@@ -88,8 +88,8 @@ def run(
     api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key or RAFTER_API_KEY env var"),
     fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
-    save: str = typer.Option(None, "--save", help="save file to path (default: current directory)"),
-    save_name: str = typer.Option(None, "--save-name", help="filename override (default: rafter_static_<timestamp>)"),
+    save: str | None = typer.Option(None, "--save", help="save file to path (default: current directory)"),
+    save_name: str | None = typer.Option(None, "--save-name", help="filename override (default: rafter_static_<timestamp>)"),
 ):
     key = resolve_key(api_key)
     repo, branch = resolve_repo_branch(repo, branch)
@@ -116,7 +116,7 @@ def run(
                 print("[green]Scan completed!")
                 if save is not None:
                     save_result(data, save, save_name, fmt)
-                else: # TODO: check if this is correct (unreachable)
+                else:
                     if fmt == "md":
                         print(data["markdown"])
                     else:
@@ -133,8 +133,8 @@ def get(
     api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key or RAFTER_API_KEY env var"),
     fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
     interactive: bool = typer.Option(False, "--interactive", help="poll until done"),
-    save: str = typer.Option(None, "--save", help="save file to path (default: current directory)"),
-    save_name: str = typer.Option(None, "--save-name", help="filename override (default: rafter_static_<timestamp>)"),
+    save: str | None = typer.Option(None, "--save", help="save file to path (default: current directory)"),
+    save_name: str | None = typer.Option(None, "--save-name", help="filename override (default: rafter_static_<timestamp>)"),
 ):
     key = resolve_key(api_key)
     headers = {"x-api-key": key}
@@ -143,7 +143,7 @@ def get(
         data = resp.json()
         if save is not None:
             save_result(data, save, save_name, fmt)
-        else: # TODO: check if this is correct (unreachable)
+        else:
             if fmt == "md":
                 print(data["markdown"])
             else:
@@ -163,7 +163,7 @@ def get(
                 print("[green]Scan completed!")
                 if save is not None:
                     save_result(data, save, save_name, fmt)
-                else: # TODO: check if this is correct (unreachable)
+                else:
                     if fmt == "md":
                         print(data["markdown"])
                     else:
