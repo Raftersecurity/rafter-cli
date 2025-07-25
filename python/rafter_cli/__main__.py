@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 from rich import print, progress
 
 app = typer.Typer()
-API_BASE = "https://rafter.so/api"
+# API_BASE = "https://rafter.so/api"
+API_BASE = "http://localhost:3000/api"
 
 class GitInfo:
     def __init__(self):
@@ -72,7 +73,9 @@ def resolve_repo_branch(repo_opt, branch_opt):
 
 def save_result(data, path, name, fmt):
     path = pathlib.Path(path or ".")
-    name = name or f"rafter_static_{int(time.time())}"
+    path.mkdir(parents=True, exist_ok=True)
+    if not name:
+        name = f"rafter_static_{int(time.time())}"
     ext = "md" if fmt == "md" else "json"
     out = path / f"{name}.{ext}"
     if fmt == "md":
@@ -81,15 +84,7 @@ def save_result(data, path, name, fmt):
         out.write_text(json.dumps(data, indent=2))
     print(f"Saved to {out.resolve()}")
 
-def print_or_save_result(data, fmt, save, save_name):
-    if save is not None:
-        save_result(data, save, save_name, fmt)
-    elif fmt == "md":
-        print(data["markdown"])
-    else:
-        print(json.dumps(data, indent=2))
-
-def handle_scan_status(scan_id, headers, fmt, save, save_name):
+def handle_scan_status_interactive(scan_id, headers, fmt, save_path, save_name):
     # First poll
     poll = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
     data = poll.json()
@@ -103,7 +98,7 @@ def handle_scan_status(scan_id, headers, fmt, save, save_name):
             status = data.get("status")
             if status == "completed":
                 print("[green]Scan completed!")
-                print_or_save_result(data, fmt, save, save_name)
+                save_result(data, save_path, save_name, fmt)
                 return
             elif status == "failed":
                 print("[red]Scan failed.")
@@ -111,7 +106,7 @@ def handle_scan_status(scan_id, headers, fmt, save, save_name):
         print(f"[yellow]Scan status: {status}")
     elif status == "completed":
         print("[green]Scan completed!")
-        print_or_save_result(data, fmt, save, save_name)
+        save_result(data, save_path, save_name, fmt)
         return
     elif status == "failed":
         print("[red]Scan failed.")
@@ -126,7 +121,7 @@ def run(
     api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key or RAFTER_API_KEY env var"),
     fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
-    save: str | None = typer.Option(None, "--save", help="save file to path (default: current directory)"),
+    save_path: str | None = typer.Option(None, "--save-path", help="save file to path (default: current directory)"),
     save_name: str | None = typer.Option(None, "--save-name", help="filename override (default: rafter_static_<timestamp>)"),
 ):
     key = resolve_key(api_key)
@@ -140,7 +135,7 @@ def run(
     print(f"Scan ID: {scan_id}")
     if skip_interactive:
         return
-    handle_scan_status(scan_id, headers, fmt, save, save_name)
+    handle_scan_status_interactive(scan_id, headers, fmt, save_path, save_name)
 
 @app.command()
 def get(
@@ -148,7 +143,7 @@ def get(
     api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key or RAFTER_API_KEY env var"),
     fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
     interactive: bool = typer.Option(False, "--interactive", help="poll until done"),
-    save: str | None = typer.Option(None, "--save", help="save file to path (default: current directory)"),
+    save_path: str | None = typer.Option(None, "--save-path", help="save file to path (default: current directory)"),
     save_name: str | None = typer.Option(None, "--save-name", help="filename override (default: rafter_static_<timestamp>)"),
 ):
     key = resolve_key(api_key)
@@ -156,9 +151,9 @@ def get(
     if not interactive:
         resp = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
         data = resp.json()
-        print_or_save_result(data, fmt, save, save_name)
+        save_result(data, save_path, save_name, fmt)
         return
-    handle_scan_status(scan_id, headers, fmt, save, save_name)
+    handle_scan_status_interactive(scan_id, headers, fmt, save_path, save_name)
 
 @app.command()
 def usage(

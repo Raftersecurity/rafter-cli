@@ -81,17 +81,7 @@ function detectRepo(opts: { repo?: string; branch?: string }) {
   }
 }
 
-function printOrSaveResult(data: any, fmt: string, save?: string, saveName?: string) {
-  if (save !== undefined) {
-    saveResult(data, save, saveName, fmt);
-  } else if (fmt === "md") {
-    console.log(data.markdown);
-  } else {
-    console.log(JSON.stringify(data, null, 2));
-  }
-}
-
-async function handleScanStatus(scan_id: string, headers: any, fmt: string, save?: string, saveName?: string) {
+async function handleScanStatus(scan_id: string, headers: any, fmt: string, savePath?: string, saveName?: string) {
   // First poll
   let poll = await axios.get(
     `${API}/static/scan`,
@@ -109,7 +99,7 @@ async function handleScanStatus(scan_id: string, headers: any, fmt: string, save
       status = poll.data.status;
       if (status === "completed") {
         spinner.succeed("Scan completed");
-        printOrSaveResult(poll.data, fmt, save, saveName);
+        saveResult(poll.data, fmt, savePath, saveName);
         return;
       } else if (status === "failed") {
         spinner.fail("Scan failed");
@@ -119,7 +109,7 @@ async function handleScanStatus(scan_id: string, headers: any, fmt: string, save
     console.log(`Scan status: ${status}`);
   } else if (status === "completed") {
     console.log("Scan completed");
-    printOrSaveResult(poll.data, fmt, save, saveName);
+    saveResult(poll.data, fmt, savePath, saveName);
     return;
   } else if (status === "failed") {
     console.log("Scan failed");
@@ -140,7 +130,7 @@ program
   .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
   .option("-f, --format <format>", "json | md", "json")
   .option("--skip-interactive", "do not wait for scan to complete")
-  .option("--save [path]", "save file to path (default: current directory)")
+  .option("--save-path <path>", "save file to path (default: current directory)")
   .option("--save-name <name>", "filename override (default: rafter_static_<timestamp>)")
   .action(async (opts) => {
     const key = resolveKey(opts.apiKey);
@@ -164,7 +154,7 @@ program
       );
       spinner.succeed(`Scan ID: ${data.scan_id}`);
       if (opts.skipInteractive) return;
-      await handleScanStatus(data.scan_id, { "x-api-key": key }, opts.format, opts.save, opts.saveName);
+      await handleScanStatus(data.scan_id, { "x-api-key": key }, opts.format, opts.savePath, opts.saveName);
     } catch (e) {
       spinner.fail("Request failed");
       if (e && typeof e === "object" && "response" in e && e.response && typeof e.response === "object" && "data" in e.response) {
@@ -186,7 +176,7 @@ program
   .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
   .option("-f, --format <format>", "json | md", "json")
   .option("--interactive", "poll until done")
-  .option("--save [path]", "save file to path (default: current directory)")
+  .option("--save-path <path>", "save file to path (default: current directory)")
   .option("--save-name <name>", "filename override (default: rafter_static_<timestamp>)")
   .action(async (scan_id, opts) => {
     const key = resolveKey(opts.apiKey);
@@ -195,10 +185,10 @@ program
         `${API}/static/scan`,
         { params: { scan_id, format: opts.format }, headers: { "x-api-key": key } }
       );
-      printOrSaveResult(data, opts.format, opts.save, opts.saveName);
+      saveResult(data, opts.format, opts.savePath, opts.saveName);
       return;
     }
-    await handleScanStatus(scan_id, { "x-api-key": key }, opts.format, opts.save, opts.saveName);
+    await handleScanStatus(scan_id, { "x-api-key": key }, opts.format, opts.savePath, opts.saveName);
   });
 
 program
