@@ -17,21 +17,6 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-def version_callback(value: bool):
-    if value:
-        typer.echo("rafter version 0.1.0")
-        raise typer.Exit()
-
-app.callback()(
-    typer.Option(
-        None,
-        "--version",
-        callback=version_callback,
-        is_eager=True,
-        help="Show version and exit.",
-    )
-)
-
 API_BASE = "https://rafter.so/api"
 
 # Exit codes
@@ -210,6 +195,11 @@ def get(
         return write_payload(data, fmt, quiet)
     
     handle_scan_status_interactive(scan_id, headers, fmt, quiet)
+
+@app.command()
+def version():
+    """Show version and exit."""
+    typer.echo("0.1.0")
 
 @app.command()
 def usage(
