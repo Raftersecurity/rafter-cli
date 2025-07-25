@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "rafter-cli"
+version = "0.1.0"
+description = "Rafter Security Scanner CLI"
+authors = ["Your Name <you@rafter.so>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.8,<4.0"
+typer = "^0.12.3"
+rich = "^13.7.1"
+python-dotenv = "^1.0.1"
+requests = "^2.31.0"
+
+[tool.poetry.scripts]
+rafter = "rafter_cli.__main__:app"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+pytest-mock = "^3.14.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api" 
