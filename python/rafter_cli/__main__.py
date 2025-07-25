@@ -11,8 +11,7 @@ from dotenv import load_dotenv
 from rich import print, progress
 
 app = typer.Typer()
-# API_BASE = "https://rafter.so/api"
-API_BASE = "http://localhost:3000/api"
+API_BASE = "https://rafter.so/api"
 
 # Exit codes
 EXIT_SUCCESS = 0

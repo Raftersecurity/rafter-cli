@@ -7,8 +7,7 @@ import { execSync } from "child_process";
 
 dotenv.config();
 const program = new Command();
-// const API = "https://rafter.so/api/";
-const API = "http://localhost:3000/api/";
+const API = "https://rafter.so/api/";
 
 // Exit codes
 const EXIT_SUCCESS = 0;
