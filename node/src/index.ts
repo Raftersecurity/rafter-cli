@@ -5,8 +5,6 @@ import ora from "ora";
 import * as dotenv from "dotenv";
 import { writeFileSync } from "fs";
 import { resolve } from "path";
-import type axios from "axios";
-import type * as dotenv from "dotenv";
 import { execSync } from "child_process";
 
 dotenv.config();
@@ -102,7 +100,11 @@ program
     try {
       ({ repo, branch } = detectRepo({ repo: opts.repo, branch: opts.branch }));
     } catch (e) {
-      console.error(e.message);
+      if (e instanceof Error) {
+        console.error(e.message);
+      } else {
+        console.error(e);
+      }
       process.exit(1);
     }
     const spinner = ora("Submitting scan").start();
@@ -117,7 +119,7 @@ program
       let status = "queued";
       spinner.start("Waiting for result…");
       while (["queued", "pending", "processing"].includes(status)) {
-        await new Promise((r) => setTimeout(r, 5000));
+        await new Promise((r) => setTimeout(r, 10000));
         const { data: poll } = await axios.get(
           `${API}/static/scan`,
           { params: { scan_id: data.scan_id, format: opts.format },
@@ -141,10 +143,12 @@ program
       }
     } catch (e) {
       spinner.fail("Request failed");
-      if (e.response) {
+      if (e && typeof e === "object" && "response" in e && e.response && typeof e.response === "object" && "data" in e.response) {
         console.error(e.response.data);
-      } else {
+      } else if (e instanceof Error) {
         console.error(e.message);
+      } else {
+        console.error(e);
       }
       process.exit(1);
     }
@@ -179,7 +183,7 @@ program
     const spinner = ora("Waiting for scan to complete...").start();
     let status = "queued";
     while (["queued", "pending", "processing"].includes(status)) {
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise((r) => setTimeout(r, 10000));
       const { data: poll } = await axios.get(
         `${API}/static/scan`,
         { params: { scan_id, format: opts.format }, headers: { "x-api-key": key } }

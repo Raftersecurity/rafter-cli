@@ -107,7 +107,7 @@ def run(
         status = "queued"
         while status in ("queued", "pending", "processing"):
             prog.start_task(task)
-            time.sleep(5)
+            time.sleep(10)
             poll = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
             data = poll.json()
             status = data.get("status")
@@ -154,7 +154,7 @@ def get(
         status = "queued"
         while status in ("queued", "pending", "processing"):
             prog.start_task(task)
-            time.sleep(5)
+            time.sleep(10)
             poll = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
             data = poll.json()
             status = data.get("status")

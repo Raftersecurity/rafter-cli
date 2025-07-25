@@ -1,8 +1,8 @@
 [tool.poetry]
 name = "rafter-cli"
 version = "0.1.0"
-description = "Rafter Security Scanner CLI"
-authors = ["Your Name <you@rafter.so>"]
+description = "Rafter CLI"
+authors = ["Rafter Team <hello@rafter.so>"]
 license = "MIT"
 readme = "README.md"
 

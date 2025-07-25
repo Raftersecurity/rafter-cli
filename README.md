@@ -1,6 +1,6 @@
 # Rafter CLI
 
-Multi-language CLI for Rafter Security Scanner.
+Multi-language CLI for Rafter.
 
 ## Overview
 This CLI allows you to trigger and retrieve security scans for your repositories via the Rafter public API. It is available for both Python (pip) and Node.js (npm, pnpm, yarn).
