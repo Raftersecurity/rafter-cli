@@ -3,31 +3,32 @@ import { Command } from "commander";
 import axios from "axios";
 import ora from "ora";
 import * as dotenv from "dotenv";
-import { writeFileSync } from "fs";
-import { resolve } from "path";
 import { execSync } from "child_process";
 
 dotenv.config();
 const program = new Command();
-const API = "https://rafter.so/api/";
+// const API = "https://rafter.so/api/";
+const API = "http://localhost:3000/api/";
+
+// Exit codes
+const EXIT_SUCCESS = 0;
+const EXIT_GENERAL_ERROR = 1;
+const EXIT_SCAN_NOT_FOUND = 2;
+const EXIT_QUOTA_EXHAUSTED = 3;
 
 function resolveKey(cliKey?: string): string {
   if (cliKey) return cliKey;
   if (process.env.RAFTER_API_KEY) return process.env.RAFTER_API_KEY;
   console.error("No API key provided. Use --api-key or set RAFTER_API_KEY");
-  process.exit(1);
+  process.exit(EXIT_GENERAL_ERROR);
 }
 
-function saveResult(data: any, path?: string, name?: string, fmt?: string) {
-  const ext = fmt === "md" ? "md" : "json";
-  const file = name || `rafter_static_${Date.now()}`;
-  const outPath = resolve(path || ".", `${file}.${ext}`);
-  if (fmt === "md" && data.markdown) {
-    writeFileSync(outPath, data.markdown);
-  } else {
-    writeFileSync(outPath, JSON.stringify(data, null, 2));
-  }
-  console.log(`Saved to ${outPath}`);
+function writePayload(data: any, fmt?: string, quiet?: boolean): number {
+  const payload = fmt === "md" && data.markdown ? data.markdown : JSON.stringify(data, null, quiet ? 0 : 2);
+  
+  // Stream to stdout for pipelines
+  process.stdout.write(payload);
+  return EXIT_SUCCESS;
 }
 
 function git(cmd: string): string {
@@ -51,7 +52,7 @@ function parseRemote(url: string): string {
   return parts.slice(-2).join("/"); // owner/repo
 }
 
-function detectRepo(opts: { repo?: string; branch?: string }) {
+function detectRepo(opts: { repo?: string; branch?: string, quiet?: boolean }) {
   if (opts.repo && opts.branch) return opts;
   const repoEnv = process.env.GITHUB_REPOSITORY || process.env.CI_REPOSITORY;
   const branchEnv = process.env.GITHUB_REF_NAME || process.env.CI_COMMIT_BRANCH || process.env.CI_BRANCH;
@@ -70,8 +71,8 @@ function detectRepo(opts: { repo?: string; branch?: string }) {
         }
       }
     }
-    if (!opts.repo || !opts.branch) {
-      console.log(`\u{1F50D}  Repo auto-detected: ${repoSlug} @ ${branch}`);
+    if ((!opts.repo || !opts.branch) && !opts.quiet) {
+      console.error(`Repo auto-detected: ${repoSlug} @ ${branch} (note: scanning remote)`);
     }
     return { repo: repoSlug, branch };
   } catch {
@@ -81,42 +82,73 @@ function detectRepo(opts: { repo?: string; branch?: string }) {
   }
 }
 
-async function handleScanStatus(scan_id: string, headers: any, fmt: string, savePath?: string, saveName?: string) {
+async function handleScanStatus(scan_id: string, headers: any, fmt: string, quiet?: boolean): Promise<number> {
   // First poll
-  let poll = await axios.get(
-    `${API}/static/scan`,
-    { params: { scan_id, format: fmt }, headers }
-  );
+  let poll;
+  try {
+    poll = await axios.get(
+      `${API}/static/scan`,
+      { params: { scan_id, format: fmt }, headers }
+    );
+  } catch (e: any) {
+    if (e.response?.status === 404) {
+      console.error(`Scan '${scan_id}' not found`);
+      return EXIT_SCAN_NOT_FOUND;
+    }
+    console.error(`Error: ${e.response?.data || e.message}`);
+    return EXIT_GENERAL_ERROR;
+  }
+  
   let status = poll.data.status;
   if (["queued", "pending", "processing"].includes(status)) {
-    const spinner = ora("Waiting for scan to complete... (this could take several minutes)").start();
-    while (["queued", "pending", "processing"].includes(status)) {
-      await new Promise((r) => setTimeout(r, 10000));
-      poll = await axios.get(
-        `${API}/static/scan`,
-        { params: { scan_id, format: fmt }, headers }
-      );
-      status = poll.data.status;
-      if (status === "completed") {
-        spinner.succeed("Scan completed");
-        saveResult(poll.data, fmt, savePath, saveName);
-        return;
-      } else if (status === "failed") {
-        spinner.fail("Scan failed");
-        process.exit(1);
+    if (!quiet) {
+      const spinner = ora("Waiting for scan to complete... (this could take several minutes)").start();
+      while (["queued", "pending", "processing"].includes(status)) {
+        await new Promise((r) => setTimeout(r, 10000));
+        poll = await axios.get(
+          `${API}/static/scan`,
+          { params: { scan_id, format: fmt }, headers }
+        );
+        status = poll.data.status;
+        if (status === "completed") {
+          spinner.succeed("Scan completed");
+          return writePayload(poll.data, fmt, quiet);
+        } else if (status === "failed") {
+          spinner.fail("Scan failed");
+          return EXIT_GENERAL_ERROR;
+        }
+      }
+      console.error(`Scan status: ${status}`);
+    } else {
+      while (["queued", "pending", "processing"].includes(status)) {
+        await new Promise((r) => setTimeout(r, 10000));
+        poll = await axios.get(
+          `${API}/static/scan`,
+          { params: { scan_id, format: fmt }, headers }
+        );
+        status = poll.data.status;
+        if (status === "completed") {
+          return writePayload(poll.data, fmt, quiet);
+        } else if (status === "failed") {
+          return EXIT_GENERAL_ERROR;
+        }
       }
     }
-    console.log(`Scan status: ${status}`);
   } else if (status === "completed") {
-    console.log("Scan completed");
-    saveResult(poll.data, fmt, savePath, saveName);
-    return;
+    if (!quiet) {
+      console.error("Scan completed");
+    }
+    return writePayload(poll.data, fmt, quiet);
   } else if (status === "failed") {
-    console.log("Scan failed");
-    process.exit(1);
+    console.error("Scan failed");
+    return EXIT_GENERAL_ERROR;
   } else {
-    console.log(`Scan status: ${status}`);
+    if (!quiet) {
+      console.error(`Scan status: ${status}`);
+    }
   }
+  
+  return writePayload(poll.data, fmt, quiet);
 }
 
 program
@@ -130,43 +162,69 @@ program
   .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
   .option("-f, --format <format>", "json | md", "json")
   .option("--skip-interactive", "do not wait for scan to complete")
-  .option("--save-path <path>", "save file to path (default: current directory)")
-  .option("--save-name <name>", "filename override (default: rafter_static_<timestamp>)")
+  .option("--quiet", "suppress status messages")
   .action(async (opts) => {
     const key = resolveKey(opts.apiKey);
     let repo, branch;
     try {
-      ({ repo, branch } = detectRepo({ repo: opts.repo, branch: opts.branch }));
+      ({ repo, branch } = detectRepo({ repo: opts.repo, branch: opts.branch, quiet: opts.quiet }));
     } catch (e) {
       if (e instanceof Error) {
         console.error(e.message);
       } else {
         console.error(e);
       }
-      process.exit(1);
+      process.exit(EXIT_GENERAL_ERROR);
     }
-    const spinner = ora("Submitting scan").start();
-    try {
-      const { data } = await axios.post(
-        `${API}/static/scan`,
-        { repository_name: repo, branch_name: branch },
-        { headers: { "x-api-key": key } }
-      );
-      spinner.succeed(`Scan ID: ${data.scan_id}`);
-      if (opts.skipInteractive) return;
-      await handleScanStatus(data.scan_id, { "x-api-key": key }, opts.format, opts.savePath, opts.saveName);
-    } catch (e) {
-      spinner.fail("Request failed");
-      if (e && typeof e === "object" && "response" in e && e.response && typeof e.response === "object" && "data" in e.response) {
-        // Likely an AxiosError
-        // @ts-ignore
-        console.error(e.response.data);
-      } else if (e instanceof Error) {
-        console.error(e.message);
-      } else {
-        console.error(e);
+    
+    if (!opts.quiet) {
+      const spinner = ora("Submitting scan").start();
+      try {
+        const { data } = await axios.post(
+          `${API}/static/scan`,
+          { repository_name: repo, branch_name: branch },
+          { headers: { "x-api-key": key } }
+        );
+        spinner.succeed(`Scan ID: ${data.scan_id}`);
+        if (opts.skipInteractive) return;
+        const exitCode = await handleScanStatus(data.scan_id, { "x-api-key": key }, opts.format, opts.quiet);
+        process.exit(exitCode);
+      } catch (e: any) {
+        spinner.fail("Request failed");
+        if (e.response?.status === 429) {
+          console.error("Quota exhausted");
+          process.exit(EXIT_QUOTA_EXHAUSTED);
+        } else if (e.response?.data) {
+          console.error(e.response.data);
+        } else if (e instanceof Error) {
+          console.error(e.message);
+        } else {
+          console.error(e);
+        }
+        process.exit(EXIT_GENERAL_ERROR);
       }
-      process.exit(1);
+    } else {
+      try {
+        const { data } = await axios.post(
+          `${API}/static/scan`,
+          { repository_name: repo, branch_name: branch },
+          { headers: { "x-api-key": key } }
+        );
+        if (opts.skipInteractive) return;
+        const exitCode = await handleScanStatus(data.scan_id, { "x-api-key": key }, opts.format, opts.quiet);
+        process.exit(exitCode);
+      } catch (e: any) {
+        if (e.response?.status === 429) {
+          process.exit(EXIT_QUOTA_EXHAUSTED);
+        } else if (e.response?.data) {
+          console.error(e.response.data);
+        } else if (e instanceof Error) {
+          console.error(e.message);
+        } else {
+          console.error(e);
+        }
+        process.exit(EXIT_GENERAL_ERROR);
+      }
     }
   });
 
@@ -176,19 +234,34 @@ program
   .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
   .option("-f, --format <format>", "json | md", "json")
   .option("--interactive", "poll until done")
-  .option("--save-path <path>", "save file to path (default: current directory)")
-  .option("--save-name <name>", "filename override (default: rafter_static_<timestamp>)")
+  .option("--quiet", "suppress status messages")
   .action(async (scan_id, opts) => {
     const key = resolveKey(opts.apiKey);
     if (!opts.interactive) {
-      const { data } = await axios.get(
-        `${API}/static/scan`,
-        { params: { scan_id, format: opts.format }, headers: { "x-api-key": key } }
-      );
-      saveResult(data, opts.format, opts.savePath, opts.saveName);
+      try {
+        const { data } = await axios.get(
+          `${API}/static/scan`,
+          { params: { scan_id, format: opts.format }, headers: { "x-api-key": key } }
+        );
+        const exitCode = writePayload(data, opts.format, opts.quiet);
+        process.exit(exitCode);
+      } catch (e: any) {
+        if (e.response?.status === 404) {
+          console.error(`Scan '${scan_id}' not found`);
+          process.exit(EXIT_SCAN_NOT_FOUND);
+        } else if (e.response?.data) {
+          console.error(e.response.data);
+        } else if (e instanceof Error) {
+          console.error(e.message);
+        } else {
+          console.error(e);
+        }
+        process.exit(EXIT_GENERAL_ERROR);
+      }
       return;
     }
-    await handleScanStatus(scan_id, { "x-api-key": key }, opts.format, opts.savePath, opts.saveName);
+    const exitCode = await handleScanStatus(scan_id, { "x-api-key": key }, opts.format, opts.quiet);
+    process.exit(exitCode);
   });
 
 program
@@ -200,12 +273,12 @@ program
       const { data } = await axios.get(`${API}/static/usage`, { headers: { "x-api-key": key } });
       console.log(JSON.stringify(data, null, 2));
     } catch (e: any) {
-      if (e.response) {
+      if (e.response?.data) {
         console.error(e.response.data);
       } else {
         console.error(e.message);
       }
-      process.exit(1);
+      process.exit(EXIT_GENERAL_ERROR);
     }
   });
 
