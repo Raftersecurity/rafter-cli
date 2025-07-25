@@ -81,6 +81,54 @@ function detectRepo(opts: { repo?: string; branch?: string }) {
   }
 }
 
+function printOrSaveResult(data: any, fmt: string, save?: string, saveName?: string) {
+  if (save !== undefined) {
+    saveResult(data, save, saveName, fmt);
+  } else if (fmt === "md") {
+    console.log(data.markdown);
+  } else {
+    console.log(JSON.stringify(data, null, 2));
+  }
+}
+
+async function handleScanStatus(scan_id: string, headers: any, fmt: string, save?: string, saveName?: string) {
+  // First poll
+  let poll = await axios.get(
+    `${API}/static/scan`,
+    { params: { scan_id, format: fmt }, headers }
+  );
+  let status = poll.data.status;
+  if (["queued", "pending", "processing"].includes(status)) {
+    const spinner = ora("Waiting for scan to complete... (this could take several minutes)").start();
+    while (["queued", "pending", "processing"].includes(status)) {
+      await new Promise((r) => setTimeout(r, 10000));
+      poll = await axios.get(
+        `${API}/static/scan`,
+        { params: { scan_id, format: fmt }, headers }
+      );
+      status = poll.data.status;
+      if (status === "completed") {
+        spinner.succeed("Scan completed");
+        printOrSaveResult(poll.data, fmt, save, saveName);
+        return;
+      } else if (status === "failed") {
+        spinner.fail("Scan failed");
+        process.exit(1);
+      }
+    }
+    console.log(`Scan status: ${status}`);
+  } else if (status === "completed") {
+    console.log("Scan completed");
+    printOrSaveResult(poll.data, fmt, save, saveName);
+    return;
+  } else if (status === "failed") {
+    console.log("Scan failed");
+    process.exit(1);
+  } else {
+    console.log(`Scan status: ${status}`);
+  }
+}
+
 program
   .name("rafter")
   .description("Rafter CLI");
@@ -116,34 +164,12 @@ program
       );
       spinner.succeed(`Scan ID: ${data.scan_id}`);
       if (opts.skipInteractive) return;
-      let status = "queued";
-      spinner.start("Waiting for result…");
-      while (["queued", "pending", "processing"].includes(status)) {
-        await new Promise((r) => setTimeout(r, 10000));
-        const { data: poll } = await axios.get(
-          `${API}/static/scan`,
-          { params: { scan_id: data.scan_id, format: opts.format },
-            headers: { "x-api-key": key } }
-        );
-        status = poll.status;
-        if (status === "completed") {
-          spinner.succeed("Scan completed");
-          if (opts.save !== undefined) {
-            saveResult(poll, opts.save, opts.saveName, opts.format);
-          } else if (opts.format === "md") {
-            console.log(poll.markdown);
-          } else {
-            console.log(JSON.stringify(poll, null, 2));
-          }
-          return;
-        } else if (status === "failed") {
-          spinner.fail("Scan failed");
-          process.exit(1);
-        }
-      }
+      await handleScanStatus(data.scan_id, { "x-api-key": key }, opts.format, opts.save, opts.saveName);
     } catch (e) {
       spinner.fail("Request failed");
       if (e && typeof e === "object" && "response" in e && e.response && typeof e.response === "object" && "data" in e.response) {
+        // Likely an AxiosError
+        // @ts-ignore
         console.error(e.response.data);
       } else if (e instanceof Error) {
         console.error(e.message);
@@ -169,43 +195,10 @@ program
         `${API}/static/scan`,
         { params: { scan_id, format: opts.format }, headers: { "x-api-key": key } }
       );
-      if (opts.save !== undefined) {
-        saveResult(data, opts.save, opts.saveName, opts.format);
-      } else {
-        if (opts.format === "md") {
-          console.log(data.markdown);
-        } else {
-          console.log(JSON.stringify(data, null, 2));
-        }
-      }
+      printOrSaveResult(data, opts.format, opts.save, opts.saveName);
       return;
     }
-    const spinner = ora("Waiting for scan to complete...").start();
-    let status = "queued";
-    while (["queued", "pending", "processing"].includes(status)) {
-      await new Promise((r) => setTimeout(r, 10000));
-      const { data: poll } = await axios.get(
-        `${API}/static/scan`,
-        { params: { scan_id, format: opts.format }, headers: { "x-api-key": key } }
-      );
-      status = poll.status;
-      if (status === "completed") {
-        spinner.succeed("Scan completed");
-        if (opts.save !== undefined) {
-          saveResult(poll, opts.save, opts.saveName, opts.format);
-        } else {
-          if (opts.format === "md") {
-            console.log(poll.markdown);
-          } else {
-            console.log(JSON.stringify(poll, null, 2));
-          }
-        }
-        return;
-      } else if (status === "failed") {
-        spinner.fail("Scan failed");
-        process.exit(1);
-      }
-    }
+    await handleScanStatus(scan_id, { "x-api-key": key }, opts.format, opts.save, opts.saveName);
   });
 
 program
