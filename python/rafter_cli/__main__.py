@@ -10,7 +10,28 @@ import sys
 from dotenv import load_dotenv
 from rich import print, progress
 
-app = typer.Typer()
+app = typer.Typer(
+    name="rafter",
+    help="Rafter CLI",
+    add_completion=False,
+    no_args_is_help=True,
+)
+
+def version_callback(value: bool):
+    if value:
+        typer.echo("rafter version 0.1.0")
+        raise typer.Exit()
+
+app.callback()(
+    typer.Option(
+        None,
+        "--version",
+        callback=version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    )
+)
+
 API_BASE = "https://rafter.so/api"
 
 # Exit codes
