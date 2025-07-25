@@ -6,7 +6,12 @@ import * as dotenv from "dotenv";
 import { execSync } from "child_process";
 
 dotenv.config();
-const program = new Command();
+
+const program = new Command()
+  .name("rafter")
+  .description("Rafter CLI")
+  .version("0.1.0");
+  
 const API = "https://rafter.so/api/";
 
 // Exit codes

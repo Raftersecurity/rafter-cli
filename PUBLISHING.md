@@ -90,8 +90,8 @@ cd ..
 
 ```bash
 # Node – install the tarball in a throw-away dir
-mkdir /tmp/rafter-npmtmp && cd $_
-npm i -g ../rafter-cli-0.3.0.tgz
+mkdir tmp-rafter-npmtmp && cd $_
+npm i -g ../rafter-cli-0.1.0.tgz
 rafter --version
 cd -
 
