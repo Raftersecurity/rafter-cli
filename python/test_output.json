@@ -1,0 +1,103 @@
+{
+  "status": "completed",
+  "vulnerabilities": [
+    {
+      "runIndex": 1,
+      "resultIndex": 0,
+      "ruleId": "CKV2_GHA_1",
+      "level": "error",
+      "message": "Ensure top-level permissions are not set to write-all",
+      "file": ".github/workflows/firebase-hosting-merge.yml",
+      "line": 1,
+      "result": {
+        "ruleId": "CKV2_GHA_1",
+        "ruleIndex": 0,
+        "level": "error",
+        "attachments": [],
+        "message": {
+          "text": "Ensure top-level permissions are not set to write-all"
+        },
+        "locations": [
+          {
+            "physicalLocation": {
+              "artifactLocation": {
+                "uri": ".github/workflows/firebase-hosting-merge.yml"
+              },
+              "region": {
+                "startLine": 1,
+                "endLine": 1,
+                "snippet": {
+                  "text": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "runIndex": 3,
+      "resultIndex": 1,
+      "ruleId": "WEAK_CRYPTO",
+      "level": "warning",
+      "message": "Weak crypto usage (md5/sha1) found: // sha1 mistake to fix",
+      "file": "src/lib/utils.ts",
+      "line": 8,
+      "result": {
+        "ruleId": "WEAK_CRYPTO",
+        "level": "warning",
+        "message": {
+          "text": "Weak crypto usage (md5/sha1) found: // sha1 mistake to fix"
+        },
+        "locations": [
+          {
+            "physicalLocation": {
+              "artifactLocation": {
+                "uri": "src/lib/utils.ts"
+              },
+              "region": {
+                "startLine": 8
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "runIndex": 4,
+      "resultIndex": 2,
+      "ruleId": "CVE-2025-5889",
+      "level": "note",
+      "message": "Package: brace-expansion\nInstalled Version: 2.0.1\nVulnerability CVE-2025-5889\nSeverity: LOW\nFixed Version: 2.0.2, 1.1.12, 3.0.1, 4.0.1\nLink: [CVE-2025-5889](https://avd.aquasec.com/nvd/cve-2025-5889)",
+      "file": "package-lock.json",
+      "line": 2572,
+      "result": {
+        "ruleId": "CVE-2025-5889",
+        "ruleIndex": 0,
+        "level": "note",
+        "message": {
+          "text": "Package: brace-expansion\nInstalled Version: 2.0.1\nVulnerability CVE-2025-5889\nSeverity: LOW\nFixed Version: 2.0.2, 1.1.12, 3.0.1, 4.0.1\nLink: [CVE-2025-5889](https://avd.aquasec.com/nvd/cve-2025-5889)"
+        },
+        "locations": [
+          {
+            "physicalLocation": {
+              "artifactLocation": {
+                "uri": "package-lock.json",
+                "uriBaseId": "ROOTPATH"
+              },
+              "region": {
+                "startLine": 2572,
+                "startColumn": 1,
+                "endLine": 2580,
+                "endColumn": 1
+              }
+            },
+            "message": {
+              "text": "package-lock.json: brace-expansion@2.0.1"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

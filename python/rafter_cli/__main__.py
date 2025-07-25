@@ -6,12 +6,19 @@ import json
 import pathlib
 import subprocess
 import re
+import sys
 from dotenv import load_dotenv
 from rich import print, progress
 
 app = typer.Typer()
 # API_BASE = "https://rafter.so/api"
 API_BASE = "http://localhost:3000/api"
+
+# Exit codes
+EXIT_SUCCESS = 0
+EXIT_GENERAL_ERROR = 1
+EXIT_SCAN_NOT_FOUND = 2
+EXIT_QUOTA_EXHAUSTED = 3
 
 class GitInfo:
     def __init__(self):
@@ -47,10 +54,10 @@ def resolve_key(cli_opt):
     env_key = os.getenv("RAFTER_API_KEY")
     if env_key:
         return env_key
-    typer.echo("No API key provided. Use --api-key or set RAFTER_API_KEY", err=True)
-    raise typer.Exit(code=1)
+    print("No API key provided. Use --api-key or set RAFTER_API_KEY", file=sys.stderr)
+    raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
-def resolve_repo_branch(repo_opt, branch_opt):
+def resolve_repo_branch(repo_opt, branch_opt, quiet):
     if repo_opt and branch_opt:
         return repo_opt, branch_opt
     repo_env = os.getenv("GITHUB_REPOSITORY") or os.getenv("CI_REPOSITORY")
@@ -65,54 +72,67 @@ def resolve_repo_branch(repo_opt, branch_opt):
             if not branch:
                 branch = git.branch
         if not repo_opt or not branch_opt:
-            print(f"[bold cyan]\U0001F50D  Repo auto-detected: {repo} @ {branch}")
+            if not quiet: 
+                print(f"Repo auto-detected: {repo} @ {branch} (note: scanning remote)", file=sys.stderr)
         return repo, branch
     except Exception:
-        typer.echo("Could not auto-detect Git repository. Please pass --repo and --branch explicitly.", err=True)
-        raise typer.Exit(code=1)
+        print("Could not auto-detect Git repository. Please pass --repo and --branch explicitly.", file=sys.stderr)
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
-def save_result(data, path, name, fmt):
-    path = pathlib.Path(path or ".")
-    path.mkdir(parents=True, exist_ok=True)
-    if not name:
-        name = f"rafter_static_{int(time.time())}"
-    ext = "md" if fmt == "md" else "json"
-    out = path / f"{name}.{ext}"
+def write_payload(data, fmt="json", quiet=False):
+    """Write payload to stdout following UNIX principles"""
     if fmt == "md":
-        out.write_text(data["markdown"])
+        payload = data.get("markdown", "")
     else:
-        out.write_text(json.dumps(data, indent=2))
-    print(f"Saved to {out.resolve()}")
+        payload = json.dumps(data, indent=2 if not quiet else None)
+    
+    # Stream to stdout for pipelines
+    sys.stdout.write(payload)
+    return EXIT_SUCCESS
 
-def handle_scan_status_interactive(scan_id, headers, fmt, save_path, save_name):
+def handle_scan_status_interactive(scan_id, headers, fmt, quiet):
     # First poll
     poll = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
+    
+    if poll.status_code == 404:
+        print(f"Scan '{scan_id}' not found", file=sys.stderr)
+        raise typer.Exit(code=EXIT_SCAN_NOT_FOUND)
+    elif poll.status_code != 200:
+        print(f"Error: {poll.text}", file=sys.stderr)
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
+    
     data = poll.json()
     status = data.get("status")
+    
     if status in ("queued", "pending", "processing"):
-        print("Waiting for scan to complete... (this could take several minutes)")
+        if not quiet:
+            print("Waiting for scan to complete... (this could take several minutes)", file=sys.stderr)
         while status in ("queued", "pending", "processing"):
             time.sleep(10)
             poll = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
             data = poll.json()
             status = data.get("status")
             if status == "completed":
-                print("[green]Scan completed!")
-                save_result(data, save_path, save_name, fmt)
-                return
+                if not quiet:
+                    print("Scan completed!", file=sys.stderr)
+                return write_payload(data, fmt, quiet)
             elif status == "failed":
-                print("[red]Scan failed.")
-                raise typer.Exit(code=1)
-        print(f"[yellow]Scan status: {status}")
+                print("Scan failed.", file=sys.stderr)
+                raise typer.Exit(code=EXIT_GENERAL_ERROR)
+        if not quiet:
+            print(f"Scan status: {status}", file=sys.stderr)
     elif status == "completed":
-        print("[green]Scan completed!")
-        save_result(data, save_path, save_name, fmt)
-        return
+        if not quiet:
+            print("Scan completed!", file=sys.stderr)
+        return write_payload(data, fmt, quiet)
     elif status == "failed":
-        print("[red]Scan failed.")
-        raise typer.Exit(code=1)
+        print("Scan failed.", file=sys.stderr)
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
     else:
-        print(f"[yellow]Scan status: {status}")
+        if not quiet:
+            print(f"Scan status: {status}", file=sys.stderr)
+    
+    return write_payload(data, fmt, quiet)
 
 @app.command()
 def run(
@@ -121,21 +141,29 @@ def run(
     api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key or RAFTER_API_KEY env var"),
     fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
-    save_path: str | None = typer.Option(None, "--save-path", help="save file to path (default: current directory)"),
-    save_name: str | None = typer.Option(None, "--save-name", help="filename override (default: rafter_static_<timestamp>)"),
+    quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
     key = resolve_key(api_key)
-    repo, branch = resolve_repo_branch(repo, branch)
+    repo, branch = resolve_repo_branch(repo, branch, quiet)
     headers = {"x-api-key": key, "Content-Type": "application/json"}
+    
     resp = requests.post(f"{API_BASE}/static/scan", headers=headers, json={"repository_name": repo, "branch_name": branch})
-    if resp.status_code != 200:
-        print(f"[red]Error: {resp.text}")
-        raise typer.Exit(code=1)
+    
+    if resp.status_code == 429:
+        print("Quota exhausted", file=sys.stderr)
+        raise typer.Exit(code=EXIT_QUOTA_EXHAUSTED)
+    elif resp.status_code != 200:
+        print(f"Error: {resp.text}", file=sys.stderr)
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
+    
     scan_id = resp.json()["scan_id"]
-    print(f"Scan ID: {scan_id}")
+    if not quiet:
+        print(f"Scan ID: {scan_id}", file=sys.stderr)
+    
     if skip_interactive:
         return
-    handle_scan_status_interactive(scan_id, headers, fmt, save_path, save_name)
+    
+    handle_scan_status_interactive(scan_id, headers, fmt, quiet)
 
 @app.command()
 def get(
@@ -143,17 +171,25 @@ def get(
     api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key or RAFTER_API_KEY env var"),
     fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
     interactive: bool = typer.Option(False, "--interactive", help="poll until done"),
-    save_path: str | None = typer.Option(None, "--save-path", help="save file to path (default: current directory)"),
-    save_name: str | None = typer.Option(None, "--save-name", help="filename override (default: rafter_static_<timestamp>)"),
+    quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
     key = resolve_key(api_key)
     headers = {"x-api-key": key}
+    
     if not interactive:
         resp = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
+        
+        if resp.status_code == 404:
+            print(f"Scan '{scan_id}' not found", file=sys.stderr)
+            raise typer.Exit(code=EXIT_SCAN_NOT_FOUND)
+        elif resp.status_code != 200:
+            print(f"Error: {resp.text}", file=sys.stderr)
+            raise typer.Exit(code=EXIT_GENERAL_ERROR)
+        
         data = resp.json()
-        save_result(data, save_path, save_name, fmt)
-        return
-    handle_scan_status_interactive(scan_id, headers, fmt, save_path, save_name)
+        return write_payload(data, fmt, quiet)
+    
+    handle_scan_status_interactive(scan_id, headers, fmt, quiet)
 
 @app.command()
 def usage(
@@ -162,9 +198,11 @@ def usage(
     key = resolve_key(api_key)
     headers = {"x-api-key": key}
     resp = requests.get(f"{API_BASE}/static/usage", headers=headers)
+    
     if resp.status_code != 200:
-        print(f"[red]Error: {resp.text}")
-        raise typer.Exit(code=1)
+        print(f"Error: {resp.text}", file=sys.stderr)
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
+    
     print(json.dumps(resp.json(), indent=2))
 
 if __name__ == "__main__":
