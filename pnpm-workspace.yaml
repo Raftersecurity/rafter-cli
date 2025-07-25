@@ -1,2 +1,5 @@
 packages:
-  - "node" 
+  - node
+
+onlyBuiltDependencies:
+  - esbuild
