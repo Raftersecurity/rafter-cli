@@ -81,6 +81,44 @@ def save_result(data, path, name, fmt):
         out.write_text(json.dumps(data, indent=2))
     print(f"Saved to {out.resolve()}")
 
+def print_or_save_result(data, fmt, save, save_name):
+    if save is not None:
+        save_result(data, save, save_name, fmt)
+    elif fmt == "md":
+        print(data["markdown"])
+    else:
+        print(json.dumps(data, indent=2))
+
+def handle_scan_status(scan_id, headers, fmt, save, save_name):
+    # First poll
+    poll = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
+    data = poll.json()
+    status = data.get("status")
+    if status in ("queued", "pending", "processing"):
+        print("Waiting for scan to complete... (this could take several minutes)")
+        while status in ("queued", "pending", "processing"):
+            time.sleep(10)
+            poll = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
+            data = poll.json()
+            status = data.get("status")
+            if status == "completed":
+                print("[green]Scan completed!")
+                print_or_save_result(data, fmt, save, save_name)
+                return
+            elif status == "failed":
+                print("[red]Scan failed.")
+                raise typer.Exit(code=1)
+        print(f"[yellow]Scan status: {status}")
+    elif status == "completed":
+        print("[green]Scan completed!")
+        print_or_save_result(data, fmt, save, save_name)
+        return
+    elif status == "failed":
+        print("[red]Scan failed.")
+        raise typer.Exit(code=1)
+    else:
+        print(f"[yellow]Scan status: {status}")
+
 @app.command()
 def run(
     repo: str = typer.Option(None, "--repo", "-r", help="org/repo (default: current)"),
@@ -102,30 +140,7 @@ def run(
     print(f"Scan ID: {scan_id}")
     if skip_interactive:
         return
-    with progress.Progress() as prog:
-        task = prog.add_task("Waiting for scan to complete...", start=False)
-        status = "queued"
-        while status in ("queued", "pending", "processing"):
-            prog.start_task(task)
-            time.sleep(10)
-            poll = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
-            data = poll.json()
-            status = data.get("status")
-            if status == "completed":
-                prog.update(task, completed=100)
-                print("[green]Scan completed!")
-                if save is not None:
-                    save_result(data, save, save_name, fmt)
-                else:
-                    if fmt == "md":
-                        print(data["markdown"])
-                    else:
-                        print(json.dumps(data, indent=2))
-                return
-            elif status == "failed":
-                print("[red]Scan failed.")
-                raise typer.Exit(code=1)
-        print(f"[yellow]Scan status: {status}")
+    handle_scan_status(scan_id, headers, fmt, save, save_name)
 
 @app.command()
 def get(
@@ -141,38 +156,9 @@ def get(
     if not interactive:
         resp = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
         data = resp.json()
-        if save is not None:
-            save_result(data, save, save_name, fmt)
-        else:
-            if fmt == "md":
-                print(data["markdown"])
-            else:
-                print(json.dumps(data, indent=2))
+        print_or_save_result(data, fmt, save, save_name)
         return
-    with progress.Progress() as prog:
-        task = prog.add_task("Waiting for scan to complete...", start=False)
-        status = "queued"
-        while status in ("queued", "pending", "processing"):
-            prog.start_task(task)
-            time.sleep(10)
-            poll = requests.get(f"{API_BASE}/static/scan", headers=headers, params={"scan_id": scan_id, "format": fmt})
-            data = poll.json()
-            status = data.get("status")
-            if status == "completed":
-                prog.update(task, completed=100)
-                print("[green]Scan completed!")
-                if save is not None:
-                    save_result(data, save, save_name, fmt)
-                else:
-                    if fmt == "md":
-                        print(data["markdown"])
-                    else:
-                        print(json.dumps(data, indent=2))
-                return
-            elif status == "failed":
-                print("[red]Scan failed.")
-                raise typer.Exit(code=1)
-        print(f"[yellow]Scan status: {status}")
+    handle_scan_status(scan_id, headers, fmt, save, save_name)
 
 @app.command()
 def usage(
