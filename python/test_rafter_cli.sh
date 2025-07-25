@@ -15,17 +15,17 @@ poetry run rafter --help
 echo -e "\n=== rafter usage ==="
 poetry run rafter usage --api-key "$API_KEY"
 
-echo -e "\n=== rafter run (non-interactive, skip) ==="
-poetry run rafter run --repo "$REPO" --branch "$BRANCH" --api-key "$API_KEY" --skip-interactive
+# echo -e "\n=== rafter run (non-interactive, skip) ==="
+# poetry run rafter run --repo "$REPO" --branch "$BRANCH" --api-key "$API_KEY" --skip-interactive
 
-echo -e "\n=== rafter run (interactive, default format) ==="
-poetry run rafter run --repo "$REPO" --branch "$BRANCH" --api-key "$API_KEY"
+# echo -e "\n=== rafter run (interactive, default format) ==="
+# poetry run rafter run --repo "$REPO" --branch "$BRANCH" --api-key "$API_KEY"
 
-echo -e "\n=== rafter run (interactive, markdown format, save to file) ==="
-poetry run rafter run --repo "$REPO" --branch "$BRANCH" --api-key "$API_KEY" --format md --save ./ --save-name "test_scan_md"
+# echo -e "\n=== rafter run (interactive, markdown format, save to file) ==="
+# poetry run rafter run --repo "$REPO" --branch "$BRANCH" --api-key "$API_KEY" --format md --save ./ --save-name "test_scan_md"
 
 echo -e "\n=== rafter get (json, save to file) ==="
-poetry run rafter get "$SCAN_ID2" --api-key "$API_KEY" --format json --save ./ --save-name "test_get_json"
+poetry run rafter get "$SCAN_ID2" --api-key "$API_KEY" --format json --save-path ./ --save-name "test_get_json"
 
 echo -e "\n=== rafter get (markdown, interactive) ==="
 poetry run rafter get "$SCAN_ID3" --api-key "$API_KEY" --format md --interactive

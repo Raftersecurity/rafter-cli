@@ -31,10 +31,10 @@ echo -e "\n=== rafter run (interactive, default format) ==="
 $CLI run --repo "$REPO" --branch "$BRANCH" --api-key "$API_KEY"
 
 echo -e "\n=== rafter run (interactive, markdown format, save to file) ==="
-$CLI run --repo "$REPO" --branch "$BRANCH" --api-key "$API_KEY" --format md --save ./ --save-name "test_scan_md"
+$CLI run --repo "$REPO" --branch "$BRANCH" --api-key "$API_KEY" --format md --save-path ./ --save-name "test_scan_md"
 
 echo -e "\n=== rafter get (json, save to file) ==="
-$CLI get "$SCAN_ID1" --api-key "$API_KEY" --format json --save ./ --save-name "test_get_json"
+$CLI get "$SCAN_ID1" --api-key "$API_KEY" --format json --save-path ./ --save-name "test_get_json"
 
 echo -e "\n=== rafter get (markdown, interactive) ==="
 $CLI get "$SCAN_ID2" --api-key "$API_KEY" --format md --interactive
