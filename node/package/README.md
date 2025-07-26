@@ -1,4 +1,4 @@
-# @rafter/cli
+# -security/cli
 
 A Node.js CLI for Rafter Security that supports npm, pnpm, and yarn package managers.
 
@@ -6,13 +6,13 @@ A Node.js CLI for Rafter Security that supports npm, pnpm, and yarn package mana
 
 ```bash
 # Using npm
-npm install -g @rafter/cli
+npm install -g @rafter-security/cli
 
 # Using pnpm
-pnpm add -g @rafter/cli
+pnpm add -g @rafter-security/cli
 
 # Using yarn
-yarn global add @rafter/cli
+yarn global add @rafter-security/cli
 ```
 
 ## Quick Start
