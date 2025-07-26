@@ -1,6 +1,6 @@
 # Publishing Guide
 
-Below is a **hands-on checklist** for publishing **@rafter/cli** (Node) and **rafter-cli** (Python) *from your laptop*—no CI involved.
+Below is a **hands-on checklist** for publishing **@rafter-security/cli** (Node) and **rafter-cli** (Python) *from your laptop*—no CI involved.
 Follow it top-to-bottom and you'll go from fresh clone ➜ globally installable packages on npm & PyPI in ~10 minutes.
 
 ---
@@ -111,11 +111,11 @@ If both commands print `0.3.0`, you're good.
 ### 4-A · npm registry
 
 ```bash
-# still at repo root
+# From repo root
 npm publish node/ --access public
-#   └─ if your package.json is inside ./node
-# OR if you're in the node/ dir:
-# cd node && npm publish --access public
+
+# OR from the node directory
+cd node && npm publish --access public
 ```
 
 *Gotcha*: if you re-publish the same version you'll see **"EPUBLISHCONFLICT"**—bump the version or add `--force` (not advised).
@@ -137,7 +137,7 @@ cd ..
 
 ```bash
 # Node (npm, pnpm, yarn all hit the same registry)
-docker run --rm node:20-alpine sh -c "npm i -g @rafter/cli@0.3.0 && rafter --version"
+docker run --rm node:20-alpine sh -c "npm i -g @rafter-security/cli@0.3.0 && rafter --version"
 
 # Python
 docker run --rm python:3.11-alpine sh -c "pip install rafter-cli==0.3.0 && rafter --version"
