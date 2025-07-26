@@ -22,11 +22,11 @@ pip install rafter-cli
 
 ### Node.js (npm, pnpm, yarn)
 ```sh
-npm install -g @rafter/cli
+npm install -g @rafter-security/cli
 # or
-yarn global add @rafter/cli
+yarn global add @rafter-security/cli
 # or
-pnpm add -g @rafter/cli
+pnpm add -g @rafter-security/cli
 ```
 
 ## Quickstart
