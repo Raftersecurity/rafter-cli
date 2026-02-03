@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { ConfigManager } from "../../core/config-manager.js";
 import { getRafterDir } from "../../core/config-defaults.js";
+import { BinaryManager } from "../../utils/binary-manager.js";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -10,6 +11,7 @@ export function createInitCommand(): Command {
     .description("Initialize agent security system")
     .option("--risk-level <level>", "Set risk level (minimal, moderate, aggressive)", "moderate")
     .option("--skip-openclaw", "Skip OpenClaw skill installation")
+    .option("--skip-gitleaks", "Skip Gitleaks binary download")
     .action(async (opts) => {
       console.log("\n🛡️  Rafter Agent Security Setup");
       console.log("━".repeat(40));
@@ -44,6 +46,33 @@ export function createInitCommand(): Command {
 
       manager.set("agent.riskLevel", opts.riskLevel);
       console.log(`✓ Set risk level: ${opts.riskLevel}`);
+
+      // Download Gitleaks binary (optional)
+      if (!opts.skipGitleaks) {
+        const binaryManager = new BinaryManager();
+        const platformInfo = binaryManager.getPlatformInfo();
+
+        if (!platformInfo.supported) {
+          console.log(`ℹ️  Gitleaks not available for ${platformInfo.platform}/${platformInfo.arch}`);
+          console.log("✓ Using pattern-based scanning (21 patterns)");
+        } else if (binaryManager.isGitleaksInstalled()) {
+          const version = await binaryManager.getGitleaksVersion();
+          console.log(`✓ Gitleaks already installed (${version})`);
+        } else {
+          console.log();
+          console.log("📦 Downloading Gitleaks (enhanced secret detection)...");
+          try {
+            await binaryManager.downloadGitleaks((msg) => {
+              console.log(`   ${msg}`);
+            });
+            console.log();
+          } catch (e) {
+            console.log(`⚠️  Failed to download Gitleaks: ${e}`);
+            console.log("✓ Falling back to pattern-based scanning");
+            console.log();
+          }
+        }
+      }
 
       // Install OpenClaw skill if applicable
       if (hasOpenClaw && !opts.skipOpenclaw) {
