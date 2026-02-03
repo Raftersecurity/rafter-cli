@@ -22,10 +22,27 @@ yarn global add @rafter-security/cli
 
 ## Quick Start
 
+### Getting an API Key
+
+To use backend scanning features, you'll need a Rafter API key:
+
+1. **Sign up**: Create an account at [rafter.so](https://rafter.so)
+2. **Get API key**: Navigate to Dashboard → Settings → API Keys
+3. **Set environment variable**:
+   ```bash
+   export RAFTER_API_KEY="your-api-key-here"
+   ```
+4. **Or use `.env` file**:
+   ```bash
+   echo "RAFTER_API_KEY=your-api-key-here" >> .env
+   ```
+
+**Note**: Agent security features (secret scanning, command execution) work **without an API key**. Only backend scanning requires authentication.
+
 ### Backend Scanning
 
 ```bash
-# Set your API key
+# Set your API key (from above)
 export RAFTER_API_KEY="your-api-key-here"
 
 # Run a security scan
