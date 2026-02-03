@@ -10,7 +10,7 @@ dotenv.config();
 const program = new Command()
   .name("rafter")
   .description("Rafter CLI")
-  .version("0.1.0");
+  .version("0.3.0");
   
 const API = "https://rafter.so/api/";
 
@@ -164,7 +164,7 @@ program
   .option("-r, --repo <repo>", "org/repo (default: current)")
   .option("-b, --branch <branch>", "branch (default: current else main)")
   .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
-  .option("-f, --format <format>", "json | md", "json")
+  .option("-f, --format <format>", "json | md", "md")
   .option("--skip-interactive", "do not wait for scan to complete")
   .option("--quiet", "suppress status messages")
   .action(async (opts) => {
@@ -236,7 +236,7 @@ program
   .command("get")
   .argument("<scan_id>")
   .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
-  .option("-f, --format <format>", "json | md", "json")
+  .option("-f, --format <format>", "json | md", "md")
   .option("--interactive", "poll until done")
   .option("--quiet", "suppress status messages")
   .action(async (scan_id, opts) => {

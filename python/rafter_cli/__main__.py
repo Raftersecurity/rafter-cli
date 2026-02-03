@@ -144,7 +144,7 @@ def run(
     repo: str = typer.Option(None, "--repo", "-r", help="org/repo (default: current)"),
     branch: str = typer.Option(None, "--branch", "-b", help="branch (default: current else main)"),
     api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key or RAFTER_API_KEY env var"),
-    fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
+    fmt: str = typer.Option("md", "--format", "-f", help="json | md"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
@@ -174,7 +174,7 @@ def run(
 def get(
     scan_id: str = typer.Argument(...),
     api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key or RAFTER_API_KEY env var"),
-    fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
+    fmt: str = typer.Option("md", "--format", "-f", help="json | md"),
     interactive: bool = typer.Option(False, "--interactive", help="poll until done"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
@@ -199,7 +199,7 @@ def get(
 @app.command()
 def version():
     """Show version and exit."""
-    typer.echo("0.1.0")
+    typer.echo("0.3.0")
 
 @app.command()
 def usage(

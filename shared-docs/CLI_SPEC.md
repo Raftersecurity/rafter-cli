@@ -26,14 +26,14 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 - `-k, --api-key TEXT` - API key or RAFTER_API_KEY env var
 - `-r, --repo TEXT` - org/repo (default: current repo)
 - `-b, --branch TEXT` - branch (default: current branch or 'main')
-- `-f, --format [json|md]` - output format (default: json)
+- `-f, --format [json|md]` - output format (default: md)
 - `--skip-interactive` - fire-and-forget mode
 - `--quiet` - suppress status messages
 - `-h, --help`
 
 ### rafter get SCAN_ID [OPTIONS]
 - `-k, --api-key TEXT` - API key or RAFTER_API_KEY env var
-- `-f, --format [json|md]` - output format (default: json)
+- `-f, --format [json|md]` - output format (default: md)
 - `--interactive` - poll until scan completes
 - `--quiet` - suppress status messages
 - `-h, --help`
