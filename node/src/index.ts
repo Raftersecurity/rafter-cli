@@ -4,6 +4,7 @@ import * as dotenv from "dotenv";
 import { createRunCommand } from "./commands/backend/run.js";
 import { createGetCommand } from "./commands/backend/get.js";
 import { createUsageCommand } from "./commands/backend/usage.js";
+import { createAgentCommand } from "./commands/agent/index.js";
 
 dotenv.config();
 
@@ -17,7 +18,7 @@ program.addCommand(createRunCommand());
 program.addCommand(createGetCommand());
 program.addCommand(createUsageCommand());
 
-// Agent commands (placeholder for future implementation)
-// program.addCommand(createAgentCommand());
+// Agent commands
+program.addCommand(createAgentCommand());
 
 program.parse();
