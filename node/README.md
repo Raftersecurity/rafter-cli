@@ -305,6 +305,56 @@ rafter agent audit --event secret_detected
 rafter agent audit --since 2026-02-01
 ```
 
+### `rafter agent install-hook [options]`
+
+Install git pre-commit hook to automatically scan for secrets before commits.
+
+**Options:**
+- `--global` - Install globally for all repos (via git config)
+
+**Features:**
+- Automatically scans staged files before each commit
+- Blocks commits if secrets are detected
+- Zero-configuration security for git workflows
+- Can be bypassed with `git commit --no-verify` (not recommended)
+
+**Examples:**
+```bash
+# Install for current repository
+cd my-repo
+rafter agent install-hook
+
+# Install globally for all repositories
+rafter agent install-hook --global
+
+# Uninstall global hook
+git config --global --unset core.hooksPath
+```
+
+**What it does:**
+```bash
+# When you commit:
+git add .env
+git commit -m "Update config"
+
+# Rafter automatically scans:
+🔍 Rafter: Scanning staged files for secrets...
+❌ Commit blocked: Secrets detected in staged files
+
+   Run: rafter agent scan --staged
+   To see details and remediate.
+```
+
+**Why use pre-commit hooks?**
+
+Pre-commit hooks provide the most effective protection against accidentally committing secrets to git:
+- **Automatic**: No need to remember to scan manually
+- **Fail-safe**: Prevents secrets from entering version control
+- **CI-friendly**: Works locally before code reaches CI/CD
+- **Team-wide**: Can be committed to `.git/hooks` or distributed via git config
+
+Always install pre-commit hooks for repositories handling sensitive data.
+
 ### `rafter agent audit-skill <skill-path> [options]`
 
 Security audit of a Claude Code skill file before installation.
@@ -450,7 +500,7 @@ When OpenClaw is detected, `rafter agent init` automatically installs a skill to
 
 ### Best Practices
 
-1. **Always scan before commits**: Run `rafter agent scan` before `git commit`
+1. **Install pre-commit hooks**: Run `rafter agent install-hook` to automatically scan before commits (recommended)
 2. **Audit untrusted skills**: Run `/rafter-audit-skill` before installing skills from unknown sources
 3. **Review blocked commands**: Check `rafter agent audit` when commands are blocked
 4. **Configure appropriately**: Use `moderate` risk level for most use cases
