@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { RegexScanner } from "../../scanners/regex-scanner.js";
 import { GitleaksScanner } from "../../scanners/gitleaks.js";
 import { BinaryManager } from "../../utils/binary-manager.js";
+import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 
@@ -11,8 +12,15 @@ export function createScanCommand(): Command {
     .argument("[path]", "File or directory to scan", ".")
     .option("-q, --quiet", "Only output if secrets found")
     .option("--json", "Output as JSON")
+    .option("--staged", "Scan only git staged files")
     .option("--engine <engine>", "Scan engine: gitleaks or patterns", "auto")
     .action(async (scanPath, opts) => {
+      // Handle --staged flag
+      if (opts.staged) {
+        await scanStagedFiles(opts);
+        return;
+      }
+
       const resolvedPath = path.resolve(scanPath);
 
       // Check if path exists
@@ -76,6 +84,97 @@ export function createScanCommand(): Command {
         }
       }
     });
+}
+
+/**
+ * Scan git staged files for secrets
+ */
+async function scanStagedFiles(opts: { quiet?: boolean; json?: boolean; engine?: string }) {
+  try {
+    // Get list of staged files
+    const stagedFilesOutput = execSync("git diff --cached --name-only --diff-filter=ACM", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"]
+    }).trim();
+
+    if (!stagedFilesOutput) {
+      if (!opts.quiet) {
+        console.log("✓ No files staged for commit");
+      }
+      process.exit(0);
+    }
+
+    const stagedFiles = stagedFilesOutput.split("\n").map(f => f.trim()).filter(f => f);
+
+    if (!opts.quiet) {
+      console.error(`Scanning ${stagedFiles.length} staged file(s)...`);
+    }
+
+    // Determine scan engine
+    const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
+
+    // Scan each staged file
+    const allResults = [];
+    for (const file of stagedFiles) {
+      const filePath = path.resolve(file);
+
+      // Skip if file doesn't exist (might be deleted)
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+
+      // Skip if not a regular file
+      const stats = fs.statSync(filePath);
+      if (!stats.isFile()) {
+        continue;
+      }
+
+      const results = await scanFile(filePath, engine);
+      allResults.push(...results);
+    }
+
+    // Output results (same as regular scan)
+    if (opts.json) {
+      console.log(JSON.stringify(allResults, null, 2));
+    } else {
+      if (allResults.length === 0) {
+        if (!opts.quiet) {
+          console.log("\n✓ No secrets detected in staged files\n");
+        }
+        process.exit(0);
+      } else {
+        console.log(`\n⚠️  Found secrets in ${allResults.length} staged file(s):\n`);
+
+        let totalMatches = 0;
+        for (const result of allResults) {
+          console.log(`\n📄 ${result.file}`);
+
+          for (const match of result.matches) {
+            totalMatches++;
+            const location = match.line ? `Line ${match.line}` : "Unknown location";
+            const severity = getSeverityEmoji(match.pattern.severity);
+
+            console.log(`  ${severity} [${match.pattern.severity.toUpperCase()}] ${match.pattern.name}`);
+            console.log(`     Location: ${location}`);
+            console.log(`     Pattern: ${match.pattern.description || match.pattern.regex}`);
+            console.log(`     Redacted: ${match.redacted}`);
+            console.log();
+          }
+        }
+
+        console.log(`\n⚠️  Total: ${totalMatches} secret(s) detected in ${allResults.length} file(s)\n`);
+        console.log("❌ Commit blocked. Remove secrets before committing.\n");
+
+        process.exit(1);
+      }
+    }
+  } catch (error: any) {
+    if (error.status === 128) {
+      console.error("Error: Not in a git repository");
+      process.exit(1);
+    }
+    throw error;
+  }
 }
 
 function getSeverityEmoji(severity: string): string {
