@@ -305,6 +305,82 @@ rafter agent audit --event secret_detected
 rafter agent audit --since 2026-02-01
 ```
 
+### `rafter agent audit-skill <skill-path> [options]`
+
+Security audit of a Claude Code skill file before installation.
+
+**Arguments:**
+- `skill-path` - Path to skill file to audit
+
+**Options:**
+- `--skip-openclaw` - Skip OpenClaw integration, show manual review prompt
+- `--json` - Output results as JSON
+
+**Features:**
+- **Quick Scan**: Detects secrets, external URLs, high-risk commands
+- **Deep Analysis**: Uses OpenClaw's skill-auditor for comprehensive review (if installed)
+- **12 Security Dimensions**: Trust, network security, command safety, file access, credentials, input validation, data exfiltration, obfuscation, scope alignment, error handling, dependencies, environment manipulation
+- **Risk Rating**: LOW/MEDIUM/HIGH/CRITICAL assessment
+- **Actionable Recommendations**: Clear install/don't install guidance
+
+**Security Dimensions Analyzed:**
+1. Trust & Attribution - Source verification
+2. Network Security - External communication
+3. Command Execution - Shell command safety
+4. File System Access - Read/write patterns
+5. Credential Handling - Secret management
+6. Input Validation - Injection risks
+7. Data Exfiltration - What leaves the system
+8. Obfuscation - Hidden behavior detection
+9. Scope Alignment - Matches stated purpose
+10. Error Handling - Information disclosure
+11. Dependencies - Supply chain risks
+12. Environment Manipulation - System modifications
+
+**Examples:**
+```bash
+# Audit a skill file
+rafter agent audit-skill ~/.openclaw/skills/untrusted-skill.md
+
+# Audit with OpenClaw (comprehensive)
+rafter agent audit-skill skill.md
+# Then in OpenClaw: /audit-skill /path/to/skill.md
+
+# Manual review prompt (no OpenClaw)
+rafter agent audit-skill skill.md --skip-openclaw
+
+# JSON output for automation
+rafter agent audit-skill skill.md --json
+```
+
+**Example Output:**
+```
+🔍 Auditing skill: untrusted-skill.md
+═══════════════════════════════════════════════════════════
+📊 Quick Scan Results
+⚠️  Secrets: 1 found
+⚠️  External URLs: 2 found
+   • https://api.example.com/v1/data
+   • https://untrusted-cdn.com/script.js
+⚠️  High-risk commands: 1 found
+   • curl | bash (line 45)
+
+🤖 For comprehensive security review:
+   1. Open OpenClaw
+   2. Run: /audit-skill /path/to/skill.md
+```
+
+**Why audit skills?**
+
+Claude Code skills can:
+- Execute shell commands
+- Access sensitive files
+- Make network requests
+- Handle credentials
+- Process user input
+
+Always audit skills from untrusted sources before installation. The skill-auditor provides systematic analysis to identify security risks.
+
 ---
 
 ## Configuration

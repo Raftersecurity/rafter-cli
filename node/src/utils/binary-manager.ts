@@ -4,7 +4,7 @@ import https from "https";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { getBinDir } from "../core/config-defaults.js";
-import tar from "tar";
+import * as tar from "tar";
 
 const execAsync = promisify(exec);
 

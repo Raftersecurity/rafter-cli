@@ -25,6 +25,11 @@ export function getDefaultConfig(): RafterConfig {
           mcpPath: path.join(os.homedir(), ".claude", "mcp", "rafter-security.json")
         }
       },
+      skills: {
+        autoUpdate: true,
+        installOnInit: true,
+        backupBeforeUpdate: true
+      },
       commandPolicy: {
         mode: "approve-dangerous",
         blockedPatterns: [
