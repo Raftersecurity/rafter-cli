@@ -75,26 +75,19 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install OpenClaw skills if applicable
+      // Install OpenClaw skill if applicable
       if (hasOpenClaw && !opts.skipOpenclaw) {
         try {
-          installOpenClawSkill();
-          console.log("✓ Installed OpenClaw skill to ~/.openclaw/skills/rafter-security.md");
-          manager.set("agent.environments.openclaw.enabled", true);
-
-          // Install skill-auditor if configured
-          const config = manager.load();
-          if (config.agent?.skills.installOnInit) {
-            const skillManager = new SkillManager();
-            const installed = await skillManager.installSkillAuditor();
-            if (installed) {
-              console.log("✓ Installed skill auditor to ~/.openclaw/skills/rafter-skill-auditor.md");
-            } else {
-              console.log("⚠️  Failed to install skill auditor");
-            }
+          const skillManager = new SkillManager();
+          const installed = await skillManager.installRafterSkill();
+          if (installed) {
+            console.log("✓ Installed Rafter Security skill to ~/.openclaw/skills/rafter-security.md");
+            manager.set("agent.environments.openclaw.enabled", true);
+          } else {
+            console.log("⚠️  Failed to install Rafter Security skill");
           }
         } catch (e) {
-          console.error(`Failed to install OpenClaw skills: ${e}`);
+          console.error(`Failed to install OpenClaw skill: ${e}`);
         }
       }
 
@@ -109,104 +102,4 @@ export function createInitCommand(): Command {
       console.log("  - Configure: rafter agent config show");
       console.log();
     });
-}
-
-function installOpenClawSkill(): void {
-  const skillPath = path.join(os.homedir(), ".openclaw", "skills", "rafter-security.md");
-  const skillDir = path.dirname(skillPath);
-
-  // Ensure skills directory exists
-  if (!fs.existsSync(skillDir)) {
-    fs.mkdirSync(skillDir, { recursive: true });
-  }
-
-  const skillContent = `---
-openclaw:
-  skillKey: rafter-security
-  primaryEnv: RAFTER_API_KEY
-  emoji: 🛡️
-  always: false
-  requires:
-    bins: [rafter]
----
-
-# Rafter Security
-
-Security layer for autonomous agents. Scans code, intercepts dangerous commands, and prevents vulnerabilities.
-
-## Overview
-
-Rafter provides real-time security checks for agent operations:
-- **Secret Detection**: Scan files before commits
-- **Command Validation**: Block dangerous shell commands
-- **Output Filtering**: Redact secrets in responses
-- **Audit Logging**: Track all security events
-
-## Commands
-
-### /rafter-scan
-
-Scan files for secrets before committing.
-
-\`\`\`bash
-rafter agent scan <path>
-\`\`\`
-
-**When to use:**
-- Before git commits
-- When handling user-provided code
-- When reading sensitive files
-
-### /rafter-bash
-
-Execute shell command with security validation (future).
-
-\`\`\`bash
-rafter agent exec <command>
-\`\`\`
-
-**Features:**
-- Blocks destructive commands (rm -rf /, fork bombs)
-- Requires approval for dangerous operations
-- Logs all command attempts
-
-### /rafter-audit
-
-View recent security events.
-
-\`\`\`bash
-rafter agent audit --last 10
-\`\`\`
-
-## Security Levels
-
-- **Minimal**: Basic guidance only
-- **Moderate**: Standard protections (recommended)
-- **Aggressive**: Maximum security, requires approval for most operations
-
-Configure with: \`rafter agent config set agent.riskLevel moderate\`
-
-## Best Practices
-
-1. **Always scan before commits**: Run \`rafter agent scan\` before \`git commit\`
-2. **Review audit logs**: Check \`rafter agent audit\` after suspicious activity
-3. **Update patterns**: Keep secret patterns current with \`rafter agent update\` (future)
-4. **Report false positives**: Help improve detection accuracy
-
-## Configuration
-
-View config: \`rafter agent config show\`
-Set values: \`rafter agent config set <key> <value>\`
-
-Key settings:
-- \`agent.riskLevel\`: minimal | moderate | aggressive
-- \`agent.commandPolicy.mode\`: allow-all | approve-dangerous | deny-list
-- \`agent.outputFiltering.redactSecrets\`: true | false
-
----
-
-**Note**: Rafter is a security aid, not a replacement for secure coding practices.
-`;
-
-  fs.writeFileSync(skillPath, skillContent, "utf-8");
 }
