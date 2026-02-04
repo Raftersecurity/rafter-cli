@@ -53,7 +53,7 @@ async function auditSkill(
   // Check OpenClaw availability
   const skillManager = new SkillManager();
   const openClawAvailable = skillManager.isOpenClawInstalled();
-  const skillAuditorInstalled = skillManager.isSkillAuditorInstalled();
+  const rafterSkillInstalled = skillManager.isRafterSkillInstalled();
 
   if (opts.json) {
     // JSON output
@@ -62,7 +62,7 @@ async function auditSkill(
       path: absolutePath,
       quickScan,
       openClawAvailable,
-      skillAuditorInstalled
+      rafterSkillInstalled
     };
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -70,13 +70,13 @@ async function auditSkill(
 
   // Check if we can use OpenClaw
   if (openClawAvailable && !opts.skipOpenclaw) {
-    if (!skillAuditorInstalled) {
-      console.log("\n⚠️  Skill auditor not installed in OpenClaw.");
+    if (!rafterSkillInstalled) {
+      console.log("\n⚠️  Rafter Security skill not installed in OpenClaw.");
       console.log("   Run: rafter agent init\n");
     } else {
       console.log("\n🤖 For comprehensive security review:\n");
       console.log("   1. Open OpenClaw");
-      console.log(`   2. Run: /audit-skill ${absolutePath}`);
+      console.log(`   2. Run: /rafter-audit-skill ${absolutePath}`);
       console.log("\n   The auditor will analyze:");
       console.log("   • Trust & attribution");
       console.log("   • Network security");

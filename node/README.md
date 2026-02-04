@@ -344,7 +344,7 @@ rafter agent audit-skill ~/.openclaw/skills/untrusted-skill.md
 
 # Audit with OpenClaw (comprehensive)
 rafter agent audit-skill skill.md
-# Then in OpenClaw: /audit-skill /path/to/skill.md
+# Then in OpenClaw: /rafter-audit-skill /path/to/skill.md
 
 # Manual review prompt (no OpenClaw)
 rafter agent audit-skill skill.md --skip-openclaw
@@ -367,7 +367,7 @@ rafter agent audit-skill skill.md --json
 
 🤖 For comprehensive security review:
    1. Open OpenClaw
-   2. Run: /audit-skill /path/to/skill.md
+   2. Run: /rafter-audit-skill /path/to/skill.md
 ```
 
 **Why audit skills?**
@@ -429,6 +429,7 @@ When OpenClaw is detected, `rafter agent init` automatically installs a skill to
 **What the skill provides:**
 - `/rafter-scan` - Scan files before commits
 - `/rafter-bash` - Execute commands with validation (via `rafter agent exec`)
+- `/rafter-audit-skill` - Comprehensive security audit of Claude Code skills
 - `/rafter-audit` - View security logs
 
 ### Usage in OpenClaw
@@ -438,6 +439,10 @@ When OpenClaw is detected, `rafter agent init` automatically installs a skill to
 "Scan this directory for secrets"
 # OpenClaw will call: rafter agent scan .
 
+"Audit this skill for security issues"
+# OpenClaw will call: /rafter-audit-skill <path>
+# Provides comprehensive 12-dimension security analysis
+
 "Commit these changes"
 # OpenClaw will call: rafter agent exec "git commit -m '...'"
 # Rafter scans staged files first, blocks if secrets found
@@ -446,9 +451,10 @@ When OpenClaw is detected, `rafter agent init` automatically installs a skill to
 ### Best Practices
 
 1. **Always scan before commits**: Run `rafter agent scan` before `git commit`
-2. **Review blocked commands**: Check `rafter agent audit` when commands are blocked
-3. **Configure appropriately**: Use `moderate` risk level for most use cases
-4. **Keep patterns updated**: Patterns are updated automatically (future feature)
+2. **Audit untrusted skills**: Run `/rafter-audit-skill` before installing skills from unknown sources
+3. **Review blocked commands**: Check `rafter agent audit` when commands are blocked
+4. **Configure appropriately**: Use `moderate` risk level for most use cases
+5. **Keep patterns updated**: Patterns are updated automatically with CLI updates
 
 ## Documentation
 
