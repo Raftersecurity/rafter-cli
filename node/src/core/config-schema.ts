@@ -25,6 +25,13 @@ export interface RafterConfig {
         mcpPath: string;
       };
     };
+    skills: {
+      autoUpdate: boolean;
+      installOnInit: boolean;
+      backupBeforeUpdate: boolean;
+      installedVersion?: string;
+      lastChecked?: string;
+    };
     commandPolicy: {
       mode: CommandPolicyMode;
       blockedPatterns: string[];

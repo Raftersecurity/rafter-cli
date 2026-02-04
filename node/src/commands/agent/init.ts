@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { ConfigManager } from "../../core/config-manager.js";
 import { getRafterDir } from "../../core/config-defaults.js";
 import { BinaryManager } from "../../utils/binary-manager.js";
+import { SkillManager } from "../../utils/skill-manager.js";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -74,14 +75,26 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install OpenClaw skill if applicable
+      // Install OpenClaw skills if applicable
       if (hasOpenClaw && !opts.skipOpenclaw) {
         try {
           installOpenClawSkill();
           console.log("✓ Installed OpenClaw skill to ~/.openclaw/skills/rafter-security.md");
           manager.set("agent.environments.openclaw.enabled", true);
+
+          // Install skill-auditor if configured
+          const config = manager.load();
+          if (config.agent?.skills.installOnInit) {
+            const skillManager = new SkillManager();
+            const installed = await skillManager.installSkillAuditor();
+            if (installed) {
+              console.log("✓ Installed skill auditor to ~/.openclaw/skills/rafter-skill-auditor.md");
+            } else {
+              console.log("⚠️  Failed to install skill auditor");
+            }
+          }
         } catch (e) {
-          console.error(`Failed to install OpenClaw skill: ${e}`);
+          console.error(`Failed to install OpenClaw skills: ${e}`);
         }
       }
 
