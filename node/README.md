@@ -506,6 +506,71 @@ When OpenClaw is detected, `rafter agent init` automatically installs a skill to
 4. **Configure appropriately**: Use `moderate` risk level for most use cases
 5. **Keep patterns updated**: Patterns are updated automatically with CLI updates
 
+## Claude Code Integration
+
+Rafter provides TWO skills for Claude Code:
+
+### 1. Backend Scanning Skill (Core Feature)
+
+**Automatic Integration** - Claude can proactively suggest security scans
+
+**Commands:**
+- `rafter run` - Trigger security scan
+- `rafter get <scan-id>` - Get results
+- `rafter usage` - Check quota
+
+**Installation:**
+```bash
+rafter agent init
+# Auto-detects Claude Code and installs both skills
+```
+
+Or manually:
+```bash
+cp -r node/.claude/skills/rafter ~/.claude/skills/
+```
+
+**Usage:**
+Claude will automatically suggest Rafter scans when you mention security, vulnerabilities, or code analysis. You can also invoke manually:
+```
+Can you run a Rafter security scan on this repo?
+```
+
+### 2. Agent Security Skill
+
+**User-Invoked** - Requires explicit commands for safety
+
+**Commands:**
+- `/rafter-scan` - Scan files for secrets
+- `/rafter-bash` - Execute commands safely
+- `/rafter-audit-skill` - Audit skills before installing
+- `/rafter-audit` - View security logs
+
+**Installation:**
+```bash
+rafter agent init
+# Installs automatically if Claude Code detected
+```
+
+Or manually:
+```bash
+cp -r node/.claude/skills/rafter-agent-security ~/.claude/skills/
+```
+
+**Usage:**
+Explicitly invoke commands:
+```
+/rafter-scan .
+/rafter-audit-skill untrusted-skill.md
+```
+
+### Why Two Skills?
+
+- **Backend skill** - Safe for Claude to auto-invoke (read-only API calls)
+- **Agent security skill** - Requires user permission (local file access, command execution)
+
+This separation emphasizes Rafter's core backend scanning capabilities while keeping local security features safely behind user control.
+
 ## Documentation
 
 For comprehensive documentation, API reference, and examples, see [https://docs.rafter.so](https://docs.rafter.so). 
