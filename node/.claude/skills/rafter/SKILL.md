@@ -15,9 +15,11 @@ Rafter provides automated security scanning for GitHub repositories via backend 
 
 ```bash
 rafter run [--repo org/repo] [--branch branch-name]
+# or
+rafter scan [--repo org/repo] [--branch branch-name]
 ```
 
-Triggers a comprehensive security scan on a repository. Auto-detects current repo and branch if in a git directory.
+Triggers a comprehensive security scan on a repository. Auto-detects current repo and branch if in a git directory. (`scan` is an alias for `run`)
 
 **When to use:**
 - User asks: "Can you scan this code for security issues?"
@@ -29,10 +31,10 @@ Triggers a comprehensive security scan on a repository. Auto-detects current rep
 **Example:**
 ```bash
 # In a git repo
-rafter run
+rafter scan
 
 # Specific repo
-rafter run --repo myorg/myrepo --branch main
+rafter scan --repo myorg/myrepo --branch main
 ```
 
 ### Get Scan Results
