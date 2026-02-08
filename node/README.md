@@ -45,7 +45,7 @@ To use backend scanning features, you'll need a Rafter API key:
 # Set your API key (from above)
 export RAFTER_API_KEY="your-api-key-here"
 
-# Run a security scan
+# Run a security scan (can also use 'rafter scan')
 rafter run
 
 # Get scan results
@@ -77,6 +77,7 @@ rafter agent config show
 ## Commands
 
 ### `rafter run [options]`
+**Alias:** `rafter scan`
 
 Trigger a new security scan for your repository.
 
@@ -92,12 +93,14 @@ Trigger a new security scan for your repository.
 ```bash
 # Basic scan with auto-detection
 rafter run
+# or
+rafter scan
 
 # Scan specific repo/branch
-rafter run --repo myorg/myrepo --branch feature-branch
+rafter scan --repo myorg/myrepo --branch feature-branch
 
 # Non-interactive scan
-rafter run --skip-interactive
+rafter scan --skip-interactive
 ```
 
 ### `rafter get <scan-id> [options]`

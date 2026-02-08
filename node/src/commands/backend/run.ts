@@ -12,6 +12,7 @@ import { handleScanStatus } from "./scan-status.js";
 
 export function createRunCommand(): Command {
   return new Command("run")
+    .alias("scan")
     .option("-r, --repo <repo>", "org/repo (default: current)")
     .option("-b, --branch <branch>", "branch (default: current else main)")
     .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
