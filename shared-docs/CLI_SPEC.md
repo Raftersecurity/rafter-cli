@@ -5,90 +5,183 @@
 The Rafter CLI follows UNIX principles for automation-friendly operation:
 
 - **Scan data** is output to **stdout** for easy piping
-- **Status messages** are output to **stderr** 
+- **Status messages** are output to **stderr**
 - **Exit codes** provide predictable failure modes
-- **No file writing** - pure stdout output for maximum pipe-friendliness
-
-**Important**: The scanner analyzes the **remote repository** (e.g., on GitHub), not your local files. Auto-detection uses your local Git configuration to determine which remote repository and branch to scan.
+- **No file writing** — pure stdout output for maximum pipe-friendliness
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General error (API failure, network issues, etc.) |
+| 1 | General error / secrets found |
 | 2 | Scan not found |
 | 3 | Quota exhausted |
 
-## Commands
+---
+
+## Backend Scanning Commands
+
+**Important**: The scanner analyzes the **remote repository** (e.g., on GitHub), not your local files. Auto-detection uses your local Git configuration to determine which remote repository and branch to scan.
 
 ### rafter run [OPTIONS]
-- `-k, --api-key TEXT` - API key or RAFTER_API_KEY env var
-- `-r, --repo TEXT` - org/repo (default: current repo)
-- `-b, --branch TEXT` - branch (default: current branch or 'main')
-- `-f, --format [json|md]` - output format (default: md)
-- `--skip-interactive` - fire-and-forget mode
-- `--quiet` - suppress status messages
+
+Alias: `rafter scan`
+
+Trigger a new security scan for a repository.
+
+- `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
+- `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
+- `-b, --branch TEXT` — branch (default: current branch or 'main')
+- `-f, --format [json|md]` — output format (default: md)
+- `--skip-interactive` — fire-and-forget mode (don't poll for completion)
+- `--quiet` — suppress status messages on stderr
 - `-h, --help`
 
 ### rafter get SCAN_ID [OPTIONS]
-- `-k, --api-key TEXT` - API key or RAFTER_API_KEY env var
-- `-f, --format [json|md]` - output format (default: md)
-- `--interactive` - poll until scan completes
-- `--quiet` - suppress status messages
+
+Retrieve results from a scan.
+
+- `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
+- `-f, --format [json|md]` — output format (default: md)
+- `--interactive` — poll until scan completes (10-second intervals)
+- `--quiet` — suppress status messages on stderr
 - `-h, --help`
 
 ### rafter usage [OPTIONS]
-- `-k, --api-key TEXT` - API key or RAFTER_API_KEY env var
+
+Check API quota and usage statistics.
+
+- `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
 - `-h, --help`
+
+### rafter version
+
+Print version and exit.
+
+---
+
+## Agent Security Commands
+
+All agent commands work locally. No API key required.
+
+### rafter agent init [OPTIONS]
+
+Initialize agent security system. Creates config, downloads Gitleaks, auto-detects and installs skills for Claude Code, Codex CLI, and OpenClaw.
+
+- `--risk-level <level>` — `minimal`, `moderate` (default), or `aggressive`
+- `--skip-openclaw` — skip OpenClaw skill installation
+- `--skip-claude-code` — skip Claude Code skill installation
+- `--skip-codex` — skip Codex CLI skill installation
+- `--skip-gitleaks` — skip Gitleaks binary download
+
+### rafter agent scan [PATH] [OPTIONS]
+
+Scan files or directories for secrets (21+ patterns).
+
+- `[PATH]` — file or directory (default: `.`)
+- `-q, --quiet` — only output if secrets found
+- `--json` — output as JSON
+- `--staged` — scan git staged files only
+- `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
+
+Exit code 1 if secrets found, 0 if clean.
+
+### rafter agent exec COMMAND [OPTIONS]
+
+Execute shell command with risk assessment and approval workflow.
+
+- `COMMAND` — shell command string
+- `--skip-scan` — skip pre-execution file scanning
+- `--force` — skip approval prompts (logged as override)
+
+Risk tiers: critical (blocked), high (approval required), medium (approval on moderate+), low (allowed).
+
+### rafter agent audit-skill SKILL_PATH [OPTIONS]
+
+Security audit of a skill/extension file before installation.
+
+- `SKILL_PATH` — path to skill file (.md)
+- `--skip-openclaw` — skip OpenClaw integration, show manual review prompt
+- `--json` — output as JSON
+
+Quick scan: secrets, URLs, high-risk commands. Deep analysis (OpenClaw): 12-dimension review.
+
+### rafter agent audit [OPTIONS]
+
+View security audit log.
+
+- `--last <n>` — show last N entries (default: 10)
+- `--event <type>` — filter by event type
+- `--agent <type>` — filter by agent type (`openclaw`, `claude-code`)
+- `--since <date>` — entries since date (YYYY-MM-DD)
+
+Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`, `scan_executed`, `config_changed`.
+
+### rafter agent install-hook [OPTIONS]
+
+Install git pre-commit hook for automatic secret scanning.
+
+- `--global` — install globally for all repos (sets `core.hooksPath`)
+
+### rafter agent config SUBCOMMAND
+
+Manage agent configuration (dot-notation paths).
+
+- `rafter agent config show` — display full config
+- `rafter agent config get <key>` — read value
+- `rafter agent config set <key> <value>` — write value
+
+Config keys: `agent.riskLevel`, `agent.commandPolicy.mode`, `agent.commandPolicy.blockedPatterns`, `agent.commandPolicy.requireApproval`, `agent.outputFiltering.redactSecrets`, `agent.audit.logAllActions`, `agent.audit.retentionDays`, `agent.audit.logLevel`.
+
+---
 
 ## Usage Examples
 
-### Basic Usage (stdout output)
+### Backend Scanning
+
 ```bash
-# Get scan results as JSON to stdout
-rafter get 8c2e1234-5678-9abc-def0-123456789abc
+# Run scan, auto-detect repo/branch
+rafter run
 
-# Get scan results as Markdown to stdout  
-rafter get 8c2e1234-5678-9abc-def0-123456789abc --format md
+# Scan specific repo
+rafter scan --repo myorg/myrepo --branch main
 
-# Pipe to jq for filtering
-rafter get 8c2e1234-5678-9abc-def0-123456789abc | jq '.vulnerabilities[] | select(.level=="critical")'
+# Get results as JSON
+rafter get SCAN_ID --format json
 
-# Run new scan and wait for completion (scans remote repository)
-rafter run --repo myorg/myrepo --branch main
-```
+# Pipe to jq
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="critical")'
 
-### Piping and Automation
-```bash
-# Filter vulnerabilities by severity
-rafter get 8c2e1234-5678-9abc-def0-123456789abc | jq '.vulnerabilities[] | select(.level=="high" or .level=="critical")'
+# Count vulnerabilities
+rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
 
-# Count total vulnerabilities
-rafter get 8c2e1234-5678-9abc-def0-123456789abc | jq '.vulnerabilities | length'
+# Save to file
+rafter get SCAN_ID > scan_results.json
 
-# Save output to file using shell redirection
-rafter get 8c2e1234-5678-9abc-def0-123456789abc > scan_results.json
+# CSV export
+rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
 
-# Process scan results in scripts
-if rafter get 8c2e1234-5678-9abc-def0-123456789abc --format json | jq -e '.vulnerabilities | length > 0'; then
-    echo "Vulnerabilities found!"
+# CI gate
+if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then
+    echo "Vulnerabilities found!" && exit 1
 fi
 ```
 
-### Quiet Mode for Scripts
-```bash
-# Get just the scan data, no status messages
-rafter get 8c2e1234-5678-9abc-def0-123456789abc --quiet | jq '.scan_id'
+### Quiet Mode
 
-# Run scan quietly and capture output
-scan_data=$(rafter run --repo myorg/myrepo --branch main --quiet)
+```bash
+# Suppress status messages, get just data
+rafter get SCAN_ID --quiet | jq '.scan_id'
+
+# Capture output in variable
+scan_data=$(rafter run --quiet)
 ```
 
 ### Error Handling
+
 ```bash
-# Check for specific error conditions
-if rafter get invalid-scan-id; then
+if rafter get SCAN_ID; then
     echo "Scan found"
 else
     case $? in
@@ -99,30 +192,39 @@ else
 fi
 ```
 
-### Advanced Piping Examples
+### Agent Security
+
 ```bash
-# Extract all file paths with vulnerabilities
-rafter get 8c2e1234-5678-9abc-def0-123456789abc | jq -r '.vulnerabilities[].file' | sort | uniq
+# Full setup
+rafter agent init
 
-# Create a summary report
-rafter get 8c2e1234-5678-9abc-def0-123456789abc | jq '{
-    scan_id: .scan_id,
-    total_vulnerabilities: (.vulnerabilities | length),
-    critical_count: (.vulnerabilities | map(select(.level=="critical")) | length),
-    high_count: (.vulnerabilities | map(select(.level=="high")) | length)
-}'
+# Scan for secrets
+rafter agent scan .
+rafter agent scan --staged --quiet  # CI-friendly
 
-# Filter and format for CSV output
-rafter get 8c2e1234-5678-9abc-def0-123456789abc | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
+# Pre-commit hook
+rafter agent install-hook --global
+
+# Safe command execution
+rafter agent exec "git push origin main"
+
+# Audit a skill before installing
+rafter agent audit-skill untrusted-skill.md
+
+# View security log
+rafter agent audit --last 20
+
+# Configure
+rafter agent config set agent.riskLevel aggressive
 ```
+
+---
 
 ## Notes
 
-- API key can be provided as a flag, env var, or .env file
-- Git repository auto-detection works in CI environments (GITHUB_REPOSITORY, CI_REPOSITORY, etc.)
-- **The scanner analyzes the remote repository, not your local files**
-- Auto-detection uses your local Git configuration to determine which remote repository and branch to scan
-- All scan data is output to stdout for maximum pipe-friendliness
-- Status messages (progress, completion notices, errors) go to stderr
-- The `--quiet` flag suppresses all stderr output while preserving stdout behavior
-- Use shell redirection (`>`, `>>`) to save output to files when needed 
+- API key: provided via `--api-key` flag, `RAFTER_API_KEY` env var, or `.env` file
+- Git auto-detection works in CI (supports `GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, `CI_REPOSITORY`, `CI_COMMIT_BRANCH`, `CI_BRANCH`)
+- Backend scanning targets the remote repository, not local files
+- All scan data to stdout, all status messages to stderr
+- `--quiet` suppresses stderr; stdout is unaffected
+- Agent commands are Node.js only; Python package provides backend scanning
