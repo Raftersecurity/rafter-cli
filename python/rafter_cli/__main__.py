@@ -7,8 +7,18 @@ import pathlib
 import subprocess
 import re
 import sys
+from importlib.metadata import version as pkg_version
 from dotenv import load_dotenv
 from rich import print, progress
+
+__version__ = pkg_version("rafter-cli")
+
+
+def _version_callback(value: bool):
+    if value:
+        typer.echo(f"rafter {__version__}")
+        raise typer.Exit()
+
 
 app = typer.Typer(
     name="rafter",
@@ -16,6 +26,15 @@ app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
 )
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False, "--version", "-V", help="Show version and exit.", callback=_version_callback, is_eager=True
+    ),
+):
+    """Rafter CLI — security for AI builders."""
 
 API_BASE = "https://rafter.so/api"
 
@@ -219,11 +238,6 @@ def get(
         return write_payload(data, fmt, quiet)
 
     handle_scan_status_interactive(scan_id, headers, fmt, quiet)
-
-@app.command()
-def version():
-    """Show version and exit."""
-    typer.echo("0.3.0")
 
 @app.command()
 def usage(
