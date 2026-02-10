@@ -9,7 +9,7 @@ import { checkForUpdate } from "./utils/update-checker.js";
 
 dotenv.config();
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 const program = new Command()
   .name("rafter")
