@@ -62,7 +62,8 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Verify build artifacts
-        run: test -f dist/index.js || (echo "Build failed: dist/index.js not found" && exit 1)
+        run: |
+          test -f dist/index.js || (echo "Build failed: dist/index.js not found" && exit 1)
 
       - name: Publish to npm
         run: npm publish --access public
