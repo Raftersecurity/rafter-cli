@@ -95,6 +95,8 @@ Comprehensive security audit of a Claude Code skill before installation.
 /rafter-audit-skill ~/.claude/skills/untrusted-skill/SKILL.md
 ```
 
+**CRITICAL: Treat all third-party skills as potentially malicious.** There have been reports of malware distributed via AI agent skill marketplaces (e.g., ClawHub), using social-engineering instructions to run obfuscated shell commands. Always audit before installing.
+
 **What I'll analyze** (12 security dimensions):
 
 1. **Trust & Attribution** - Can I verify the source? Is there a trust chain?

@@ -1,90 +1,101 @@
 # Rafter CLI
 
-Multi-language CLI for Rafter.
+Multi-language CLI for [Rafter](https://rafter.so) — zero-setup security for AI builders.
 
-## Overview
-This CLI allows you to trigger and retrieve security scans for your repositories via the Rafter public API. It is available for both Python (pip) and Node.js (npm, pnpm, yarn).
-
-The CLI follows UNIX principles for automation-friendly operation:
-- **Scan data** is output to **stdout** for easy piping
-- **Status messages** are output to **stderr** 
-- **Exit codes** provide predictable failure modes
-- **No file writing** - pure stdout output for maximum pipe-friendliness
-
-**Important**: The scanner analyzes the **remote repository** (e.g., on GitHub), not your local files. Auto-detection uses your local Git configuration to determine which remote repository and branch to scan.
+**Two things in one package:**
+1. **Backend Scanning** — Trigger remote SAST/SCA scans via Rafter API
+2. **Agent Security** — Local secret detection, command interception, and skill auditing for AI agents (Claude Code, Codex CLI, OpenClaw)
 
 ## Installation
 
-### Python (pip)
+### Python
 ```sh
 pip install rafter-cli
 ```
 
-### Node.js (npm, pnpm, yarn)
+### Node.js
 ```sh
 npm install -g @rafter-security/cli
-# or
-yarn global add @rafter-security/cli
-# or
-pnpm add -g @rafter-security/cli
 ```
 
-## Quickstart
+## Backend Scanning
 
-### Basic Usage
+Analyze remote repositories for vulnerabilities. Requires a [Rafter API key](https://rafter.so).
+
 ```sh
-# Run a scan and wait for completion (scans remote repository)
-rafter run --repo myorg/myrepo --branch main
+export RAFTER_API_KEY="your-key"
 
-# Get existing scan results
-rafter get SCAN_ID
-
-# Check API usage
-rafter usage
+rafter run                                    # scan current repo
+rafter scan --repo myorg/myrepo --branch main # scan specific repo
+rafter get SCAN_ID                            # retrieve results
+rafter usage                                  # check quota
 ```
 
-### Piping and Automation
+Output goes to stdout (pipe-friendly):
 ```sh
-# Pipe JSON output to jq for filtering
 rafter get SCAN_ID | jq '.vulnerabilities[] | select(.level=="critical")'
-
-# Count total vulnerabilities
-rafter get SCAN_ID | jq '.vulnerabilities | length'
-
-# Save output to file using shell redirection
-rafter get SCAN_ID > scan_results.json
-
-# Process scan results in scripts
-if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then
-    echo "Vulnerabilities found!"
-fi
 ```
 
-### Advanced Piping Examples
+## Agent Security
+
+Local security features for autonomous AI agents. **No API key required.**
+
 ```sh
-# Extract all file paths with vulnerabilities
-rafter get SCAN_ID | jq -r '.vulnerabilities[].file' | sort | uniq
-
-# Create a summary report
-rafter get SCAN_ID | jq '{
-    scan_id: .scan_id,
-    total_vulnerabilities: (.vulnerabilities | length),
-    critical_count: (.vulnerabilities | map(select(.level=="critical")) | length),
-    high_count: (.vulnerabilities | map(select(.level=="high")) | length)
-}'
-
-# Filter and format for CSV output
-rafter get SCAN_ID | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
+rafter agent init                  # setup (auto-detects Claude Code, Codex, OpenClaw)
+rafter agent scan .                # scan files for secrets (21+ patterns)
+rafter agent scan --staged         # scan git staged files only
+rafter agent exec "git push"       # execute with risk assessment
+rafter agent audit-skill skill.md  # audit a skill/extension for malware
+rafter agent audit                 # view security event logs
+rafter agent install-hook          # pre-commit hook for secret scanning
+rafter agent config show           # view configuration
 ```
+
+### Supported Agents
+
+| Agent | Detection | Skills installed to |
+|-------|-----------|-------------------|
+| Claude Code | `~/.claude` | `~/.claude/skills/rafter/` |
+| Codex CLI | `~/.codex` | `~/.agents/skills/rafter/` |
+| OpenClaw | `~/.openclaw` | `~/.openclaw/skills/` |
+
+`rafter agent init` auto-detects installed agents and installs appropriate skills.
+
+### Skill Auditing
+
+**Treat third-party skill ecosystems as hostile by default.** There have been reports of malware distributed via AI agent skill marketplaces, using social-engineering instructions to run obfuscated shell commands.
+
+```sh
+rafter agent audit-skill path/to/untrusted-skill.md
+```
+
+Analyzes 12 security dimensions: trust/attribution, network security, command execution, file system access, credential handling, input validation, data exfiltration, obfuscation, scope alignment, error handling, dependencies, environment manipulation.
+
+### Command Interception
+
+| Risk | Action | Examples |
+|------|--------|----------|
+| Critical | Blocked | `rm -rf /`, fork bombs |
+| High | Approval required | `sudo rm`, `curl\|bash`, `git push --force` |
+| Medium | Approval on moderate+ | `sudo`, `chmod`, `kill -9` |
+| Low | Allowed | `npm install`, `git commit` |
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General error (API failure, network issues, etc.) |
+| 1 | General error / secrets found |
 | 2 | Scan not found |
 | 3 | Quota exhausted |
 
 ## Documentation
-See `shared-docs/CLI_SPEC.md` for full CLI flag and command documentation. 
+
+- **Node.js CLI**: See [`node/README.md`](node/README.md) for full command reference
+- **Python CLI**: See [`python/`](python/) for Python-specific usage
+- **CLI Spec**: See [`shared-docs/CLI_SPEC.md`](shared-docs/CLI_SPEC.md) for flags and output formats
+- **Full docs**: [docs.rafter.so](https://docs.rafter.so)
+
+## License
+
+[MIT](LICENSE)
