@@ -7,11 +7,14 @@ import pathlib
 import subprocess
 import re
 import sys
-from importlib.metadata import version as pkg_version
 from dotenv import load_dotenv
 from rich import print, progress
 
-__version__ = pkg_version("rafter-cli")
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("rafter-cli")
+except Exception:
+    __version__ = "0.4.2"
 
 
 def _version_callback(value: bool):
