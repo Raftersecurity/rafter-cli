@@ -1,7 +1,12 @@
 #!/bin/bash
 
-# Set test values
-API_KEY="REDACTED_API_KEY"
+# Load env vars from .env file (at repo root)
+set -a
+source "$(dirname "$0")/../../.env" 2>/dev/null || true
+set +a
+
+# Test values — API_KEY must be set via .env or environment
+API_KEY="${RAFTER_API_KEY:?Error: Set RAFTER_API_KEY in .env or environment}"
 REPO="Rome-1/ridespy"
 BRANCH="main"
 SCAN_ID1="0f89007c-1e20-4cba-938e-ffc36c1dad16" # Existing scan (few-vulnerable repo)
