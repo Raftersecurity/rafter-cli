@@ -57,7 +57,9 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Verify build artifacts
         run: test -f dist/index.js || (echo "Build failed: dist/index.js not found" && exit 1)
@@ -96,8 +98,8 @@ jobs:
       - name: Verify build artifacts
         run: |
           ls dist/
-          test -f dist/*.whl || (echo "Build failed: wheel not found" && exit 1)
-          test -f dist/*.tar.gz || (echo "Build failed: sdist not found" && exit 1)
+          ls dist/*.whl >/dev/null 2>&1 || (echo "Build failed: wheel not found" && exit 1)
+          ls dist/*.tar.gz >/dev/null 2>&1 || (echo "Build failed: sdist not found" && exit 1)
 
       - name: Publish to PyPI
         env:
