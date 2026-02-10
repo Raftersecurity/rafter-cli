@@ -6,7 +6,7 @@ on:
       - prod
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test-node:
@@ -110,6 +110,8 @@ jobs:
   create-release:
     needs: [publish-node, publish-python]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 

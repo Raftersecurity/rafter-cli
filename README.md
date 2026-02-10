@@ -3,7 +3,7 @@
 Multi-language CLI for [Rafter](https://rafter.so) — zero-setup security for AI builders.
 
 **Two things in one package:**
-1. **Backend Scanning** — Trigger remote SAST/SCA scans via Rafter API
+1. **Rafter Security Audits** — Trigger remote SAST/SCA scans via Rafter API
 2. **Agent Security** — Local secret detection, command interception, and skill auditing for AI agents (Claude Code, Codex CLI, OpenClaw)
 
 ## Installation
@@ -18,9 +18,9 @@ pip install rafter-cli
 npm install -g @rafter-security/cli
 ```
 
-## Backend Scanning
+## Rafter Security Audits
 
-Analyze remote repositories for vulnerabilities. Requires a [Rafter API key](https://rafter.so).
+Analyze remote repositories for vulnerabilities. Requires a [Rafter API key](https://rafter.so). See [docs.rafter.so](https://docs.rafter.so) for full documentation.
 
 ```sh
 export RAFTER_API_KEY="your-key"
