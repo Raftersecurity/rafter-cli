@@ -5,6 +5,9 @@ on:
     branches:
       - prod
 
+permissions:
+  contents: read
+
 jobs:
   validate-versions:
     runs-on: ubuntu-latest
@@ -27,16 +30,18 @@ jobs:
 
       - name: Ensure versions match
         run: |
-          if [ "${{ steps.node-version.outputs.VERSION }}" != "${{ steps.python-version.outputs.VERSION }}" ]; then
-            echo "Version mismatch: Node=${{ steps.node-version.outputs.VERSION }} Python=${{ steps.python-version.outputs.VERSION }}"
+          NODE_VERSION="${{ steps.node-version.outputs.VERSION }}"
+          PYTHON_VERSION="${{ steps.python-version.outputs.VERSION }}"
+          if [ "$NODE_VERSION" != "$PYTHON_VERSION" ]; then
+            echo "Version mismatch: Node=$NODE_VERSION Python=$PYTHON_VERSION"
             exit 1
           fi
-          echo "Versions match: ${{ steps.node-version.outputs.VERSION }}"
+          echo "Versions match: $NODE_VERSION"
 
       - name: Check version not already published
         run: |
-          VERSION=${{ steps.node-version.outputs.VERSION }}
-          if npm view @rafter-security/cli@$VERSION version 2>/dev/null; then
+          VERSION="${{ steps.node-version.outputs.VERSION }}"
+          if npm view "@rafter-security/cli@$VERSION" version 2>/dev/null; then
             echo "Version $VERSION already exists on npm"
             exit 1
           fi
@@ -44,7 +49,7 @@ jobs:
 
       - name: Check CHANGELOG updated
         run: |
-          VERSION=${{ steps.node-version.outputs.VERSION }}
+          VERSION="${{ steps.node-version.outputs.VERSION }}"
           if ! grep -q "\[$VERSION\]" CHANGELOG.md; then
             echo "Warning: CHANGELOG.md missing entry for $VERSION"
           else
