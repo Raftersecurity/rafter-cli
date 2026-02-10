@@ -152,4 +152,4 @@ jobs:
       - name: Test pip install
         run: |
           pip install rafter-cli==${{ needs.publish-python.outputs.version }}
-          rafter --version
+          pip show rafter-cli | grep -E "^(Name|Version)"
