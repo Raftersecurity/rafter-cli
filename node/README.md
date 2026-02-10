@@ -1,11 +1,10 @@
 # @rafter-security/cli
 
-A Node.js CLI for Rafter Security with backend scanning and agent security features.
+Node.js CLI for [Rafter](https://rafter.so) — zero-setup security for AI builders. This is the **full-featured package** with both backend scanning and agent security.
 
-**Features:**
-- 🔍 **Backend Scanning**: Trigger security scans via Rafter API
-- 🛡️ **Agent Security**: Local secret detection, command validation, audit logging
-- 🤖 **Agent Integration**: OpenClaw and Claude Code support
+**Backend scanning** — Remote SAST/SCA via Rafter API. Trigger scans, retrieve structured vulnerability reports, pipe to any tool.
+
+**Agent security** — Local-first protection for autonomous AI agents. Secret scanning (21+ patterns, Gitleaks), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. No API key required.
 
 ## Installation
 

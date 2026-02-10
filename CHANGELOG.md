@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-02-09
+
 ### Added
 - Agent security command group (`rafter agent`)
 - Pattern-based secret scanning (21+ secret types: AWS, GitHub, Stripe, Slack, npm, PyPI, etc.)
@@ -17,15 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-execution secret scanning for git commits
 - Config management system (`~/.rafter/config.json`) with dot-notation paths
 - Structured audit logging (`~/.rafter/audit.log`)
-- Init wizard with environment auto-detection (OpenClaw, Claude Code)
+- Init wizard with environment auto-detection (OpenClaw, Claude Code, Codex CLI)
 - Skill auditing system with 12-dimension security analysis
 - Pre-commit hooks (per-repo and global) for automatic secret scanning
 - Claude Code integration (backend + agent security skills)
+- Codex CLI integration (`.agents/skills/` convention)
+- Non-nagging update checker (once per day, notifies once per new version)
 - `scan` alias for `run` command
 - CI/CD publish workflows
+- MIT LICENSE
 
 ### Changed
 - Modularized CLI structure (backend commands extracted to `commands/backend/`)
+- Root README rewritten to cover both backend scanning and agent security
 
 ## [0.3.0] - 2025-12-15
 

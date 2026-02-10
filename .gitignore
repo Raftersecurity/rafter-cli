@@ -11,6 +11,9 @@ venv/
 node_modules/
 dist/
 
+# Test output
+**/test_output.json
+
 # General
 .env
-.DS_Store 
+.DS_Store
