@@ -147,11 +147,17 @@ Initialize agent security system.
 **Options:**
 - `--risk-level <level>` - Set risk level: `minimal`, `moderate`, or `aggressive` (default: `moderate`)
 - `--skip-openclaw` - Skip OpenClaw skill installation
+- `--skip-claude-code` - Skip Claude Code skill installation
+- `--claude-code` - Force Claude Code skill installation
+- `--skip-codex` - Skip Codex CLI skill installation
+- `--codex` - Force Codex CLI skill installation
+- `--skip-gitleaks` - Skip Gitleaks binary download
 
 **What it does:**
 - Creates `~/.rafter/config.json` configuration
 - Initializes directory structure
-- Detects and installs OpenClaw skill (if present)
+- Detects and installs agent skills (OpenClaw, Claude Code, Codex CLI)
+- Downloads Gitleaks binary for enhanced secret detection
 - Sets up audit logging
 
 **Example:**
@@ -425,14 +431,16 @@ rafter agent audit-skill skill.md --json
 
 **Why audit skills?**
 
-Claude Code skills can:
-- Execute shell commands
-- Access sensitive files
-- Make network requests
-- Handle credentials
-- Process user input
+**Treat third-party skill ecosystems as hostile by default.** There have been reports of malware distributed via AI agent skill marketplaces (e.g., ClawHub), using social-engineering instructions to run obfuscated shell commands.
 
-Always audit skills from untrusted sources before installation. The skill-auditor provides systematic analysis to identify security risks.
+Agent skills can:
+- Execute arbitrary shell commands
+- Access sensitive files (`~/.ssh`, `~/.env`, credentials)
+- Make network requests to exfiltrate data
+- Modify environment (PATH, shell configs, cron jobs, git hooks)
+- Encode malicious payloads in base64 or eval() chains
+
+Always audit skills from ANY external source before installation. The skill-auditor provides systematic 12-dimension analysis to identify security risks.
 
 ---
 
@@ -470,6 +478,36 @@ Agent security settings are stored in `~/.rafter/config.json`. Key settings:
 - Audit log: `~/.rafter/audit.log`
 - Binaries: `~/.rafter/bin/`
 - Patterns: `~/.rafter/patterns/`
+
+## Codex CLI Integration
+
+Rafter provides skills for [OpenAI Codex CLI](https://github.com/openai/codex) using the `.agents/skills/` convention.
+
+### Setup
+
+```bash
+rafter agent init
+# Auto-detects ~/.codex and installs skills to ~/.agents/skills/
+```
+
+Or manually:
+```bash
+cp -r node/.agents/skills/rafter ~/.agents/skills/
+cp -r node/.agents/skills/rafter-agent-security ~/.agents/skills/
+```
+
+### Skills Installed
+
+1. **rafter** — Backend scanning (implicit invocation, triggers on security-related queries)
+2. **rafter-agent-security** — Local security features (explicit invocation only)
+
+### Key Differences from Claude Code
+
+- Skills live in `~/.agents/skills/` (not `~/.claude/skills/`)
+- No `allowed-tools` or `disable-model-invocation` — Codex uses `sandbox_mode` and `approval_policy`
+- Implicit invocation driven by skill `description` field matching
+
+---
 
 ## OpenClaw Integration
 

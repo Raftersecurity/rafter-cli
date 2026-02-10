@@ -11,6 +11,48 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+async function installCodexSkills(): Promise<void> {
+  const homeDir = os.homedir();
+  const codexSkillsDir = path.join(homeDir, ".agents", "skills");
+
+  // Ensure ~/.agents/skills directory exists
+  if (!fs.existsSync(codexSkillsDir)) {
+    fs.mkdirSync(codexSkillsDir, { recursive: true });
+  }
+
+  // Install Backend Skill
+  const backendSkillDir = path.join(codexSkillsDir, "rafter");
+  const backendSkillPath = path.join(backendSkillDir, "SKILL.md");
+  const backendTemplatePath = path.join(__dirname, "..", "..", "..", ".agents", "skills", "rafter", "SKILL.md");
+
+  if (!fs.existsSync(backendSkillDir)) {
+    fs.mkdirSync(backendSkillDir, { recursive: true });
+  }
+
+  if (fs.existsSync(backendTemplatePath)) {
+    fs.copyFileSync(backendTemplatePath, backendSkillPath);
+    console.log(`✓ Installed Rafter Backend skill to ${backendSkillPath}`);
+  } else {
+    console.log(`⚠️  Backend skill template not found at ${backendTemplatePath}`);
+  }
+
+  // Install Agent Security Skill
+  const agentSkillDir = path.join(codexSkillsDir, "rafter-agent-security");
+  const agentSkillPath = path.join(agentSkillDir, "SKILL.md");
+  const agentTemplatePath = path.join(__dirname, "..", "..", "..", ".agents", "skills", "rafter-agent-security", "SKILL.md");
+
+  if (!fs.existsSync(agentSkillDir)) {
+    fs.mkdirSync(agentSkillDir, { recursive: true });
+  }
+
+  if (fs.existsSync(agentTemplatePath)) {
+    fs.copyFileSync(agentTemplatePath, agentSkillPath);
+    console.log(`✓ Installed Rafter Agent Security skill to ${agentSkillPath}`);
+  } else {
+    console.log(`⚠️  Agent Security skill template not found at ${agentTemplatePath}`);
+  }
+}
+
 async function installClaudeCodeSkills(): Promise<void> {
   const homeDir = os.homedir();
   const claudeSkillsDir = path.join(homeDir, ".claude", "skills");
@@ -60,6 +102,8 @@ export function createInitCommand(): Command {
     .option("--skip-openclaw", "Skip OpenClaw skill installation")
     .option("--skip-claude-code", "Skip Claude Code skill installation")
     .option("--claude-code", "Force Claude Code skill installation")
+    .option("--skip-codex", "Skip Codex CLI skill installation")
+    .option("--codex", "Force Codex CLI skill installation")
     .option("--skip-gitleaks", "Skip Gitleaks binary download")
     .action(async (opts) => {
       console.log("\n🛡️  Rafter Agent Security Setup");
@@ -71,6 +115,7 @@ export function createInitCommand(): Command {
       // Detect environments
       const hasOpenClaw = fs.existsSync(path.join(os.homedir(), ".openclaw"));
       const hasClaudeCode = opts.claudeCode || fs.existsSync(path.join(os.homedir(), ".claude"));
+      const hasCodex = opts.codex || fs.existsSync(path.join(os.homedir(), ".codex"));
 
       if (hasOpenClaw) {
         console.log("✓ Detected environment: OpenClaw");
@@ -82,6 +127,12 @@ export function createInitCommand(): Command {
         console.log("✓ Detected environment: Claude Code");
       } else {
         console.log("ℹ️  Claude Code not detected");
+      }
+
+      if (hasCodex) {
+        console.log("✓ Detected environment: Codex CLI");
+      } else {
+        console.log("ℹ️  Codex CLI not detected");
       }
 
       // Initialize directory structure
@@ -157,6 +208,16 @@ export function createInitCommand(): Command {
         }
       }
 
+      // Install Codex CLI skills if applicable
+      if (hasCodex && !opts.skipCodex) {
+        try {
+          await installCodexSkills();
+          manager.set("agent.environments.codex.enabled", true);
+        } catch (e) {
+          console.error(`Failed to install Codex CLI skills: ${e}`);
+        }
+      }
+
       console.log();
       console.log("✓ Agent security initialized!");
       console.log();
@@ -166,6 +227,9 @@ export function createInitCommand(): Command {
       }
       if (hasClaudeCode && !opts.skipClaudeCode) {
         console.log("  - Restart Claude Code to load skills");
+      }
+      if (hasCodex && !opts.skipCodex) {
+        console.log("  - Restart Codex CLI to load skills");
       }
       console.log("  - Run: rafter agent scan . (test secret scanning)");
       console.log("  - Configure: rafter agent config show");
