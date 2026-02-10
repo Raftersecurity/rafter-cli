@@ -1,0 +1,87 @@
+name: Validate Release
+
+on:
+  pull_request:
+    branches:
+      - prod
+
+jobs:
+  validate-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract Node version
+        id: node-version
+        run: |
+          VERSION=$(node -p "require('./node/package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Node version: $VERSION"
+
+      - name: Extract Python version
+        id: python-version
+        run: |
+          VERSION=$(grep -oP 'version = "\K[^"]+' python/pyproject.toml)
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Python version: $VERSION"
+
+      - name: Ensure versions match
+        run: |
+          if [ "${{ steps.node-version.outputs.VERSION }}" != "${{ steps.python-version.outputs.VERSION }}" ]; then
+            echo "Version mismatch: Node=${{ steps.node-version.outputs.VERSION }} Python=${{ steps.python-version.outputs.VERSION }}"
+            exit 1
+          fi
+          echo "Versions match: ${{ steps.node-version.outputs.VERSION }}"
+
+      - name: Check version not already published
+        run: |
+          VERSION=${{ steps.node-version.outputs.VERSION }}
+          if npm view @rafter-security/cli@$VERSION version 2>/dev/null; then
+            echo "Version $VERSION already exists on npm"
+            exit 1
+          fi
+          echo "Version $VERSION is new"
+
+      - name: Check CHANGELOG updated
+        run: |
+          VERSION=${{ steps.node-version.outputs.VERSION }}
+          if ! grep -q "\[$VERSION\]" CHANGELOG.md; then
+            echo "Warning: CHANGELOG.md missing entry for $VERSION"
+          else
+            echo "CHANGELOG.md updated for $VERSION"
+          fi
+
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Node package
+        run: |
+          cd node
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm install --frozen-lockfile
+          pnpm run build
+          pnpm test
+
+      - name: Build Python package
+        run: |
+          cd python
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Verify all artifacts
+        run: |
+          test -f node/dist/index.js || exit 1
+          test -f python/dist/*.whl || exit 1
+          test -f python/dist/*.tar.gz || exit 1
+          echo "All build artifacts verified"
