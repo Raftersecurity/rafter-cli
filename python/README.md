@@ -1,105 +1,99 @@
-# rafter-cli
+# rafter-cli (Python)
 
-A Python CLI for Rafter Security that supports pip package management.
+Python CLI for [Rafter](https://rafter.so) — trigger and retrieve remote SAST/SCA security scans via the Rafter API.
+
+> **Note**: This package provides **backend scanning only**. For the full feature set—including agent security (secret scanning, command interception, pre-commit hooks, skill auditing)—install the [Node.js package](https://www.npmjs.com/package/@rafter-security/cli): `npm install -g @rafter-security/cli`
 
 ## Installation
 
 ```bash
-# Using pip
 pip install rafter-cli
-
-# Using pipx (recommended for CLI tools)
-pipx install rafter-cli
 ```
+
+Requires Python 3.10+.
 
 ## Quick Start
 
 ```bash
-# Set your API key
-export RAFTER_API_KEY="your-api-key-here"
+export RAFTER_API_KEY="your-key"   # or add to .env file
 
-# Run a security scan
-rafter run
-
-# Get scan results
-rafter get <scan-id>
-
-# Check API usage
-rafter usage
+rafter run                                    # scan current repo (auto-detected)
+rafter scan --repo myorg/myrepo --branch main # scan specific repo
+rafter get SCAN_ID                            # retrieve results
+rafter get SCAN_ID --interactive              # poll until complete
+rafter usage                                  # check quota
 ```
+
+**Important**: The scanner analyzes the **remote repository** on GitHub, not your local files. Auto-detection uses your local Git configuration to determine which repo and branch to scan.
 
 ## Commands
 
 ### `rafter run [options]`
 
+Alias: `rafter scan`
+
 Trigger a new security scan for your repository.
 
-**Options:**
-- `-r, --repo <repo>` - Repository in format `org/repo` (default: auto-detected)
-- `-b, --branch <branch>` - Branch name (default: auto-detected)
-- `-k, --api-key <key>` - API key (or set `RAFTER_API_KEY` env var)
-- `-f, --format <format>` - Output format: `json` or `md` (default: `json`)
-- `--skip-interactive` - Don't wait for scan completion
-- `--quiet` - Suppress status messages
-
-**Examples:**
-```bash
-# Basic scan with auto-detection
-rafter run
-
-# Scan specific repo/branch
-rafter run --repo myorg/myrepo --branch feature-branch
-
-# Non-interactive scan
-rafter run --skip-interactive
-```
+- `-r, --repo <repo>` — org/repo (default: auto-detected from git remote)
+- `-b, --branch <branch>` — branch (default: current branch or 'main')
+- `-k, --api-key <key>` — API key (or `RAFTER_API_KEY` env var)
+- `-f, --format <format>` — `json` or `md` (default: `md`)
+- `--skip-interactive` — don't wait for scan completion
+- `--quiet` — suppress status messages
 
 ### `rafter get <scan-id> [options]`
 
-Retrieve results from a completed scan.
+Retrieve results from a scan.
 
-**Options:**
-- `-k, --api-key <key>` - API key (or set `RAFTER_API_KEY` env var)
-- `-f, --format <format>` - Output format: `json` or `md` (default: `json`)
-- `--interactive` - Poll until scan completes
-- `--quiet` - Suppress status messages
-
-**Examples:**
-```bash
-# Get scan results
-rafter get <scan-id>
-
-# Wait for scan completion
-rafter get <scan-id> --interactive
-```
+- `-k, --api-key <key>` — API key
+- `-f, --format <format>` — `json` or `md` (default: `md`)
+- `--interactive` — poll until scan completes
+- `--quiet` — suppress status messages
 
 ### `rafter usage [options]`
 
-Check your API quota and usage.
+Check API quota and usage.
 
-**Options:**
-- `-k, --api-key <key>` - API key (or set `RAFTER_API_KEY` env var)
+- `-k, --api-key <key>` — API key
 
-**Example:**
+## Piping and Automation
+
+The CLI follows UNIX principles: scan data to stdout, status to stderr, no file writing.
+
 ```bash
-rafter usage
+# Filter critical vulnerabilities
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="critical")'
+
+# Count vulnerabilities
+rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
+
+# CSV export
+rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
+
+# CI gate
+if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then
+    echo "Vulnerabilities found!" && exit 1
+fi
+
+# Save to file
+rafter get SCAN_ID > scan_results.json
 ```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Scan not found |
+| 3 | Quota exhausted |
 
 ## Configuration
 
-### Environment Variables
-
-- `RAFTER_API_KEY` - Your Rafter API key (alternative to `--api-key` flag)
-
-### Git Auto-Detection
-
-The CLI automatically detects your repository and branch from the current Git repository:
-
-1. **Repository**: Extracted from Git remote URL
-2. **Branch**: Current branch name, or `main`
-
-**Note**: The CLI only scans remote repositories, not your current local branch.
+- **API key**: `--api-key` flag, `RAFTER_API_KEY` env var, or `.env` file
+- **Git auto-detection**: works in CI (`GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, `CI_REPOSITORY`, `CI_COMMIT_BRANCH`)
+- **Remote scanning**: analyzes the remote repository, not local files
 
 ## Documentation
 
-For comprehensive documentation, API reference, and examples, see [https://docs.rafter.so](https://docs.rafter.so). 
+Full docs at [docs.rafter.so](https://docs.rafter.so).
