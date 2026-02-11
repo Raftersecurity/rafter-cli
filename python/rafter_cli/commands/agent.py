@@ -7,6 +7,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich import print as rprint
@@ -64,6 +65,53 @@ def config_set(
 
 agent_app.add_typer(config_app)
 
+# ── init helpers ─────────────────────────────────────────────────────
+
+
+def _install_claude_code_hooks() -> None:
+    """Install Rafter PreToolUse hooks into ~/.claude/settings.json."""
+    home = Path.home()
+    claude_dir = home / ".claude"
+    settings_path = claude_dir / "settings.json"
+
+    claude_dir.mkdir(parents=True, exist_ok=True)
+
+    # Read existing settings or start fresh
+    settings: dict[str, Any] = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing settings.json was unreadable, creating new one"))
+
+    # Merge hooks — don't overwrite existing non-Rafter hooks
+    if "hooks" not in settings:
+        settings["hooks"] = {}
+    if "PreToolUse" not in settings["hooks"]:
+        settings["hooks"]["PreToolUse"] = []
+
+    rafter_command = "rafter hook pretool"
+
+    # Remove any existing Rafter hooks to avoid duplicates
+    settings["hooks"]["PreToolUse"] = [
+        entry for entry in settings["hooks"]["PreToolUse"]
+        if not any(
+            h.get("command") == rafter_command
+            for h in (entry.get("hooks") or [])
+        )
+    ]
+
+    # Add Rafter hooks
+    rafter_hook = {"type": "command", "command": rafter_command}
+    settings["hooks"]["PreToolUse"].extend([
+        {"matcher": "Bash", "hooks": [rafter_hook]},
+        {"matcher": "Write|Edit", "hooks": [rafter_hook]},
+    ])
+
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    rprint(fmt.success(f"Installed PreToolUse hooks to {settings_path}"))
+
+
 # ── init ─────────────────────────────────────────────────────────────
 
 
@@ -71,6 +119,7 @@ agent_app.add_typer(config_app)
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
     skip_gitleaks: bool = typer.Option(False, "--skip-gitleaks", help="Skip gitleaks check"),
+    skip_claude_code: bool = typer.Option(False, "--skip-claude-code", help="Skip Claude Code hook installation"),
     claude_code: bool = typer.Option(False, "--claude-code", help="Force Claude Code detection"),
 ):
     """Initialize agent security system."""
@@ -111,10 +160,20 @@ def init(
         else:
             rprint(fmt.info("Gitleaks not found — using pattern-based scanning (21 patterns)"))
 
+    # Install Claude Code hooks
+    if has_claude_code and not skip_claude_code:
+        try:
+            _install_claude_code_hooks()
+            manager.set("agent.environments.claude_code.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Claude Code hooks: {e}"))
+
     rprint()
     rprint(fmt.success("Agent security initialized!"))
     rprint()
     rprint("Next steps:")
+    if has_claude_code and not skip_claude_code:
+        rprint("  - Restart Claude Code to load hooks")
     rprint("  - Run: rafter agent scan . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
     rprint()

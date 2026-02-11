@@ -12,6 +12,50 @@ import { fmt } from "../../utils/formatter.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function installClaudeCodeHooks(): void {
+  const homeDir = os.homedir();
+  const settingsPath = path.join(homeDir, ".claude", "settings.json");
+  const claudeDir = path.join(homeDir, ".claude");
+
+  if (!fs.existsSync(claudeDir)) {
+    fs.mkdirSync(claudeDir, { recursive: true });
+  }
+
+  // Read existing settings or start fresh
+  let settings: Record<string, any> = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    } catch {
+      // Corrupted file — start fresh but warn
+      console.log(fmt.warning("Existing settings.json was unreadable, creating new one"));
+    }
+  }
+
+  // Merge hooks — don't overwrite existing non-Rafter hooks
+  if (!settings.hooks) settings.hooks = {};
+  if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+
+  const rafterHook = { type: "command", command: "rafter hook pretool" };
+
+  // Remove any existing Rafter hooks to avoid duplicates
+  settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
+    (entry: any) => {
+      const hooks = entry.hooks || [];
+      return !hooks.some((h: any) => h.command === "rafter hook pretool");
+    }
+  );
+
+  // Add Rafter hooks
+  settings.hooks.PreToolUse.push(
+    { matcher: "Bash", hooks: [rafterHook] },
+    { matcher: "Write|Edit", hooks: [rafterHook] },
+  );
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+  console.log(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
+}
+
 async function installClaudeCodeSkills(): Promise<void> {
   const homeDir = os.homedir();
   const claudeSkillsDir = path.join(homeDir, ".claude", "skills");
@@ -148,13 +192,14 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install Claude Code skills if applicable
+      // Install Claude Code skills + hooks if applicable
       if (hasClaudeCode && !opts.skipClaudeCode) {
         try {
           await installClaudeCodeSkills();
+          installClaudeCodeHooks();
           manager.set("agent.environments.claudeCode.enabled", true);
         } catch (e) {
-          console.error(fmt.error(`Failed to install Claude Code skills: ${e}`));
+          console.error(fmt.error(`Failed to install Claude Code integration: ${e}`));
         }
       }
 
