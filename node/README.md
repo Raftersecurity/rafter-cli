@@ -73,6 +73,14 @@ rafter agent audit
 rafter agent config show
 ```
 
+## Global Options
+
+| Flag | Description |
+|------|-------------|
+| `-a, --agent` | Plain output for AI agents (no colors, no emoji) |
+| `-V, --version` | Print version |
+| `-h, --help` | Show help |
+
 ## Commands
 
 ### `rafter run [options]`
@@ -169,6 +177,7 @@ Scan files or directories for secrets.
 **Options:**
 - `-q, --quiet` - Only output if secrets found
 - `--json` - Output results as JSON
+- `--diff <ref>` - Scan files changed since a git ref (e.g., `HEAD~1`, `main`, `v1.0.0`)
 
 **Features:**
 - Detects 21+ secret types (AWS, GitHub, Stripe, Google, Slack, etc.)
@@ -184,6 +193,10 @@ rafter agent scan
 
 # Scan specific file
 rafter agent scan ./config.js
+
+# Scan files changed since a ref
+rafter agent scan --diff HEAD~1
+rafter agent scan --diff main
 
 # Scan for CI (quiet mode)
 rafter agent scan --quiet
@@ -432,6 +445,58 @@ Claude Code skills can:
 - Process user input
 
 Always audit skills from untrusted sources before installation. The skill-auditor provides systematic analysis to identify security risks.
+
+### `rafter ci init [options]`
+
+Generate CI/CD pipeline configuration for secret scanning.
+
+**Options:**
+- `--platform <platform>` - CI platform: `github`, `gitlab`, `circleci` (default: auto-detect)
+- `--output <path>` - Output file path (default: platform-specific)
+- `--with-backend` - Include backend security audit job (requires `RAFTER_API_KEY`)
+
+**Auto-detection:** Checks for `.github/`, `.gitlab-ci.yml`, `.circleci/` in the current directory.
+
+**Examples:**
+```bash
+# Auto-detect platform
+rafter ci init
+
+# Generate GitHub Actions workflow
+rafter ci init --platform github
+
+# Include backend scanning job
+rafter ci init --with-backend
+
+# Custom output path
+rafter ci init --output .github/workflows/security.yml
+```
+
+---
+
+## Policy File (`.rafter.yml`)
+
+Define per-project security policies by placing a `.rafter.yml` in your project root. The CLI walks from cwd up to git root looking for it.
+
+```yaml
+version: "1"
+risk_level: moderate
+command_policy:
+  mode: approve-dangerous
+  blocked_patterns: ["rm -rf /"]
+  require_approval: ["npm publish"]
+scan:
+  exclude_paths: ["vendor/", "third_party/"]
+  custom_patterns:
+    - name: "Internal API Key"
+      regex: "INTERNAL_[A-Z0-9]{32}"
+      severity: critical
+audit:
+  retention_days: 90
+  log_level: info
+```
+
+**Precedence:** Policy file values override `~/.rafter/config.json`. Arrays replace, not append.
 
 ---
 
