@@ -6,6 +6,8 @@ import { createGetCommand } from "./commands/backend/get.js";
 import { createUsageCommand } from "./commands/backend/usage.js";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createCiCommand } from "./commands/ci/index.js";
+import { createHookCommand } from "./commands/hook/index.js";
+import { createPolicyCommand } from "./commands/policy/index.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 
@@ -37,6 +39,12 @@ program.addCommand(createAgentCommand());
 
 // CI commands
 program.addCommand(createCiCommand());
+
+// Hook commands (for agent platform integration)
+program.addCommand(createHookCommand());
+
+// Policy commands
+program.addCommand(createPolicyCommand());
 
 // Non-blocking update check — runs after command, prints to stderr
 checkForUpdate(VERSION).then((notice) => {
