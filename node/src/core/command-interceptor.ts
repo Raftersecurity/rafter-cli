@@ -25,7 +25,7 @@ export class CommandInterceptor {
    * Evaluate if a command should be allowed
    */
   evaluate(command: string): CommandEvaluation {
-    const cfg = this.config.load();
+    const cfg = this.config.loadWithPolicy();
     const policy = cfg.agent?.commandPolicy;
 
     if (!policy) {
