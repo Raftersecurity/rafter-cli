@@ -8,6 +8,7 @@ from .commands.agent import agent_app
 from .commands.backend import register_backend_commands
 from .commands.ci import ci_app
 from .commands.hook import hook_app
+from .commands.mcp_server import mcp_app
 from .commands.policy import policy_app
 from .utils.formatter import set_agent_mode
 
@@ -47,6 +48,7 @@ register_backend_commands(app)
 app.add_typer(agent_app)
 app.add_typer(ci_app)
 app.add_typer(hook_app)
+app.add_typer(mcp_app)
 app.add_typer(policy_app)
 
 if __name__ == "__main__":

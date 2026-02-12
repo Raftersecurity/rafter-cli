@@ -20,13 +20,13 @@ npm install -g @rafter-security/cli
 pnpm add -g @rafter-security/cli
 ```
 
-### Python (backend scanning only)
+### Python (full features)
 
 ```sh
 pip install rafter-cli
 ```
 
-Requires Python 3.10+. For agent security features, use the Node.js package.
+Requires Python 3.10+. Full feature parity with Node.js including agent security and MCP server.
 
 ---
 
@@ -223,6 +223,35 @@ rafter ci init --platform gitlab        # GitLab CI
 rafter ci init --platform circleci      # CircleCI
 rafter ci init --with-backend           # include backend security audit job
 ```
+
+### MCP Server
+
+Expose Rafter security tools to **any MCP-compatible client** (Cursor, Windsurf, Claude Desktop, Cline, etc.) over stdio:
+
+```sh
+rafter mcp serve
+```
+
+Add to any MCP client config:
+
+```json
+{
+  "rafter": {
+    "command": "rafter",
+    "args": ["mcp", "serve"]
+  }
+}
+```
+
+**Tools provided:**
+- `scan_secrets` — scan files/directories for hardcoded secrets
+- `evaluate_command` — check if a shell command is allowed by policy
+- `read_audit_log` — read audit log entries with filtering
+- `get_config` — read Rafter configuration
+
+**Resources:**
+- `rafter://config` — current configuration
+- `rafter://policy` — active security policy (merged `.rafter.yml` + config)
 
 ### Supported Agents
 

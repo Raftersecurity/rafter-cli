@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `rafter mcp serve` command — MCP server over stdio for cross-platform agent integrations
+- Four MCP tools: `scan_secrets`, `evaluate_command`, `read_audit_log`, `get_config`
+- Two MCP resources: `rafter://config`, `rafter://policy`
+- `rafter hook pretool` command — PreToolUse hook handler for Claude Code
+- `rafter policy export --format claude|codex` — generate agent platform configs
+- `rafter agent init --claude-code` — auto-install PreToolUse hooks into Claude Code settings
+
+### Dependencies
+- Added `@modelcontextprotocol/sdk` (Node.js) and `mcp` (Python) for MCP protocol support
+
 ## [0.5.0] - 2026-02-10
 
 ### Added
