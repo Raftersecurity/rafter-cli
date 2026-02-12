@@ -446,6 +446,41 @@ Claude Code skills can:
 
 Always audit skills from untrusted sources before installation. The skill-auditor provides systematic analysis to identify security risks.
 
+### `rafter mcp serve [options]`
+
+Start an MCP server exposing Rafter security tools over stdio transport. Any MCP-compatible client (Cursor, Windsurf, Claude Desktop, Cline, etc.) can connect.
+
+**Options:**
+- `--transport <type>` - Transport type (default: `stdio`)
+
+**MCP client config:**
+```json
+{
+  "rafter": {
+    "command": "rafter",
+    "args": ["mcp", "serve"]
+  }
+}
+```
+
+**Tools provided:**
+
+| Tool | Description |
+|------|-------------|
+| `scan_secrets` | Scan files/directories for hardcoded secrets. Params: `path` (required), `engine` (auto/gitleaks/patterns) |
+| `evaluate_command` | Check if a shell command is allowed by Rafter policy. Params: `command` (required) |
+| `read_audit_log` | Read audit log entries. Params: `limit`, `event_type`, `since` |
+| `get_config` | Read Rafter config. Params: `key` (optional dot-path) |
+
+**Resources provided:**
+
+| URI | Description |
+|-----|-------------|
+| `rafter://config` | Current Rafter configuration (JSON) |
+| `rafter://policy` | Active security policy — merged `.rafter.yml` + config (JSON) |
+
+---
+
 ### `rafter ci init [options]`
 
 Generate CI/CD pipeline configuration for secret scanning.
