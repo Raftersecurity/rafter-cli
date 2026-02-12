@@ -129,11 +129,11 @@ export class CommandInterceptor {
    */
   private matchesPattern(command: string, pattern: string): boolean {
     try {
-      const regex = new RegExp(pattern);
+      const regex = new RegExp(pattern, "i");
       return regex.test(command);
     } catch {
-      // If pattern is not valid regex, try exact match
-      return command.includes(pattern);
+      // If pattern is not valid regex, try case-insensitive substring match
+      return command.toLowerCase().includes(pattern.toLowerCase());
     }
   }
 
@@ -141,6 +141,8 @@ export class CommandInterceptor {
    * Assess risk level of command
    */
   private assessRisk(command: string): CommandRiskLevel {
+    const cmd = command.toLowerCase();
+
     // Critical patterns
     const critical = [
       /rm\s+-rf\s+\//,
@@ -178,15 +180,15 @@ export class CommandInterceptor {
     ];
 
     for (const pattern of critical) {
-      if (pattern.test(command)) return "critical";
+      if (pattern.test(cmd)) return "critical";
     }
 
     for (const pattern of high) {
-      if (pattern.test(command)) return "high";
+      if (pattern.test(cmd)) return "high";
     }
 
     for (const pattern of medium) {
-      if (pattern.test(command)) return "medium";
+      if (pattern.test(cmd)) return "medium";
     }
 
     return "low";

@@ -84,9 +84,9 @@ class CommandInterceptor:
     @staticmethod
     def _matches(command: str, pattern: str) -> bool:
         try:
-            return bool(re.search(pattern, command))
+            return bool(re.search(pattern, command, re.IGNORECASE))
         except re.error:
-            return pattern in command
+            return pattern.lower() in command.lower()
 
     @staticmethod
     def _assess_risk(command: str) -> str:
@@ -116,12 +116,12 @@ class CommandInterceptor:
         ]
 
         for p in critical:
-            if re.search(p, command):
+            if re.search(p, command, re.IGNORECASE):
                 return "critical"
         for p in high:
-            if re.search(p, command):
+            if re.search(p, command, re.IGNORECASE):
                 return "high"
         for p in medium:
-            if re.search(p, command):
+            if re.search(p, command, re.IGNORECASE):
                 return "medium"
         return "low"

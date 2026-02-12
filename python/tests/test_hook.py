@@ -34,20 +34,9 @@ class TestEvaluateBash:
             assert result["decision"] == "deny"
             assert "2 secret(s)" in result["reason"]
 
-    def test_git_push_triggers_staged_scan(self):
-        """git push triggers staged file scan when command passes interceptor.
-
-        Note: with default config, 'curl.*|.*sh' approval pattern matches 'push'
-        via regex alternation (.*sh). We patch the interceptor to isolate the
-        staged-files scanning logic.
-        """
-        with patch("rafter_cli.commands.hook._scan_staged_files") as mock_scan, \
-             patch("rafter_cli.commands.hook.CommandInterceptor") as mock_cls:
+    def test_git_push_scans_staged(self):
+        with patch("rafter_cli.commands.hook._scan_staged_files") as mock_scan:
             mock_scan.return_value = {"secrets_found": False, "count": 0, "files": 0}
-            mock_eval = mock_cls.return_value.evaluate
-            mock_eval.return_value = type("Eval", (), {
-                "allowed": True, "requires_approval": False, "reason": None,
-            })()
             result = _evaluate_bash("git push origin main")
             assert result["decision"] == "allow"
             mock_scan.assert_called_once()
