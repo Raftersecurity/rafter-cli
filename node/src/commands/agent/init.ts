@@ -7,9 +7,54 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
+import { fmt } from "../../utils/formatter.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+function installClaudeCodeHooks(): void {
+  const homeDir = os.homedir();
+  const settingsPath = path.join(homeDir, ".claude", "settings.json");
+  const claudeDir = path.join(homeDir, ".claude");
+
+  if (!fs.existsSync(claudeDir)) {
+    fs.mkdirSync(claudeDir, { recursive: true });
+  }
+
+  // Read existing settings or start fresh
+  let settings: Record<string, any> = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    } catch {
+      // Corrupted file — start fresh but warn
+      console.log(fmt.warning("Existing settings.json was unreadable, creating new one"));
+    }
+  }
+
+  // Merge hooks — don't overwrite existing non-Rafter hooks
+  if (!settings.hooks) settings.hooks = {};
+  if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+
+  const rafterHook = { type: "command", command: "rafter hook pretool" };
+
+  // Remove any existing Rafter hooks to avoid duplicates
+  settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
+    (entry: any) => {
+      const hooks = entry.hooks || [];
+      return !hooks.some((h: any) => h.command === "rafter hook pretool");
+    }
+  );
+
+  // Add Rafter hooks
+  settings.hooks.PreToolUse.push(
+    { matcher: "Bash", hooks: [rafterHook] },
+    { matcher: "Write|Edit", hooks: [rafterHook] },
+  );
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+  console.log(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
+}
 
 async function installClaudeCodeSkills(): Promise<void> {
   const homeDir = os.homedir();
@@ -31,9 +76,9 @@ async function installClaudeCodeSkills(): Promise<void> {
 
   if (fs.existsSync(backendTemplatePath)) {
     fs.copyFileSync(backendTemplatePath, backendSkillPath);
-    console.log(`✓ Installed Rafter Backend skill to ${backendSkillPath}`);
+    console.log(fmt.success(`Installed Rafter Backend skill to ${backendSkillPath}`));
   } else {
-    console.log(`⚠️  Backend skill template not found at ${backendTemplatePath}`);
+    console.log(fmt.warning(`Backend skill template not found at ${backendTemplatePath}`));
   }
 
   // Install Agent Security Skill
@@ -47,9 +92,9 @@ async function installClaudeCodeSkills(): Promise<void> {
 
   if (fs.existsSync(agentTemplatePath)) {
     fs.copyFileSync(agentTemplatePath, agentSkillPath);
-    console.log(`✓ Installed Rafter Agent Security skill to ${agentSkillPath}`);
+    console.log(fmt.success(`Installed Rafter Agent Security skill to ${agentSkillPath}`));
   } else {
-    console.log(`⚠️  Agent Security skill template not found at ${agentTemplatePath}`);
+    console.log(fmt.warning(`Agent Security skill template not found at ${agentTemplatePath}`));
   }
 }
 
@@ -62,8 +107,8 @@ export function createInitCommand(): Command {
     .option("--claude-code", "Force Claude Code skill installation")
     .option("--skip-gitleaks", "Skip Gitleaks binary download")
     .action(async (opts) => {
-      console.log("\n🛡️  Rafter Agent Security Setup");
-      console.log("━".repeat(40));
+      console.log(fmt.header("Rafter Agent Security Setup"));
+      console.log(fmt.divider());
       console.log();
 
       const manager = new ConfigManager();
@@ -73,36 +118,36 @@ export function createInitCommand(): Command {
       const hasClaudeCode = opts.claudeCode || fs.existsSync(path.join(os.homedir(), ".claude"));
 
       if (hasOpenClaw) {
-        console.log("✓ Detected environment: OpenClaw");
+        console.log(fmt.success("Detected environment: OpenClaw"));
       } else {
-        console.log("ℹ️  OpenClaw not detected");
+        console.log(fmt.info("OpenClaw not detected"));
       }
 
       if (hasClaudeCode) {
-        console.log("✓ Detected environment: Claude Code");
+        console.log(fmt.success("Detected environment: Claude Code"));
       } else {
-        console.log("ℹ️  Claude Code not detected");
+        console.log(fmt.info("Claude Code not detected"));
       }
 
       // Initialize directory structure
       try {
         await manager.initialize();
-        console.log(`✓ Created config at ~/.rafter/config.json`);
+        console.log(fmt.success("Created config at ~/.rafter/config.json"));
       } catch (e) {
-        console.error(`Failed to initialize: ${e}`);
+        console.error(fmt.error(`Failed to initialize: ${e}`));
         process.exit(1);
       }
 
       // Set risk level
       const validRiskLevels = ["minimal", "moderate", "aggressive"];
       if (!validRiskLevels.includes(opts.riskLevel)) {
-        console.error(`Invalid risk level: ${opts.riskLevel}`);
+        console.error(fmt.error(`Invalid risk level: ${opts.riskLevel}`));
         console.error(`Valid options: ${validRiskLevels.join(", ")}`);
         process.exit(1);
       }
 
       manager.set("agent.riskLevel", opts.riskLevel);
-      console.log(`✓ Set risk level: ${opts.riskLevel}`);
+      console.log(fmt.success(`Set risk level: ${opts.riskLevel}`));
 
       // Download Gitleaks binary (optional)
       if (!opts.skipGitleaks) {
@@ -110,22 +155,22 @@ export function createInitCommand(): Command {
         const platformInfo = binaryManager.getPlatformInfo();
 
         if (!platformInfo.supported) {
-          console.log(`ℹ️  Gitleaks not available for ${platformInfo.platform}/${platformInfo.arch}`);
-          console.log("✓ Using pattern-based scanning (21 patterns)");
+          console.log(fmt.info(`Gitleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
+          console.log(fmt.success("Using pattern-based scanning (21 patterns)"));
         } else if (binaryManager.isGitleaksInstalled()) {
           const version = await binaryManager.getGitleaksVersion();
-          console.log(`✓ Gitleaks already installed (${version})`);
+          console.log(fmt.success(`Gitleaks already installed (${version})`));
         } else {
           console.log();
-          console.log("📦 Downloading Gitleaks (enhanced secret detection)...");
+          console.log(fmt.info("Downloading Gitleaks (enhanced secret detection)..."));
           try {
             await binaryManager.downloadGitleaks((msg) => {
               console.log(`   ${msg}`);
             });
             console.log();
           } catch (e) {
-            console.log(`⚠️  Failed to download Gitleaks: ${e}`);
-            console.log("✓ Falling back to pattern-based scanning");
+            console.log(fmt.warning(`Failed to download Gitleaks: ${e}`));
+            console.log(fmt.success("Falling back to pattern-based scanning"));
             console.log();
           }
         }
@@ -137,28 +182,29 @@ export function createInitCommand(): Command {
           const skillManager = new SkillManager();
           const installed = await skillManager.installRafterSkill();
           if (installed) {
-            console.log("✓ Installed Rafter Security skill to ~/.openclaw/skills/rafter-security.md");
+            console.log(fmt.success("Installed Rafter Security skill to ~/.openclaw/skills/rafter-security.md"));
             manager.set("agent.environments.openclaw.enabled", true);
           } else {
-            console.log("⚠️  Failed to install Rafter Security skill");
+            console.log(fmt.warning("Failed to install Rafter Security skill"));
           }
         } catch (e) {
-          console.error(`Failed to install OpenClaw skill: ${e}`);
+          console.error(fmt.error(`Failed to install OpenClaw skill: ${e}`));
         }
       }
 
-      // Install Claude Code skills if applicable
+      // Install Claude Code skills + hooks if applicable
       if (hasClaudeCode && !opts.skipClaudeCode) {
         try {
           await installClaudeCodeSkills();
+          installClaudeCodeHooks();
           manager.set("agent.environments.claudeCode.enabled", true);
         } catch (e) {
-          console.error(`Failed to install Claude Code skills: ${e}`);
+          console.error(fmt.error(`Failed to install Claude Code integration: ${e}`));
         }
       }
 
       console.log();
-      console.log("✓ Agent security initialized!");
+      console.log(fmt.success("Agent security initialized!"));
       console.log();
       console.log("Next steps:");
       if (hasOpenClaw && !opts.skipOpenclaw) {

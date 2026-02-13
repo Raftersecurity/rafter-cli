@@ -20,6 +20,14 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 
 ---
 
+## Global Options
+
+- `-a, --agent` — Plain output for AI agents (no colors, no emoji)
+- `-V, --version` — Print version
+- `-h, --help` — Show help
+
+---
+
 ## Backend Scanning Commands
 
 **Important**: The scanner analyzes the **remote repository** (e.g., on GitHub), not your local files. Auto-detection uses your local Git configuration to determine which remote repository and branch to scan.
@@ -83,6 +91,7 @@ Scan files or directories for secrets (21+ patterns).
 - `-q, --quiet` — only output if secrets found
 - `--json` — output as JSON
 - `--staged` — scan git staged files only
+- `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
 - `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
 
 Exit code 1 if secrets found, 0 if clean.
@@ -133,6 +142,42 @@ Manage agent configuration (dot-notation paths).
 - `rafter agent config set <key> <value>` — write value
 
 Config keys: `agent.riskLevel`, `agent.commandPolicy.mode`, `agent.commandPolicy.blockedPatterns`, `agent.commandPolicy.requireApproval`, `agent.outputFiltering.redactSecrets`, `agent.audit.logAllActions`, `agent.audit.retentionDays`, `agent.audit.logLevel`.
+
+### rafter ci init [OPTIONS]
+
+Generate CI/CD pipeline configuration for secret scanning.
+
+- `--platform <platform>` — `github`, `gitlab`, or `circleci` (default: auto-detect)
+- `--output <path>` — output file path (default: platform-specific)
+- `--with-backend` — include backend security audit job (requires `RAFTER_API_KEY`)
+
+Auto-detection: checks for `.github/`, `.gitlab-ci.yml`, `.circleci/` in cwd.
+
+---
+
+## Policy File (`.rafter.yml`)
+
+Project-level security policy. Placed in project root; CLI walks from cwd to git root.
+
+```yaml
+version: "1"
+risk_level: moderate
+command_policy:
+  mode: approve-dangerous
+  blocked_patterns: ["rm -rf /"]
+  require_approval: ["npm publish"]
+scan:
+  exclude_paths: ["vendor/", "third_party/"]
+  custom_patterns:
+    - name: "Internal API Key"
+      regex: "INTERNAL_[A-Z0-9]{32}"
+      severity: critical
+audit:
+  retention_days: 90
+  log_level: info
+```
+
+Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not append.
 
 ---
 

@@ -2,6 +2,12 @@ export type RiskLevel = 'minimal' | 'moderate' | 'aggressive';
 export type CommandPolicyMode = 'allow-all' | 'approve-dangerous' | 'deny-list';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
+export interface ScanCustomPattern {
+  name: string;
+  regex: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+}
+
 export interface RafterConfig {
   version: string;
   initialized: string;
@@ -45,6 +51,10 @@ export interface RafterConfig {
       logAllActions: boolean;
       retentionDays: number;
       logLevel: LogLevel;
+    };
+    scan?: {
+      excludePaths?: string[];
+      customPatterns?: ScanCustomPattern[];
     };
   };
 }

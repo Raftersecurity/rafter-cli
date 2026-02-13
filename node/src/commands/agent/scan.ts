@@ -1,10 +1,19 @@
 import { Command } from "commander";
-import { RegexScanner } from "../../scanners/regex-scanner.js";
+import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { GitleaksScanner } from "../../scanners/gitleaks.js";
-import { BinaryManager } from "../../utils/binary-manager.js";
-import { execSync } from "child_process";
+import { ConfigManager } from "../../core/config-manager.js";
+import { execSync, execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
+import { fmt } from "../../utils/formatter.js";
+
+interface ScanOpts {
+  quiet?: boolean;
+  json?: boolean;
+  engine?: string;
+  staged?: boolean;
+  diff?: string;
+}
 
 export function createScanCommand(): Command {
   return new Command("scan")
@@ -13,11 +22,23 @@ export function createScanCommand(): Command {
     .option("-q, --quiet", "Only output if secrets found")
     .option("--json", "Output as JSON")
     .option("--staged", "Scan only git staged files")
+    .option("--diff <ref>", "Scan files changed since a git ref")
     .option("--engine <engine>", "Scan engine: gitleaks or patterns", "auto")
-    .action(async (scanPath, opts) => {
+    .action(async (scanPath, opts: ScanOpts) => {
+      // Load policy-merged config for excludePaths/customPatterns
+      const manager = new ConfigManager();
+      const cfg = manager.loadWithPolicy();
+      const scanCfg = cfg.agent?.scan;
+
+      // Handle --diff flag
+      if (opts.diff) {
+        await scanDiffFiles(opts.diff, opts, scanCfg);
+        return;
+      }
+
       // Handle --staged flag
       if (opts.staged) {
-        await scanStagedFiles(opts);
+        await scanStagedFiles(opts, scanCfg);
         return;
       }
 
@@ -30,7 +51,7 @@ export function createScanCommand(): Command {
       }
 
       // Determine scan engine
-      const engine = await selectEngine(opts.engine, opts.quiet);
+      const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
 
       // Determine if path is file or directory
       const stats = fs.statSync(resolvedPath);
@@ -40,58 +61,127 @@ export function createScanCommand(): Command {
         if (!opts.quiet) {
           console.error(`Scanning directory: ${resolvedPath} (${engine})`);
         }
-        results = await scanDirectory(resolvedPath, engine);
+        results = await scanDirectory(resolvedPath, engine, scanCfg);
       } else {
         if (!opts.quiet) {
           console.error(`Scanning file: ${resolvedPath} (${engine})`);
         }
-        results = await scanFile(resolvedPath, engine);
+        results = await scanFile(resolvedPath, engine, scanCfg);
       }
 
-      // Output results
-      if (opts.json) {
-        console.log(JSON.stringify(results, null, 2));
-      } else {
-        if (results.length === 0) {
-          if (!opts.quiet) {
-            console.log("\n✓ No secrets detected\n");
-          }
-          process.exit(0);
-        } else {
-          console.log(`\n⚠️  Found secrets in ${results.length} file(s):\n`);
-
-          let totalMatches = 0;
-          for (const result of results) {
-            console.log(`\n📄 ${result.file}`);
-
-            for (const match of result.matches) {
-              totalMatches++;
-              const location = match.line ? `Line ${match.line}` : "Unknown location";
-              const severity = getSeverityEmoji(match.pattern.severity);
-
-              console.log(`  ${severity} [${match.pattern.severity.toUpperCase()}] ${match.pattern.name}`);
-              console.log(`     Location: ${location}`);
-              console.log(`     Pattern: ${match.pattern.description || match.pattern.regex}`);
-              console.log(`     Redacted: ${match.redacted}`);
-              console.log();
-            }
-          }
-
-          console.log(`\n⚠️  Total: ${totalMatches} secret(s) detected in ${results.length} file(s)\n`);
-          console.log("Run 'rafter agent audit' to see the security log.\n");
-
-          process.exit(1);
-        }
-      }
+      outputScanResults(results, opts);
     });
+}
+
+/**
+ * Shared output logic for scan results
+ */
+function outputScanResults(
+  results: ScanResult[],
+  opts: ScanOpts,
+  context?: string,
+): void {
+  if (opts.json) {
+    console.log(JSON.stringify(results, null, 2));
+    process.exit(results.length > 0 ? 1 : 0);
+  }
+
+  if (results.length === 0) {
+    if (!opts.quiet) {
+      const msg = context ? `No secrets detected in ${context}` : "No secrets detected";
+      console.log(`\n${fmt.success(msg)}\n`);
+    }
+    process.exit(0);
+  }
+
+  console.log(`\n${fmt.warning(`Found secrets in ${results.length} file(s):`)}\n`);
+
+  let totalMatches = 0;
+  for (const result of results) {
+    console.log(`\n${fmt.info(result.file)}`);
+
+    for (const match of result.matches) {
+      totalMatches++;
+      const location = match.line ? `Line ${match.line}` : "Unknown location";
+      const sev = fmt.severity(match.pattern.severity);
+
+      console.log(`  ${sev} ${match.pattern.name}`);
+      console.log(`     Location: ${location}`);
+      console.log(`     Pattern: ${match.pattern.description || match.pattern.regex}`);
+      console.log(`     Redacted: ${match.redacted}`);
+      console.log();
+    }
+  }
+
+  console.log(`\n${fmt.warning(`Total: ${totalMatches} secret(s) detected in ${results.length} file(s)`)}\n`);
+
+  if (context === "staged files") {
+    console.log(`${fmt.error("Commit blocked. Remove secrets before committing.")}\n`);
+  } else {
+    console.log(`Run 'rafter agent audit' to see the security log.\n`);
+  }
+
+  process.exit(1);
+}
+
+/**
+ * Scan files changed since a git ref
+ */
+async function scanDiffFiles(
+  ref: string,
+  opts: ScanOpts,
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+): Promise<void> {
+  try {
+    const diffOutput = execFileSync("git", ["diff", "--name-only", "--diff-filter=ACM", ref], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+
+    if (!diffOutput) {
+      if (!opts.quiet) {
+        console.log(fmt.success(`No files changed since ${ref}`));
+      }
+      process.exit(0);
+    }
+
+    const changedFiles = diffOutput.split("\n").map(f => f.trim()).filter(f => f);
+
+    if (!opts.quiet) {
+      console.error(`Scanning ${changedFiles.length} file(s) changed since ${ref}...`);
+    }
+
+    const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
+
+    const allResults: ScanResult[] = [];
+    for (const file of changedFiles) {
+      const filePath = path.resolve(file);
+      if (!fs.existsSync(filePath)) continue;
+      const stats = fs.statSync(filePath);
+      if (!stats.isFile()) continue;
+
+      const results = await scanFile(filePath, engine, scanCfg);
+      allResults.push(...results);
+    }
+
+    outputScanResults(allResults, opts, `files changed since ${ref}`);
+  } catch (error: any) {
+    if (error.status === 128) {
+      console.error("Error: Not in a git repository or invalid ref");
+      process.exit(1);
+    }
+    throw error;
+  }
 }
 
 /**
  * Scan git staged files for secrets
  */
-async function scanStagedFiles(opts: { quiet?: boolean; json?: boolean; engine?: string }) {
+async function scanStagedFiles(
+  opts: ScanOpts,
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+): Promise<void> {
   try {
-    // Get list of staged files
     const stagedFilesOutput = execSync("git diff --cached --name-only --diff-filter=ACM", {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"]
@@ -99,7 +189,7 @@ async function scanStagedFiles(opts: { quiet?: boolean; json?: boolean; engine?:
 
     if (!stagedFilesOutput) {
       if (!opts.quiet) {
-        console.log("✓ No files staged for commit");
+        console.log(fmt.success("No files staged for commit"));
       }
       process.exit(0);
     }
@@ -110,64 +200,20 @@ async function scanStagedFiles(opts: { quiet?: boolean; json?: boolean; engine?:
       console.error(`Scanning ${stagedFiles.length} staged file(s)...`);
     }
 
-    // Determine scan engine
     const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
 
-    // Scan each staged file
-    const allResults = [];
+    const allResults: ScanResult[] = [];
     for (const file of stagedFiles) {
       const filePath = path.resolve(file);
-
-      // Skip if file doesn't exist (might be deleted)
-      if (!fs.existsSync(filePath)) {
-        continue;
-      }
-
-      // Skip if not a regular file
+      if (!fs.existsSync(filePath)) continue;
       const stats = fs.statSync(filePath);
-      if (!stats.isFile()) {
-        continue;
-      }
+      if (!stats.isFile()) continue;
 
-      const results = await scanFile(filePath, engine);
+      const results = await scanFile(filePath, engine, scanCfg);
       allResults.push(...results);
     }
 
-    // Output results (same as regular scan)
-    if (opts.json) {
-      console.log(JSON.stringify(allResults, null, 2));
-    } else {
-      if (allResults.length === 0) {
-        if (!opts.quiet) {
-          console.log("\n✓ No secrets detected in staged files\n");
-        }
-        process.exit(0);
-      } else {
-        console.log(`\n⚠️  Found secrets in ${allResults.length} staged file(s):\n`);
-
-        let totalMatches = 0;
-        for (const result of allResults) {
-          console.log(`\n📄 ${result.file}`);
-
-          for (const match of result.matches) {
-            totalMatches++;
-            const location = match.line ? `Line ${match.line}` : "Unknown location";
-            const severity = getSeverityEmoji(match.pattern.severity);
-
-            console.log(`  ${severity} [${match.pattern.severity.toUpperCase()}] ${match.pattern.name}`);
-            console.log(`     Location: ${location}`);
-            console.log(`     Pattern: ${match.pattern.description || match.pattern.regex}`);
-            console.log(`     Redacted: ${match.redacted}`);
-            console.log();
-          }
-        }
-
-        console.log(`\n⚠️  Total: ${totalMatches} secret(s) detected in ${allResults.length} file(s)\n`);
-        console.log("❌ Commit blocked. Remove secrets before committing.\n");
-
-        process.exit(1);
-      }
-    }
+    outputScanResults(allResults, opts, "staged files");
   } catch (error: any) {
     if (error.status === 128) {
       console.error("Error: Not in a git repository");
@@ -175,16 +221,6 @@ async function scanStagedFiles(opts: { quiet?: boolean; json?: boolean; engine?:
     }
     throw error;
   }
-}
-
-function getSeverityEmoji(severity: string): string {
-  const emojiMap: Record<string, string> = {
-    critical: "🔴",
-    high: "🟠",
-    medium: "🟡",
-    low: "🟢"
-  };
-  return emojiMap[severity] || "⚪";
 }
 
 /**
@@ -200,7 +236,7 @@ async function selectEngine(preference: string, quiet: boolean): Promise<"gitlea
     const available = await gitleaks.isAvailable();
     if (!available) {
       if (!quiet) {
-        console.error("⚠️  Gitleaks requested but not available, using patterns");
+        console.error(fmt.warning("Gitleaks requested but not available, using patterns"));
       }
       return "patterns";
     }
@@ -217,21 +253,24 @@ async function selectEngine(preference: string, quiet: boolean): Promise<"gitlea
 /**
  * Scan a file with selected engine
  */
-async function scanFile(filePath: string, engine: "gitleaks" | "patterns") {
+async function scanFile(
+  filePath: string,
+  engine: "gitleaks" | "patterns",
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+): Promise<ScanResult[]> {
   if (engine === "gitleaks") {
     try {
       const gitleaks = new GitleaksScanner();
       const result = await gitleaks.scanFile(filePath);
       return result.matches.length > 0 ? [result] : [];
     } catch (e) {
-      // Fall back to patterns on error
-      console.error(`⚠️  Gitleaks scan failed, falling back to patterns`);
-      const scanner = new RegexScanner();
+      console.error(fmt.warning("Gitleaks scan failed, falling back to patterns"));
+      const scanner = new RegexScanner(scanCfg?.customPatterns);
       const result = scanner.scanFile(filePath);
       return result.matches.length > 0 ? [result] : [];
     }
   } else {
-    const scanner = new RegexScanner();
+    const scanner = new RegexScanner(scanCfg?.customPatterns);
     const result = scanner.scanFile(filePath);
     return result.matches.length > 0 ? [result] : [];
   }
@@ -240,19 +279,22 @@ async function scanFile(filePath: string, engine: "gitleaks" | "patterns") {
 /**
  * Scan a directory with selected engine
  */
-async function scanDirectory(dirPath: string, engine: "gitleaks" | "patterns") {
+async function scanDirectory(
+  dirPath: string,
+  engine: "gitleaks" | "patterns",
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+): Promise<ScanResult[]> {
   if (engine === "gitleaks") {
     try {
       const gitleaks = new GitleaksScanner();
       return await gitleaks.scanDirectory(dirPath);
     } catch (e) {
-      // Fall back to patterns on error
-      console.error(`⚠️  Gitleaks scan failed, falling back to patterns`);
-      const scanner = new RegexScanner();
-      return scanner.scanDirectory(dirPath);
+      console.error(fmt.warning("Gitleaks scan failed, falling back to patterns"));
+      const scanner = new RegexScanner(scanCfg?.customPatterns);
+      return scanner.scanDirectory(dirPath, { excludePaths: scanCfg?.excludePaths });
     }
   } else {
-    const scanner = new RegexScanner();
-    return scanner.scanDirectory(dirPath);
+    const scanner = new RegexScanner(scanCfg?.customPatterns);
+    return scanner.scanDirectory(dirPath, { excludePaths: scanCfg?.excludePaths });
   }
 }
