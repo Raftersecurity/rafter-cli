@@ -30,7 +30,7 @@ class GitleaksScanner:
                 capture_output=True, timeout=5,
             )
             return True
-        except Exception:
+        except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
             return False
 
     def scan_file(self, file_path: str) -> GitleaksScanResult:

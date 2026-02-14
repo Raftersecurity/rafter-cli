@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
 
@@ -46,9 +48,10 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
                     }
                     for r in results
                 ]
-            except Exception:
+            except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
                 if engine == "gitleaks":
                     raise
+                print(f"rafter: gitleaks scan failed, falling back to patterns: {exc}", file=sys.stderr)
                 # Fall through to patterns on auto
 
         elif engine == "gitleaks":

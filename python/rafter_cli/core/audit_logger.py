@@ -108,40 +108,5 @@ class AuditLogger:
 
     @staticmethod
     def _assess_command_risk(command: str) -> str:
-        import re
-
-        critical = [
-            r"rm\s+-rf\s+/",
-            r":\(\)\{\s*:\|:&\s*\};:",
-            r"dd\s+if=.*of=/dev/sd",
-            r">\s*/dev/sd",
-            r"mkfs",
-            r"fdisk",
-            r"parted",
-        ]
-        high = [
-            r"rm\s+-rf",
-            r"sudo\s+rm",
-            r"chmod\s+777",
-            r"curl.*\|\s*(bash|sh|zsh|dash)\b",
-            r"wget.*\|\s*(bash|sh|zsh|dash)\b",
-            r"git\s+push\s+--force",
-            r"docker\s+system\s+prune",
-            r"npm\s+publish",
-            r"pypi.*upload",
-        ]
-        medium = [
-            r"sudo", r"chmod", r"chown", r"systemctl",
-            r"service", r"kill\s+-9", r"pkill", r"killall",
-        ]
-
-        for p in critical:
-            if re.search(p, command, re.IGNORECASE):
-                return "critical"
-        for p in high:
-            if re.search(p, command, re.IGNORECASE):
-                return "high"
-        for p in medium:
-            if re.search(p, command, re.IGNORECASE):
-                return "medium"
-        return "low"
+        from .risk_rules import assess_command_risk
+        return assess_command_risk(command)
