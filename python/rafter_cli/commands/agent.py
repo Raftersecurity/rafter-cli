@@ -531,7 +531,8 @@ def exec_cmd(
 
     # Execute
     try:
-        subprocess.run(command, shell=True, check=True)
+        import shlex
+        subprocess.run(shlex.split(command), check=True)
         rprint(f"\n{fmt.success('Command executed successfully')}\n")
     except subprocess.CalledProcessError as e:
         rprint(f"\n{fmt.error(f'Command failed with exit code {e.returncode}')}\n")

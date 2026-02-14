@@ -43,7 +43,13 @@ def load_policy() -> dict | None:
         if not raw or not isinstance(raw, dict):
             return None
         return _map_policy(raw)
-    except Exception:
+    except yaml.YAMLError as e:
+        import sys
+        print(f"Warning: Failed to parse policy file {path}: {e}", file=sys.stderr)
+        return None
+    except OSError as e:
+        import sys
+        print(f"Warning: Cannot read policy file {path}: {e}", file=sys.stderr)
         return None
 
 

@@ -35,8 +35,8 @@ class CommandPolicyConfig:
     require_approval: list[str] = field(default_factory=lambda: [
         "rm -rf",
         "sudo rm",
-        r"curl.*\|.*sh",
-        r"wget.*\|.*sh",
+        r"curl.*\|\s*(bash|sh|zsh|dash)\b",
+        r"wget.*\|\s*(bash|sh|zsh|dash)\b",
         "chmod 777",
         "git push --force",
     ])

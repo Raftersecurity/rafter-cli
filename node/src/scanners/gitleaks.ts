@@ -1,11 +1,12 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { BinaryManager } from "../utils/binary-manager.js";
 import { PatternMatch } from "../core/pattern-engine.js";
 import fs from "fs";
+import os from "os";
 import path from "path";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 interface GitleaksResult {
   Description: string;
@@ -59,12 +60,12 @@ export class GitleaksScanner {
     }
 
     const gitleaksPath = this.binaryManager.getGitleaksPath();
-    const tmpReport = path.join("/tmp", `gitleaks-${Date.now()}.json`);
+    const tmpReport = path.join(os.tmpdir(), `gitleaks-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
 
     try {
       // Run gitleaks detect on file
-      await execAsync(
-        `"${gitleaksPath}" detect --no-git -f json -r "${tmpReport}" -s "${filePath}"`,
+      await execFileAsync(
+        gitleaksPath, ["detect", "--no-git", "-f", "json", "-r", tmpReport, "-s", filePath],
         { timeout: 30000 }
       );
 
@@ -133,12 +134,12 @@ export class GitleaksScanner {
     }
 
     const gitleaksPath = this.binaryManager.getGitleaksPath();
-    const tmpReport = path.join("/tmp", `gitleaks-${Date.now()}.json`);
+    const tmpReport = path.join(os.tmpdir(), `gitleaks-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
 
     try {
       // Run gitleaks detect on directory
-      await execAsync(
-        `"${gitleaksPath}" detect --no-git -f json -r "${tmpReport}" -s "${dirPath}"`,
+      await execFileAsync(
+        gitleaksPath, ["detect", "--no-git", "-f", "json", "-r", tmpReport, "-s", dirPath],
         { timeout: 60000 }
       );
 
