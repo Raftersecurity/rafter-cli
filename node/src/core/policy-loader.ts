@@ -64,7 +64,7 @@ export function loadPolicy(): PolicyFile | null {
     const content = fs.readFileSync(policyPath, "utf-8");
     const parsed = yaml.load(content) as Record<string, any>;
     if (!parsed || typeof parsed !== "object") return null;
-    return mapPolicy(parsed);
+    return validatePolicy(mapPolicy(parsed), parsed);
   } catch (e: any) {
     console.error(`Warning: Failed to parse policy file ${policyPath}: ${e.message}`);
     return null;
@@ -111,6 +111,84 @@ function mapPolicy(raw: Record<string, any>): PolicyFile {
       policy.audit.retentionDays = Number(raw.audit.retention_days);
     }
     if (raw.audit.log_level) policy.audit.logLevel = raw.audit.log_level;
+  }
+
+  return policy;
+}
+
+const VALID_TOP_LEVEL_KEYS = new Set(["version", "risk_level", "command_policy", "scan", "audit"]);
+const VALID_RISK_LEVELS = new Set(["minimal", "moderate", "aggressive"]);
+const VALID_COMMAND_MODES = new Set(["allow-all", "approve-dangerous", "deny-list"]);
+const VALID_LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
+
+/**
+ * Validate a mapped policy, warn on stderr for invalid fields, strip them out.
+ * `raw` is the original parsed YAML (snake_case keys) for unknown-key detection.
+ */
+function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFile {
+  // 1. Unknown top-level keys
+  for (const key of Object.keys(raw)) {
+    if (!VALID_TOP_LEVEL_KEYS.has(key)) {
+      console.error(`Warning: Unknown policy key "${key}" — ignoring.`);
+    }
+  }
+
+  // 2. Type checking + strip invalid
+  if (policy.version !== undefined && typeof policy.version !== "string") {
+    console.error(`Warning: "version" must be a string — ignoring.`);
+    delete policy.version;
+  }
+
+  if (policy.riskLevel !== undefined && !VALID_RISK_LEVELS.has(policy.riskLevel)) {
+    console.error(`Warning: "risk_level" must be one of: minimal, moderate, aggressive — ignoring.`);
+    delete policy.riskLevel;
+  }
+
+  if (policy.commandPolicy) {
+    if (policy.commandPolicy.mode !== undefined && !VALID_COMMAND_MODES.has(policy.commandPolicy.mode)) {
+      console.error(`Warning: "command_policy.mode" must be one of: allow-all, approve-dangerous, deny-list — ignoring.`);
+      delete policy.commandPolicy.mode;
+    }
+    if (policy.commandPolicy.blockedPatterns !== undefined) {
+      if (!Array.isArray(policy.commandPolicy.blockedPatterns) || !policy.commandPolicy.blockedPatterns.every((v: any) => typeof v === "string")) {
+        console.error(`Warning: "command_policy.blocked_patterns" must be an array of strings — ignoring.`);
+        delete policy.commandPolicy.blockedPatterns;
+      }
+    }
+    if (policy.commandPolicy.requireApproval !== undefined) {
+      if (!Array.isArray(policy.commandPolicy.requireApproval) || !policy.commandPolicy.requireApproval.every((v: any) => typeof v === "string")) {
+        console.error(`Warning: "command_policy.require_approval" must be an array of strings — ignoring.`);
+        delete policy.commandPolicy.requireApproval;
+      }
+    }
+  }
+
+  if (policy.scan) {
+    if (policy.scan.excludePaths !== undefined) {
+      if (!Array.isArray(policy.scan.excludePaths) || !policy.scan.excludePaths.every((v: any) => typeof v === "string")) {
+        console.error(`Warning: "scan.exclude_paths" must be an array of strings — ignoring.`);
+        delete policy.scan.excludePaths;
+      }
+    }
+    if (policy.scan.customPatterns !== undefined) {
+      if (!Array.isArray(policy.scan.customPatterns) || !policy.scan.customPatterns.every((v: any) =>
+        v && typeof v === "object" && typeof v.name === "string" && typeof v.regex === "string" && typeof v.severity === "string"
+      )) {
+        console.error(`Warning: "scan.custom_patterns" must be an array of objects with name, regex, severity — ignoring.`);
+        delete policy.scan.customPatterns;
+      }
+    }
+  }
+
+  if (policy.audit) {
+    if (policy.audit.retentionDays !== undefined && (typeof policy.audit.retentionDays !== "number" || isNaN(policy.audit.retentionDays))) {
+      console.error(`Warning: "audit.retention_days" must be a number — ignoring.`);
+      delete policy.audit.retentionDays;
+    }
+    if (policy.audit.logLevel !== undefined && !VALID_LOG_LEVELS.has(policy.audit.logLevel)) {
+      console.error(`Warning: "audit.log_level" must be one of: debug, info, warn, error — ignoring.`);
+      delete policy.audit.logLevel;
+    }
   }
 
   return policy;

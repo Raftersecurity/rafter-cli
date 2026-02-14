@@ -26,20 +26,12 @@ class ScanCustomPattern:
 @dataclass
 class CommandPolicyConfig:
     mode: CommandPolicyMode = "approve-dangerous"
-    blocked_patterns: list[str] = field(default_factory=lambda: [
-        "rm -rf /",
-        ":(){ :|:& };:",
-        "dd if=/dev/zero of=/dev/sda",
-        "> /dev/sda",
-    ])
-    require_approval: list[str] = field(default_factory=lambda: [
-        "rm -rf",
-        "sudo rm",
-        r"curl.*\|\s*(bash|sh|zsh|dash)\b",
-        r"wget.*\|\s*(bash|sh|zsh|dash)\b",
-        "chmod 777",
-        "git push --force",
-    ])
+    blocked_patterns: list[str] = field(
+        default_factory=lambda: list(__import__("rafter_cli.core.risk_rules", fromlist=["DEFAULT_BLOCKED_PATTERNS"]).DEFAULT_BLOCKED_PATTERNS)
+    )
+    require_approval: list[str] = field(
+        default_factory=lambda: list(__import__("rafter_cli.core.risk_rules", fromlist=["DEFAULT_REQUIRE_APPROVAL"]).DEFAULT_REQUIRE_APPROVAL)
+    )
 
 
 @dataclass

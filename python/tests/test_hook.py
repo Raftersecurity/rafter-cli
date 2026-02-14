@@ -2,9 +2,20 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+
+import pytest
 
 from rafter_cli.commands.hook import _evaluate_bash, _evaluate_write
+from rafter_cli.core.config_schema import get_default_config
+
+
+@pytest.fixture(autouse=True)
+def _use_default_config():
+    """Ensure tests use default config, not the real disk config."""
+    with patch("rafter_cli.core.config_manager.ConfigManager.load", return_value=get_default_config()), \
+         patch("rafter_cli.core.config_manager.ConfigManager.load_with_policy", return_value=get_default_config()):
+        yield
 
 
 class TestEvaluateBash:
