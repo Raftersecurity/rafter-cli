@@ -64,7 +64,8 @@ class GitleaksScanner:
             )
             if not os.path.exists(report_path):
                 return []
-            content = open(report_path).read().strip()
+            with open(report_path) as f:
+                content = f.read().strip()
             if not content:
                 return []
             return json.loads(content)

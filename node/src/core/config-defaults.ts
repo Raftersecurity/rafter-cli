@@ -41,8 +41,8 @@ export function getDefaultConfig(): RafterConfig {
         requireApproval: [
           "rm -rf",
           "sudo rm",
-          "curl.*\\|.*sh",
-          "wget.*\\|.*sh",
+          "curl.*\\|\\s*(bash|sh|zsh|dash)\\b",
+          "wget.*\\|\\s*(bash|sh|zsh|dash)\\b",
           "chmod 777",
           "git push --force"
         ]

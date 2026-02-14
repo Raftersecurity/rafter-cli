@@ -65,7 +65,8 @@ export function loadPolicy(): PolicyFile | null {
     const parsed = yaml.load(content) as Record<string, any>;
     if (!parsed || typeof parsed !== "object") return null;
     return mapPolicy(parsed);
-  } catch {
+  } catch (e: any) {
+    console.error(`Warning: Failed to parse policy file ${policyPath}: ${e.message}`);
     return null;
   }
 }
