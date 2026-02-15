@@ -172,7 +172,7 @@ function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFil
     }
     if (policy.scan.customPatterns !== undefined) {
       if (!Array.isArray(policy.scan.customPatterns) || !policy.scan.customPatterns.every((v: any) =>
-        v && typeof v === "object" && typeof v.name === "string" && typeof v.regex === "string" && typeof v.severity === "string"
+        v && typeof v === "object" && typeof v.name === "string" && v.name !== "" && typeof v.regex === "string" && v.regex !== "" && typeof v.severity === "string"
       )) {
         console.error(`Warning: "scan.custom_patterns" must be an array of objects with name, regex, severity — ignoring.`);
         delete policy.scan.customPatterns;

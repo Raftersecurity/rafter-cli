@@ -86,7 +86,10 @@ def _map_policy(raw: dict) -> dict:
     if isinstance(audit, dict):
         policy["audit"] = {}
         if audit.get("retention_days") is not None:
-            policy["audit"]["retention_days"] = int(audit["retention_days"])
+            try:
+                policy["audit"]["retention_days"] = int(audit["retention_days"])
+            except (ValueError, TypeError):
+                print(f'Warning: "audit.retention_days" must be a number — ignoring.', file=sys.stderr)
         if audit.get("log_level"):
             policy["audit"]["log_level"] = audit["log_level"]
 
@@ -138,7 +141,7 @@ def _validate_policy(policy: dict, raw: dict) -> dict:
                 del scan["exclude_paths"]
         if "custom_patterns" in scan:
             valid = isinstance(scan["custom_patterns"], list) and all(
-                isinstance(p, dict) and isinstance(p.get("name"), str) and isinstance(p.get("regex"), str) and isinstance(p.get("severity"), str)
+                isinstance(p, dict) and isinstance(p.get("name"), str) and p.get("name") != "" and isinstance(p.get("regex"), str) and p.get("regex") != "" and isinstance(p.get("severity"), str)
                 for p in scan["custom_patterns"]
             )
             if not valid:

@@ -58,7 +58,7 @@ export function getConfigPath(): string {
 }
 
 export function getAuditLogPath(): string {
-  return path.join(getRafterDir(), "audit.log");
+  return path.join(getRafterDir(), "audit.jsonl");
 }
 
 export function getBinDir(): string {
