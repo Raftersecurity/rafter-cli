@@ -20,6 +20,11 @@ class AuditLogger:
 
     def log(self, entry: dict[str, Any]) -> None:
         """Append an audit entry (JSONL)."""
+        from .config_manager import ConfigManager
+        config = ConfigManager().load()
+        if not config.agent.audit.log_all_actions:
+            return
+
         full = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "session_id": self._session_id,

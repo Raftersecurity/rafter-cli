@@ -16,6 +16,16 @@ LogLevel = Literal["debug", "info", "warn", "error"]
 CONFIG_VERSION = "1.0.0"
 
 
+def _default_blocked_patterns() -> list[str]:
+    from .risk_rules import DEFAULT_BLOCKED_PATTERNS
+    return DEFAULT_BLOCKED_PATTERNS
+
+
+def _default_require_approval() -> list[str]:
+    from .risk_rules import DEFAULT_REQUIRE_APPROVAL
+    return DEFAULT_REQUIRE_APPROVAL
+
+
 @dataclass
 class ScanCustomPattern:
     name: str
@@ -27,10 +37,10 @@ class ScanCustomPattern:
 class CommandPolicyConfig:
     mode: CommandPolicyMode = "approve-dangerous"
     blocked_patterns: list[str] = field(
-        default_factory=lambda: list(__import__("rafter_cli.core.risk_rules", fromlist=["DEFAULT_BLOCKED_PATTERNS"]).DEFAULT_BLOCKED_PATTERNS)
+        default_factory=lambda: list(_default_blocked_patterns())
     )
     require_approval: list[str] = field(
-        default_factory=lambda: list(__import__("rafter_cli.core.risk_rules", fromlist=["DEFAULT_REQUIRE_APPROVAL"]).DEFAULT_REQUIRE_APPROVAL)
+        default_factory=lambda: list(_default_require_approval())
     )
 
 

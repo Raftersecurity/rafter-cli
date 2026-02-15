@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-02-14
+
 ### Added
 - `rafter mcp serve` command — MCP server over stdio for cross-platform agent integrations
 - Four MCP tools: `scan_secrets`, `evaluate_command`, `read_audit_log`, `get_config`
@@ -14,6 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rafter hook pretool` command — PreToolUse hook handler for Claude Code
 - `rafter policy export --format claude|codex` — generate agent platform configs
 - `rafter agent init --claude-code` — auto-install PreToolUse hooks into Claude Code settings
+- `.rafter.yml` schema validation with field-level warnings and graceful degradation
+
+### Fixed
+- Command injection in Node.js gitleaks scanner (`exec` → `execFile` with array args)
+- `curl.*|.*sh` regex matching `git push` due to unbounded alternation (now word-bounded)
+- Python `shell=True` in agent exec command (now uses `shlex.split`)
+- Unclosed file handle in Python gitleaks scanner
+- Silent policy parse failures now warn on stderr
+- Python config deserialization handles Node-written camelCase JSON
+- Python `AuditLogger.log()` now respects `log_all_actions: false` config (parity with Node)
+- Empty regex in `custom_patterns` now rejected by schema validation
+- Audit log filename aligned to `audit.jsonl` in both languages
+
+### Changed
+- Risk assessment patterns extracted to shared modules (`risk-rules.ts`, `risk_rules.py`)
+- Broad `except Exception` handlers replaced with specific exception types in Python
+- `/tmp` usage replaced with `os.tmpdir()` + random filenames
 
 ### Dependencies
 - Added `@modelcontextprotocol/sdk` (Node.js) and `mcp` (Python) for MCP protocol support
