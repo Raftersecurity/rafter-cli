@@ -30,7 +30,7 @@ class GitleaksScanner:
                 capture_output=True, timeout=5,
             )
             return True
-        except Exception:
+        except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
             return False
 
     def scan_file(self, file_path: str) -> GitleaksScanResult:
@@ -64,7 +64,8 @@ class GitleaksScanner:
             )
             if not os.path.exists(report_path):
                 return []
-            content = open(report_path).read().strip()
+            with open(report_path) as f:
+                content = f.read().strip()
             if not content:
                 return []
             return json.loads(content)

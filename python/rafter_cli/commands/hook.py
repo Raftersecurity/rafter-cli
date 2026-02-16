@@ -36,7 +36,8 @@ def _scan_staged_files() -> dict:
         results = scanner.scan_files(staged)
         total = sum(len(r.matches) for r in results)
         return {"secrets_found": len(results) > 0, "count": total, "files": len(results)}
-    except Exception:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        print(f"rafter: staged file scan failed: {exc}", file=sys.stderr)
         return {"secrets_found": False, "count": 0, "files": 0}
 
 

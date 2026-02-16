@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { getAuditLogPath } from "./config-defaults.js";
 import { ConfigManager } from "./config-manager.js";
+import { assessCommandRisk } from "./risk-rules.js";
 
 export type EventType =
   | "command_intercepted"
@@ -246,53 +247,6 @@ export class AuditLogger {
    * Assess risk level of a command
    */
   private assessCommandRisk(command: string): RiskLevel {
-    const cmd = command.toLowerCase();
-
-    const critical = [
-      /rm\s+-rf\s+\//,
-      /:\(\)\{\s*:\|:&\s*\};:/,  // fork bomb
-      /dd\s+if=.*of=\/dev\/sd/,
-      />\s*\/dev\/sd/,
-      /mkfs/,
-      /fdisk/,
-      /parted/
-    ];
-
-    const high = [
-      /rm\s+-rf/,
-      /sudo\s+rm/,
-      /chmod\s+777/,
-      /curl.*\|.*sh/,
-      /wget.*\|.*sh/,
-      /git\s+push\s+--force/,
-      /docker\s+system\s+prune/,
-      /npm\s+publish/,
-      /pypi.*upload/
-    ];
-
-    const medium = [
-      /sudo/,
-      /chmod/,
-      /chown/,
-      /systemctl/,
-      /service/,
-      /kill\s+-9/,
-      /pkill/,
-      /killall/
-    ];
-
-    for (const pattern of critical) {
-      if (pattern.test(cmd)) return "critical";
-    }
-
-    for (const pattern of high) {
-      if (pattern.test(cmd)) return "high";
-    }
-
-    for (const pattern of medium) {
-      if (pattern.test(cmd)) return "medium";
-    }
-
-    return "low";
+    return assessCommandRisk(command) as RiskLevel;
   }
 }
