@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "rafter-cli"
-version = "0.5.0"
+version = "0.5.1"
 description = "Rafter CLI — security for AI builders"
 authors = ["Rafter Team <hello@rafter.so>"]
 license = "MIT"

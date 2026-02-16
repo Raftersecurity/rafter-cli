@@ -1,7 +1,8 @@
 import { ConfigManager } from "./config-manager.js";
 import { AuditLogger } from "./audit-logger.js";
+import { assessCommandRisk, CommandRiskLevel } from "./risk-rules.js";
 
-export type CommandRiskLevel = "low" | "medium" | "high" | "critical";
+export type { CommandRiskLevel } from "./risk-rules.js";
 
 export interface CommandEvaluation {
   command: string;
@@ -141,56 +142,6 @@ export class CommandInterceptor {
    * Assess risk level of command
    */
   private assessRisk(command: string): CommandRiskLevel {
-    const cmd = command.toLowerCase();
-
-    // Critical patterns
-    const critical = [
-      /rm\s+-rf\s+\//,
-      /:\(\)\{\s*:\|:&\s*\};:/,  // fork bomb
-      /dd\s+if=.*of=\/dev\/sd/,
-      />\s*\/dev\/sd/,
-      /mkfs/,
-      /fdisk/,
-      /parted/
-    ];
-
-    // High risk patterns
-    const high = [
-      /rm\s+-rf/,
-      /sudo\s+rm/,
-      /chmod\s+777/,
-      /curl.*\|.*sh/,
-      /wget.*\|.*sh/,
-      /git\s+push\s+--force/,
-      /docker\s+system\s+prune/,
-      /npm\s+publish/,
-      /pypi.*upload/
-    ];
-
-    // Medium risk patterns
-    const medium = [
-      /sudo/,
-      /chmod/,
-      /chown/,
-      /systemctl/,
-      /service/,
-      /kill\s+-9/,
-      /pkill/,
-      /killall/
-    ];
-
-    for (const pattern of critical) {
-      if (pattern.test(cmd)) return "critical";
-    }
-
-    for (const pattern of high) {
-      if (pattern.test(cmd)) return "high";
-    }
-
-    for (const pattern of medium) {
-      if (pattern.test(cmd)) return "medium";
-    }
-
-    return "low";
+    return assessCommandRisk(command);
   }
 }

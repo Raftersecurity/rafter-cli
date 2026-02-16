@@ -16,6 +16,16 @@ LogLevel = Literal["debug", "info", "warn", "error"]
 CONFIG_VERSION = "1.0.0"
 
 
+def _default_blocked_patterns() -> list[str]:
+    from .risk_rules import DEFAULT_BLOCKED_PATTERNS
+    return DEFAULT_BLOCKED_PATTERNS
+
+
+def _default_require_approval() -> list[str]:
+    from .risk_rules import DEFAULT_REQUIRE_APPROVAL
+    return DEFAULT_REQUIRE_APPROVAL
+
+
 @dataclass
 class ScanCustomPattern:
     name: str
@@ -26,20 +36,12 @@ class ScanCustomPattern:
 @dataclass
 class CommandPolicyConfig:
     mode: CommandPolicyMode = "approve-dangerous"
-    blocked_patterns: list[str] = field(default_factory=lambda: [
-        "rm -rf /",
-        ":(){ :|:& };:",
-        "dd if=/dev/zero of=/dev/sda",
-        "> /dev/sda",
-    ])
-    require_approval: list[str] = field(default_factory=lambda: [
-        "rm -rf",
-        "sudo rm",
-        r"curl.*\|.*sh",
-        r"wget.*\|.*sh",
-        "chmod 777",
-        "git push --force",
-    ])
+    blocked_patterns: list[str] = field(
+        default_factory=lambda: list(_default_blocked_patterns())
+    )
+    require_approval: list[str] = field(
+        default_factory=lambda: list(_default_require_approval())
+    )
 
 
 @dataclass
