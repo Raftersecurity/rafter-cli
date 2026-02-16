@@ -3,6 +3,7 @@ import { CommandInterceptor } from "../../core/command-interceptor.js";
 import { RegexScanner } from "../../scanners/regex-scanner.js";
 import { execSync } from "child_process";
 import readline from "readline";
+import { fmt } from "../../utils/formatter.js";
 
 export function createExecCommand(): Command {
   return new Command("exec")
@@ -18,7 +19,7 @@ export function createExecCommand(): Command {
 
       // Step 2: Handle blocked commands
       if (!evaluation.allowed && !evaluation.requiresApproval) {
-        console.error(`\n🚫 Command BLOCKED\n`);
+        console.error(`\n${fmt.error("Command BLOCKED")}\n`);
         console.error(`Risk Level: ${evaluation.riskLevel.toUpperCase()}`);
         console.error(`Reason: ${evaluation.reason}`);
         console.error(`Command: ${command}\n`);
@@ -31,7 +32,7 @@ export function createExecCommand(): Command {
       if (!opts.skipScan && isGitCommand(command)) {
         const scanResult = await scanStagedFiles();
         if (scanResult.secretsFound) {
-          console.error(`\n⚠️  Secrets detected in staged files!\n`);
+          console.error(`\n${fmt.warning("Secrets detected in staged files!")}\n`);
           console.error(`Found ${scanResult.count} secret(s) in ${scanResult.files} file(s)`);
           console.error(`\nRun 'rafter agent scan' for details.\n`);
 
@@ -42,7 +43,7 @@ export function createExecCommand(): Command {
 
       // Step 4: Handle approval required
       if (evaluation.requiresApproval && !opts.force) {
-        console.log(`\n⚠️  Command requires approval\n`);
+        console.log(`\n${fmt.warning("Command requires approval")}\n`);
         console.log(`Risk Level: ${evaluation.riskLevel.toUpperCase()}`);
         console.log(`Command: ${command}`);
         if (evaluation.reason) {
@@ -53,15 +54,15 @@ export function createExecCommand(): Command {
         const approved = await promptApproval();
 
         if (!approved) {
-          console.log("\n❌ Command cancelled\n");
+          console.log(`\n${fmt.error("Command cancelled")}\n`);
           interceptor.logEvaluation(evaluation, "blocked");
           process.exit(1);
         }
 
-        console.log("\n✓ Command approved by user\n");
+        console.log(`\n${fmt.success("Command approved by user")}\n`);
         interceptor.logEvaluation(evaluation, "overridden");
       } else if (opts.force && evaluation.requiresApproval) {
-        console.log(`\n⚠️  Forcing execution (--force flag)\n`);
+        console.log(`\n${fmt.warning("Forcing execution (--force flag)")}\n`);
         interceptor.logEvaluation(evaluation, "overridden");
       } else {
         interceptor.logEvaluation(evaluation, "allowed");
@@ -74,10 +75,10 @@ export function createExecCommand(): Command {
           encoding: "utf-8"
         });
 
-        console.log(`\n✓ Command executed successfully\n`);
+        console.log(`\n${fmt.success("Command executed successfully")}\n`);
         process.exit(0);
       } catch (e: any) {
-        console.error(`\n❌ Command failed with exit code ${e.status}\n`);
+        console.error(`\n${fmt.error(`Command failed with exit code ${e.status}`)}\n`);
         process.exit(e.status || 1);
       }
     });

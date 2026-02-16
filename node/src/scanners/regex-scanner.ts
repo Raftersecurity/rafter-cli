@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { PatternEngine, PatternMatch } from "../core/pattern-engine.js";
+import { PatternEngine, PatternMatch, Pattern } from "../core/pattern-engine.js";
 import { DEFAULT_SECRET_PATTERNS } from "./secret-patterns.js";
 
 export interface ScanResult {
@@ -11,8 +11,18 @@ export interface ScanResult {
 export class RegexScanner {
   private engine: PatternEngine;
 
-  constructor() {
-    this.engine = new PatternEngine(DEFAULT_SECRET_PATTERNS);
+  constructor(customPatterns?: Array<{ name: string; regex: string; severity: string }>) {
+    const patterns: Pattern[] = [...DEFAULT_SECRET_PATTERNS];
+    if (customPatterns) {
+      for (const cp of customPatterns) {
+        patterns.push({
+          name: cp.name,
+          regex: cp.regex,
+          severity: cp.severity as Pattern["severity"],
+        });
+      }
+    }
+    this.engine = new PatternEngine(patterns);
   }
 
   /**
@@ -57,6 +67,7 @@ export class RegexScanner {
    */
   scanDirectory(dirPath: string, options?: {
     exclude?: string[];
+    excludePaths?: string[];
     maxDepth?: number;
   }): ScanResult[] {
     const exclude = options?.exclude || [
@@ -69,6 +80,17 @@ export class RegexScanner {
       ".vscode",
       ".idea"
     ];
+
+    // Merge policy excludePaths into the exclude list
+    if (options?.excludePaths) {
+      for (const ep of options.excludePaths) {
+        // Strip trailing slashes for directory name matching
+        const cleaned = ep.replace(/\/+$/, "");
+        if (!exclude.includes(cleaned)) {
+          exclude.push(cleaned);
+        }
+      }
+    }
 
     const files = this.walkDirectory(dirPath, exclude, options?.maxDepth || 10);
     return this.scanFiles(files);
