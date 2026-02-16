@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `rafter mcp serve` command — MCP server over stdio for cross-platform agent integrations
+- Four MCP tools: `scan_secrets`, `evaluate_command`, `read_audit_log`, `get_config`
+- Two MCP resources: `rafter://config`, `rafter://policy`
+- `rafter hook pretool` command — PreToolUse hook handler for Claude Code
+- `rafter policy export --format claude|codex` — generate agent platform configs
+- `rafter agent init --claude-code` — auto-install PreToolUse hooks into Claude Code settings
+
+### Dependencies
+- Added `@modelcontextprotocol/sdk` (Node.js) and `mcp` (Python) for MCP protocol support
+
+## [0.5.0] - 2026-02-10
+
+### Added
+- `rafter ci init` command — auto-generate CI/CD pipeline configs for GitHub Actions, GitLab CI, and CircleCI
+- `rafter agent scan --diff <ref>` — scan only files changed since a git ref
+- `.rafter.yml` policy file — project-level security policies (custom patterns, exclude paths, command policy overrides)
+- `--agent` global flag — plain text output (no colors/emoji) for AI agent consumers
+- `fmt` formatter module — centralized output formatting with agent mode support
+
+### Changed
+- `rafter agent scan` now loads policy-merged config for custom patterns and exclude paths
+- `RegexScanner` accepts optional custom patterns at construction time
+- `ConfigManager.loadWithPolicy()` merges `.rafter.yml` overrides into config
+- `CommandInterceptor` uses policy-merged config for blocked/approval patterns
+- Migrated `init`, `exec`, `audit`, and `scan` commands to use `fmt` formatter
+- Extracted shared `outputScanResults()` function from scan command (removes duplication)
+
+### Dependencies
+- Added `js-yaml` (runtime) and `@types/js-yaml` (dev) for YAML policy file parsing
+
 ## [0.4.0] - 2026-02-09
 
 ### Added
