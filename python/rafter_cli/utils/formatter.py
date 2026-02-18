@@ -20,25 +20,25 @@ class fmt:
     def header(text: str) -> str:
         if _agent_mode:
             return f"=== {text} ==="
-        return f"\n[bold][cyan]\\u250c\\u2500[/cyan] {text} [cyan]\\u2500\\u2510[/cyan][/bold]\n"
+        return f"\n[bold][cyan]\u250c\u2500[/cyan] {text} [cyan]\u2500\u2510[/cyan][/bold]\n"
 
     @staticmethod
     def success(text: str) -> str:
         if _agent_mode:
             return f"[OK] {text}"
-        return f"[green]\\u2713 {text}[/green]"
+        return f"[green]\u2713 {text}[/green]"
 
     @staticmethod
     def warning(text: str) -> str:
         if _agent_mode:
             return f"[WARN] {text}"
-        return f"[yellow]\\u26a0  {text}[/yellow]"
+        return f"[yellow]\u26a0  {text}[/yellow]"
 
     @staticmethod
     def error(text: str) -> str:
         if _agent_mode:
             return f"[ERROR] {text}"
-        return f"[red]\\u2717 {text}[/red]"
+        return f"[red]\u2717 {text}[/red]"
 
     @staticmethod
     def severity(level: str) -> str:

@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import json
-import math
+import os
 import random
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -105,9 +106,16 @@ class AuditLogger:
     def cleanup(self, retention_days: int = 30) -> None:
         cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
         entries = self.read(since=cutoff)
-        self._path.write_text(
-            "\n".join(json.dumps(e) for e in entries) + "\n" if entries else ""
-        )
+        content = ("\n".join(json.dumps(e) for e in entries) + "\n" if entries else "").encode()
+        fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=".audit_tmp_")
+        try:
+            os.write(fd, content)
+            os.close(fd)
+            os.replace(tmp, self._path)
+        except Exception:
+            os.close(fd)
+            os.unlink(tmp)
+            raise
 
     # ------------------------------------------------------------------
 

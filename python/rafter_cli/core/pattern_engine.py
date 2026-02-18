@@ -89,7 +89,7 @@ class PatternEngine:
 
     @staticmethod
     def _redact(match: str) -> str:
-        if len(match) <= 8:
+        if len(match) < 16:
             return "*" * len(match)
         visible = 4
         return match[:visible] + "*" * (len(match) - visible * 2) + match[-visible:]
