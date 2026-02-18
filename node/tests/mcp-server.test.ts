@@ -4,57 +4,65 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Must be declared before imports so vi.mock hoists correctly.
 
 vi.mock("../src/scanners/gitleaks.js", () => ({
-  GitleaksScanner: vi.fn().mockImplementation(() => ({
-    isAvailable: vi.fn().mockResolvedValue(false),
-    scanDirectory: vi.fn().mockResolvedValue([]),
-    scanFile: vi.fn().mockResolvedValue({ file: "", matches: [] }),
-  })),
+  GitleaksScanner: vi.fn().mockImplementation(function () {
+    return {
+      isAvailable: vi.fn().mockResolvedValue(false),
+      scanDirectory: vi.fn().mockResolvedValue([]),
+      scanFile: vi.fn().mockResolvedValue({ file: "", matches: [] }),
+    };
+  }),
 }));
 
 vi.mock("../src/scanners/regex-scanner.js", () => ({
-  RegexScanner: vi.fn().mockImplementation(() => ({
-    scanFile: vi.fn().mockReturnValue({ file: "", matches: [] }),
-    scanDirectory: vi.fn().mockReturnValue([]),
-  })),
+  RegexScanner: vi.fn().mockImplementation(function () {
+    return {
+      scanFile: vi.fn().mockReturnValue({ file: "", matches: [] }),
+      scanDirectory: vi.fn().mockReturnValue([]),
+    };
+  }),
 }));
 
 vi.mock("../src/core/command-interceptor.js", () => ({
-  CommandInterceptor: vi.fn().mockImplementation(() => ({
-    evaluate: vi.fn().mockReturnValue({
-      command: "",
-      riskLevel: "low",
-      allowed: true,
-      requiresApproval: false,
-    }),
-  })),
+  CommandInterceptor: vi.fn().mockImplementation(function () {
+    return {
+      evaluate: vi.fn().mockReturnValue({
+        command: "",
+        riskLevel: "low",
+        allowed: true,
+        requiresApproval: false,
+      }),
+    };
+  }),
 }));
 
 vi.mock("../src/core/audit-logger.js", () => ({
-  AuditLogger: vi.fn().mockImplementation(() => ({
-    read: vi.fn().mockReturnValue([]),
-  })),
+  AuditLogger: vi.fn().mockImplementation(function () {
+    return { read: vi.fn().mockReturnValue([]) };
+  }),
 }));
 
 vi.mock("../src/core/config-manager.js", () => ({
-  ConfigManager: vi.fn().mockImplementation(() => ({
-    load: vi.fn().mockReturnValue({
-      version: "1.0",
-      agent: {
-        riskLevel: "medium",
-        commandPolicy: { mode: "intercept", blockedPatterns: [], requireApproval: [] },
-        audit: { logAllActions: true, retentionDays: 30, logLevel: "info" },
-      },
-    }),
-    get: vi.fn().mockReturnValue(undefined),
-    loadWithPolicy: vi.fn().mockReturnValue({
-      version: "1.0",
-      agent: {
-        riskLevel: "medium",
-        commandPolicy: { mode: "intercept" },
-        audit: { logAllActions: true, retentionDays: 30 },
-      },
-    }),
-  })),
+  ConfigManager: vi.fn().mockImplementation(function () {
+    return {
+      load: vi.fn().mockReturnValue({
+        version: "1.0",
+        agent: {
+          riskLevel: "medium",
+          commandPolicy: { mode: "intercept", blockedPatterns: [], requireApproval: [] },
+          audit: { logAllActions: true, retentionDays: 30, logLevel: "info" },
+        },
+      }),
+      get: vi.fn().mockReturnValue(undefined),
+      loadWithPolicy: vi.fn().mockReturnValue({
+        version: "1.0",
+        agent: {
+          riskLevel: "medium",
+          commandPolicy: { mode: "intercept" },
+          audit: { logAllActions: true, retentionDays: 30 },
+        },
+      }),
+    };
+  }),
 }));
 
 // Prevent MCP SDK from touching stdio
@@ -166,7 +174,7 @@ describe("MCP Server — scan_secrets", () => {
     });
 
     // Re-mock constructor to return our instance
-    (RegexScanner as any).mockImplementation(() => scannerInstance);
+    (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
 
     const results = await handleScanSecrets("/tmp/creds.txt", "patterns");
 
@@ -194,7 +202,7 @@ describe("MCP Server — scan_secrets", () => {
     ];
     const scannerInstance = new RegexScanner() as any;
     scannerInstance.scanDirectory.mockReturnValue(mockResults);
-    (RegexScanner as any).mockImplementation(() => scannerInstance);
+    (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
 
     const results = await handleScanSecrets("/tmp/dir", "patterns");
 
@@ -212,7 +220,7 @@ describe("MCP Server — scan_secrets", () => {
       file: "/tmp/clean.py",
       matches: [],
     });
-    (RegexScanner as any).mockImplementation(() => scannerInstance);
+    (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
 
     const results = await handleScanSecrets("/tmp/clean.py", "patterns");
 
@@ -223,7 +231,7 @@ describe("MCP Server — scan_secrets", () => {
   it("should fall back to regex when gitleaks unavailable in auto mode", async () => {
     const glInstance = new GitleaksScanner() as any;
     glInstance.isAvailable.mockResolvedValue(false);
-    (GitleaksScanner as any).mockImplementation(() => glInstance);
+    (GitleaksScanner as any).mockImplementation(function () { return glInstance; });
 
     const scannerInstance = new RegexScanner() as any;
     scannerInstance.scanDirectory.mockImplementation(() => {
@@ -233,7 +241,7 @@ describe("MCP Server — scan_secrets", () => {
       file: "/tmp/test.txt",
       matches: [],
     });
-    (RegexScanner as any).mockImplementation(() => scannerInstance);
+    (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
 
     const results = await handleScanSecrets("/tmp/test.txt", "auto");
 
@@ -244,7 +252,7 @@ describe("MCP Server — scan_secrets", () => {
   it("should throw when gitleaks explicitly requested but unavailable", async () => {
     const glInstance = new GitleaksScanner() as any;
     glInstance.isAvailable.mockResolvedValue(false);
-    (GitleaksScanner as any).mockImplementation(() => glInstance);
+    (GitleaksScanner as any).mockImplementation(function () { return glInstance; });
 
     await expect(handleScanSecrets("/tmp", "gitleaks")).rejects.toThrow(
       "Gitleaks not installed"
@@ -267,7 +275,7 @@ describe("MCP Server — scan_secrets", () => {
         ],
       },
     ]);
-    (GitleaksScanner as any).mockImplementation(() => glInstance);
+    (GitleaksScanner as any).mockImplementation(function () { return glInstance; });
 
     const results = await handleScanSecrets("/tmp", "auto");
 
@@ -290,7 +298,7 @@ describe("MCP Server — evaluate_command", () => {
       allowed: true,
       requiresApproval: false,
     });
-    (CommandInterceptor as any).mockImplementation(() => interceptorInstance);
+    (CommandInterceptor as any).mockImplementation(function () { return interceptorInstance; });
 
     const result = handleEvaluateCommand("ls -la");
 
@@ -309,7 +317,7 @@ describe("MCP Server — evaluate_command", () => {
       requiresApproval: false,
       reason: "Destructive system command",
     });
-    (CommandInterceptor as any).mockImplementation(() => interceptorInstance);
+    (CommandInterceptor as any).mockImplementation(function () { return interceptorInstance; });
 
     const result = handleEvaluateCommand("rm -rf /");
 
@@ -327,7 +335,7 @@ describe("MCP Server — evaluate_command", () => {
       requiresApproval: true,
       reason: "Permissions change requires approval",
     });
-    (CommandInterceptor as any).mockImplementation(() => interceptorInstance);
+    (CommandInterceptor as any).mockImplementation(function () { return interceptorInstance; });
 
     const result = handleEvaluateCommand("chmod 777 /tmp/test");
 
@@ -345,7 +353,7 @@ describe("MCP Server — read_audit_log", () => {
   it("should return empty array for no entries", () => {
     const loggerInstance = new AuditLogger() as any;
     loggerInstance.read.mockReturnValue([]);
-    (AuditLogger as any).mockImplementation(() => loggerInstance);
+    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
 
     const entries = handleReadAuditLog({ limit: 10 });
 
@@ -364,7 +372,7 @@ describe("MCP Server — read_audit_log", () => {
     ];
     const loggerInstance = new AuditLogger() as any;
     loggerInstance.read.mockReturnValue(mockEntries);
-    (AuditLogger as any).mockImplementation(() => loggerInstance);
+    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
 
     const entries = handleReadAuditLog({ limit: 5 });
 
@@ -379,7 +387,7 @@ describe("MCP Server — read_audit_log", () => {
   it("should pass event_type filter", () => {
     const loggerInstance = new AuditLogger() as any;
     loggerInstance.read.mockReturnValue([{ eventType: "secret_detected" }]);
-    (AuditLogger as any).mockImplementation(() => loggerInstance);
+    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
 
     handleReadAuditLog({ event_type: "secret_detected", limit: 5 });
 
@@ -391,7 +399,7 @@ describe("MCP Server — read_audit_log", () => {
   it("should parse since as Date", () => {
     const loggerInstance = new AuditLogger() as any;
     loggerInstance.read.mockReturnValue([]);
-    (AuditLogger as any).mockImplementation(() => loggerInstance);
+    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
 
     handleReadAuditLog({ since: "2026-01-01T00:00:00Z" });
 
@@ -403,7 +411,7 @@ describe("MCP Server — read_audit_log", () => {
   it("should default limit to 20", () => {
     const loggerInstance = new AuditLogger() as any;
     loggerInstance.read.mockReturnValue([]);
-    (AuditLogger as any).mockImplementation(() => loggerInstance);
+    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
 
     handleReadAuditLog();
 
@@ -428,7 +436,7 @@ describe("MCP Server — get_config", () => {
         audit: { logAllActions: true },
       },
     });
-    (ConfigManager as any).mockImplementation(() => managerInstance);
+    (ConfigManager as any).mockImplementation(function () { return managerInstance; });
 
     const result = handleGetConfig();
 
@@ -440,7 +448,7 @@ describe("MCP Server — get_config", () => {
   it("should return specific key value", () => {
     const managerInstance = new ConfigManager() as any;
     managerInstance.get.mockReturnValue("medium");
-    (ConfigManager as any).mockImplementation(() => managerInstance);
+    (ConfigManager as any).mockImplementation(function () { return managerInstance; });
 
     const result = handleGetConfig("agent.riskLevel");
 
@@ -451,7 +459,7 @@ describe("MCP Server — get_config", () => {
   it("should return undefined for missing key", () => {
     const managerInstance = new ConfigManager() as any;
     managerInstance.get.mockReturnValue(undefined);
-    (ConfigManager as any).mockImplementation(() => managerInstance);
+    (ConfigManager as any).mockImplementation(function () { return managerInstance; });
 
     const result = handleGetConfig("nonexistent.path");
 
