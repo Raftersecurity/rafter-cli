@@ -1,6 +1,7 @@
 """Load and parse .rafter.yml policy files."""
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -140,12 +141,20 @@ def _validate_policy(policy: dict, raw: dict) -> dict:
                 print('Warning: "scan.exclude_paths" must be an array of strings \u2014 ignoring.', file=sys.stderr)
                 del scan["exclude_paths"]
         if "custom_patterns" in scan:
-            valid = isinstance(scan["custom_patterns"], list) and all(
-                isinstance(p, dict) and isinstance(p.get("name"), str) and p.get("name") != "" and isinstance(p.get("regex"), str) and p.get("regex") != "" and isinstance(p.get("severity"), str)
-                for p in scan["custom_patterns"]
-            )
-            if not valid:
-                print('Warning: "scan.custom_patterns" must be an array of objects with name, regex, severity \u2014 ignoring.', file=sys.stderr)
+            valid_patterns = []
+            for p in scan["custom_patterns"] if isinstance(scan["custom_patterns"], list) else []:
+                if not (isinstance(p, dict) and isinstance(p.get("name"), str) and p.get("name") != "" and isinstance(p.get("regex"), str) and p.get("regex") != "" and isinstance(p.get("severity"), str)):
+                    print(f'Warning: skipping malformed custom_patterns entry {p!r} \u2014 must have name, regex, severity.', file=sys.stderr)
+                    continue
+                try:
+                    re.compile(p["regex"])
+                except re.error as exc:
+                    print(f'Warning: skipping custom pattern {p["name"]!r} \u2014 invalid regex: {exc}', file=sys.stderr)
+                    continue
+                valid_patterns.append(p)
+            if valid_patterns:
+                scan["custom_patterns"] = valid_patterns
+            else:
                 del scan["custom_patterns"]
 
     audit = policy.get("audit")
