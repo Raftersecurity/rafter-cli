@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { RafterConfig } from "./config-schema.js";
 import { getDefaultConfig, getConfigPath, getRafterDir, CONFIG_VERSION } from "./config-defaults.js";
+import { loadPolicy } from "./policy-loader.js";
 
 export class ConfigManager {
   private configPath: string;
@@ -117,6 +118,62 @@ export class ConfigManager {
       const config = getDefaultConfig();
       this.save(config);
     }
+  }
+
+  /**
+   * Load config merged with .rafter.yml policy (policy wins)
+   */
+  loadWithPolicy(): RafterConfig {
+    const config = this.load();
+    const policy = loadPolicy();
+    if (!policy) return config;
+
+    // Ensure agent block exists
+    if (!config.agent) {
+      const defaults = getDefaultConfig();
+      config.agent = defaults.agent;
+    }
+
+    // Risk level
+    if (policy.riskLevel && config.agent) {
+      config.agent.riskLevel = policy.riskLevel as any;
+    }
+
+    // Command policy — arrays replace, not append
+    if (policy.commandPolicy && config.agent) {
+      if (policy.commandPolicy.mode) {
+        config.agent.commandPolicy.mode = policy.commandPolicy.mode as any;
+      }
+      if (policy.commandPolicy.blockedPatterns) {
+        config.agent.commandPolicy.blockedPatterns = policy.commandPolicy.blockedPatterns;
+      }
+      if (policy.commandPolicy.requireApproval) {
+        config.agent.commandPolicy.requireApproval = policy.commandPolicy.requireApproval;
+      }
+    }
+
+    // Scan settings
+    if (policy.scan && config.agent) {
+      if (!config.agent.scan) config.agent.scan = {};
+      if (policy.scan.excludePaths) {
+        config.agent.scan.excludePaths = policy.scan.excludePaths;
+      }
+      if (policy.scan.customPatterns) {
+        config.agent.scan.customPatterns = policy.scan.customPatterns;
+      }
+    }
+
+    // Audit settings
+    if (policy.audit && config.agent) {
+      if (policy.audit.retentionDays != null) {
+        config.agent.audit.retentionDays = policy.audit.retentionDays;
+      }
+      if (policy.audit.logLevel) {
+        config.agent.audit.logLevel = policy.audit.logLevel as any;
+      }
+    }
+
+    return config;
   }
 
   /**

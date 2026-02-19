@@ -20,13 +20,13 @@ npm install -g @rafter-security/cli
 pnpm add -g @rafter-security/cli
 ```
 
-### Python (backend scanning only)
+### Python (full features)
 
 ```sh
 pip install rafter-cli
 ```
 
-Requires Python 3.10+. For agent security features, use the Node.js package.
+Requires Python 3.10+. Full feature parity with Node.js including agent security and MCP server.
 
 ---
 
@@ -76,6 +76,12 @@ rafter get SCAN_ID > scan_results.json
 
 ---
 
+## Global Options
+
+| Flag | Description |
+|------|-------------|
+| `-a, --agent` | Plain output for AI agents (no colors, no emoji). Useful when piping to LLMs or automated systems. |
+
 ## Agent Security
 
 Local security features for autonomous AI agents. Everything below works offline, no API key needed.
@@ -100,6 +106,7 @@ Scan files and directories for leaked credentials. 21+ built-in patterns coverin
 rafter agent scan .              # scan directory
 rafter agent scan ./config.js    # scan specific file
 rafter agent scan --staged       # scan git staged files only
+rafter agent scan --diff HEAD~1  # scan files changed since a git ref
 rafter agent scan --json         # structured output
 rafter agent scan --quiet        # silent unless secrets found (CI-friendly)
 ```
@@ -179,7 +186,72 @@ rafter agent config set agent.commandPolicy.mode deny-list  # dot-notation paths
 
 **Command policies:** `allow-all` · `approve-dangerous` (default) · `deny-list`
 
-Config lives at `~/.rafter/config.json`.
+Config lives at `~/.rafter/config.json`. Project-level overrides via `.rafter.yml` (see below).
+
+### Policy File (`.rafter.yml`)
+
+Drop a `.rafter.yml` in your project root to define per-repo security policies. The CLI walks from cwd to git root looking for it.
+
+```yaml
+version: "1"
+risk_level: moderate
+command_policy:
+  mode: approve-dangerous
+  blocked_patterns: ["rm -rf /"]
+  require_approval: ["npm publish"]
+scan:
+  exclude_paths: ["vendor/", "third_party/"]
+  custom_patterns:
+    - name: "Internal API Key"
+      regex: "INTERNAL_[A-Z0-9]{32}"
+      severity: critical
+audit:
+  retention_days: 90
+  log_level: info
+```
+
+Policy file values override `~/.rafter/config.json`. Arrays replace (not append).
+
+### CI/CD Setup
+
+Generate CI pipeline config for secret scanning:
+
+```sh
+rafter ci init                          # auto-detect platform
+rafter ci init --platform github        # GitHub Actions
+rafter ci init --platform gitlab        # GitLab CI
+rafter ci init --platform circleci      # CircleCI
+rafter ci init --with-backend           # include backend security audit job
+```
+
+### MCP Server
+
+Expose Rafter security tools to **any MCP-compatible client** (Cursor, Windsurf, Claude Desktop, Cline, etc.) over stdio:
+
+```sh
+rafter mcp serve
+```
+
+Add to any MCP client config:
+
+```json
+{
+  "rafter": {
+    "command": "rafter",
+    "args": ["mcp", "serve"]
+  }
+}
+```
+
+**Tools provided:**
+- `scan_secrets` — scan files/directories for hardcoded secrets
+- `evaluate_command` — check if a shell command is allowed by policy
+- `read_audit_log` — read audit log entries with filtering
+- `get_config` — read Rafter configuration
+
+**Resources:**
+- `rafter://config` — current configuration
+- `rafter://policy` — active security policy (merged `.rafter.yml` + config)
 
 ### Supported Agents
 

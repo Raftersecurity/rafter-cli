@@ -1,4 +1,5 @@
 import { RafterConfig } from "./config-schema.js";
+import { DEFAULT_BLOCKED_PATTERNS, DEFAULT_REQUIRE_APPROVAL } from "./risk-rules.js";
 import os from "os";
 import path from "path";
 
@@ -32,20 +33,8 @@ export function getDefaultConfig(): RafterConfig {
       },
       commandPolicy: {
         mode: "approve-dangerous",
-        blockedPatterns: [
-          "rm -rf /",
-          ":(){ :|:& };:",  // fork bomb
-          "dd if=/dev/zero of=/dev/sda",
-          "> /dev/sda"
-        ],
-        requireApproval: [
-          "rm -rf",
-          "sudo rm",
-          "curl.*|.*sh",
-          "wget.*|.*sh",
-          "chmod 777",
-          "git push --force"
-        ]
+        blockedPatterns: [...DEFAULT_BLOCKED_PATTERNS],
+        requireApproval: [...DEFAULT_REQUIRE_APPROVAL],
       },
       outputFiltering: {
         redactSecrets: true,
@@ -69,7 +58,7 @@ export function getConfigPath(): string {
 }
 
 export function getAuditLogPath(): string {
-  return path.join(getRafterDir(), "audit.log");
+  return path.join(getRafterDir(), "audit.jsonl");
 }
 
 export function getBinDir(): string {

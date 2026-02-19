@@ -1,18 +1,20 @@
 [tool.poetry]
 name = "rafter-cli"
-version = "0.4.2"
-description = "Rafter CLI"
+version = "0.5.1"
+description = "Rafter CLI — security for AI builders"
 authors = ["Rafter Team <hello@rafter.so>"]
 license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
-typer = "^0.12.3"
+typer = "^0.13.0"
 rich = "^13.7.1"
 python-dotenv = "^1.0.1"
 requests = "^2.31.0"
 urllib3 = ">=2.6.0,<3"
+pyyaml = "^6.0.1"
+mcp = "^1.9.0"
 
 [tool.poetry.scripts]
 rafter = "rafter_cli.__main__:app"

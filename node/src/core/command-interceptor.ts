@@ -1,7 +1,8 @@
 import { ConfigManager } from "./config-manager.js";
 import { AuditLogger } from "./audit-logger.js";
+import { assessCommandRisk, CommandRiskLevel } from "./risk-rules.js";
 
-export type CommandRiskLevel = "low" | "medium" | "high" | "critical";
+export type { CommandRiskLevel } from "./risk-rules.js";
 
 export interface CommandEvaluation {
   command: string;
@@ -25,7 +26,7 @@ export class CommandInterceptor {
    * Evaluate if a command should be allowed
    */
   evaluate(command: string): CommandEvaluation {
-    const cfg = this.config.load();
+    const cfg = this.config.loadWithPolicy();
     const policy = cfg.agent?.commandPolicy;
 
     if (!policy) {
@@ -129,11 +130,11 @@ export class CommandInterceptor {
    */
   private matchesPattern(command: string, pattern: string): boolean {
     try {
-      const regex = new RegExp(pattern);
+      const regex = new RegExp(pattern, "i");
       return regex.test(command);
     } catch {
-      // If pattern is not valid regex, try exact match
-      return command.includes(pattern);
+      // If pattern is not valid regex, try case-insensitive substring match
+      return command.toLowerCase().includes(pattern.toLowerCase());
     }
   }
 
@@ -141,54 +142,6 @@ export class CommandInterceptor {
    * Assess risk level of command
    */
   private assessRisk(command: string): CommandRiskLevel {
-    // Critical patterns
-    const critical = [
-      /rm\s+-rf\s+\//,
-      /:\(\)\{\s*:\|:&\s*\};:/,  // fork bomb
-      /dd\s+if=.*of=\/dev\/sd/,
-      />\s*\/dev\/sd/,
-      /mkfs/,
-      /fdisk/,
-      /parted/
-    ];
-
-    // High risk patterns
-    const high = [
-      /rm\s+-rf/,
-      /sudo\s+rm/,
-      /chmod\s+777/,
-      /curl.*\|.*sh/,
-      /wget.*\|.*sh/,
-      /git\s+push\s+--force/,
-      /docker\s+system\s+prune/,
-      /npm\s+publish/,
-      /pypi.*upload/
-    ];
-
-    // Medium risk patterns
-    const medium = [
-      /sudo/,
-      /chmod/,
-      /chown/,
-      /systemctl/,
-      /service/,
-      /kill\s+-9/,
-      /pkill/,
-      /killall/
-    ];
-
-    for (const pattern of critical) {
-      if (pattern.test(command)) return "critical";
-    }
-
-    for (const pattern of high) {
-      if (pattern.test(command)) return "high";
-    }
-
-    for (const pattern of medium) {
-      if (pattern.test(command)) return "medium";
-    }
-
-    return "low";
+    return assessCommandRisk(command);
   }
 }
