@@ -1,5 +1,7 @@
 import { Command } from "commander";
 import { AuditLogger, EventType, AgentType } from "../../core/audit-logger.js";
+import { fmt } from "../../utils/formatter.js";
+import { isAgentMode } from "../../utils/formatter.js";
 
 export function createAuditCommand(): Command {
   return new Command("audit")
@@ -38,8 +40,8 @@ export function createAuditCommand(): Command {
 
       for (const entry of entries) {
         const timestamp = new Date(entry.timestamp).toLocaleString();
-        const emoji = getEventEmoji(entry.eventType);
-        console.log(`${emoji} [${timestamp}] ${entry.eventType}`);
+        const indicator = getEventIndicator(entry.eventType);
+        console.log(`${indicator} [${timestamp}] ${entry.eventType}`);
 
         if (entry.agentType) {
           console.log(`   Agent: ${entry.agentType}`);
@@ -70,7 +72,19 @@ export function createAuditCommand(): Command {
     });
 }
 
-function getEventEmoji(eventType: EventType): string {
+function getEventIndicator(eventType: EventType): string {
+  if (isAgentMode()) {
+    const tagMap: Record<EventType, string> = {
+      command_intercepted: "[INTERCEPT]",
+      secret_detected: "[SECRET]",
+      content_sanitized: "[SANITIZE]",
+      policy_override: "[OVERRIDE]",
+      scan_executed: "[SCAN]",
+      config_changed: "[CONFIG]",
+    };
+    return tagMap[eventType] || "[EVENT]";
+  }
+
   const emojiMap: Record<EventType, string> = {
     command_intercepted: "🛡️",
     secret_detected: "🔑",

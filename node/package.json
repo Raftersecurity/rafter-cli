@@ -1,12 +1,13 @@
 {
   "name": "@rafter-security/cli",
-  "version": "0.4.2",
+  "version": "0.5.1",
   "type": "module",
   "bin": {
     "rafter": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "resources"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -18,17 +19,20 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
     "axios": "^1.6.8",
     "chalk": "^5.3.0",
     "commander": "^11.1.0",
     "dotenv": "^16.4.5",
+    "js-yaml": "^4.1.0",
     "ora": "^7.0.1",
     "tar": "^7.5.7"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.11.30",
     "tsx": "^4.7.0",
     "typescript": "^5.4.5",
-    "vitest": "^1.5.0"
+    "vitest": "^4.0.18"
   }
 }
