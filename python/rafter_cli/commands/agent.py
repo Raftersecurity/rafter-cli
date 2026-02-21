@@ -1,9 +1,10 @@
-"""Agent security commands: init, scan, audit, exec, config, install-hook, verify."""
+"""Agent security commands: init, scan, audit, exec, config, install-hook, verify, audit-skill."""
 from __future__ import annotations
 
 import importlib.resources
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -19,9 +20,12 @@ from rich import print as rprint
 from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
 from ..core.config_manager import ConfigManager
+from ..core.pattern_engine import PatternEngine
 from ..scanners.gitleaks import GitleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
+from ..scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
 from ..utils.formatter import fmt, is_agent_mode
+from ..utils.skill_manager import SkillManager
 
 agent_app = typer.Typer(name="agent", help="Agent security features", no_args_is_help=True)
 
@@ -839,3 +843,218 @@ def verify():
 
     if not all_passed:
         raise typer.Exit(code=1)
+
+
+# ── audit-skill ──────────────────────────────────────────────────────
+
+# High-risk command patterns for skill auditing
+_HIGH_RISK_PATTERNS: list[dict[str, str]] = [
+    {"pattern": r"rm\s+-rf\s+/(?!\w)", "name": "rm -rf /"},
+    {"pattern": r"sudo\s+rm", "name": "sudo rm"},
+    {"pattern": r"curl[^|]*\|\s*(?:ba)?sh", "name": "curl | sh"},
+    {"pattern": r"wget[^|]*\|\s*(?:ba)?sh", "name": "wget | sh"},
+    {"pattern": r"eval\s*\(", "name": "eval()"},
+    {"pattern": r"exec\s*\(", "name": "exec()"},
+    {"pattern": r"chmod\s+777", "name": "chmod 777"},
+    {"pattern": r":\(\)\{\s*:\|:&\s*\};:", "name": "fork bomb"},
+    {"pattern": r"dd\s+if=/dev/(?:zero|random)\s+of=/dev", "name": "dd to device"},
+    {"pattern": r"mkfs", "name": "mkfs (format)"},
+    {"pattern": r"base64\s+-d[^|]*\|\s*(?:ba)?sh", "name": "base64 decode | sh"},
+]
+
+
+@dataclass
+class QuickScanResults:
+    secrets: int
+    urls: list[str]
+    high_risk_commands: list[dict[str, Any]]
+
+
+def _run_quick_scan(content: str) -> QuickScanResults:
+    """Run deterministic security analysis on skill content."""
+    # 1. Scan for secrets
+    engine = PatternEngine(DEFAULT_SECRET_PATTERNS)
+    secret_matches = engine.scan(content)
+
+    # 2. Extract URLs
+    url_regex = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+    urls = list(dict.fromkeys(url_regex.findall(content)))  # deduplicate, preserve order
+
+    # 3. Detect high-risk commands
+    commands: list[dict[str, Any]] = []
+    for hp in _HIGH_RISK_PATTERNS:
+        compiled = re.compile(hp["pattern"], re.IGNORECASE)
+        for m in compiled.finditer(content):
+            line_number = content[:m.start()].count("\n") + 1
+            commands.append({"command": hp["name"], "line": line_number})
+
+    return QuickScanResults(
+        secrets=len(secret_matches),
+        urls=urls,
+        high_risk_commands=commands,
+    )
+
+
+def _display_quick_scan(scan: QuickScanResults, skill_name: str) -> None:
+    """Render human-readable quick scan results."""
+    print("\n\U0001f4ca Quick Scan Results")
+    print("\u2550" * 60)
+
+    # Secrets
+    if scan.secrets == 0:
+        print("\u2713 Secrets: None detected")
+    else:
+        print(f"\u26a0\ufe0f  Secrets: {scan.secrets} found")
+        print("   \u2192 API keys, tokens, or credentials detected")
+        print("   \u2192 Run: rafter agent scan <path> for details")
+
+    # URLs
+    if not scan.urls:
+        print("\u2713 External URLs: None")
+    else:
+        print(f"\u26a0\ufe0f  External URLs: {len(scan.urls)} found")
+        for url in scan.urls[:5]:
+            print(f"   \u2022 {url}")
+        if len(scan.urls) > 5:
+            print(f"   ... and {len(scan.urls) - 5} more")
+
+    # High-risk commands
+    if not scan.high_risk_commands:
+        print("\u2713 High-risk commands: None detected")
+    else:
+        print(f"\u26a0\ufe0f  High-risk commands: {len(scan.high_risk_commands)} found")
+        for cmd in scan.high_risk_commands[:5]:
+            print(f"   \u2022 {cmd['command']} (line {cmd['line']})")
+        if len(scan.high_risk_commands) > 5:
+            print(f"   ... and {len(scan.high_risk_commands) - 5} more")
+
+    print()
+
+
+def _generate_manual_review_prompt(
+    skill_name: str,
+    skill_path: str,
+    scan: QuickScanResults,
+    content: str,
+) -> str:
+    """Construct a security assessment prompt for external AI review."""
+    urls_detail = ""
+    if scan.urls:
+        urls_detail = "\n  " + "\n  ".join(scan.urls)
+
+    commands_detail = ""
+    if scan.high_risk_commands:
+        commands_detail = "\n  " + "\n  ".join(
+            f"{c['command']} (line {c['line']})" for c in scan.high_risk_commands
+        )
+
+    return f"""You are reviewing a Claude Code skill for security issues. Analyze the skill below and provide:
+
+1. **Security Assessment**: Evaluate trustworthiness, identify risks
+2. **External Dependencies**: Review URLs, APIs, network calls - are they trustworthy?
+3. **Command Safety**: Analyze shell commands - any dangerous patterns?
+4. **Bundled Resources**: Check for suspicious scripts, images, binaries
+5. **Prompt Injection Risks**: Could malicious input exploit this skill?
+6. **Data Exfiltration**: Does it send sensitive data externally?
+7. **Credential Handling**: How are API keys/secrets managed?
+8. **Input Validation**: Is user input properly sanitized?
+9. **File System Access**: What files does it read/write?
+10. **Scope Alignment**: Does behavior match stated purpose?
+11. **Recommendations**: Should I install this? What precautions?
+
+**Skill**: {skill_name}
+**Path**: {skill_path}
+
+**Quick Scan Findings**:
+- Secrets detected: {scan.secrets}
+- External URLs: {len(scan.urls)}{urls_detail}
+- High-risk commands: {len(scan.high_risk_commands)}{commands_detail}
+
+**Skill Content**:
+```markdown
+{content}
+```
+
+Provide a clear risk rating (LOW/MEDIUM/HIGH/CRITICAL) and actionable recommendations."""
+
+
+@agent_app.command("audit-skill")
+def audit_skill(
+    skill_path: str = typer.Argument(..., help="Path to skill file to audit"),
+    skip_openclaw: bool = typer.Option(False, "--skip-openclaw", help="Skip OpenClaw integration, show manual review prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Security audit of a Claude Code skill file."""
+    # Validate skill file exists
+    resolved = Path(skill_path).resolve()
+    if not resolved.exists():
+        print(f"Error: Skill file not found: {skill_path}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    skill_content = resolved.read_text(encoding="utf-8")
+    skill_name = resolved.name
+
+    # Run deterministic analysis
+    if not json_output:
+        print(f"\n\U0001f50d Auditing skill: {skill_name}\n")
+        print("\u2550" * 60)
+        print("Running quick security scan...\n")
+
+    quick_scan = _run_quick_scan(skill_content)
+
+    # Display quick scan results
+    if not json_output:
+        _display_quick_scan(quick_scan, skill_name)
+
+    # Check OpenClaw availability
+    skill_manager = SkillManager()
+    openclaw_available = skill_manager.is_openclaw_installed()
+    rafter_skill_installed = skill_manager.is_rafter_skill_installed()
+
+    if json_output:
+        result = {
+            "skill": skill_name,
+            "path": str(resolved),
+            "quickScan": {
+                "secrets": quick_scan.secrets,
+                "urls": quick_scan.urls,
+                "highRiskCommands": quick_scan.high_risk_commands,
+            },
+            "openClawAvailable": openclaw_available,
+            "rafterSkillInstalled": rafter_skill_installed,
+        }
+        print(json.dumps(result, indent=2))
+        return
+
+    # Check if we can use OpenClaw
+    if openclaw_available and not skip_openclaw:
+        if not rafter_skill_installed:
+            print("\n\u26a0\ufe0f  Rafter Security skill not installed in OpenClaw.")
+            print("   Run: rafter agent init\n")
+        else:
+            print("\n\U0001f916 For comprehensive security review:\n")
+            print("   1. Open OpenClaw")
+            print(f"   2. Run: /rafter-audit-skill {resolved}")
+            print("\n   The auditor will analyze:")
+            print("   \u2022 Trust & attribution")
+            print("   \u2022 Network security")
+            print("   \u2022 Command execution risks")
+            print("   \u2022 File system access")
+            print("   \u2022 Credential handling")
+            print("   \u2022 Input validation & injection risks")
+            print("   \u2022 Data exfiltration patterns")
+            print("   \u2022 Obfuscation techniques")
+            print("   \u2022 Scope & intent alignment")
+            print("   \u2022 Error handling & info disclosure")
+            print("   \u2022 Dependencies & supply chain")
+            print("   \u2022 Environment manipulation\n")
+    else:
+        # OpenClaw not available or skipped — show manual review prompt
+        print("\n\U0001f4cb Manual Security Review Prompt\n")
+        print("\u2550" * 60)
+        print("\nCopy the following to your AI assistant for review:\n")
+        print("\u2500" * 60)
+        print(_generate_manual_review_prompt(skill_name, str(resolved), quick_scan, skill_content))
+        print("\u2500" * 60)
+
+    print()
