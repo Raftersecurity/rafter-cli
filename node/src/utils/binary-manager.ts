@@ -355,13 +355,17 @@ export class BinaryManager {
   }
 
   /**
-   * Extract tarball
+   * Extract tarball — binary only, strip packaging extras (LICENSE, README.md)
    */
   private async extractTarball(tarballPath: string): Promise<void> {
     await tar.extract({
       file: tarballPath,
       cwd: this.binDir,
-      strip: 0
+      strip: 1,
+      filter: (p: string) => {
+        const base = path.basename(p);
+        return base === "gitleaks" || base === "gitleaks.exe";
+      },
     });
   }
 }

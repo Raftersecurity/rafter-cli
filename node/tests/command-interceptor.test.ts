@@ -90,6 +90,36 @@ describe("CommandInterceptor", () => {
       expect(result.allowed).toBe(false);
       expect(result.requiresApproval).toBe(true);
     });
+
+    it("should require approval for git push -f (short flag)", () => {
+      const result = interceptor.evaluate("git push -f origin main");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
+    });
+
+    it("should require approval for git push --force-with-lease", () => {
+      const result = interceptor.evaluate("git push --force-with-lease origin main");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
+    });
+
+    it("should require approval for git push --force-if-includes", () => {
+      const result = interceptor.evaluate("git push --force-if-includes origin main");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
+    });
+
+    it("should require approval for refspec force push (git push origin +main)", () => {
+      const result = interceptor.evaluate("git push origin +main");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
+    });
+
+    it("should require approval for refspec force push with full ref (git push origin +HEAD:main)", () => {
+      const result = interceptor.evaluate("git push origin +HEAD:main");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
+    });
   });
 
   describe("Medium-risk commands", () => {

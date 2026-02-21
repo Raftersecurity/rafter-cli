@@ -90,7 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - High-risk command approval workflow (`git push --force`, `sudo rm`, etc.)
 - Pre-execution secret scanning for git commits
 - Config management system (`~/.rafter/config.json`) with dot-notation paths
-- Structured audit logging (`~/.rafter/audit.log`)
+- Structured audit logging (`~/.rafter/audit.jsonl`)
 - Init wizard with environment auto-detection (OpenClaw, Claude Code, Codex CLI)
 - Skill auditing system with 12-dimension security analysis
 - Pre-commit hooks (per-repo and global) for automatic secret scanning
