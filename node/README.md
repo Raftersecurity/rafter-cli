@@ -566,7 +566,7 @@ Agent security settings are stored in `~/.rafter/config.json`. Key settings:
 
 **File Locations:**
 - Config: `~/.rafter/config.json`
-- Audit log: `~/.rafter/audit.log`
+- Audit log: `~/.rafter/audit.jsonl`
 - Binaries: `~/.rafter/bin/`
 - Patterns: `~/.rafter/patterns/`
 

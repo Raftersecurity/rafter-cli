@@ -113,6 +113,27 @@ export class ConfigManager {
       }
     }
 
+    // Write patterns/ README if missing
+    const patternsReadme = path.join(rafterDir, "patterns", "README.md");
+    if (!fs.existsSync(patternsReadme)) {
+      fs.writeFileSync(
+        patternsReadme,
+        [
+          "# Custom Secret Patterns",
+          "",
+          "Place custom secret-detection pattern files here.",
+          "Each file should contain one regex pattern per line.",
+          "",
+          "Rafter ships 21 built-in patterns (AWS, GitHub, Stripe, etc.).",
+          "Files in this directory extend that set for your environment.",
+          "",
+          "Support for loading custom patterns from this directory is planned",
+          "for a future release.",
+        ].join("\n"),
+        "utf-8"
+      );
+    }
+
     // Create default config if it doesn't exist
     if (!fs.existsSync(this.configPath)) {
       const config = getDefaultConfig();

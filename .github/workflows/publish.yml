@@ -30,8 +30,54 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+  test-package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@9 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Pack
+        run: npm pack
+
+      - name: Verify resources/pre-commit-hook.sh in tarball
+        run: |
+          TARBALL=$(ls *.tgz | head -1)
+          echo "Inspecting: $TARBALL"
+          tar -tzf "$TARBALL" | grep "resources/pre-commit-hook.sh" \
+            || (echo "FAIL: resources/pre-commit-hook.sh not found in tarball" && exit 1)
+          echo "OK: resources/pre-commit-hook.sh present in tarball"
+
+      - name: Test install-hook end-to-end from packed tarball
+        run: |
+          TARBALL=$(ls *.tgz | head -1)
+          npm install -g "./$TARBALL"
+          rafter --version
+          TMPDIR=$(mktemp -d)
+          git init "$TMPDIR"
+          git -C "$TMPDIR" config user.email "ci@test.local"
+          git -C "$TMPDIR" config user.name "CI Test"
+          (cd "$TMPDIR" && rafter agent install-hook)
+          test -f "$TMPDIR/.git/hooks/pre-commit" \
+            || (echo "FAIL: pre-commit hook not installed" && exit 1)
+          echo "OK: pre-commit hook installed end-to-end"
+
   publish-node:
-    needs: test-node
+    needs: [test-node, test-package]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -137,19 +183,66 @@ jobs:
 
             See [CHANGELOG.md](https://github.com/raftersecurity/rafter-cli/blob/main/CHANGELOG.md) for details.
 
-  smoke-test:
-    needs: [publish-node, publish-python, create-release]
+  smoke-test-node:
+    needs: [publish-node, create-release]
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for registry propagation
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Wait for npm registry propagation
         run: sleep 30
 
-      - name: Test npm install
-        run: |
-          npm install -g @rafter-security/cli@${{ needs.publish-node.outputs.version }}
-          rafter --version
+      - name: Install from npm registry
+        run: npm install -g @rafter-security/cli@${{ needs.publish-node.outputs.version }}
 
-      - name: Test pip install
+      - name: Verify rafter --version
+        run: rafter --version
+
+      - name: Verify rafter --help
+        run: rafter --help
+
+      - name: Verify rafter agent scan detects secrets
         run: |
-          pip install rafter-cli==${{ needs.publish-python.outputs.version }}
-          pip show rafter-cli | grep -E "^(Name|Version)"
+          # Scan fixture file with fake secret — must exit 1 (secrets found)
+          if rafter agent scan .github/fixtures/fake-secret.txt --engine patterns; then
+            echo "FAIL: scan should have exited non-zero (secrets found)"
+            exit 1
+          fi
+          echo "OK: rafter agent scan correctly detected fake secret"
+
+  smoke-test-python:
+    needs: [publish-python, create-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Wait for PyPI registry propagation
+        run: sleep 30
+
+      - name: Create fresh venv and install from PyPI
+        run: |
+          python -m venv /tmp/rafter-smoke
+          /tmp/rafter-smoke/bin/pip install rafter-cli==${{ needs.publish-python.outputs.version }}
+
+      - name: Verify rafter --version
+        run: /tmp/rafter-smoke/bin/rafter --version
+
+      - name: Verify rafter --help
+        run: /tmp/rafter-smoke/bin/rafter --help
+
+      - name: Verify rafter agent scan detects secrets
+        run: |
+          # Scan fixture file with fake secret — must exit 1 (secrets found)
+          if /tmp/rafter-smoke/bin/rafter agent scan .github/fixtures/fake-secret.txt --engine patterns; then
+            echo "FAIL: scan should have exited non-zero (secrets found)"
+            exit 1
+          fi
+          echo "OK: rafter agent scan correctly detected fake secret"

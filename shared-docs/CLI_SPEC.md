@@ -11,12 +11,22 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 
 ## Exit Codes
 
+### Backend Commands (`rafter run`, `rafter get`, `rafter usage`)
+
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General error / secrets found |
-| 2 | Scan not found |
-| 3 | Quota exhausted |
+| 1 | General error |
+| 2 | Scan not found (HTTP 404) |
+| 3 | Quota exhausted (HTTP 429) |
+
+### Agent Scan (`rafter agent scan`)
+
+| Code | Meaning |
+|------|---------|
+| 0 | Clean — no secrets detected |
+| 1 | Findings — one or more secrets detected |
+| 2 | Runtime error — path not found, not a git repo, invalid ref |
 
 ---
 
@@ -94,7 +104,46 @@ Scan files or directories for secrets (21+ patterns).
 - `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
 - `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
 
-Exit code 1 if secrets found, 0 if clean.
+Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
+
+#### JSON Output (`--json`)
+
+When `--json` is passed, output is a JSON array to stdout. Both Node and Python produce identical schema:
+
+```json
+[
+  {
+    "file": "/absolute/path/to/file.ts",
+    "matches": [
+      {
+        "pattern": {
+          "name": "AWS Access Key",
+          "severity": "critical",
+          "description": "Detects AWS access key IDs"
+        },
+        "line": 42,
+        "column": 7,
+        "redacted": "AKIA************MPLE"
+      }
+    ]
+  }
+]
+```
+
+**Field reference:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `file` | string | Absolute path to the scanned file |
+| `matches` | array | List of secret matches in this file |
+| `matches[].pattern.name` | string | Human-readable pattern name |
+| `matches[].pattern.severity` | string | `"low"`, `"medium"`, `"high"`, or `"critical"` |
+| `matches[].pattern.description` | string | Pattern description (may be empty) |
+| `matches[].line` | number\|null | 1-based line number, null if unknown |
+| `matches[].column` | number\|null | 1-based column number, null if unknown |
+| `matches[].redacted` | string | Redacted secret value (first/last 4 chars visible for values >8 chars, fully masked otherwise) |
+
+The raw secret value is never included in JSON output.
 
 ### rafter agent exec COMMAND [OPTIONS]
 
@@ -126,6 +175,76 @@ View security audit log.
 - `--since <date>` — entries since date (YYYY-MM-DD)
 
 Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`, `scan_executed`, `config_changed`.
+
+#### Audit Log Schema
+
+The audit log is written to `~/.rafter/audit.jsonl` as newline-delimited JSON (JSONL). Each line is one event. Both Node and Python CLIs write to the same file.
+
+**Base fields (all events):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `timestamp` | string (ISO 8601) | yes | UTC timestamp of the event |
+| `sessionId` | string | yes | Unique session identifier (`{epoch_ms}-{random}`) |
+| `eventType` | string | yes | One of the event types below |
+| `agentType` | string | no | `"openclaw"` or `"claude-code"` |
+
+**`action` object (optional):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `action.command` | string | no | Shell command string (present on `command_intercepted`, optional on `policy_override`) |
+| `action.tool` | string | no | Tool name that triggered the event |
+| `action.riskLevel` | string | no | `"low"`, `"medium"`, `"high"`, or `"critical"` |
+
+**`securityCheck` object (required):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `securityCheck.passed` | boolean | yes | Whether the security check passed |
+| `securityCheck.reason` | string | no | Human-readable explanation |
+| `securityCheck.details` | object | no | Structured details (used by `content_sanitized`) |
+
+**`resolution` object (required):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `resolution.actionTaken` | string | yes | `"blocked"`, `"allowed"`, `"overridden"`, or `"redacted"` |
+| `resolution.overrideReason` | string | no | Reason for override (only on `policy_override`) |
+
+**Event types:**
+
+| Event | Description | Typical `actionTaken` |
+|-------|-------------|----------------------|
+| `command_intercepted` | Shell command evaluated against policy | `allowed`, `blocked`, `overridden` |
+| `secret_detected` | Secret found in files or staged content | `blocked`, `allowed` |
+| `content_sanitized` | Sensitive patterns redacted from output | `redacted` |
+| `policy_override` | User overrode a security policy | `overridden` |
+| `scan_executed` | File scan performed | — |
+| `config_changed` | Security configuration modified | — |
+
+**Redaction behavior:** The audit log never contains raw secret values. For `secret_detected` events, only the secret type and location are recorded (e.g., `"AWS Access Key detected in config.js"`). For `content_sanitized`, only the count and content type are stored.
+
+**Example entries:**
+
+```jsonl
+{"timestamp":"2026-02-20T10:30:45.123Z","sessionId":"1740047445123-abc123","eventType":"command_intercepted","agentType":"claude-code","action":{"command":"git push --force","riskLevel":"high"},"securityCheck":{"passed":false,"reason":"High-risk command requires approval"},"resolution":{"actionTaken":"blocked"}}
+{"timestamp":"2026-02-20T10:25:12.456Z","sessionId":"1740047445123-abc123","eventType":"secret_detected","agentType":"openclaw","action":{"riskLevel":"critical"},"securityCheck":{"passed":false,"reason":"AWS Access Key detected in config.js"},"resolution":{"actionTaken":"blocked"}}
+```
+
+**Size and rotation:**
+
+- No automatic rotation or size limit. The file grows unbounded until cleanup runs.
+- Time-based retention: entries older than `agent.audit.retentionDays` (default: 30) are purged by `cleanup()`.
+- Cleanup is not scheduled automatically; invoke via the API or manually.
+
+**Configuration** (in `~/.rafter/config.json` or `.rafter.yml`):
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agent.audit.logAllActions` | boolean | `true` | Master switch — if `false`, no events are written |
+| `agent.audit.retentionDays` | number | `30` | Days to retain log entries |
+| `agent.audit.logLevel` | string | `"info"` | Stored but not currently used for filtering |
 
 ### rafter agent install-hook [OPTIONS]
 
@@ -272,4 +391,4 @@ rafter agent config set agent.riskLevel aggressive
 - Backend scanning targets the remote repository, not local files
 - All scan data to stdout, all status messages to stderr
 - `--quiet` suppresses stderr; stdout is unaffected
-- Agent commands are Node.js only; Python package provides backend scanning
+- Agent commands are available in both Node and Python implementations

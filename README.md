@@ -162,7 +162,7 @@ Without OpenClaw, generates an LLM-ready review prompt you can paste into any mo
 
 ### Audit Log
 
-Every security-relevant event is logged to `~/.rafter/audit.log` in JSON-lines format.
+Every security-relevant event is logged to `~/.rafter/audit.jsonl` in JSON-lines format.
 
 ```sh
 rafter agent audit                           # last 10 entries
@@ -282,7 +282,7 @@ Add to any MCP client config:
 ```
 ~/.rafter/
 ├── config.json        # Configuration
-├── audit.log          # Security event log (JSON lines)
+├── audit.jsonl        # Security event log (JSON lines)
 ├── bin/gitleaks       # Gitleaks binary
 ├── patterns/          # Custom patterns (reserved)
 └── git-hooks/         # Global pre-commit hook (if --global)

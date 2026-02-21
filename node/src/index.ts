@@ -9,12 +9,13 @@ import { createCiCommand } from "./commands/ci/index.js";
 import { createHookCommand } from "./commands/hook/index.js";
 import { createMcpCommand } from "./commands/mcp/index.js";
 import { createPolicyCommand } from "./commands/policy/index.js";
+import { createCompletionCommand } from "./commands/completion.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 
 dotenv.config();
 
-const VERSION = "0.5.0";
+const VERSION = "0.5.3";
 
 const program = new Command()
   .name("rafter")
@@ -49,6 +50,9 @@ program.addCommand(createMcpCommand());
 
 // Policy commands
 program.addCommand(createPolicyCommand());
+
+// Shell completions
+program.addCommand(createCompletionCommand());
 
 // Non-blocking update check — runs after command, prints to stderr
 checkForUpdate(VERSION).then((notice) => {
