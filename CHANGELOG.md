@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-02-21
+
+### Added
+- **SARIF 2.1.0 output** (Node + Python): `rafter agent scan --format sarif` outputs GitHub/GitLab-compatible SARIF JSON. `--format` flag accepts `text` (default), `json`, and `sarif`; `--json` remains as alias for `json`.
+- **Shell completions** (Node + Python): `rafter completion bash|zsh|fish` generates shell completion scripts. Node uses `eval "$(rafter completion bash)"` pattern; Python wraps Typer's built-in `--show-completion`.
+- **Custom patterns from disk** (Node + Python): `~/.rafter/patterns/*.txt` (one regex per line) and `*.json` (`{name, pattern, severity}`) are loaded and merged with built-in patterns at `RegexScanner` init.
+- **`.rafterignore` suppression** (Node + Python): `~/.rafter/.rafterignore` accepts path/glob lines (or `path:pattern-name`) to suppress findings at scan time. Supports `*` and `**` glob syntax.
+- **`rafter agent status`** (Node + Python): new subcommand showing config presence, gitleaks version, PreToolUse/PostToolUse hook registration, OpenClaw skill detection, and audit log summary (totals + 5 recent events).
+- **Python gitleaks auto-download**: `python/rafter_cli/utils/binary_manager.py` is a full port of `binary-manager.ts`—platform/arch detection, URL construction, `urllib` download with progress, tarfile extraction (binary only), `chmod 0o755`, subprocess verification, and diagnostic collection on failure. Wired into `agent init` and `agent verify`.
+
+### Fixed
+- **Force push detection** (Node + Python): added `git push -f`, `--force-with-lease`, `--force-if-includes`, and refspec force syntax (`git push origin +main`, `+HEAD:main`).
+- **Gitleaks tarball extraction** (Node): `binary-manager.ts` now uses `strip: 1` + binary-only filter—prevents `LICENSE` and `README.md` from landing in `~/.rafter/bin/`.
+- **`patterns/` README**: a `README.md` explaining the directory is written on first `agent init`, preventing user confusion about the empty folder.
+- **Stale `VERSION` constant**: `node/src/index.ts` `VERSION` was hardcoded to `0.5.0`; now tracks the release version correctly.
+- Documentation: `audit.log` references corrected to `audit.jsonl` across `README.md`, `node/README.md`, and `CHANGELOG.md`.
+
 ## [0.5.2] - 2026-02-21
 
 ### Added
