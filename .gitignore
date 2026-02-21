@@ -10,6 +10,9 @@ venv/
 # Node
 node_modules/
 dist/
+*.tgz
+node/package/
+node/package */
 
 # Test output
 **/test_output.json
