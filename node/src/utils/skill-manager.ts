@@ -15,6 +15,13 @@ export interface SkillMetadata {
   last_updated: string;
 }
 
+export interface SkillInstallResult {
+  ok: boolean;
+  sourcePath: string;
+  destPath: string;
+  error?: string;
+}
+
 export class SkillManager {
   private configManager: ConfigManager;
 
@@ -181,19 +188,19 @@ export class SkillManager {
   }
 
   /**
-   * Install Rafter Security skill to OpenClaw
+   * Install Rafter Security skill to OpenClaw (verbose result)
    */
-  async installRafterSkill(force: boolean = false): Promise<boolean> {
-    if (!this.isOpenClawInstalled()) {
-      return false;
-    }
-
+  async installRafterSkillVerbose(force: boolean = false): Promise<SkillInstallResult> {
     const skillPath = this.getRafterSkillPath();
     const sourcePath = this.getRafterSkillSourcePath();
 
+    if (!this.isOpenClawInstalled()) {
+      return { ok: false, sourcePath, destPath: skillPath, error: `OpenClaw skills directory not found: ${this.getOpenClawSkillsDir()}` };
+    }
+
     // Check if already installed and not forcing
     if (!force && this.isRafterSkillInstalled()) {
-      return true;
+      return { ok: true, sourcePath, destPath: skillPath };
     }
 
     try {
@@ -201,6 +208,11 @@ export class SkillManager {
       const skillsDir = this.getOpenClawSkillsDir();
       if (!fs.existsSync(skillsDir)) {
         fs.mkdirSync(skillsDir, { recursive: true });
+      }
+
+      // Verify source exists
+      if (!fs.existsSync(sourcePath)) {
+        return { ok: false, sourcePath, destPath: skillPath, error: `Source skill file not found: ${sourcePath}` };
       }
 
       // Copy skill file
@@ -217,11 +229,21 @@ export class SkillManager {
       // Migrate old skill-auditor if present
       await this.migrateOldSkill();
 
-      return true;
+      return { ok: true, sourcePath, destPath: skillPath };
     } catch (e) {
-      console.error(`Failed to install Rafter Security skill: ${e}`);
-      return false;
+      return { ok: false, sourcePath, destPath: skillPath, error: String(e) };
     }
+  }
+
+  /**
+   * Install Rafter Security skill to OpenClaw
+   */
+  async installRafterSkill(force: boolean = false): Promise<boolean> {
+    const result = await this.installRafterSkillVerbose(force);
+    if (!result.ok && result.error) {
+      console.error(`Failed to install Rafter Security skill: ${result.error}`);
+    }
+    return result.ok;
   }
 
   /**

@@ -216,17 +216,18 @@ export function createInitCommand(): Command {
 
       // Install OpenClaw skill if applicable
       if (hasOpenClaw && !opts.skipOpenclaw) {
-        try {
-          const skillManager = new SkillManager();
-          const installed = await skillManager.installRafterSkill();
-          if (installed) {
-            console.log(fmt.success("Installed Rafter Security skill to ~/.openclaw/skills/rafter-security.md"));
-            manager.set("agent.environments.openclaw.enabled", true);
-          } else {
-            console.log(fmt.warning("Failed to install Rafter Security skill"));
+        const skillManager = new SkillManager();
+        const result = await skillManager.installRafterSkillVerbose();
+        if (result.ok) {
+          console.log(fmt.success("Installed Rafter Security skill to ~/.openclaw/skills/rafter-security.md"));
+          manager.set("agent.environments.openclaw.enabled", true);
+        } else {
+          console.log(fmt.error("Failed to install Rafter Security skill"));
+          console.log(fmt.warning(`  Source: ${result.sourcePath}`));
+          console.log(fmt.warning(`  Destination: ${result.destPath}`));
+          if (result.error) {
+            console.log(fmt.warning(`  Error: ${result.error}`));
           }
-        } catch (e) {
-          console.error(fmt.error(`Failed to install OpenClaw skill: ${e}`));
         }
       }
 
