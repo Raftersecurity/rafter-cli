@@ -87,6 +87,26 @@ class TestHighRisk:
         result = _eval("git push --force origin main")
         assert result.risk_level == "high"
 
+    def test_git_push_short_flag(self):
+        result = _eval("git push -f origin main")
+        assert result.risk_level == "high"
+
+    def test_git_push_force_with_lease(self):
+        result = _eval("git push --force-with-lease origin main")
+        assert result.risk_level == "high"
+
+    def test_git_push_force_if_includes(self):
+        result = _eval("git push --force-if-includes origin main")
+        assert result.risk_level == "high"
+
+    def test_git_push_refspec_force(self):
+        result = _eval("git push origin +main")
+        assert result.risk_level == "high"
+
+    def test_git_push_refspec_force_full(self):
+        result = _eval("git push origin +HEAD:main")
+        assert result.risk_level == "high"
+
     def test_npm_publish(self):
         result = _eval("npm publish --access public")
         assert result.risk_level == "high"
@@ -212,6 +232,18 @@ class TestApprovalPatterns:
 
     def test_git_push_force_requires_approval(self):
         result = _eval("git push --force origin main")
+        assert result.requires_approval
+
+    def test_git_push_short_flag_requires_approval(self):
+        result = _eval("git push -f origin main")
+        assert result.requires_approval
+
+    def test_git_push_force_with_lease_requires_approval(self):
+        result = _eval("git push --force-with-lease origin main")
+        assert result.requires_approval
+
+    def test_git_push_refspec_requires_approval(self):
+        result = _eval("git push origin +main")
         assert result.requires_approval
 
 

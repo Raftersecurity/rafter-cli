@@ -81,6 +81,25 @@ class ConfigManager:
         rafter_dir = get_rafter_dir()
         for sub in [rafter_dir, rafter_dir / "bin", rafter_dir / "patterns"]:
             sub.mkdir(parents=True, exist_ok=True)
+
+        # Write patterns/ README if missing
+        patterns_readme = rafter_dir / "patterns" / "README.md"
+        if not patterns_readme.exists():
+            patterns_readme.write_text(
+                "\n".join([
+                    "# Custom Secret Patterns",
+                    "",
+                    "Place custom secret-detection pattern files here.",
+                    "Each file should contain one regex pattern per line.",
+                    "",
+                    "Rafter ships 21 built-in patterns (AWS, GitHub, Stripe, etc.).",
+                    "Files in this directory extend that set for your environment.",
+                    "",
+                    "Support for loading custom patterns from this directory is planned",
+                    "for a future release.",
+                ]) + "\n"
+            )
+
         if not self._path.exists():
             self.save(get_default_config())
 
