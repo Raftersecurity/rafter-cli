@@ -714,14 +714,20 @@ class _CheckResult:
     name: str
     passed: bool
     detail: str
+    optional: bool = False  # optional checks warn but don't fail exit code
 
 
 def _check_gitleaks() -> _CheckResult:
-    """Check if gitleaks is available and executable."""
+    """Check if gitleaks is available and executable. Checks PATH first, then ~/.rafter/bin."""
     name = "Gitleaks"
+    # Check PATH first (e.g. Homebrew), then fall back to rafter-managed binary
     gitleaks_path = shutil.which("gitleaks")
     if not gitleaks_path:
-        return _CheckResult(name, False, "Not found on PATH")
+        rafter_bin = Path.home() / ".rafter" / "bin" / "gitleaks"
+        if rafter_bin.exists():
+            gitleaks_path = str(rafter_bin)
+    if not gitleaks_path:
+        return _CheckResult(name, False, f"Not found on PATH or at {Path.home() / '.rafter' / 'bin' / 'gitleaks'}")
 
     scanner = GitleaksScanner()
     result = scanner.check()
@@ -761,16 +767,16 @@ def _check_claude_code() -> _CheckResult:
     claude_dir = home / ".claude"
 
     if not claude_dir.exists():
-        return _CheckResult(name, False, f"Directory not found: {claude_dir}")
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --claude-code' to enable", optional=True)
 
     settings_path = claude_dir / "settings.json"
     if not settings_path.exists():
-        return _CheckResult(name, False, f"Settings file not found: {settings_path}")
+        return _CheckResult(name, False, f"Settings file not found: {settings_path}", optional=True)
 
     try:
         settings = json.loads(settings_path.read_text())
     except (json.JSONDecodeError, OSError) as e:
-        return _CheckResult(name, False, f"Cannot read settings: {e}")
+        return _CheckResult(name, False, f"Cannot read settings: {e}", optional=True)
 
     hooks = settings.get("hooks", {}).get("PreToolUse", [])
     has_rafter = any(
@@ -778,7 +784,7 @@ def _check_claude_code() -> _CheckResult:
         for entry in hooks
     )
     if not has_rafter:
-        return _CheckResult(name, False, "Rafter hooks not found in settings.json — run 'rafter agent init'")
+        return _CheckResult(name, False, "Rafter hooks not installed — run 'rafter agent init --claude-code'", optional=True)
     return _CheckResult(name, True, "Hooks installed")
 
 
@@ -789,11 +795,11 @@ def _check_openclaw() -> _CheckResult:
     skills_dir = home / ".openclaw" / "skills"
 
     if not skills_dir.exists():
-        return _CheckResult(name, False, f"Not installed ({skills_dir} not found)")
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init' to enable", optional=True)
 
     skill_path = skills_dir / "rafter-security.md"
     if not skill_path.exists():
-        return _CheckResult(name, False, f"Rafter skill not found at {skill_path}")
+        return _CheckResult(name, False, "Rafter skill not installed — run 'rafter agent init'", optional=True)
 
     # Try to extract version from frontmatter
     version = ""
@@ -827,21 +833,24 @@ def verify():
     for r in results:
         if r.passed:
             rprint(fmt.success(f"{r.name}: {r.detail}"))
+        elif r.optional:
+            rprint(fmt.warning(f"{r.name}: {r.detail}"))
         else:
-            rprint(fmt.error(f"{r.name}: FAIL"))
-            rprint(f"   {r.detail}")
+            rprint(fmt.error(f"{r.name}: FAIL — {r.detail}"))
 
     rprint()
-    all_passed = all(r.passed for r in results)
-    pass_count = sum(1 for r in results if r.passed)
+    hard_failed = [r for r in results if not r.passed and not r.optional]
+    warned = [r for r in results if not r.passed and r.optional]
+    passed = [r for r in results if r.passed]
 
-    if all_passed:
-        rprint(fmt.success(f"All {len(results)} checks passed"))
+    if not hard_failed:
+        warn_note = f" ({len(warned)} optional check{'s' if len(warned) != 1 else ''} not configured)" if warned else ""
+        rprint(fmt.success(f"{len(passed)}/{len(results)} core checks passed{warn_note}"))
     else:
-        rprint(fmt.warning(f"{pass_count}/{len(results)} checks passed"))
+        rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
     rprint()
 
-    if not all_passed:
+    if hard_failed:
         raise typer.Exit(code=1)
 
 
@@ -1024,6 +1033,8 @@ def audit_skill(
             "rafterSkillInstalled": rafter_skill_installed,
         }
         print(json.dumps(result, indent=2))
+        if quick_scan.secrets > 0 or len(quick_scan.high_risk_commands) > 0:
+            raise typer.Exit(code=1)
         return
 
     # Check if we can use OpenClaw
@@ -1058,3 +1069,6 @@ def audit_skill(
         print("\u2500" * 60)
 
     print()
+
+    if quick_scan.secrets > 0 or len(quick_scan.high_risk_commands) > 0:
+        raise typer.Exit(code=1)

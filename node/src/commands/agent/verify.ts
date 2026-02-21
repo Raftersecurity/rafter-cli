@@ -11,23 +11,29 @@ interface CheckResult {
   name: string;
   passed: boolean;
   detail: string;
+  optional?: boolean;  // optional checks warn but don't fail exit code
 }
 
 async function checkGitleaks(): Promise<CheckResult> {
   const binaryManager = new BinaryManager();
   const name = "Gitleaks";
 
-  if (!binaryManager.isGitleaksInstalled()) {
-    return { name, passed: false, detail: `Binary not found at ${binaryManager.getGitleaksPath()}` };
+  // Check PATH first (e.g. Homebrew), then fall back to ~/.rafter/bin
+  const pathBinary = binaryManager.findGitleaksOnPath();
+  const hasBinary = pathBinary !== null || binaryManager.isGitleaksInstalled();
+
+  if (!hasBinary) {
+    return { name, passed: false, detail: `Not found on PATH or at ${binaryManager.getGitleaksPath()}` };
   }
 
-  const { ok, stdout, stderr } = await binaryManager.verifyGitleaksVerbose();
+  const binaryPath = pathBinary ?? binaryManager.getGitleaksPath();
+  const { ok, stdout, stderr } = await binaryManager.verifyGitleaksVerbose(binaryPath);
   if (!ok) {
-    const diag = await binaryManager.collectBinaryDiagnostics();
-    return { name, passed: false, detail: `Binary exists but failed to execute\n${stdout ? `  stdout: ${stdout}\n` : ""}${stderr ? `  stderr: ${stderr}\n` : ""}${diag}` };
+    const diag = await binaryManager.collectBinaryDiagnostics(binaryPath);
+    return { name, passed: false, detail: `Binary found at ${binaryPath} but failed to execute\n${stdout ? `  stdout: ${stdout}\n` : ""}${stderr ? `  stderr: ${stderr}\n` : ""}${diag}` };
   }
 
-  return { name, passed: true, detail: stdout };
+  return { name, passed: true, detail: `${stdout} (${binaryPath})` };
 }
 
 function checkConfig(): CheckResult {
@@ -50,15 +56,16 @@ function checkConfig(): CheckResult {
 function checkClaudeCode(): CheckResult {
   const name = "Claude Code";
   const homeDir = os.homedir();
+  // optional: warn if absent but don't fail exit code
   const claudeDir = path.join(homeDir, ".claude");
 
   if (!fs.existsSync(claudeDir)) {
-    return { name, passed: false, detail: `Directory not found: ${claudeDir}` };
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --claude-code' to enable` };
   }
 
   const settingsPath = path.join(claudeDir, "settings.json");
   if (!fs.existsSync(settingsPath)) {
-    return { name, passed: false, detail: `Settings file not found: ${settingsPath}` };
+    return { name, passed: false, optional: true, detail: `Settings file not found: ${settingsPath}` };
   }
 
   try {
@@ -68,11 +75,11 @@ function checkClaudeCode(): CheckResult {
       (entry.hooks || []).some((h: any) => h.command === "rafter hook pretool")
     );
     if (!hasRafterHook) {
-      return { name, passed: false, detail: "Rafter hooks not found in settings.json — run 'rafter agent init'" };
+      return { name, passed: false, optional: true, detail: "Rafter hooks not installed — run 'rafter agent init --claude-code'" };
     }
     return { name, passed: true, detail: "Hooks installed" };
   } catch (e) {
-    return { name, passed: false, detail: `Cannot read settings: ${e}` };
+    return { name, passed: false, optional: true, detail: `Cannot read settings: ${e}` };
   }
 }
 
@@ -81,11 +88,11 @@ function checkOpenClaw(): CheckResult {
   const skillManager = new SkillManager();
 
   if (!skillManager.isOpenClawInstalled()) {
-    return { name, passed: false, detail: `Not installed (${skillManager.getOpenClawSkillsDir()} not found)` };
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init' to enable` };
   }
 
   if (!skillManager.isRafterSkillInstalled()) {
-    return { name, passed: false, detail: `Rafter skill not found at ${skillManager.getRafterSkillPath()}` };
+    return { name, passed: false, optional: true, detail: `Rafter skill not installed — run 'rafter agent init'` };
   }
 
   const version = skillManager.getInstalledVersion();
@@ -110,24 +117,27 @@ export function createVerifyCommand(): Command {
       for (const r of results) {
         if (r.passed) {
           console.log(fmt.success(`${r.name}: ${r.detail}`));
+        } else if (r.optional) {
+          console.log(fmt.warning(`${r.name}: ${r.detail}`));
         } else {
-          console.log(fmt.error(`${r.name}: FAIL`));
-          console.log(`   ${r.detail}`);
+          console.log(fmt.error(`${r.name}: FAIL — ${r.detail}`));
         }
       }
 
       console.log();
-      const allPassed = results.every((r) => r.passed);
-      const passCount = results.filter((r) => r.passed).length;
+      const hardFailed = results.filter((r) => !r.passed && !r.optional);
+      const warned = results.filter((r) => !r.passed && r.optional);
+      const passed = results.filter((r) => r.passed);
 
-      if (allPassed) {
-        console.log(fmt.success(`All ${results.length} checks passed`));
+      if (hardFailed.length === 0) {
+        const warnNote = warned.length > 0 ? ` (${warned.length} optional check${warned.length > 1 ? "s" : ""} not configured)` : "";
+        console.log(fmt.success(`${passed.length}/${results.length} core checks passed${warnNote}`));
       } else {
-        console.log(fmt.warning(`${passCount}/${results.length} checks passed`));
+        console.log(fmt.error(`${hardFailed.length} check${hardFailed.length > 1 ? "s" : ""} failed`));
       }
       console.log();
 
-      if (!allPassed) {
+      if (hardFailed.length > 0) {
         process.exit(1);
       }
     });
