@@ -169,8 +169,11 @@ export function createInitCommand(): Command {
             });
             console.log();
           } catch (e) {
-            console.log(fmt.warning(`Failed to download Gitleaks: ${e}`));
-            console.log(fmt.success("Falling back to pattern-based scanning"));
+            console.log();
+            console.log(fmt.error(`Gitleaks setup failed — pattern-based scanning will be used instead.`));
+            console.log(fmt.warning(String(e)));
+            console.log();
+            console.log(fmt.info("To fix: install gitleaks manually (https://github.com/gitleaks/gitleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
             console.log();
           }
         }
