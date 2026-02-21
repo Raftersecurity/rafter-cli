@@ -4,6 +4,9 @@ on:
   pull_request:
     branches:
       - prod
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -90,3 +93,49 @@ jobs:
           test -f python/dist/*.whl || exit 1
           test -f python/dist/*.tar.gz || exit 1
           echo "All build artifacts verified"
+
+  test-package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@9 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Pack
+        run: npm pack
+
+      - name: Verify resources/pre-commit-hook.sh in tarball
+        run: |
+          TARBALL=$(ls rafter-security-cli-*.tgz | head -1)
+          echo "Inspecting: $TARBALL"
+          tar -tzf "$TARBALL" | grep "resources/pre-commit-hook.sh" \
+            || (echo "FAIL: resources/pre-commit-hook.sh not found in tarball" && exit 1)
+          echo "OK: resources/pre-commit-hook.sh present in tarball"
+
+      - name: Test install-hook end-to-end from packed tarball
+        run: |
+          TARBALL=$(ls rafter-security-cli-*.tgz | head -1)
+          npm install -g "./$TARBALL"
+          rafter --version
+          TMPDIR=$(mktemp -d)
+          git init "$TMPDIR"
+          git -C "$TMPDIR" config user.email "ci@test.local"
+          git -C "$TMPDIR" config user.name "CI Test"
+          (cd "$TMPDIR" && rafter agent install-hook)
+          test -f "$TMPDIR/.git/hooks/pre-commit" \
+            || (echo "FAIL: pre-commit hook not installed" && exit 1)
+          echo "OK: pre-commit hook installed end-to-end"
