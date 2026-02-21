@@ -65,6 +65,9 @@ async function auditSkill(
       rafterSkillInstalled
     };
     console.log(JSON.stringify(result, null, 2));
+    if (quickScan.secrets > 0 || quickScan.highRiskCommands.length > 0) {
+      process.exit(1);
+    }
     return;
   }
 
@@ -102,6 +105,10 @@ async function auditSkill(
   }
 
   console.log();
+
+  if (quickScan.secrets > 0 || quickScan.highRiskCommands.length > 0) {
+    process.exit(1);
+  }
 }
 
 async function runQuickScan(content: string): Promise<QuickScanResults> {

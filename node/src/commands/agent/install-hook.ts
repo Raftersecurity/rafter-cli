@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { fileURLToPath } from 'url';
@@ -94,7 +95,7 @@ async function installLocalHook(): Promise<void> {
  */
 async function installGlobalHook(): Promise<void> {
   // Create global hooks directory
-  const homeDir = process.env.HOME || process.env.USERPROFILE;
+  const homeDir = os.homedir();
   if (!homeDir) {
     console.error("❌ Error: Could not determine home directory");
     process.exit(1);
