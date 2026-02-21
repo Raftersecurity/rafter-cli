@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-02-20
+
+### Added
+- `rafter agent install-hook` — Python CLI now supports pre-commit hook installation (local and global via `--global`) at parity with Node. Bundles hook template via `importlib.resources`; backs up any existing hook before overwriting.
+
+### Fixed
+- **Python crash on `rafter --help`**: upgraded `typer` to `^0.15.0` and pinned `click<9.0.0`. Typer 0.13.x + Click 8.3.x caused `TypeError: Parameter.make_metavar() missing 1 required positional argument: 'ctx'` on fresh installs.
+- **Gitleaks silent fallback**: `rafter agent init` no longer silently falls back to pattern scanning when the gitleaks binary fails. On failure, both Node and Python now surface the download URL, binary path, `gitleaks version` stdout/stderr, `file <binary>` output, arch/platform info, and glibc/musl detection on Linux, plus actionable fix instructions. (Node: `binary-manager.ts`; Python: `gitleaks.py` + `agent.py`)
+
+### CI
+- Added npm packaging smoke test to `publish.yml` (prod push only): `npm pack`, tarball inspection for `resources/pre-commit-hook.sh`, and end-to-end `agent install-hook` run against the packed tarball.
+
 ## [0.5.1] - 2026-02-14
 
 ### Added
