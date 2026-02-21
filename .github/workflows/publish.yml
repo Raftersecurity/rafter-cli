@@ -56,7 +56,7 @@ jobs:
 
       - name: Verify resources/pre-commit-hook.sh in tarball
         run: |
-          TARBALL=$(ls *.tgz | head -1)
+          TARBALL=$(ls rafter-security-cli-*.tgz | head -1)
           echo "Inspecting: $TARBALL"
           tar -tzf "$TARBALL" | grep "resources/pre-commit-hook.sh" \
             || (echo "FAIL: resources/pre-commit-hook.sh not found in tarball" && exit 1)
@@ -64,7 +64,7 @@ jobs:
 
       - name: Test install-hook end-to-end from packed tarball
         run: |
-          TARBALL=$(ls *.tgz | head -1)
+          TARBALL=$(ls rafter-security-cli-*.tgz | head -1)
           npm install -g "./$TARBALL"
           rafter --version
           TMPDIR=$(mktemp -d)
