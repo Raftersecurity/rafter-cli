@@ -52,6 +52,10 @@ export interface RafterConfig {
       retentionDays: number;
       logLevel: LogLevel;
     };
+    notifications?: {
+      webhook?: string;
+      minRiskLevel?: 'high' | 'critical';
+    };
     scan?: {
       excludePaths?: string[];
       customPatterns?: ScanCustomPattern[];

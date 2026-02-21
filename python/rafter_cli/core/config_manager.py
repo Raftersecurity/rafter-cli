@@ -184,6 +184,7 @@ class ConfigManager:
             CommandPolicyConfig,
             EnvironmentConfig,
             EnvironmentsConfig,
+            NotificationsConfig,
             OutputFilteringConfig,
             ScanConfig,
             ScanCustomPattern,
@@ -202,6 +203,7 @@ class ConfigManager:
             command_policy=CommandPolicyConfig(**cls._pick_fields(CommandPolicyConfig, agent_raw.get("commandPolicy") or agent_raw.get("command_policy") or {})),
             output_filtering=OutputFilteringConfig(**cls._pick_fields(OutputFilteringConfig, agent_raw.get("outputFiltering") or agent_raw.get("output_filtering") or {})),
             audit=AuditConfig(**cls._pick_fields(AuditConfig, agent_raw.get("audit") or {})),
+            notifications=NotificationsConfig(**cls._pick_fields(NotificationsConfig, agent_raw.get("notifications") or {})),
             scan=ScanConfig(
                 exclude_paths=(agent_raw.get("scan") or {}).get("exclude_paths", (agent_raw.get("scan") or {}).get("excludePaths", [])),
                 custom_patterns=[

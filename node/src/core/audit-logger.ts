@@ -37,6 +37,13 @@ export interface AuditLogEntry {
   };
 }
 
+export const RISK_SEVERITY: Record<string, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+  critical: 3,
+};
+
 export class AuditLogger {
   private logPath: string;
   private sessionId: string;
@@ -74,6 +81,46 @@ export class AuditLogger {
     // Append to log file
     const line = JSON.stringify(fullEntry) + "\n";
     fs.appendFileSync(this.logPath, line, "utf-8");
+
+    // Send webhook notification if configured and risk meets threshold
+    this.sendNotification(fullEntry, config);
+  }
+
+  /**
+   * Send webhook notification for high-risk events
+   */
+  private sendNotification(entry: AuditLogEntry, config: any): void {
+    const webhookUrl = config.agent?.notifications?.webhook;
+    if (!webhookUrl) return;
+
+    const eventRisk = entry.action?.riskLevel || "low";
+    const minRisk = config.agent?.notifications?.minRiskLevel || "high";
+
+    if ((RISK_SEVERITY[eventRisk] ?? 0) < (RISK_SEVERITY[minRisk] ?? 2)) {
+      return;
+    }
+
+    const payload = {
+      event: entry.eventType,
+      risk: eventRisk,
+      command: entry.action?.command || null,
+      timestamp: entry.timestamp,
+      agent: entry.agentType || null,
+      // Slack-compatible text field
+      text: `[rafter] ${eventRisk}-risk event: ${entry.eventType}${entry.action?.command ? ` — ${entry.action.command}` : ""}`,
+      // Discord-compatible content field
+      content: `[rafter] ${eventRisk}-risk event: ${entry.eventType}${entry.action?.command ? ` — ${entry.action.command}` : ""}`,
+    };
+
+    // Fire-and-forget POST — never block audit logging
+    fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {
+      // Silently ignore webhook failures
+    });
   }
 
   /**

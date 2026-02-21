@@ -52,6 +52,12 @@ class AuditConfig:
 
 
 @dataclass
+class NotificationsConfig:
+    webhook: str | None = None
+    min_risk_level: Literal["high", "critical"] = "high"
+
+
+@dataclass
 class ScanConfig:
     exclude_paths: list[str] = field(default_factory=list)
     custom_patterns: list[ScanCustomPattern] = field(default_factory=list)
@@ -86,6 +92,7 @@ class AgentConfig:
     command_policy: CommandPolicyConfig = field(default_factory=CommandPolicyConfig)
     output_filtering: OutputFilteringConfig = field(default_factory=OutputFilteringConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
+    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
 
 
