@@ -57,6 +57,7 @@ export const DEFAULT_REQUIRE_APPROVAL: string[] = [
   "git push -f",
   "git push --force-with-lease",
   "git push --force-if-includes",
+  "git push .* \\+",
 ];
 
 /**

@@ -52,6 +52,7 @@ DEFAULT_REQUIRE_APPROVAL: list[str] = [
     "git push -f",
     "git push --force-with-lease",
     "git push --force-if-includes",
+    r"git push .* \+",
 ]
 
 
