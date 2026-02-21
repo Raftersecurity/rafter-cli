@@ -341,8 +341,13 @@ def _output_scan_results(
     json_output: bool,
     quiet: bool,
     context: str | None = None,
+    format: str = "text",
 ) -> None:
-    if json_output:
+    if format == "sarif":
+        _output_sarif(results)
+        return
+
+    if json_output or format == "json":
         out = [
             {"file": r.file, "matches": [
                 {"pattern": {"name": m.pattern.name, "severity": m.pattern.severity, "description": m.pattern.description or ""},
@@ -384,11 +389,55 @@ def _output_scan_results(
     raise typer.Exit(code=1)
 
 
+def _output_sarif(results: list[ScanResult]) -> None:
+    """Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration."""
+    rules: dict[str, dict] = {}
+    sarif_results = []
+    for r in results:
+        for m in r.matches:
+            rule_id = re.sub(r"\s+", "-", m.pattern.name.lower())
+            if rule_id not in rules:
+                rules[rule_id] = {
+                    "id": rule_id,
+                    "name": m.pattern.name,
+                    "shortDescription": {"text": m.pattern.description or m.pattern.name},
+                }
+            level = "error" if m.pattern.severity in ("critical", "high") else "warning"
+            location: dict[str, Any] = {
+                "artifactLocation": {"uri": r.file.replace("\\", "/"), "uriBaseId": "%SRCROOT%"},
+            }
+            if m.line:
+                location["region"] = {"startLine": m.line, "startColumn": m.column or 1}
+            sarif_results.append({
+                "ruleId": rule_id,
+                "level": level,
+                "message": {"text": f"{m.pattern.name} detected"},
+                "locations": [{"physicalLocation": location}],
+            })
+    sarif = {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "rafter",
+                    "informationUri": "https://rafter.so",
+                    "rules": list(rules.values()),
+                }
+            },
+            "results": sarif_results,
+        }],
+    }
+    print(json.dumps(sarif, indent=2))
+    raise typer.Exit(code=1 if results else 0)
+
+
 @agent_app.command()
 def scan(
     path: str = typer.Argument(".", help="File or directory to scan"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Only output if secrets found"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
     staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
     diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
     engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
@@ -429,7 +478,7 @@ def scan(
             resolved = os.path.abspath(f)
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
-        _output_scan_results(all_results, json_output, quiet, f"files changed since {diff}")
+        _output_scan_results(all_results, json_output, quiet, f"files changed since {diff}", format=format)
         return
 
     # --staged
@@ -458,7 +507,7 @@ def scan(
             resolved = os.path.abspath(f)
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
-        _output_scan_results(all_results, json_output, quiet, "staged files")
+        _output_scan_results(all_results, json_output, quiet, "staged files", format=format)
         return
 
     # Default: scan path
@@ -478,7 +527,7 @@ def scan(
             print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
         results = _scan_file(resolved_path, eng, custom_patterns)
 
-    _output_scan_results(results, json_output, quiet)
+    _output_scan_results(results, json_output, quiet, format=format)
 
 
 # ── audit ────────────────────────────────────────────────────────────

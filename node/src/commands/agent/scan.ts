@@ -10,6 +10,7 @@ import { fmt } from "../../utils/formatter.js";
 interface ScanOpts {
   quiet?: boolean;
   json?: boolean;
+  format?: string;
   engine?: string;
   staged?: boolean;
   diff?: string;
@@ -21,6 +22,7 @@ export function createScanCommand(): Command {
     .argument("[path]", "File or directory to scan", ".")
     .option("-q, --quiet", "Only output if secrets found")
     .option("--json", "Output as JSON")
+    .option("--format <format>", "Output format: text, json, sarif", "text")
     .option("--staged", "Scan only git staged files")
     .option("--diff <ref>", "Scan files changed since a git ref")
     .option("--engine <engine>", "Scan engine: gitleaks or patterns", "auto")
@@ -74,6 +76,60 @@ export function createScanCommand(): Command {
 }
 
 /**
+ * Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration
+ */
+function outputSarif(results: ScanResult[]): void {
+  const rules = new Map<string, { id: string; name: string; shortDescription: string }>();
+  const sarifResults: object[] = [];
+
+  for (const r of results) {
+    for (const m of r.matches) {
+      const ruleId = m.pattern.name.toLowerCase().replace(/\s+/g, "-");
+      if (!rules.has(ruleId)) {
+        rules.set(ruleId, {
+          id: ruleId,
+          name: m.pattern.name,
+          shortDescription: m.pattern.description || m.pattern.name,
+        });
+      }
+      sarifResults.push({
+        ruleId,
+        level: m.pattern.severity === "critical" || m.pattern.severity === "high" ? "error" : "warning",
+        message: { text: `${m.pattern.name} detected` },
+        locations: [
+          {
+            physicalLocation: {
+              artifactLocation: { uri: r.file.replace(/\\/g, "/"), uriBaseId: "%SRCROOT%" },
+              region: m.line ? { startLine: m.line, startColumn: m.column ?? 1 } : undefined,
+            },
+          },
+        ],
+      });
+    }
+  }
+
+  const sarif = {
+    $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+    version: "2.1.0",
+    runs: [
+      {
+        tool: {
+          driver: {
+            name: "rafter",
+            informationUri: "https://rafter.so",
+            rules: Array.from(rules.values()),
+          },
+        },
+        results: sarifResults,
+      },
+    ],
+  };
+
+  console.log(JSON.stringify(sarif, null, 2));
+  process.exit(results.length > 0 ? 1 : 0);
+}
+
+/**
  * Shared output logic for scan results
  */
 function outputScanResults(
@@ -81,7 +137,14 @@ function outputScanResults(
   opts: ScanOpts,
   context?: string,
 ): void {
-  if (opts.json) {
+  const format = opts.format ?? (opts.json ? "json" : "text");
+
+  if (format === "sarif") {
+    outputSarif(results);
+    return;
+  }
+
+  if (format === "json" || opts.json) {
     const out = results.map((r) => ({
       file: r.file,
       matches: r.matches.map((m) => ({

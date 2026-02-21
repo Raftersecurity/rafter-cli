@@ -15,7 +15,7 @@ from .utils.formatter import set_agent_mode
 app = typer.Typer(
     name="rafter",
     help="Rafter CLI — security for AI builders.",
-    add_completion=False,
+    add_completion=True,
     no_args_is_help=True,
 )
 
@@ -39,6 +39,43 @@ def main(
     """Rafter CLI — security for AI builders."""
     if agent:
         set_agent_mode(True)
+
+
+@app.command("completion")
+def completion(
+    shell: str = typer.Argument(..., help="Shell type: bash, zsh, or fish"),
+):
+    """Generate shell completion script.
+
+    \b
+    Install:
+      bash  — add to ~/.bashrc:   eval "$(rafter completion bash)"
+      zsh   — add to ~/.zshrc:    eval "$(rafter completion zsh)"
+      fish  — save to completions: rafter completion fish > ~/.config/fish/completions/rafter.fish
+    """
+    import subprocess
+    import sys
+
+    shell = shell.lower()
+    if shell not in ("bash", "zsh", "fish"):
+        typer.echo(f"Unknown shell: {shell}. Supported: bash, zsh, fish", err=True)
+        raise typer.Exit(code=1)
+
+    env_map = {"bash": "bash", "zsh": "zsh", "fish": "fish"}
+    result = subprocess.run(
+        [sys.executable, "-m", "rafter_cli", "--show-completion", env_map[shell]],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        # Fallback: use _RAFTER_COMPLETE env var approach
+        import os
+        env = os.environ.copy()
+        env[f"_RAFTER_COMPLETE"] = f"{shell}_source"
+        result = subprocess.run(
+            [sys.executable, "-m", "rafter_cli"],
+            capture_output=True, text=True, env=env,
+        )
+    typer.echo(result.stdout, nl=False)
 
 
 # Backend commands (run, get, usage) on root app
