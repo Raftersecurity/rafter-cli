@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-02-21
+
+### Added
+- **SARIF 2.1.0 output** (Node + Python): `rafter agent scan --format sarif` outputs GitHub/GitLab-compatible SARIF JSON. `--format` flag accepts `text` (default), `json`, and `sarif`; `--json` remains as alias for `json`.
+- **Shell completions** (Node + Python): `rafter completion bash|zsh|fish` generates shell completion scripts. Node uses `eval "$(rafter completion bash)"` pattern; Python wraps Typer's built-in `--show-completion`.
+- **Custom patterns from disk** (Node + Python): `~/.rafter/patterns/*.txt` (one regex per line) and `*.json` (`{name, pattern, severity}`) are loaded and merged with built-in patterns at `RegexScanner` init.
+- **`.rafterignore` suppression** (Node + Python): `~/.rafter/.rafterignore` accepts path/glob lines (or `path:pattern-name`) to suppress findings at scan time. Supports `*` and `**` glob syntax.
+- **`rafter agent status`** (Node + Python): new subcommand showing config presence, gitleaks version, PreToolUse/PostToolUse hook registration, OpenClaw skill detection, and audit log summary (totals + 5 recent events).
+- **Python gitleaks auto-download**: `python/rafter_cli/utils/binary_manager.py` is a full port of `binary-manager.ts`—platform/arch detection, URL construction, `urllib` download with progress, tarfile extraction (binary only), `chmod 0o755`, subprocess verification, and diagnostic collection on failure. Wired into `agent init` and `agent verify`.
+
+### Fixed
+- **Force push detection** (Node + Python): added `git push -f`, `--force-with-lease`, `--force-if-includes`, and refspec force syntax (`git push origin +main`, `+HEAD:main`).
+- **Gitleaks tarball extraction** (Node): `binary-manager.ts` now uses `strip: 1` + binary-only filter—prevents `LICENSE` and `README.md` from landing in `~/.rafter/bin/`.
+- **`patterns/` README**: a `README.md` explaining the directory is written on first `agent init`, preventing user confusion about the empty folder.
+- **Stale `VERSION` constant**: `node/src/index.ts` `VERSION` was hardcoded to `0.5.0`; now tracks the release version correctly.
+- Documentation: `audit.log` references corrected to `audit.jsonl` across `README.md`, `node/README.md`, and `CHANGELOG.md`.
+
+## [0.5.2] - 2026-02-21
+
+### Added
+- `rafter agent install-hook` — Python CLI now supports pre-commit hook installation (local and global via `--global`) at parity with Node. Bundles hook template via `importlib.resources`; backs up any existing hook before overwriting.
+- `rafter agent verify` — new subcommand (Node + Python) checks gitleaks binary, `~/.rafter/config.json`, Claude Code hooks, and OpenClaw skill; exits 0 if all pass, 1 if any fail.
+- `rafter agent audit-skill` — Python CLI now has full parity with Node's skill auditing command: secret detection, URL extraction, 11 high-risk command patterns, OpenClaw integration, manual review prompt generation, `--json` output.
+- `rafter agent init` now surfaces verbose error detail when OpenClaw skill install fails (path, exit code, stdout/stderr).
+
+### Fixed
+- **Python crash on `rafter --help`**: upgraded `typer` to `^0.15.0` and pinned `click<9.0.0`. Typer 0.13.x + Click 8.3.x caused `TypeError: Parameter.make_metavar() missing 1 required positional argument: 'ctx'` on fresh installs.
+- **Gitleaks silent fallback**: `rafter agent init` no longer silently falls back to pattern scanning when the gitleaks binary fails. Both Node and Python now surface the download URL, binary path, `gitleaks version` stdout/stderr, `file <binary>` output, arch/platform info, and glibc/musl detection on Linux, plus actionable fix instructions.
+- **Node `agent init` PATH diagnostic gap**: when a PATH-installed gitleaks binary fails to execute, Node now calls `verifyGitleaksVerbose()` + `collectBinaryDiagnostics()` and surfaces structured diagnostics, matching Python behavior.
+- **`agent scan` exit codes**: exit code 2 now reserved for runtime errors (was conflated with exit code 1 for findings). Stable contract: `0`=clean, `1`=findings, `2`=error.
+- JSON output schema for `agent scan --json` aligned between Node and Python.
+
+### Documentation
+- Audit log JSONL schema documented in `CLI_SPEC.md`: all event types, field names/types, required vs optional, redaction behavior, rotation notes.
+
+### CI
+- Post-publish smoke tests added to `publish.yml` (prod push only): Node (`npm pack` → tarball inspect → `agent scan` fixture) and Python (clean venv → `pip install` → `--help` → `agent scan` fixture). Both gate after publish.
+- npm packaging test: verifies `resources/pre-commit-hook.sh` present in tarball and `agent install-hook` works end-to-end.
+
 ## [0.5.1] - 2026-02-14
 
 ### Added
@@ -68,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - High-risk command approval workflow (`git push --force`, `sudo rm`, etc.)
 - Pre-execution secret scanning for git commits
 - Config management system (`~/.rafter/config.json`) with dot-notation paths
-- Structured audit logging (`~/.rafter/audit.log`)
+- Structured audit logging (`~/.rafter/audit.jsonl`)
 - Init wizard with environment auto-detection (OpenClaw, Claude Code, Codex CLI)
 - Skill auditing system with 12-dimension security analysis
 - Pre-commit hooks (per-repo and global) for automatic secret scanning

@@ -35,8 +35,10 @@ function installClaudeCodeHooks(): void {
   // Merge hooks — don't overwrite existing non-Rafter hooks
   if (!settings.hooks) settings.hooks = {};
   if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+  if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
 
-  const rafterHook = { type: "command", command: "rafter hook pretool" };
+  const preHook = { type: "command", command: "rafter hook pretool" };
+  const postHook = { type: "command", command: "rafter hook posttool" };
 
   // Remove any existing Rafter hooks to avoid duplicates
   settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
@@ -45,15 +47,25 @@ function installClaudeCodeHooks(): void {
       return !hooks.some((h: any) => h.command === "rafter hook pretool");
     }
   );
+  settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
+    (entry: any) => {
+      const hooks = entry.hooks || [];
+      return !hooks.some((h: any) => h.command === "rafter hook posttool");
+    }
+  );
 
   // Add Rafter hooks
   settings.hooks.PreToolUse.push(
-    { matcher: "Bash", hooks: [rafterHook] },
-    { matcher: "Write|Edit", hooks: [rafterHook] },
+    { matcher: "Bash", hooks: [preHook] },
+    { matcher: "Write|Edit", hooks: [preHook] },
+  );
+  settings.hooks.PostToolUse.push(
+    { matcher: ".*", hooks: [postHook] },
   );
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
   console.log(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
+  console.log(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
 }
 
 async function installClaudeCodeSkills(): Promise<void> {
@@ -149,46 +161,85 @@ export function createInitCommand(): Command {
       manager.set("agent.riskLevel", opts.riskLevel);
       console.log(fmt.success(`Set risk level: ${opts.riskLevel}`));
 
-      // Download Gitleaks binary (optional)
+      // Check / download Gitleaks binary (optional)
       if (!opts.skipGitleaks) {
         const binaryManager = new BinaryManager();
         const platformInfo = binaryManager.getPlatformInfo();
 
-        if (!platformInfo.supported) {
-          console.log(fmt.info(`Gitleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
-          console.log(fmt.success("Using pattern-based scanning (21 patterns)"));
-        } else if (binaryManager.isGitleaksInstalled()) {
-          const version = await binaryManager.getGitleaksVersion();
-          console.log(fmt.success(`Gitleaks already installed (${version})`));
-        } else {
+        // Helper: show diagnostics for a failing binary (mirrors Python's agent init)
+        const showDiagnostics = async (binaryPath: string, verResult: { ok: boolean; stdout: string; stderr: string }) => {
+          if (verResult.stderr) {
+            console.log(fmt.info(`  stderr: ${verResult.stderr}`));
+          }
+          const diag = await binaryManager.collectBinaryDiagnostics(binaryPath);
+          if (diag) {
+            console.log(fmt.info("Diagnostics:"));
+            console.log(diag);
+          }
+          console.log(fmt.info("To fix: install gitleaks (https://github.com/gitleaks/gitleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
           console.log();
-          console.log(fmt.info("Downloading Gitleaks (enhanced secret detection)..."));
-          try {
-            await binaryManager.downloadGitleaks((msg) => {
-              console.log(`   ${msg}`);
-            });
+        };
+
+        if (binaryManager.isGitleaksInstalled()) {
+          // Local binary exists — verify it actually works
+          const verResult = await binaryManager.verifyGitleaksVerbose();
+          if (verResult.ok) {
+            console.log(fmt.success(`Gitleaks already installed (${verResult.stdout})`));
+          } else {
+            console.log(fmt.warning("Gitleaks binary found locally but failed to execute."));
+            console.log(fmt.info(`  Binary: ${binaryManager.getGitleaksPath()}`));
+            await showDiagnostics(binaryManager.getGitleaksPath(), verResult);
+          }
+        } else {
+          // Not installed locally — check PATH (mirrors Python's shutil.which)
+          const pathBinary = binaryManager.findGitleaksOnPath();
+          if (pathBinary) {
+            const verResult = await binaryManager.verifyGitleaksVerbose(pathBinary);
+            if (verResult.ok) {
+              console.log(fmt.success(`Gitleaks available on PATH (${verResult.stdout})`));
+            } else {
+              console.log(fmt.warning("Gitleaks found on PATH but failed to execute."));
+              console.log(fmt.info(`  Binary: ${pathBinary}`));
+              await showDiagnostics(pathBinary, verResult);
+            }
+          } else if (!platformInfo.supported) {
+            console.log(fmt.info(`Gitleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
+            console.log(fmt.success("Using pattern-based scanning (21 patterns)"));
+          } else {
+            // Not on PATH, not installed locally — download
             console.log();
-          } catch (e) {
-            console.log(fmt.warning(`Failed to download Gitleaks: ${e}`));
-            console.log(fmt.success("Falling back to pattern-based scanning"));
-            console.log();
+            console.log(fmt.info("Downloading Gitleaks (enhanced secret detection)..."));
+            try {
+              await binaryManager.downloadGitleaks((msg) => {
+                console.log(`   ${msg}`);
+              });
+              console.log();
+            } catch (e) {
+              console.log();
+              console.log(fmt.error(`Gitleaks setup failed — pattern-based scanning will be used instead.`));
+              console.log(fmt.warning(String(e)));
+              console.log();
+              console.log(fmt.info("To fix: install gitleaks manually (https://github.com/gitleaks/gitleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
+              console.log();
+            }
           }
         }
       }
 
       // Install OpenClaw skill if applicable
       if (hasOpenClaw && !opts.skipOpenclaw) {
-        try {
-          const skillManager = new SkillManager();
-          const installed = await skillManager.installRafterSkill();
-          if (installed) {
-            console.log(fmt.success("Installed Rafter Security skill to ~/.openclaw/skills/rafter-security.md"));
-            manager.set("agent.environments.openclaw.enabled", true);
-          } else {
-            console.log(fmt.warning("Failed to install Rafter Security skill"));
+        const skillManager = new SkillManager();
+        const result = await skillManager.installRafterSkillVerbose();
+        if (result.ok) {
+          console.log(fmt.success("Installed Rafter Security skill to ~/.openclaw/skills/rafter-security.md"));
+          manager.set("agent.environments.openclaw.enabled", true);
+        } else {
+          console.log(fmt.error("Failed to install Rafter Security skill"));
+          console.log(fmt.warning(`  Source: ${result.sourcePath}`));
+          console.log(fmt.warning(`  Destination: ${result.destPath}`));
+          if (result.error) {
+            console.log(fmt.warning(`  Error: ${result.error}`));
           }
-        } catch (e) {
-          console.error(fmt.error(`Failed to install OpenClaw skill: ${e}`));
         }
       }
 

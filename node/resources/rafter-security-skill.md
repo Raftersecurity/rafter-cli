@@ -46,6 +46,13 @@ rafter agent scan <path>
 - Private keys (RSA, SSH, etc.)
 - 21+ secret patterns
 
+**Exit codes:**
+- `0` — clean, no secrets
+- `1` — secrets found
+- `2` — runtime error (path not found, not a git repo)
+
+**JSON output** (`--json`): Array of `{file, matches[]}` objects. Each match contains `pattern` (name, severity, description), `line`, `column`, and `redacted` value. Raw secrets are never included.
+
 ---
 
 ### /rafter-bash

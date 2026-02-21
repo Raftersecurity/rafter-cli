@@ -69,6 +69,24 @@ class AuditLogger:
             "resolution": {"action_taken": action_taken},
         })
 
+
+    def log_content_sanitized(
+        self,
+        content_type: str,
+        patterns_matched: int,
+        agent_type: str | None = None,
+    ) -> None:
+        self.log({
+            "event_type": "content_sanitized",
+            "agent_type": agent_type,
+            "security_check": {
+                "passed": False,
+                "reason": f"{patterns_matched} sensitive patterns detected",
+                "details": {"content_type": content_type, "patterns_matched": patterns_matched},
+            },
+            "resolution": {"action_taken": "redacted"},
+        })
+
     # ------------------------------------------------------------------
     # Read / Filter / Cleanup
     # ------------------------------------------------------------------

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..core.pattern_engine import Pattern, PatternEngine, PatternMatch
 from .secret_patterns import DEFAULT_SECRET_PATTERNS
+from ..core.custom_patterns import load_custom_patterns, load_suppressions, is_suppressed
 
 
 @dataclass
@@ -34,7 +35,7 @@ DEFAULT_EXCLUDE = [
 
 class RegexScanner:
     def __init__(self, custom_patterns: list[dict] | None = None):
-        patterns: list[Pattern] = list(DEFAULT_SECRET_PATTERNS)
+        patterns: list[Pattern] = list(DEFAULT_SECRET_PATTERNS) + load_custom_patterns()
         if custom_patterns:
             for cp in custom_patterns:
                 patterns.append(Pattern(
@@ -43,13 +44,15 @@ class RegexScanner:
                     severity=cp.get("severity", "high"),
                 ))
         self._engine = PatternEngine(patterns)
+        self._suppressions = load_suppressions()
 
     def scan_file(self, file_path: str) -> ScanResult:
         try:
             content = Path(file_path).read_text(errors="ignore")
         except (OSError, UnicodeDecodeError):
             return ScanResult(file=file_path)
-        matches = self._engine.scan_with_position(content)
+        raw = self._engine.scan_with_position(content)
+        matches = [m for m in raw if not is_suppressed(file_path, m.pattern.name, self._suppressions)]
         return ScanResult(file=file_path, matches=matches)
 
     def scan_files(self, file_paths: list[str]) -> list[ScanResult]:

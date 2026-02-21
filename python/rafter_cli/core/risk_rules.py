@@ -22,7 +22,9 @@ HIGH_PATTERNS: list[str] = [
     r"chmod\s+777",
     r"curl.*\|\s*(bash|sh|zsh|dash)\b",
     r"wget.*\|\s*(bash|sh|zsh|dash)\b",
-    r"git\s+push\s+--force",
+    r"git\s+push\s+(--force|-f)\b",
+    r"git\s+push\s+--force-(with-lease|if-includes)\b",
+    r"git\s+push\s+\S+\s+\+\S+",  # refspec force: git push origin +main
     r"docker\s+system\s+prune",
     r"npm\s+publish",
     r"pypi.*upload",
@@ -47,6 +49,9 @@ DEFAULT_REQUIRE_APPROVAL: list[str] = [
     r"wget.*\|\s*(bash|sh|zsh|dash)\b",
     "chmod 777",
     "git push --force",
+    "git push -f",
+    "git push --force-with-lease",
+    "git push --force-if-includes",
 ]
 
 

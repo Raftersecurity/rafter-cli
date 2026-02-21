@@ -21,7 +21,9 @@ export const HIGH_PATTERNS: RegExp[] = [
   /chmod\s+777/,
   /curl.*\|\s*(bash|sh|zsh|dash)\b/,
   /wget.*\|\s*(bash|sh|zsh|dash)\b/,
-  /git\s+push\s+--force/,
+  /git\s+push\s+(--force|-f)\b/,
+  /git\s+push\s+--force-(with-lease|if-includes)\b/,
+  /git\s+push\s+\S*\s+\+\S+/,  // refspec force: git push origin +main
   /docker\s+system\s+prune/,
   /npm\s+publish/,
   /pypi.*upload/,
@@ -52,6 +54,9 @@ export const DEFAULT_REQUIRE_APPROVAL: string[] = [
   "wget.*\\|\\s*(bash|sh|zsh|dash)\\b",
   "chmod 777",
   "git push --force",
+  "git push -f",
+  "git push --force-with-lease",
+  "git push --force-if-includes",
 ];
 
 /**
