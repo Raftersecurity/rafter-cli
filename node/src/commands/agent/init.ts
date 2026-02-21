@@ -35,8 +35,10 @@ function installClaudeCodeHooks(): void {
   // Merge hooks — don't overwrite existing non-Rafter hooks
   if (!settings.hooks) settings.hooks = {};
   if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+  if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
 
-  const rafterHook = { type: "command", command: "rafter hook pretool" };
+  const preHook = { type: "command", command: "rafter hook pretool" };
+  const postHook = { type: "command", command: "rafter hook posttool" };
 
   // Remove any existing Rafter hooks to avoid duplicates
   settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
@@ -45,15 +47,25 @@ function installClaudeCodeHooks(): void {
       return !hooks.some((h: any) => h.command === "rafter hook pretool");
     }
   );
+  settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
+    (entry: any) => {
+      const hooks = entry.hooks || [];
+      return !hooks.some((h: any) => h.command === "rafter hook posttool");
+    }
+  );
 
   // Add Rafter hooks
   settings.hooks.PreToolUse.push(
-    { matcher: "Bash", hooks: [rafterHook] },
-    { matcher: "Write|Edit", hooks: [rafterHook] },
+    { matcher: "Bash", hooks: [preHook] },
+    { matcher: "Write|Edit", hooks: [preHook] },
+  );
+  settings.hooks.PostToolUse.push(
+    { matcher: ".*", hooks: [postHook] },
   );
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
   console.log(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
+  console.log(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
 }
 
 async function installClaudeCodeSkills(): Promise<void> {

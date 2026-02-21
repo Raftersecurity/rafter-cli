@@ -114,3 +114,52 @@ def pretool():
         decision = {"decision": "allow"}
 
     _write_decision(decision)
+
+
+@hook_app.command("posttool")
+def posttool():
+    """PostToolUse hook handler. Reads tool response JSON from stdin, redacts secrets in output, writes action to stdout."""
+    raw = _read_stdin()
+
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        _write_decision({"action": "continue"})
+        return
+
+    tool_response = payload.get("tool_response")
+    tool_name = payload.get("tool_name", "unknown")
+
+    # No response body — pass through
+    if not tool_response:
+        _write_decision({"action": "continue"})
+        return
+
+    scanner = RegexScanner()
+    modified = False
+    redacted = dict(tool_response)
+
+    # Scan and redact output field
+    output_text = tool_response.get("output", "")
+    if output_text and isinstance(output_text, str) and scanner.has_secrets(output_text):
+        redacted["output"] = scanner.redact(output_text)
+        modified = True
+
+    # Scan and redact content field (used by some tools)
+    content_text = tool_response.get("content", "")
+    if content_text and isinstance(content_text, str) and scanner.has_secrets(content_text):
+        redacted["content"] = scanner.redact(content_text)
+        modified = True
+
+    if modified:
+        audit = AuditLogger()
+        match_count = 0
+        if output_text and isinstance(output_text, str):
+            match_count += len(scanner.scan_text(output_text))
+        if content_text and isinstance(content_text, str):
+            match_count += len(scanner.scan_text(content_text))
+        audit.log_content_sanitized(f"{tool_name} tool response", match_count)
+        _write_decision({"action": "modify", "tool_response": redacted})
+        return
+
+    _write_decision({"action": "continue"})
