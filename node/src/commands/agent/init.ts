@@ -149,32 +149,67 @@ export function createInitCommand(): Command {
       manager.set("agent.riskLevel", opts.riskLevel);
       console.log(fmt.success(`Set risk level: ${opts.riskLevel}`));
 
-      // Download Gitleaks binary (optional)
+      // Check / download Gitleaks binary (optional)
       if (!opts.skipGitleaks) {
         const binaryManager = new BinaryManager();
         const platformInfo = binaryManager.getPlatformInfo();
 
-        if (!platformInfo.supported) {
-          console.log(fmt.info(`Gitleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
-          console.log(fmt.success("Using pattern-based scanning (21 patterns)"));
-        } else if (binaryManager.isGitleaksInstalled()) {
-          const version = await binaryManager.getGitleaksVersion();
-          console.log(fmt.success(`Gitleaks already installed (${version})`));
-        } else {
+        // Helper: show diagnostics for a failing binary (mirrors Python's agent init)
+        const showDiagnostics = async (binaryPath: string, verResult: { ok: boolean; stdout: string; stderr: string }) => {
+          if (verResult.stderr) {
+            console.log(fmt.info(`  stderr: ${verResult.stderr}`));
+          }
+          const diag = await binaryManager.collectBinaryDiagnostics(binaryPath);
+          if (diag) {
+            console.log(fmt.info("Diagnostics:"));
+            console.log(diag);
+          }
+          console.log(fmt.info("To fix: install gitleaks (https://github.com/gitleaks/gitleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
           console.log();
-          console.log(fmt.info("Downloading Gitleaks (enhanced secret detection)..."));
-          try {
-            await binaryManager.downloadGitleaks((msg) => {
-              console.log(`   ${msg}`);
-            });
+        };
+
+        if (binaryManager.isGitleaksInstalled()) {
+          // Local binary exists — verify it actually works
+          const verResult = await binaryManager.verifyGitleaksVerbose();
+          if (verResult.ok) {
+            console.log(fmt.success(`Gitleaks already installed (${verResult.stdout})`));
+          } else {
+            console.log(fmt.warning("Gitleaks binary found locally but failed to execute."));
+            console.log(fmt.info(`  Binary: ${binaryManager.getGitleaksPath()}`));
+            await showDiagnostics(binaryManager.getGitleaksPath(), verResult);
+          }
+        } else {
+          // Not installed locally — check PATH (mirrors Python's shutil.which)
+          const pathBinary = binaryManager.findGitleaksOnPath();
+          if (pathBinary) {
+            const verResult = await binaryManager.verifyGitleaksVerbose(pathBinary);
+            if (verResult.ok) {
+              console.log(fmt.success(`Gitleaks available on PATH (${verResult.stdout})`));
+            } else {
+              console.log(fmt.warning("Gitleaks found on PATH but failed to execute."));
+              console.log(fmt.info(`  Binary: ${pathBinary}`));
+              await showDiagnostics(pathBinary, verResult);
+            }
+          } else if (!platformInfo.supported) {
+            console.log(fmt.info(`Gitleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
+            console.log(fmt.success("Using pattern-based scanning (21 patterns)"));
+          } else {
+            // Not on PATH, not installed locally — download
             console.log();
-          } catch (e) {
-            console.log();
-            console.log(fmt.error(`Gitleaks setup failed — pattern-based scanning will be used instead.`));
-            console.log(fmt.warning(String(e)));
-            console.log();
-            console.log(fmt.info("To fix: install gitleaks manually (https://github.com/gitleaks/gitleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
-            console.log();
+            console.log(fmt.info("Downloading Gitleaks (enhanced secret detection)..."));
+            try {
+              await binaryManager.downloadGitleaks((msg) => {
+                console.log(`   ${msg}`);
+              });
+              console.log();
+            } catch (e) {
+              console.log();
+              console.log(fmt.error(`Gitleaks setup failed — pattern-based scanning will be used instead.`));
+              console.log(fmt.warning(String(e)));
+              console.log();
+              console.log(fmt.info("To fix: install gitleaks manually (https://github.com/gitleaks/gitleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
+              console.log();
+            }
           }
         }
       }

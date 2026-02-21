@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import https from "https";
-import { exec } from "child_process";
+import { exec, execSync } from "child_process";
 import { promisify } from "util";
 import { getBinDir } from "../core/config-defaults.js";
 import * as tar from "tar";
@@ -65,6 +65,20 @@ export class BinaryManager {
   }
 
   /**
+   * Find gitleaks on system PATH (like Python's shutil.which)
+   */
+  findGitleaksOnPath(): string | null {
+    const cmd = process.platform === "win32" ? "where gitleaks" : "which gitleaks";
+    try {
+      const result = execSync(cmd, { timeout: 5000, encoding: "utf-8" });
+      const found = result.trim().split("\n")[0].trim();
+      return found || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Verify Gitleaks binary works
    */
   async verifyGitleaks(): Promise<boolean> {
@@ -85,8 +99,8 @@ export class BinaryManager {
   /**
    * Run gitleaks version and return {ok, stdout, stderr}
    */
-  async verifyGitleaksVerbose(): Promise<{ ok: boolean; stdout: string; stderr: string }> {
-    const gitleaksPath = this.getGitleaksPath();
+  async verifyGitleaksVerbose(binaryPath?: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    const gitleaksPath = binaryPath ?? this.getGitleaksPath();
     try {
       const { stdout, stderr } = await execAsync(`"${gitleaksPath}" version`, { timeout: 5000 });
       const ok = stdout.includes("gitleaks version");
@@ -104,8 +118,8 @@ export class BinaryManager {
   /**
    * Collect diagnostic context for a failed binary (file type, uname, glibc/musl)
    */
-  async collectBinaryDiagnostics(): Promise<string> {
-    const gitleaksPath = this.getGitleaksPath();
+  async collectBinaryDiagnostics(binaryPath?: string): Promise<string> {
+    const gitleaksPath = binaryPath ?? this.getGitleaksPath();
     const lines: string[] = [];
 
     try {
