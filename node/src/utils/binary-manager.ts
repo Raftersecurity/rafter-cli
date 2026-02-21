@@ -83,6 +83,68 @@ export class BinaryManager {
   }
 
   /**
+   * Run gitleaks version and return {ok, stdout, stderr}
+   */
+  async verifyGitleaksVerbose(): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    const gitleaksPath = this.getGitleaksPath();
+    try {
+      const { stdout, stderr } = await execAsync(`"${gitleaksPath}" version`, { timeout: 5000 });
+      const ok = stdout.includes("gitleaks version");
+      return { ok, stdout: stdout.trim(), stderr: stderr.trim() };
+    } catch (e: unknown) {
+      const err = e as { stdout?: string; stderr?: string };
+      return {
+        ok: false,
+        stdout: (err.stdout ?? "").trim(),
+        stderr: (err.stderr ?? String(e)).trim(),
+      };
+    }
+  }
+
+  /**
+   * Collect diagnostic context for a failed binary (file type, uname, glibc/musl)
+   */
+  async collectBinaryDiagnostics(): Promise<string> {
+    const gitleaksPath = this.getGitleaksPath();
+    const lines: string[] = [];
+
+    try {
+      const { stdout: fileOut } = await execAsync(`file "${gitleaksPath}"`, { timeout: 5000 });
+      lines.push(`  file: ${fileOut.trim()}`);
+    } catch {
+      lines.push(`  file: (unavailable)`);
+    }
+
+    try {
+      const { stdout: uname } = await execAsync("uname -a", { timeout: 5000 });
+      lines.push(`  uname: ${uname.trim()}`);
+    } catch {
+      lines.push(`  uname: (unavailable)`);
+    }
+
+    lines.push(`  node arch: ${process.arch}, platform: ${process.platform}`);
+
+    // Detect glibc vs musl on Linux
+    if (process.platform === "linux") {
+      try {
+        const { stdout: ldd } = await execAsync("ldd --version 2>&1 || true", { timeout: 5000 });
+        if (ldd.includes("musl")) {
+          lines.push("  libc: musl (gitleaks linux builds target glibc; musl systems need a musl build or static binary)");
+        } else if (ldd.includes("GLIBC") || ldd.includes("GNU")) {
+          const match = ldd.match(/(\d+\.\d+)/);
+          lines.push(`  libc: glibc ${match ? match[1] : "(version unknown)"}`);
+        } else {
+          lines.push("  libc: unknown");
+        }
+      } catch {
+        lines.push("  libc: (detection failed)");
+      }
+    }
+
+    return lines.join("\n");
+  }
+
+  /**
    * Download and install Gitleaks
    */
   async downloadGitleaks(onProgress?: (message: string) => void): Promise<void> {
@@ -103,12 +165,17 @@ export class BinaryManager {
     const url = this.getDownloadUrl(platform, arch);
 
     log(`Downloading Gitleaks v${GITLEAKS_VERSION} for ${platform}/${arch}...`);
+    log(`  URL: ${url}`);
 
     const archivePath = path.join(this.binDir, platform === "windows" ? "gitleaks.zip" : "gitleaks.tar.gz");
 
     try {
       // Download archive
       await this.downloadFile(url, archivePath, log);
+
+      // Log downloaded file size as basic integrity signal
+      const stats = fs.statSync(archivePath);
+      log(`  Downloaded: ${(stats.size / 1024).toFixed(1)} KB`);
 
       // Extract binary
       log("Extracting binary...");
@@ -122,13 +189,26 @@ export class BinaryManager {
       // Make executable (Unix systems)
       if (process.platform !== "win32") {
         await execAsync(`chmod +x "${this.getGitleaksPath()}"`);
+        log("  chmod +x applied");
       }
 
-      // Verify it works
-      const works = await this.verifyGitleaks();
-      if (!works) {
-        throw new Error("Downloaded binary doesn't execute correctly");
+      // Verify it works — capture output for diagnostics
+      const { ok, stdout: verOut, stderr: verErr } = await this.verifyGitleaksVerbose();
+      if (!ok) {
+        const diag = await this.collectBinaryDiagnostics();
+        const binaryPath = this.getGitleaksPath();
+        throw new Error(
+          `Gitleaks binary failed to execute.\n` +
+          `  Binary: ${binaryPath}\n` +
+          `  URL: ${url}\n` +
+          (verOut ? `  gitleaks version stdout: ${verOut}\n` : "") +
+          (verErr ? `  gitleaks version stderr: ${verErr}\n` : "") +
+          `Diagnostics:\n${diag}\n` +
+          `Fix: ensure the binary matches your OS/arch, or install gitleaks manually and ensure it is on PATH.`
+        );
       }
+
+      log(`  Verified: ${verOut}`);
 
       // Clean up archive
       if (fs.existsSync(archivePath)) {

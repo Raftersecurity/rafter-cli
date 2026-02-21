@@ -157,10 +157,23 @@ def init(
     # Gitleaks check
     if not skip_gitleaks:
         scanner = GitleaksScanner()
-        if scanner.is_available():
-            rprint(fmt.success("Gitleaks available on PATH"))
+        result = scanner.check()
+        if result.available:
+            rprint(fmt.success(f"Gitleaks available on PATH ({result.stdout})"))
         else:
-            rprint(fmt.info("Gitleaks not found — using pattern-based scanning (21 patterns)"))
+            rprint(fmt.warning("Gitleaks not available — pattern-based scanning will be used instead."))
+            if result.error:
+                rprint(fmt.info(f"  Reason: {result.error}"))
+            if result.stderr:
+                rprint(fmt.info(f"  stderr: {result.stderr}"))
+            diag = GitleaksScanner.collect_diagnostics(scanner._path)
+            if diag:
+                rprint(fmt.info("Diagnostics:"))
+                rprint(diag)
+            rprint(fmt.info(
+                "To fix: install gitleaks (https://github.com/gitleaks/gitleaks/releases) "
+                "and ensure it is on PATH, then re-run 'rafter agent init'."
+            ))
 
     # Install Claude Code hooks
     if has_claude_code and not skip_claude_code:
