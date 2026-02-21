@@ -47,7 +47,7 @@ export function createScanCommand(): Command {
       // Check if path exists
       if (!fs.existsSync(resolvedPath)) {
         console.error(`Error: Path not found: ${resolvedPath}`);
-        process.exit(1);
+        process.exit(2);
       }
 
       // Determine scan engine
@@ -82,7 +82,16 @@ function outputScanResults(
   context?: string,
 ): void {
   if (opts.json) {
-    console.log(JSON.stringify(results, null, 2));
+    const out = results.map((r) => ({
+      file: r.file,
+      matches: r.matches.map((m) => ({
+        pattern: { name: m.pattern.name, severity: m.pattern.severity, description: m.pattern.description || "" },
+        line: m.line ?? null,
+        column: m.column ?? null,
+        redacted: m.redacted || "",
+      })),
+    }));
+    console.log(JSON.stringify(out, null, 2));
     process.exit(results.length > 0 ? 1 : 0);
   }
 
@@ -168,7 +177,7 @@ async function scanDiffFiles(
   } catch (error: any) {
     if (error.status === 128) {
       console.error("Error: Not in a git repository or invalid ref");
-      process.exit(1);
+      process.exit(2);
     }
     throw error;
   }
@@ -217,7 +226,7 @@ async function scanStagedFiles(
   } catch (error: any) {
     if (error.status === 128) {
       console.error("Error: Not in a git repository");
-      process.exit(1);
+      process.exit(2);
     }
     throw error;
   }

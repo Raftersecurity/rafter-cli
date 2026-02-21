@@ -261,8 +261,8 @@ def _output_scan_results(
     if json_output:
         out = [
             {"file": r.file, "matches": [
-                {"pattern": m.pattern.name, "severity": m.pattern.severity,
-                 "line": m.line, "redacted": m.redacted}
+                {"pattern": {"name": m.pattern.name, "severity": m.pattern.severity, "description": m.pattern.description or ""},
+                 "line": m.line, "column": m.column, "redacted": m.redacted}
                 for m in r.matches
             ]}
             for r in results
@@ -328,7 +328,7 @@ def scan(
             ).stdout.strip()
         except subprocess.CalledProcessError:
             print("Error: Not in a git repository or invalid ref", file=sys.stderr)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=2)
 
         if not diff_output:
             if not quiet:
@@ -357,7 +357,7 @@ def scan(
             ).stdout.strip()
         except subprocess.CalledProcessError:
             print("Error: Not in a git repository", file=sys.stderr)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=2)
 
         if not staged_output:
             if not quiet:
@@ -381,7 +381,7 @@ def scan(
     resolved_path = os.path.abspath(path)
     if not os.path.exists(resolved_path):
         print(f"Error: Path not found: {resolved_path}", file=sys.stderr)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=2)
 
     eng = _select_engine(engine, quiet)
 

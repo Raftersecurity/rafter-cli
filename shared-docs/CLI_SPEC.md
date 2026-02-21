@@ -11,12 +11,22 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 
 ## Exit Codes
 
+### Backend Commands (`rafter run`, `rafter get`, `rafter usage`)
+
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General error / secrets found |
-| 2 | Scan not found |
-| 3 | Quota exhausted |
+| 1 | General error |
+| 2 | Scan not found (HTTP 404) |
+| 3 | Quota exhausted (HTTP 429) |
+
+### Agent Scan (`rafter agent scan`)
+
+| Code | Meaning |
+|------|---------|
+| 0 | Clean — no secrets detected |
+| 1 | Findings — one or more secrets detected |
+| 2 | Runtime error — path not found, not a git repo, invalid ref |
 
 ---
 
@@ -94,7 +104,46 @@ Scan files or directories for secrets (21+ patterns).
 - `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
 - `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
 
-Exit code 1 if secrets found, 0 if clean.
+Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
+
+#### JSON Output (`--json`)
+
+When `--json` is passed, output is a JSON array to stdout. Both Node and Python produce identical schema:
+
+```json
+[
+  {
+    "file": "/absolute/path/to/file.ts",
+    "matches": [
+      {
+        "pattern": {
+          "name": "AWS Access Key",
+          "severity": "critical",
+          "description": "Detects AWS access key IDs"
+        },
+        "line": 42,
+        "column": 7,
+        "redacted": "AKIA************MPLE"
+      }
+    ]
+  }
+]
+```
+
+**Field reference:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `file` | string | Absolute path to the scanned file |
+| `matches` | array | List of secret matches in this file |
+| `matches[].pattern.name` | string | Human-readable pattern name |
+| `matches[].pattern.severity` | string | `"low"`, `"medium"`, `"high"`, or `"critical"` |
+| `matches[].pattern.description` | string | Pattern description (may be empty) |
+| `matches[].line` | number\|null | 1-based line number, null if unknown |
+| `matches[].column` | number\|null | 1-based column number, null if unknown |
+| `matches[].redacted` | string | Redacted secret value (first/last 4 chars visible for values >8 chars, fully masked otherwise) |
+
+The raw secret value is never included in JSON output.
 
 ### rafter agent exec COMMAND [OPTIONS]
 
@@ -272,4 +321,4 @@ rafter agent config set agent.riskLevel aggressive
 - Backend scanning targets the remote repository, not local files
 - All scan data to stdout, all status messages to stderr
 - `--quiet` suppresses stderr; stdout is unaffected
-- Agent commands are Node.js only; Python package provides backend scanning
+- Agent commands are available in both Node and Python implementations
