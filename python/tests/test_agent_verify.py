@@ -60,10 +60,10 @@ class TestCheckConfig:
 
 class TestCheckGitleaks:
     def test_passes_when_gitleaks_on_path(self):
-        mock_result = MagicMock(available=True, stdout="gitleaks version 8.18.2", stderr="", error=None)
+        verify_result = {"ok": True, "stdout": "gitleaks version 8.18.2", "stderr": ""}
         with patch("shutil.which", return_value="/usr/local/bin/gitleaks"), \
-             patch("rafter_cli.commands.agent.GitleaksScanner") as MockScanner:
-            MockScanner.return_value.check.return_value = mock_result
+             patch("rafter_cli.commands.agent.BinaryManager") as MockBM:
+            MockBM.return_value.verify_gitleaks_verbose.return_value = verify_result
             r = _check_gitleaks()
         assert r.passed
         assert "gitleaks version" in r.detail
@@ -72,11 +72,11 @@ class TestCheckGitleaks:
         rafter_bin = tmp_path / ".rafter" / "bin" / "gitleaks"
         rafter_bin.parent.mkdir(parents=True)
         rafter_bin.touch()
-        mock_result = MagicMock(available=True, stdout="gitleaks version 8.18.2", stderr="", error=None)
+        verify_result = {"ok": True, "stdout": "gitleaks version 8.18.2", "stderr": ""}
         with patch("shutil.which", return_value=None), \
              patch("pathlib.Path.home", return_value=tmp_path), \
-             patch("rafter_cli.commands.agent.GitleaksScanner") as MockScanner:
-            MockScanner.return_value.check.return_value = mock_result
+             patch("rafter_cli.commands.agent.BinaryManager") as MockBM:
+            MockBM.return_value.verify_gitleaks_verbose.return_value = verify_result
             r = _check_gitleaks()
         assert r.passed
 
@@ -89,13 +89,11 @@ class TestCheckGitleaks:
         assert "Not found" in r.detail
 
     def test_fails_with_diagnostics_when_binary_broken(self):
-        mock_result = MagicMock(
-            available=False, stdout="", stderr="exec format error", error="exit code 126"
-        )
+        verify_result = {"ok": False, "stdout": "", "stderr": "exec format error"}
         with patch("shutil.which", return_value="/usr/local/bin/gitleaks"), \
-             patch("rafter_cli.commands.agent.GitleaksScanner") as MockScanner:
-            MockScanner.return_value.check.return_value = mock_result
-            MockScanner.collect_diagnostics.return_value = "  file: ELF 64-bit"
+             patch("rafter_cli.commands.agent.BinaryManager") as MockBM:
+            MockBM.return_value.verify_gitleaks_verbose.return_value = verify_result
+            MockBM.return_value.collect_binary_diagnostics.return_value = "  file: ELF 64-bit"
             r = _check_gitleaks()
         assert not r.passed
         assert not r.optional

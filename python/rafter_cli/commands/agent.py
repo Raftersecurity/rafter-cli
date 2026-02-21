@@ -26,6 +26,7 @@ from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
 from ..utils.formatter import fmt, is_agent_mode
 from ..utils.skill_manager import SkillManager
+from ..utils.binary_manager import BinaryManager
 
 agent_app = typer.Typer(name="agent", help="Agent security features", no_args_is_help=True)
 
@@ -98,26 +99,42 @@ def _install_claude_code_hooks() -> None:
     if "PreToolUse" not in settings["hooks"]:
         settings["hooks"]["PreToolUse"] = []
 
-    rafter_command = "rafter hook pretool"
+    pre_command = "rafter hook pretool"
+    post_command = "rafter hook posttool"
+
+    if "PostToolUse" not in settings["hooks"]:
+        settings["hooks"]["PostToolUse"] = []
 
     # Remove any existing Rafter hooks to avoid duplicates
     settings["hooks"]["PreToolUse"] = [
         entry for entry in settings["hooks"]["PreToolUse"]
         if not any(
-            h.get("command") == rafter_command
+            h.get("command") == pre_command
+            for h in (entry.get("hooks") or [])
+        )
+    ]
+    settings["hooks"]["PostToolUse"] = [
+        entry for entry in settings["hooks"]["PostToolUse"]
+        if not any(
+            h.get("command") == post_command
             for h in (entry.get("hooks") or [])
         )
     ]
 
     # Add Rafter hooks
-    rafter_hook = {"type": "command", "command": rafter_command}
+    pre_hook = {"type": "command", "command": pre_command}
+    post_hook = {"type": "command", "command": post_command}
     settings["hooks"]["PreToolUse"].extend([
-        {"matcher": "Bash", "hooks": [rafter_hook]},
-        {"matcher": "Write|Edit", "hooks": [rafter_hook]},
+        {"matcher": "Bash", "hooks": [pre_hook]},
+        {"matcher": "Write|Edit", "hooks": [pre_hook]},
+    ])
+    settings["hooks"]["PostToolUse"].extend([
+        {"matcher": ".*", "hooks": [post_hook]},
     ])
 
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
     rprint(fmt.success(f"Installed PreToolUse hooks to {settings_path}"))
+    rprint(fmt.success(f"Installed PostToolUse hooks to {settings_path}"))
 
 
 # ── init ─────────────────────────────────────────────────────────────
@@ -197,24 +214,35 @@ def init(
 
     # Gitleaks check
     if not skip_gitleaks:
-        scanner = GitleaksScanner()
-        result = scanner.check()
-        if result.available:
-            rprint(fmt.success(f"Gitleaks available on PATH ({result.stdout})"))
+        _gitleaks_on_path = shutil.which("gitleaks")
+        _rafter_bin = Path.home() / ".rafter" / "bin" / "gitleaks"
+        if _gitleaks_on_path:
+            rprint(fmt.success(f"Gitleaks available on PATH ({_gitleaks_on_path})"))
+        elif _rafter_bin.exists():
+            rprint(fmt.success(f"Gitleaks available at {_rafter_bin}"))
         else:
-            rprint(fmt.warning("Gitleaks not available — pattern-based scanning will be used instead."))
-            if result.error:
-                rprint(fmt.info(f"  Reason: {result.error}"))
-            if result.stderr:
-                rprint(fmt.info(f"  stderr: {result.stderr}"))
-            diag = GitleaksScanner.collect_diagnostics(scanner._path)
-            if diag:
-                rprint(fmt.info("Diagnostics:"))
-                rprint(diag)
-            rprint(fmt.info(
-                "To fix: install gitleaks (https://github.com/gitleaks/gitleaks/releases) "
-                "and ensure it is on PATH, then re-run 'rafter agent init'."
-            ))
+            rprint(fmt.info("Gitleaks not found — attempting auto-download..."))
+            _bm = BinaryManager()
+            if _bm.is_platform_supported():
+                try:
+                    _bm.download_gitleaks(on_progress=typer.echo)
+                    rprint(fmt.success("Gitleaks downloaded and verified."))
+                except Exception as _dl_err:
+                    rprint(fmt.warning(f"Auto-download failed: {_dl_err}"))
+                    rprint(fmt.info(
+                        "To fix: install gitleaks manually "
+                        "(https://github.com/gitleaks/gitleaks/releases) "
+                        "and ensure it is on PATH, then re-run 'rafter agent init'."
+                    ))
+            else:
+                rprint(fmt.warning(
+                    "Gitleaks not available for this platform — "
+                    "pattern-based scanning will be used instead."
+                ))
+                rprint(fmt.info(
+                    "To fix: install gitleaks (https://github.com/gitleaks/gitleaks/releases) "
+                    "and ensure it is on PATH, then re-run 'rafter agent init'."
+                ))
 
     # Install OpenClaw skill if applicable
     if has_openclaw and not skip_openclaw:
@@ -729,17 +757,16 @@ def _check_gitleaks() -> _CheckResult:
     if not gitleaks_path:
         return _CheckResult(name, False, f"Not found on PATH or at {Path.home() / '.rafter' / 'bin' / 'gitleaks'}")
 
-    scanner = GitleaksScanner()
-    result = scanner.check()
-    if result.available:
-        return _CheckResult(name, True, result.stdout or gitleaks_path)
+    # Verify the found binary actually works
+    bm = BinaryManager()
+    result = bm.verify_gitleaks_verbose(binary_path=Path(gitleaks_path))
+    if result["ok"]:
+        return _CheckResult(name, True, result["stdout"] or gitleaks_path)
 
     detail = f"Found at {gitleaks_path} but failed to execute"
-    if result.error:
-        detail += f"\n   Error: {result.error}"
-    if result.stderr:
-        detail += f"\n   stderr: {result.stderr}"
-    diag = GitleaksScanner.collect_diagnostics(gitleaks_path)
+    if result["stderr"]:
+        detail += f"\n   stderr: {result['stderr']}"
+    diag = bm.collect_binary_diagnostics(binary_path=Path(gitleaks_path))
     if diag:
         detail += f"\n{diag}"
     return _CheckResult(name, False, detail)
@@ -1072,3 +1099,98 @@ def audit_skill(
 
     if quick_scan.secrets > 0 or len(quick_scan.high_risk_commands) > 0:
         raise typer.Exit(code=1)
+
+
+# ── agent status ─────────────────────────────────────────────────────────
+
+@agent_app.command("status")
+def status():
+    """Show agent security status dashboard."""
+    from ..core.config_schema import get_audit_log_path, get_rafter_dir
+
+    rafter_dir = get_rafter_dir()
+    audit_path = get_audit_log_path()
+
+    print("Rafter Agent Status")
+    print("=" * 50)
+
+    # --- Config ---
+    config_path = rafter_dir / "config.json"
+    if config_path.exists():
+        try:
+            cfg = ConfigManager().load()
+            print(f"\nConfig:       {config_path}")
+            print(f"Risk level:   {cfg.agent.risk_level}")
+        except Exception:
+            print(f"\nConfig:       {config_path} (parse error)")
+    else:
+        print(f"\nConfig:       not found — run: rafter agent init")
+
+    # --- Gitleaks ---
+    gl_path = shutil.which("gitleaks") or str(rafter_dir / "bin" / "gitleaks")
+    if shutil.which("gitleaks"):
+        try:
+            ver = subprocess.run(["gitleaks", "version"], capture_output=True, text=True, timeout=5)
+            print(f"Gitleaks:     {ver.stdout.strip()} (PATH)")
+        except Exception:
+            print("Gitleaks:     on PATH (version check failed)")
+    elif Path(gl_path).exists():
+        print(f"Gitleaks:     {gl_path} (local)")
+    else:
+        print("Gitleaks:     not found — run: rafter agent init")
+
+    # --- Claude Code hooks ---
+    claude_dir = Path.home() / ".claude"
+    settings_path = claude_dir / "settings.json"
+    pretool_ok = posttool_ok = False
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+            hooks = settings.get("hooks", {})
+            for hook_entry in hooks.get("PreToolUse", []):
+                for h in hook_entry.get("hooks", []):
+                    if "rafter hook pretool" in h.get("command", ""):
+                        pretool_ok = True
+            for hook_entry in hooks.get("PostToolUse", []):
+                for h in hook_entry.get("hooks", []):
+                    if "rafter hook posttool" in h.get("command", ""):
+                        posttool_ok = True
+        except Exception:
+            pass
+    pretool_status = "installed" if pretool_ok else "not installed — run: rafter agent init"
+    posttool_status = "installed" if posttool_ok else "not installed — run: rafter agent init"
+    print(f"PreToolUse:   {pretool_status}")
+    print(f"PostToolUse:  {posttool_status}")
+
+    # --- OpenClaw skill ---
+    skill_path = Path.home() / ".openclaw" / "skills" / "rafter-security.md"
+    if skill_path.exists():
+        print(f"OpenClaw:     skill installed ({skill_path})")
+    elif (Path.home() / ".openclaw").exists():
+        print("OpenClaw:     detected but skill missing — run: rafter agent init")
+    else:
+        print("OpenClaw:     not detected (optional)")
+
+    # --- Audit log summary ---
+    print(f"\nAudit log:    {audit_path}")
+    if audit_path.exists():
+        logger = AuditLogger()
+        all_entries = logger.read()
+        total = len(all_entries)
+        secrets = sum(1 for e in all_entries if e.get("event_type") == "secret_detected")
+        blocked = sum(1 for e in all_entries if e.get("event_type") == "command_intercepted"
+                      and e.get("resolution", {}).get("action_taken") == "blocked")
+        print(f"Total events: {total}  |  Secrets detected: {secrets}  |  Commands blocked: {blocked}")
+
+        recent = logger.read(limit=5)
+        if recent:
+            print("\nRecent events:")
+            for e in reversed(recent):
+                ts = e.get("timestamp", "")[:19].replace("T", " ")
+                evt = e.get("event_type", "unknown")
+                action = e.get("resolution", {}).get("action_taken", "")
+                print(f"  {ts}  {evt}  [{action}]")
+    else:
+        print("No events logged yet.")
+
+    print()
