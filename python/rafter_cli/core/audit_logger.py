@@ -5,12 +5,20 @@ import json
 import os
 import random
 import tempfile
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from .config_schema import get_audit_log_path
+
+RISK_SEVERITY: dict[str, int] = {
+    "low": 0,
+    "medium": 1,
+    "high": 2,
+    "critical": 3,
+}
 
 
 class AuditLogger:
@@ -33,6 +41,53 @@ class AuditLogger:
         }
         with open(self._path, "a") as f:
             f.write(json.dumps(full) + "\n")
+
+        # Send webhook notification if configured and risk meets threshold
+        self._send_notification(full, config)
+
+    def _send_notification(self, entry: dict[str, Any], config: Any) -> None:
+        """Send webhook notification for high-risk events (fire-and-forget)."""
+        webhook_url = getattr(config.agent.notifications, "webhook", None)
+        if not webhook_url:
+            return
+
+        action = entry.get("action") or {}
+        event_risk = action.get("risk_level", "low")
+        min_risk = getattr(config.agent.notifications, "min_risk_level", "high")
+
+        if RISK_SEVERITY.get(event_risk, 0) < RISK_SEVERITY.get(min_risk, 2):
+            return
+
+        event_type = entry.get("event_type", "unknown")
+        command = action.get("command")
+        summary = f"[rafter] {event_risk}-risk event: {event_type}"
+        if command:
+            summary += f" \u2014 {command}"
+
+        payload = {
+            "event": event_type,
+            "risk": event_risk,
+            "command": command,
+            "timestamp": entry.get("timestamp"),
+            "agent": entry.get("agent_type"),
+            "text": summary,
+            "content": summary,
+        }
+
+        def _post() -> None:
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    webhook_url,
+                    data=json.dumps(payload).encode(),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                urllib.request.urlopen(req, timeout=5)
+            except Exception:
+                pass  # Silently ignore webhook failures
+
+        threading.Thread(target=_post, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Convenience loggers
