@@ -1,12 +1,14 @@
-"""Agent security commands: init, scan, audit, exec, config, install-hook."""
+"""Agent security commands: init, scan, audit, exec, config, install-hook, verify."""
 from __future__ import annotations
 
 import importlib.resources
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -117,10 +119,39 @@ def _install_claude_code_hooks() -> None:
 # ── init ─────────────────────────────────────────────────────────────
 
 
+def _install_openclaw_skill() -> tuple[bool, str, str, str]:
+    """Install Rafter Security skill to OpenClaw. Returns (ok, source, dest, error)."""
+    home = Path.home()
+    skills_dir = home / ".openclaw" / "skills"
+    dest_path = skills_dir / "rafter-security.md"
+
+    # Find source skill file
+    try:
+        ref = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md")
+        source_path = str(ref)
+    except Exception:
+        source_path = "(bundled resource)"
+
+    if not skills_dir.exists():
+        return False, source_path, str(dest_path), f"OpenClaw skills directory not found: {skills_dir}"
+
+    try:
+        content = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md").read_text(encoding="utf-8")
+    except Exception as e:
+        return False, source_path, str(dest_path), f"Source skill file not found: {e}"
+
+    try:
+        dest_path.write_text(content, encoding="utf-8")
+        return True, source_path, str(dest_path), ""
+    except Exception as e:
+        return False, source_path, str(dest_path), str(e)
+
+
 @agent_app.command()
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
     skip_gitleaks: bool = typer.Option(False, "--skip-gitleaks", help="Skip gitleaks check"),
+    skip_openclaw: bool = typer.Option(False, "--skip-openclaw", help="Skip OpenClaw skill installation"),
     skip_claude_code: bool = typer.Option(False, "--skip-claude-code", help="Skip Claude Code hook installation"),
     claude_code: bool = typer.Option(False, "--claude-code", help="Force Claude Code detection"),
 ):
@@ -133,7 +164,13 @@ def init(
 
     # Detect environments
     home = Path.home()
+    has_openclaw = (home / ".openclaw").exists()
     has_claude_code = claude_code or (home / ".claude").exists()
+
+    if has_openclaw:
+        rprint(fmt.success("Detected environment: OpenClaw"))
+    else:
+        rprint(fmt.info("OpenClaw not detected"))
 
     if has_claude_code:
         rprint(fmt.success("Detected environment: Claude Code"))
@@ -175,6 +212,19 @@ def init(
                 "and ensure it is on PATH, then re-run 'rafter agent init'."
             ))
 
+    # Install OpenClaw skill if applicable
+    if has_openclaw and not skip_openclaw:
+        ok, source, dest, error = _install_openclaw_skill()
+        if ok:
+            rprint(fmt.success(f"Installed Rafter Security skill to {dest}"))
+            manager.set("agent.environments.openclaw.enabled", True)
+        else:
+            rprint(fmt.error("Failed to install Rafter Security skill"))
+            rprint(fmt.warning(f"  Source: {source}"))
+            rprint(fmt.warning(f"  Destination: {dest}"))
+            if error:
+                rprint(fmt.warning(f"  Error: {error}"))
+
     # Install Claude Code hooks
     if has_claude_code and not skip_claude_code:
         try:
@@ -187,6 +237,8 @@ def init(
     rprint(fmt.success("Agent security initialized!"))
     rprint()
     rprint("Next steps:")
+    if has_openclaw and not skip_openclaw:
+        rprint("  - Restart OpenClaw to load skill")
     if has_claude_code and not skip_claude_code:
         rprint("  - Restart Claude Code to load hooks")
     rprint("  - Run: rafter agent scan . (test secret scanning)")
@@ -648,3 +700,142 @@ def _install_global_hook() -> None:
     rprint("To install per-repository instead:")
     rprint("  cd <repo> && rafter agent install-hook")
     rprint()
+
+
+# ── verify ──────────────────────────────────────────────────────────
+
+
+@dataclass
+class _CheckResult:
+    name: str
+    passed: bool
+    detail: str
+
+
+def _check_gitleaks() -> _CheckResult:
+    """Check if gitleaks is available and executable."""
+    name = "Gitleaks"
+    gitleaks_path = shutil.which("gitleaks")
+    if not gitleaks_path:
+        return _CheckResult(name, False, "Not found on PATH")
+
+    scanner = GitleaksScanner()
+    result = scanner.check()
+    if result.available:
+        return _CheckResult(name, True, result.stdout or gitleaks_path)
+
+    detail = f"Found at {gitleaks_path} but failed to execute"
+    if result.error:
+        detail += f"\n   Error: {result.error}"
+    if result.stderr:
+        detail += f"\n   stderr: {result.stderr}"
+    diag = GitleaksScanner.collect_diagnostics(gitleaks_path)
+    if diag:
+        detail += f"\n{diag}"
+    return _CheckResult(name, False, detail)
+
+
+def _check_config() -> _CheckResult:
+    """Check if ~/.rafter/config.json exists and is valid."""
+    name = "Config"
+    config_path = Path.home() / ".rafter" / "config.json"
+
+    if not config_path.exists():
+        return _CheckResult(name, False, f"Not found: {config_path}")
+
+    try:
+        json.loads(config_path.read_text())
+        return _CheckResult(name, True, str(config_path))
+    except (json.JSONDecodeError, OSError) as e:
+        return _CheckResult(name, False, f"Invalid: {config_path} — {e}")
+
+
+def _check_claude_code() -> _CheckResult:
+    """Check if Claude Code integration is healthy."""
+    name = "Claude Code"
+    home = Path.home()
+    claude_dir = home / ".claude"
+
+    if not claude_dir.exists():
+        return _CheckResult(name, False, f"Directory not found: {claude_dir}")
+
+    settings_path = claude_dir / "settings.json"
+    if not settings_path.exists():
+        return _CheckResult(name, False, f"Settings file not found: {settings_path}")
+
+    try:
+        settings = json.loads(settings_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return _CheckResult(name, False, f"Cannot read settings: {e}")
+
+    hooks = settings.get("hooks", {}).get("PreToolUse", [])
+    has_rafter = any(
+        any(h.get("command") == "rafter hook pretool" for h in (entry.get("hooks") or []))
+        for entry in hooks
+    )
+    if not has_rafter:
+        return _CheckResult(name, False, "Rafter hooks not found in settings.json — run 'rafter agent init'")
+    return _CheckResult(name, True, "Hooks installed")
+
+
+def _check_openclaw() -> _CheckResult:
+    """Check if OpenClaw integration is healthy."""
+    name = "OpenClaw"
+    home = Path.home()
+    skills_dir = home / ".openclaw" / "skills"
+
+    if not skills_dir.exists():
+        return _CheckResult(name, False, f"Not installed ({skills_dir} not found)")
+
+    skill_path = skills_dir / "rafter-security.md"
+    if not skill_path.exists():
+        return _CheckResult(name, False, f"Rafter skill not found at {skill_path}")
+
+    # Try to extract version from frontmatter
+    version = ""
+    try:
+        content = skill_path.read_text(encoding="utf-8")
+        import re
+        match = re.search(r"^version:\s*(.+)$", content, re.MULTILINE)
+        if match:
+            version = match.group(1).strip()
+    except OSError:
+        pass
+
+    detail = f"Rafter skill installed{f' (v{version})' if version else ''}"
+    return _CheckResult(name, True, detail)
+
+
+@agent_app.command()
+def verify():
+    """Check agent security integration status."""
+    rprint(fmt.header("Rafter Agent Verify"))
+    rprint(fmt.divider())
+    rprint()
+
+    results = [
+        _check_config(),
+        _check_gitleaks(),
+        _check_claude_code(),
+        _check_openclaw(),
+    ]
+
+    for r in results:
+        if r.passed:
+            rprint(fmt.success(f"{r.name}: {r.detail}"))
+        else:
+            rprint(fmt.error(f"{r.name}: FAIL"))
+            rprint(f"   {r.detail}")
+
+    rprint()
+    all_passed = all(r.passed for r in results)
+    pass_count = sum(1 for r in results if r.passed)
+
+    if all_passed:
+        rprint(fmt.success(f"All {len(results)} checks passed"))
+    else:
+        rprint(fmt.warning(f"{pass_count}/{len(results)} checks passed"))
+    rprint()
+
+    if not all_passed:
+        raise typer.Exit(code=1)

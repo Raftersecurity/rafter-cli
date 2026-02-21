@@ -6,6 +6,7 @@ import { createConfigCommand } from "./config.js";
 import { createExecCommand } from "./exec.js";
 import { createAuditSkillCommand } from "./audit-skill.js";
 import { createInstallHookCommand } from "./install-hook.js";
+import { createVerifyCommand } from "./verify.js";
 
 export function createAgentCommand(): Command {
   const agent = new Command("agent")
@@ -19,6 +20,7 @@ export function createAgentCommand(): Command {
   agent.addCommand(createAuditCommand());
   agent.addCommand(createAuditSkillCommand());
   agent.addCommand(createInstallHookCommand());
+  agent.addCommand(createVerifyCommand());
 
   return agent;
 }
