@@ -176,6 +176,76 @@ View security audit log.
 
 Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`, `scan_executed`, `config_changed`.
 
+#### Audit Log Schema
+
+The audit log is written to `~/.rafter/audit.jsonl` as newline-delimited JSON (JSONL). Each line is one event. Both Node and Python CLIs write to the same file.
+
+**Base fields (all events):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `timestamp` | string (ISO 8601) | yes | UTC timestamp of the event |
+| `sessionId` | string | yes | Unique session identifier (`{epoch_ms}-{random}`) |
+| `eventType` | string | yes | One of the event types below |
+| `agentType` | string | no | `"openclaw"` or `"claude-code"` |
+
+**`action` object (optional):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `action.command` | string | no | Shell command string (present on `command_intercepted`, optional on `policy_override`) |
+| `action.tool` | string | no | Tool name that triggered the event |
+| `action.riskLevel` | string | no | `"low"`, `"medium"`, `"high"`, or `"critical"` |
+
+**`securityCheck` object (required):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `securityCheck.passed` | boolean | yes | Whether the security check passed |
+| `securityCheck.reason` | string | no | Human-readable explanation |
+| `securityCheck.details` | object | no | Structured details (used by `content_sanitized`) |
+
+**`resolution` object (required):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `resolution.actionTaken` | string | yes | `"blocked"`, `"allowed"`, `"overridden"`, or `"redacted"` |
+| `resolution.overrideReason` | string | no | Reason for override (only on `policy_override`) |
+
+**Event types:**
+
+| Event | Description | Typical `actionTaken` |
+|-------|-------------|----------------------|
+| `command_intercepted` | Shell command evaluated against policy | `allowed`, `blocked`, `overridden` |
+| `secret_detected` | Secret found in files or staged content | `blocked`, `allowed` |
+| `content_sanitized` | Sensitive patterns redacted from output | `redacted` |
+| `policy_override` | User overrode a security policy | `overridden` |
+| `scan_executed` | File scan performed | — |
+| `config_changed` | Security configuration modified | — |
+
+**Redaction behavior:** The audit log never contains raw secret values. For `secret_detected` events, only the secret type and location are recorded (e.g., `"AWS Access Key detected in config.js"`). For `content_sanitized`, only the count and content type are stored.
+
+**Example entries:**
+
+```jsonl
+{"timestamp":"2026-02-20T10:30:45.123Z","sessionId":"1740047445123-abc123","eventType":"command_intercepted","agentType":"claude-code","action":{"command":"git push --force","riskLevel":"high"},"securityCheck":{"passed":false,"reason":"High-risk command requires approval"},"resolution":{"actionTaken":"blocked"}}
+{"timestamp":"2026-02-20T10:25:12.456Z","sessionId":"1740047445123-abc123","eventType":"secret_detected","agentType":"openclaw","action":{"riskLevel":"critical"},"securityCheck":{"passed":false,"reason":"AWS Access Key detected in config.js"},"resolution":{"actionTaken":"blocked"}}
+```
+
+**Size and rotation:**
+
+- No automatic rotation or size limit. The file grows unbounded until cleanup runs.
+- Time-based retention: entries older than `agent.audit.retentionDays` (default: 30) are purged by `cleanup()`.
+- Cleanup is not scheduled automatically; invoke via the API or manually.
+
+**Configuration** (in `~/.rafter/config.json` or `.rafter.yml`):
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agent.audit.logAllActions` | boolean | `true` | Master switch — if `false`, no events are written |
+| `agent.audit.retentionDays` | number | `30` | Days to retain log entries |
+| `agent.audit.logLevel` | string | `"info"` | Stored but not currently used for filtering |
+
 ### rafter agent install-hook [OPTIONS]
 
 Install git pre-commit hook for automatic secret scanning.
