@@ -118,6 +118,7 @@ export function createInitCommand(): Command {
     .option("--skip-claude-code", "Skip Claude Code skill installation")
     .option("--claude-code", "Force Claude Code skill installation")
     .option("--skip-gitleaks", "Skip Gitleaks binary download")
+    .option("--update", "Re-download gitleaks and reinstall integrations without resetting config")
     .action(async (opts) => {
       console.log(fmt.header("Rafter Agent Security Setup"));
       console.log(fmt.divider());
@@ -180,7 +181,7 @@ export function createInitCommand(): Command {
           console.log();
         };
 
-        if (binaryManager.isGitleaksInstalled()) {
+        if (!opts.update && binaryManager.isGitleaksInstalled()) {
           // Local binary exists — verify it actually works
           const verResult = await binaryManager.verifyGitleaksVerbose();
           if (verResult.ok) {
@@ -191,8 +192,9 @@ export function createInitCommand(): Command {
             await showDiagnostics(binaryManager.getGitleaksPath(), verResult);
           }
         } else {
-          // Not installed locally — check PATH (mirrors Python's shutil.which)
-          const pathBinary = binaryManager.findGitleaksOnPath();
+          // Not installed locally (or --update forcing re-download) — check PATH first
+          // unless --update was passed (in that case force a fresh managed install)
+          const pathBinary = opts.update ? null : binaryManager.findGitleaksOnPath();
           if (pathBinary) {
             const verResult = await binaryManager.verifyGitleaksVerbose(pathBinary);
             if (verResult.ok) {

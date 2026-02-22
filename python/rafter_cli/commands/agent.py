@@ -175,6 +175,7 @@ def init(
     skip_openclaw: bool = typer.Option(False, "--skip-openclaw", help="Skip OpenClaw skill installation"),
     skip_claude_code: bool = typer.Option(False, "--skip-claude-code", help="Skip Claude Code hook installation"),
     claude_code: bool = typer.Option(False, "--claude-code", help="Force Claude Code detection"),
+    update: bool = typer.Option(False, "--update", help="Re-download gitleaks and reinstall integrations without resetting config"),
 ):
     """Initialize agent security system."""
     rprint(fmt.header("Rafter Agent Security Setup"))
@@ -214,14 +215,17 @@ def init(
 
     # Gitleaks check
     if not skip_gitleaks:
-        _gitleaks_on_path = shutil.which("gitleaks")
+        _gitleaks_on_path = None if update else shutil.which("gitleaks")
         _rafter_bin = Path.home() / ".rafter" / "bin" / "gitleaks"
         if _gitleaks_on_path:
             rprint(fmt.success(f"Gitleaks available on PATH ({_gitleaks_on_path})"))
-        elif _rafter_bin.exists():
+        elif not update and _rafter_bin.exists():
             rprint(fmt.success(f"Gitleaks available at {_rafter_bin}"))
         else:
-            rprint(fmt.info("Gitleaks not found — attempting auto-download..."))
+            if update:
+                rprint(fmt.info("Updating gitleaks binary..."))
+            else:
+                rprint(fmt.info("Gitleaks not found — attempting auto-download..."))
             _bm = BinaryManager()
             if _bm.is_platform_supported():
                 try:
@@ -1147,6 +1151,60 @@ def audit_skill(
     print()
 
     if quick_scan.secrets > 0 or len(quick_scan.high_risk_commands) > 0:
+        raise typer.Exit(code=1)
+
+
+# ── update-gitleaks ──────────────────────────────────────────────────────
+
+
+@agent_app.command("update-gitleaks")
+def update_gitleaks(
+    version: str = typer.Option(
+        None,
+        "--version",
+        help="Gitleaks version to install (default: bundled version)",
+    ),
+):
+    """Update (or reinstall) the managed gitleaks binary."""
+    from ..utils.binary_manager import GITLEAKS_VERSION
+
+    target_version = version or GITLEAKS_VERSION
+    _bm = BinaryManager()
+
+    if not _bm.is_platform_supported():
+        rprint(fmt.error(
+            f"Gitleaks not available for {_bm._sys_platform()}/{_bm._machine()}"
+        ))
+        raise typer.Exit(code=1)
+
+    # Show current version if installed
+    _rafter_bin = _bm.get_gitleaks_path()
+    if _rafter_bin.exists():
+        result = _bm.verify_gitleaks_verbose()
+        if result["ok"]:
+            rprint(fmt.info(f"Current: {result['stdout']}"))
+        else:
+            rprint(fmt.warning(f"Current binary at {_rafter_bin} is not working"))
+    else:
+        rprint(fmt.info("Gitleaks not currently installed (managed binary)"))
+
+    rprint(fmt.info(f"Installing gitleaks v{target_version}..."))
+    rprint()
+
+    try:
+        _bm.download_gitleaks(on_progress=typer.echo, version=target_version)
+        rprint()
+        result = _bm.verify_gitleaks_verbose()
+        rprint(fmt.success(f"Gitleaks updated: {result['stdout']}"))
+        rprint(fmt.info(f"  Binary: {_rafter_bin}"))
+    except Exception as _err:
+        rprint()
+        rprint(fmt.error(f"Update failed: {_err}"))
+        rprint(fmt.info(
+            "To fix: install gitleaks manually "
+            "(https://github.com/gitleaks/gitleaks/releases) "
+            "and ensure it is on PATH."
+        ))
         raise typer.Exit(code=1)
 
 
