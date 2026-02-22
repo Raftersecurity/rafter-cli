@@ -445,6 +445,7 @@ def scan(
     staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
     diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
     engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
+    baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
 ):
     """Scan files or directories for secrets."""
     manager = ConfigManager()
@@ -455,6 +456,8 @@ def scan(
         [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns]
         if scan_cfg.custom_patterns else None
     )
+
+    baseline_entries = _load_baseline_entries() if baseline else []
 
     # --diff
     if diff:
@@ -482,7 +485,8 @@ def scan(
             resolved = os.path.abspath(f)
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
-        _output_scan_results(all_results, json_output, quiet, f"files changed since {diff}", format=format)
+        filtered = _apply_baseline(all_results, baseline_entries)
+        _output_scan_results(filtered, json_output, quiet, f"files changed since {diff}", format=format)
         return
 
     # --staged
@@ -511,7 +515,8 @@ def scan(
             resolved = os.path.abspath(f)
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
-        _output_scan_results(all_results, json_output, quiet, "staged files", format=format)
+        filtered = _apply_baseline(all_results, baseline_entries)
+        _output_scan_results(filtered, json_output, quiet, "staged files", format=format)
         return
 
     # Default: scan path
@@ -531,7 +536,8 @@ def scan(
             print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
         results = _scan_file(resolved_path, eng, custom_patterns)
 
-    _output_scan_results(results, json_output, quiet, format=format)
+    filtered = _apply_baseline(results, baseline_entries)
+    _output_scan_results(filtered, json_output, quiet, format=format)
 
 
 # ── audit ────────────────────────────────────────────────────────────
@@ -694,25 +700,28 @@ def exec_cmd(
 # ── install-hook ──────────────────────────────────────────────────────
 
 
-def _get_hook_template() -> str:
-    """Read the bundled pre-commit hook shell template."""
-    ref = importlib.resources.files("rafter_cli.resources").joinpath("pre-commit-hook.sh")
+def _get_hook_template(hook_name: str = "pre-commit") -> str:
+    """Read the bundled hook shell template."""
+    filename = f"{hook_name}-hook.sh"
+    ref = importlib.resources.files("rafter_cli.resources").joinpath(filename)
     return ref.read_text(encoding="utf-8")
 
 
 @agent_app.command("install-hook")
 def install_hook(
     global_: bool = typer.Option(False, "--global", help="Install globally for all repos (via git config)"),
+    push: bool = typer.Option(False, "--push", help="Install pre-push hook instead of pre-commit"),
 ):
-    """Install pre-commit hook to scan for secrets."""
+    """Install git hook to scan for secrets."""
+    hook_name = "pre-push" if push else "pre-commit"
     if global_:
-        _install_global_hook()
+        _install_global_hook(hook_name)
     else:
-        _install_local_hook()
+        _install_local_hook(hook_name)
 
 
-def _install_local_hook() -> None:
-    """Install pre-commit hook for the current repository."""
+def _install_local_hook(hook_name: str = "pre-commit") -> None:
+    """Install hook for the current repository."""
     try:
         git_dir = subprocess.run(
             ["git", "rev-parse", "--git-dir"],
@@ -724,42 +733,49 @@ def _install_local_hook() -> None:
         raise typer.Exit(code=1)
 
     hooks_dir = Path(git_dir).resolve() / "hooks"
-    hook_path = hooks_dir / "pre-commit"
+    hook_path = hooks_dir / hook_name
 
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
     if hook_path.exists():
         existing = hook_path.read_text(encoding="utf-8")
-        if "Rafter Security Pre-Commit Hook" in existing:
-            rprint(fmt.success("Rafter pre-commit hook already installed"))
+        marker = f"Rafter Security Pre-{'Push' if hook_name == 'pre-push' else 'Commit'} Hook"
+        if marker in existing:
+            rprint(fmt.success(f"Rafter {hook_name} hook already installed"))
             return
-        backup_path = hook_path.with_name(f"pre-commit.backup-{int(__import__('time').time() * 1000)}")
+        import time
+        backup_path = hook_path.with_name(f"{hook_name}.backup-{int(time.time() * 1000)}")
         hook_path.rename(backup_path)
         rprint(fmt.info(f"Backed up existing hook to: {backup_path.name}"))
 
-    hook_content = _get_hook_template()
+    hook_content = _get_hook_template(hook_name)
     hook_path.write_text(hook_content, encoding="utf-8")
     hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    rprint(fmt.success("Installed Rafter pre-commit hook"))
+    rprint(fmt.success(f"Installed Rafter {hook_name} hook"))
     rprint(f"  Location: {hook_path}")
     rprint()
     rprint("The hook will:")
-    rprint("  - Scan staged files for secrets before each commit")
-    rprint("  - Block commits if secrets are detected")
-    rprint("  - Can be bypassed with: git commit --no-verify (not recommended)")
+    if hook_name == "pre-push":
+        rprint("  - Scan commits being pushed for secrets")
+        rprint("  - Block pushes if secrets are detected")
+        rprint("  - Can be bypassed with: git push --no-verify (not recommended)")
+    else:
+        rprint("  - Scan staged files for secrets before each commit")
+        rprint("  - Block commits if secrets are detected")
+        rprint("  - Can be bypassed with: git commit --no-verify (not recommended)")
     rprint()
 
 
-def _install_global_hook() -> None:
-    """Install pre-commit hook globally for all repositories."""
+def _install_global_hook(hook_name: str = "pre-commit") -> None:
+    """Install hook globally for all repositories."""
     home = Path.home()
     global_hooks_dir = home / ".rafter" / "git-hooks"
-    hook_path = global_hooks_dir / "pre-commit"
+    hook_path = global_hooks_dir / hook_name
 
     global_hooks_dir.mkdir(parents=True, exist_ok=True)
 
-    hook_content = _get_hook_template()
+    hook_content = _get_hook_template(hook_name)
     hook_path.write_text(hook_content, encoding="utf-8")
     hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -773,7 +789,7 @@ def _install_global_hook() -> None:
         print(f"   Manually run: git config --global core.hooksPath {global_hooks_dir}", file=sys.stderr)
         raise typer.Exit(code=1)
 
-    rprint(fmt.success("Installed Rafter pre-commit hook globally"))
+    rprint(fmt.success(f"Installed Rafter {hook_name} hook globally"))
     rprint(f"  Location: {hook_path}")
     rprint(f"  Git config: core.hooksPath = {global_hooks_dir}")
     rprint()
@@ -783,7 +799,8 @@ def _install_global_hook() -> None:
     rprint("  git config --global --unset core.hooksPath")
     rprint()
     rprint("To install per-repository instead:")
-    rprint("  cd <repo> && rafter agent install-hook")
+    push_flag = " --push" if hook_name == "pre-push" else ""
+    rprint(f"  cd <repo> && rafter agent install-hook{push_flag}")
     rprint()
 
 
@@ -1301,3 +1318,169 @@ def status():
         print("No events logged yet.")
 
     print()
+
+
+# ── baseline ─────────────────────────────────────────────────────────
+
+_BASELINE_PATH = Path.home() / ".rafter" / "baseline.json"
+
+baseline_app = typer.Typer(name="baseline", help="Manage the findings baseline (allowlist for known findings)", no_args_is_help=True)
+agent_app.add_typer(baseline_app)
+
+
+def _load_baseline() -> dict:
+    if not _BASELINE_PATH.exists():
+        return {"version": 1, "created": "", "updated": "", "entries": []}
+    try:
+        return json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {"version": 1, "created": "", "updated": "", "entries": []}
+
+
+def _save_baseline(data: dict) -> None:
+    _BASELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _BASELINE_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _load_baseline_entries() -> list[dict]:
+    return _load_baseline().get("entries", [])
+
+
+def _apply_baseline(results: list[ScanResult], entries: list[dict]) -> list[ScanResult]:
+    if not entries:
+        return results
+    filtered = []
+    for r in results:
+        kept = [
+            m for m in r.matches
+            if not any(
+                e["file"] == r.file
+                and e["pattern"] == m.pattern.name
+                and (e.get("line") is None or e.get("line") == m.line)
+                for e in entries
+            )
+        ]
+        if kept:
+            filtered.append(ScanResult(file=r.file, matches=kept))
+    return filtered
+
+
+@baseline_app.command("create")
+def baseline_create(
+    path: str = typer.Argument(".", help="Path to scan"),
+    engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
+):
+    """Scan and save all current findings as the baseline."""
+    import datetime
+    resolved = os.path.abspath(path)
+    if not os.path.exists(resolved):
+        print(f"Error: Path not found: {resolved}", file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    manager = ConfigManager()
+    cfg = manager.load_with_policy()
+    scan_cfg = cfg.agent.scan
+
+    print(f"Scanning {resolved} to build baseline...", file=sys.stderr)
+
+    eng = _select_engine(engine, quiet=False)
+    if os.path.isdir(resolved):
+        results = _scan_directory(resolved, eng, scan_cfg)
+    else:
+        custom_patterns = (
+            [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns]
+            if scan_cfg.custom_patterns else None
+        )
+        results = _scan_file(resolved, eng, custom_patterns)
+
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    entries = []
+    for r in results:
+        for m in r.matches:
+            entries.append({"file": r.file, "line": m.line, "pattern": m.pattern.name, "addedAt": now})
+
+    existing = _load_baseline()
+    data = {
+        "version": 1,
+        "created": existing.get("created") or now,
+        "updated": now,
+        "entries": entries,
+    }
+    _save_baseline(data)
+
+    if not entries:
+        rprint(fmt.success("No findings — baseline is empty (all clean)"))
+    else:
+        rprint(fmt.success(f"Baseline saved: {len(entries)} finding(s) recorded"))
+        rprint(f"  Location: {_BASELINE_PATH}")
+        rprint()
+        rprint("Future scans with --baseline will suppress these findings.")
+
+
+@baseline_app.command("show")
+def baseline_show(
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Show current baseline entries."""
+    data = _load_baseline()
+
+    if json_out:
+        print(json.dumps(data, indent=2))
+        return
+
+    entries = data.get("entries", [])
+    if not entries:
+        print("Baseline is empty. Run: rafter agent baseline create")
+        return
+
+    print(f"Baseline: {len(entries)} entries")
+    if data.get("updated"):
+        print(f"Updated: {data['updated']}")
+    print()
+
+    by_file: dict[str, list] = {}
+    for e in entries:
+        by_file.setdefault(e["file"], []).append(e)
+
+    for file, file_entries in by_file.items():
+        rprint(fmt.info(file))
+        for e in file_entries:
+            loc = f"line {e['line']}" if e.get("line") is not None else "unknown location"
+            print(f"  {e['pattern']} ({loc})")
+        print()
+
+
+@baseline_app.command("clear")
+def baseline_clear():
+    """Remove all baseline entries."""
+    if not _BASELINE_PATH.exists():
+        print("No baseline file found — nothing to clear.")
+        return
+    _BASELINE_PATH.unlink()
+    rprint(fmt.success("Baseline cleared"))
+
+
+@baseline_app.command("add")
+def baseline_add(
+    file: str = typer.Option(..., "--file", help="File path"),
+    pattern: str = typer.Option(..., "--pattern", help="Pattern name (e.g. 'AWS Access Key')"),
+    line: int = typer.Option(None, "--line", help="Line number"),
+):
+    """Manually add a finding to the baseline."""
+    import datetime
+    data = _load_baseline()
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    entry = {
+        "file": os.path.abspath(file),
+        "line": line,
+        "pattern": pattern,
+        "addedAt": now,
+    }
+    data.setdefault("entries", []).append(entry)
+    data["updated"] = now
+    if not data.get("created"):
+        data["created"] = now
+    _save_baseline(data)
+
+    rprint(fmt.success(f"Added to baseline: {pattern} in {file}"))
