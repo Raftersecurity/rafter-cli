@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import https from "https";
 import { exec, execSync } from "child_process";
@@ -8,7 +9,7 @@ import * as tar from "tar";
 
 const execAsync = promisify(exec);
 
-const GITLEAKS_VERSION = "8.18.2";
+export const GITLEAKS_VERSION = "8.18.2";
 
 export class BinaryManager {
   private binDir: string;
@@ -159,9 +160,11 @@ export class BinaryManager {
   }
 
   /**
-   * Download and install Gitleaks
+   * Download and install Gitleaks.
+   * @param onProgress  Optional progress callback.
+   * @param version     Gitleaks version to install (defaults to GITLEAKS_VERSION).
    */
-  async downloadGitleaks(onProgress?: (message: string) => void): Promise<void> {
+  async downloadGitleaks(onProgress?: (message: string) => void, version: string = GITLEAKS_VERSION): Promise<void> {
     const log = onProgress || (() => {});
 
     // Check platform support
@@ -176,9 +179,9 @@ export class BinaryManager {
 
     const platform = this.getPlatformString();
     const arch = this.getArchString();
-    const url = this.getDownloadUrl(platform, arch);
+    const url = this.getDownloadUrl(platform, arch, version);
 
-    log(`Downloading Gitleaks v${GITLEAKS_VERSION} for ${platform}/${arch}...`);
+    log(`Downloading Gitleaks v${version} for ${platform}/${arch}...`);
     log(`  URL: ${url}`);
 
     const archivePath = path.join(this.binDir, platform === "windows" ? "gitleaks.zip" : "gitleaks.tar.gz");
@@ -194,8 +197,7 @@ export class BinaryManager {
       // Extract binary
       log("Extracting binary...");
       if (platform === "windows") {
-        // For Windows, we'd need unzip - for now just error
-        throw new Error("Windows support coming soon");
+        await this.extractZip(archivePath);
       } else {
         await this.extractTarball(archivePath);
       }
@@ -281,15 +283,15 @@ export class BinaryManager {
   }
 
   /**
-   * Get download URL for platform/arch
+   * Get download URL for platform/arch/version
    */
-  private getDownloadUrl(platform: string, arch: string): string {
-    const baseUrl = `https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}`;
+  private getDownloadUrl(platform: string, arch: string, version: string = GITLEAKS_VERSION): string {
+    const baseUrl = `https://github.com/gitleaks/gitleaks/releases/download/v${version}`;
 
     if (platform === "windows") {
-      return `${baseUrl}/gitleaks_${GITLEAKS_VERSION}_windows_${arch}.zip`;
+      return `${baseUrl}/gitleaks_${version}_windows_${arch}.zip`;
     } else {
-      return `${baseUrl}/gitleaks_${GITLEAKS_VERSION}_${platform}_${arch}.tar.gz`;
+      return `${baseUrl}/gitleaks_${version}_${platform}_${arch}.tar.gz`;
     }
   }
 
@@ -352,6 +354,40 @@ export class BinaryManager {
         reject(err);
       });
     });
+  }
+
+  /**
+   * Extract zip (Windows) — uses PowerShell's Expand-Archive, then copies
+   * only the gitleaks.exe binary to binDir. Cleans up the temp extract dir.
+   */
+  private async extractZip(zipPath: string): Promise<void> {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gitleaks-"));
+    try {
+      // PowerShell 5+ ships on all supported Windows versions
+      await execAsync(
+        `powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath '${zipPath}' -DestinationPath '${tempDir}'"`,
+        { timeout: 30000 }
+      );
+
+      // Find gitleaks.exe — may be at root or inside a subdirectory
+      const findBinary = (dir: string): string | null => {
+        for (const entry of fs.readdirSync(dir)) {
+          const full = path.join(dir, entry);
+          if (entry === "gitleaks.exe") return full;
+          if (fs.statSync(full).isDirectory()) {
+            const found = findBinary(full);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const found = findBinary(tempDir);
+      if (!found) throw new Error("gitleaks.exe not found in archive");
+      fs.copyFileSync(found, path.join(this.binDir, "gitleaks.exe"));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   }
 
   /**

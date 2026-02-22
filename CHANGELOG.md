@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-02-21
+
+### Added
+- **`rafter agent update-gitleaks`** (Node + Python): new subcommand to reinstall or upgrade the managed gitleaks binary. Accepts `--version X.Y.Z` to pin a specific release; defaults to the bundled version. Shows current version before updating.
+- **`rafter agent init --update`** (Node + Python): re-downloads gitleaks and reinstalls hooks/skills without touching existing config or risk level. Useful for repair or upgrading after a broken install.
+- **Windows zip extraction** (Node + Python): `rafter agent init` and `update-gitleaks` now work on Windows. Node uses PowerShell's `Expand-Archive`; Python uses the built-in `zipfile` module. Previously both threw `NotImplementedError`/`"Windows support coming soon"`.
+
+### Fixed
+- **Gitleaks extraction broken by `strip:1`** (Node): `binary-manager.ts` `extractTarball` used `strip: 1`, which collapses single-component paths (like the root-level `gitleaks` binary) to empty strings—the filter never matched and the binary was silently skipped. Removed `strip: 1`; the basename filter alone is correct and sufficient.
+- **`tarfile.extract(filter=)` TypeError on Python < 3.12** (Python): `filter="data"` was introduced in Python 3.12; passing it on 3.11 raised `TypeError`. Now conditional on `sys.version_info >= (3, 12)`.
+
 ## [0.5.3] - 2026-02-21
 
 ### Added
