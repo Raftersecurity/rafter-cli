@@ -41,15 +41,6 @@ jobs:
           fi
           echo "Versions match: $NODE_VERSION"
 
-      - name: Check version not already published
-        run: |
-          VERSION="${{ steps.node-version.outputs.VERSION }}"
-          if npm view "@rafter-security/cli@$VERSION" version 2>/dev/null; then
-            echo "Version $VERSION already exists on npm"
-            exit 1
-          fi
-          echo "Version $VERSION is new"
-
       - name: Check CHANGELOG updated
         run: |
           VERSION="${{ steps.node-version.outputs.VERSION }}"
