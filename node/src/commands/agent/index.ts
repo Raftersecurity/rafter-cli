@@ -9,6 +9,7 @@ import { createInstallHookCommand } from "./install-hook.js";
 import { createVerifyCommand } from "./verify.js";
 import { createStatusCommand } from "./status.js";
 import { createUpdateGitleaksCommand } from "./update-gitleaks.js";
+import { createBaselineCommand } from "./baseline.js";
 
 export function createAgentCommand(): Command {
   const agent = new Command("agent")
@@ -25,6 +26,7 @@ export function createAgentCommand(): Command {
   agent.addCommand(createVerifyCommand());
   agent.addCommand(createStatusCommand());
   agent.addCommand(createUpdateGitleaksCommand());
+  agent.addCommand(createBaselineCommand());
 
   return agent;
 }
