@@ -355,13 +355,17 @@ export class BinaryManager {
   }
 
   /**
-   * Extract tarball — binary only, strip packaging extras (LICENSE, README.md)
+   * Extract tarball — binary only, strip packaging extras (LICENSE, README.md).
+   *
+   * The gitleaks release tarball has all files at the archive root (no top-level
+   * directory), so strip: 0 (the default). With strip: 1, node-tar reduces the
+   * single-component paths to empty strings; the filter never matches "gitleaks"
+   * and nothing is extracted. The filter alone is sufficient.
    */
   private async extractTarball(tarballPath: string): Promise<void> {
     await tar.extract({
       file: tarballPath,
       cwd: this.binDir,
-      strip: 1,
       filter: (p: string) => {
         const base = path.basename(p);
         return base === "gitleaks" || base === "gitleaks.exe";

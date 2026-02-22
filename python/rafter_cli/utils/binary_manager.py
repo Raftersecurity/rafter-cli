@@ -253,10 +253,15 @@ class BinaryManager:
 
     def _extract_tarball(self, archive_path: Path) -> None:
         """Extract only the gitleaks binary from the tarball."""
+        # filter="data" was added in Python 3.12; fall back gracefully on older runtimes.
+        _extract_kwargs: dict = {}
+        if sys.version_info >= (3, 12):
+            _extract_kwargs["filter"] = "data"
+
         with tarfile.open(archive_path, "r:gz") as tf:
             for member in tf.getmembers():
                 base = os.path.basename(member.name)
                 if base in ("gitleaks", "gitleaks.exe"):
                     # Flatten: extract directly to bin_dir with just the binary name
                     member.name = base
-                    tf.extract(member, path=self.bin_dir, filter="data")
+                    tf.extract(member, path=self.bin_dir, **_extract_kwargs)
