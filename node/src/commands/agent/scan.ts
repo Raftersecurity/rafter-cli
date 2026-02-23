@@ -149,13 +149,14 @@ function outputSarif(results: ScanResult[]): void {
   }
 
   const sarif = {
-    $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+    $schema: "https://json.schemastore.org/sarif-2.1.0.json",
     version: "2.1.0",
     runs: [
       {
         tool: {
           driver: {
             name: "rafter",
+            version: "0.5.5",
             informationUri: "https://rafter.so",
             rules: Array.from(rules.values()),
           },
@@ -178,6 +179,11 @@ function outputScanResults(
   context?: string,
 ): void {
   const format = opts.format ?? (opts.json ? "json" : "text");
+
+  if (!["text", "json", "sarif"].includes(format)) {
+    console.error(`Invalid format: ${format}. Valid values: text, json, sarif`);
+    process.exit(2);
+  }
 
   if (format === "sarif") {
     outputSarif(results);
