@@ -103,8 +103,11 @@ Scan files or directories for secrets (21+ patterns).
 - `--staged` — scan git staged files only
 - `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
 - `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
+- `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
+
+> **Note:** `--watch` mode does not exit on findings — it prints results inline and keeps watching. Findings are logged to `audit.jsonl` in real time. Requires `chokidar` (Node, bundled) or `watchdog` (Python: `pip install watchdog`).
 
 #### JSON Output (`--json`)
 
