@@ -346,6 +346,7 @@ def _output_scan_results(
     quiet: bool,
     context: str | None = None,
     format: str = "text",
+    exit_on_findings: bool = True,
 ) -> None:
     if format == "sarif":
         _output_sarif(results)
@@ -361,13 +362,17 @@ def _output_scan_results(
             for r in results
         ]
         print(json.dumps(out, indent=2))
-        raise typer.Exit(code=1 if results else 0)
+        if exit_on_findings:
+            raise typer.Exit(code=1 if results else 0)
+        return
 
     if not results:
         if not quiet:
             msg = f"No secrets detected in {context}" if context else "No secrets detected"
             rprint(f"\n{fmt.success(msg)}\n")
-        raise typer.Exit(code=0)
+        if exit_on_findings:
+            raise typer.Exit(code=0)
+        return
 
     rprint(f"\n{fmt.warning(f'Found secrets in {len(results)} file(s):')}\n")
 
@@ -387,10 +392,96 @@ def _output_scan_results(
 
     if context == "staged files":
         rprint(f"{fmt.error('Commit blocked. Remove secrets before committing.')}\n")
-    else:
+    elif exit_on_findings:
         rprint("Run 'rafter agent audit' to see the security log.\n")
 
-    raise typer.Exit(code=1)
+    if exit_on_findings:
+        raise typer.Exit(code=1)
+
+
+def _watch_and_scan(
+    watch_path: str,
+    engine: str,
+    quiet: bool,
+    json_output: bool,
+    format: str,
+    custom_patterns,
+    scan_cfg,
+) -> None:
+    """Watch a path for changes and re-scan on each change. Ctrl+C exits."""
+    try:
+        from watchdog.observers import Observer
+        from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent
+    except ImportError:
+        print("Error: watchdog package required for --watch mode. Install with: pip install watchdog", file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    logger = AuditLogger()
+    eng = _select_engine(engine, quiet)
+
+    if not quiet:
+        print(fmt.info(f"Watching {watch_path} for changes ({eng}). Press Ctrl+C to exit."), file=sys.stderr)
+
+    # Initial scan
+    if os.path.isdir(watch_path):
+        initial_results = _scan_directory(watch_path, eng, scan_cfg)
+    else:
+        initial_results = _scan_file(watch_path, eng, custom_patterns)
+
+    if initial_results:
+        rprint(fmt.warning("\n[Initial scan] Found secrets:"))
+        _output_scan_results(initial_results, json_output, False, format=format, exit_on_findings=False)
+        _log_watch_findings(logger, initial_results)
+    elif not quiet:
+        rprint(fmt.success("[Initial scan] No secrets detected"))
+
+    class _Handler(FileSystemEventHandler):
+        def _handle(self, file_path: str) -> None:
+            if not os.path.isfile(file_path):
+                return
+            from datetime import datetime as _dt
+            ts = _dt.now().strftime("%H:%M:%S")
+            if not quiet:
+                print(f"\n[{ts}] Changed: {file_path}", file=sys.stderr)
+            results = _scan_file(file_path, eng, custom_patterns)
+            if results:
+                _output_scan_results(results, json_output, False, format=format, exit_on_findings=False)
+                _log_watch_findings(logger, results)
+            elif not quiet:
+                rprint(fmt.success("  No secrets detected"))
+
+        def on_modified(self, event):
+            if not event.is_directory:
+                self._handle(event.src_path)
+
+        def on_created(self, event):
+            if not event.is_directory:
+                self._handle(event.src_path)
+
+    event_handler = _Handler()
+    observer = Observer()
+    observer.schedule(event_handler, watch_path, recursive=True)
+    observer.start()
+
+    try:
+        import time
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        observer.stop()
+        if not quiet:
+            rprint(fmt.info("\nWatch mode stopped."))
+    observer.join()
+
+
+def _log_watch_findings(logger: AuditLogger, results: list[ScanResult]) -> None:
+    for result in results:
+        for match in result.matches:
+            logger.log_secret_detected(
+                location=result.file,
+                secret_type=match.pattern.name,
+                action_taken="allowed",
+            )
 
 
 def _output_sarif(results: list[ScanResult]) -> None:
@@ -446,6 +537,7 @@ def scan(
     diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
     engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
+    watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
 ):
     """Scan files or directories for secrets."""
     manager = ConfigManager()
@@ -524,6 +616,11 @@ def scan(
     if not os.path.exists(resolved_path):
         print(f"Error: Path not found: {resolved_path}", file=sys.stderr)
         raise typer.Exit(code=2)
+
+    # --watch
+    if watch:
+        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg)
+        return
 
     eng = _select_engine(engine, quiet)
 

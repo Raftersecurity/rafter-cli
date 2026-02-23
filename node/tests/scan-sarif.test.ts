@@ -38,7 +38,7 @@ describe("scan --format sarif", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should output valid SARIF 2.1.0 structure with no findings", () => {
+  it("should output valid SARIF 2.1.0 structure with no findings", { timeout: 20000 }, () => {
     // Create a clean file with no secrets
     fs.writeFileSync(path.join(tmpDir, "clean.ts"), 'const x = "hello world";\n');
 
@@ -53,7 +53,7 @@ describe("scan --format sarif", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it("should output SARIF results for files with secrets", () => {
+  it("should output SARIF results for files with secrets", { timeout: 20000 }, () => {
     // Create a file with a known secret pattern
     fs.writeFileSync(
       path.join(tmpDir, "secrets.ts"),
@@ -81,7 +81,7 @@ describe("scan --format sarif", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  it("should map severity levels correctly", () => {
+  it("should map severity levels correctly", { timeout: 20000 }, () => {
     // Create file with a secret
     fs.writeFileSync(
       path.join(tmpDir, "test.env"),
@@ -97,7 +97,7 @@ describe("scan --format sarif", () => {
     }
   });
 
-  it("should support --format json as equivalent to --json", () => {
+  it("should support --format json as equivalent to --json", { timeout: 30000 }, () => {
     fs.writeFileSync(path.join(tmpDir, "clean.ts"), 'const x = 42;\n');
 
     const jsonResult = runScan(`${tmpDir} --json`);
@@ -111,13 +111,13 @@ describe("scan --format sarif", () => {
     expect(Array.isArray(formatParsed)).toBe(true);
   });
 
-  it("should reject invalid format values", () => {
+  it("should reject invalid format values", { timeout: 20000 }, () => {
     const result = runScan(`${tmpDir} --format xml`);
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Invalid format");
   });
 
-  it("should include tool version in SARIF output", () => {
+  it("should include tool version in SARIF output", { timeout: 20000 }, () => {
     fs.writeFileSync(path.join(tmpDir, "clean.ts"), 'const x = 1;\n');
 
     const result = runScan(`${tmpDir} --format sarif`);

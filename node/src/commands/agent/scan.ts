@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { GitleaksScanner } from "../../scanners/gitleaks.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { AuditLogger } from "../../core/audit-logger.js";
 import { execSync, execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
@@ -16,6 +17,7 @@ interface ScanOpts {
   staged?: boolean;
   diff?: string;
   baseline?: boolean;
+  watch?: boolean;
 }
 
 interface BaselineEntry {
@@ -64,6 +66,7 @@ export function createScanCommand(): Command {
     .option("--diff <ref>", "Scan files changed since a git ref")
     .option("--engine <engine>", "Scan engine: gitleaks or patterns", "auto")
     .option("--baseline", "Filter findings present in the saved baseline")
+    .option("--watch", "Watch for file changes and re-scan on change")
     .action(async (scanPath, opts: ScanOpts) => {
       // Load policy-merged config for excludePaths/customPatterns
       const manager = new ConfigManager();
@@ -90,6 +93,12 @@ export function createScanCommand(): Command {
       if (!fs.existsSync(resolvedPath)) {
         console.error(`Error: Path not found: ${resolvedPath}`);
         process.exit(2);
+      }
+
+      // Handle --watch flag
+      if (opts.watch) {
+        await watchAndScan(resolvedPath, opts, scanCfg);
+        return;
       }
 
       // Determine scan engine
@@ -177,6 +186,7 @@ function outputScanResults(
   results: ScanResult[],
   opts: ScanOpts,
   context?: string,
+  exitOnFindings: boolean = true,
 ): void {
   const format = opts.format ?? (opts.json ? "json" : "text");
 
@@ -201,7 +211,8 @@ function outputScanResults(
       })),
     }));
     console.log(JSON.stringify(out, null, 2));
-    process.exit(results.length > 0 ? 1 : 0);
+    if (exitOnFindings) process.exit(results.length > 0 ? 1 : 0);
+    return;
   }
 
   if (results.length === 0) {
@@ -209,7 +220,8 @@ function outputScanResults(
       const msg = context ? `No secrets detected in ${context}` : "No secrets detected";
       console.log(`\n${fmt.success(msg)}\n`);
     }
-    process.exit(0);
+    if (exitOnFindings) process.exit(0);
+    return;
   }
 
   console.log(`\n${fmt.warning(`Found secrets in ${results.length} file(s):`)}\n`);
@@ -235,11 +247,11 @@ function outputScanResults(
 
   if (context === "staged files") {
     console.log(`${fmt.error("Commit blocked. Remove secrets before committing.")}\n`);
-  } else {
+  } else if (exitOnFindings) {
     console.log(`Run 'rafter agent audit' to see the security log.\n`);
   }
 
-  process.exit(1);
+  if (exitOnFindings) process.exit(1);
 }
 
 /**
@@ -416,5 +428,118 @@ async function scanDirectory(
   } else {
     const scanner = new RegexScanner(scanCfg?.customPatterns);
     return scanner.scanDirectory(dirPath, { excludePaths: scanCfg?.excludePaths });
+  }
+}
+
+/**
+ * Watch a path for changes and re-scan on each change
+ */
+async function watchAndScan(
+  watchPath: string,
+  opts: ScanOpts,
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+): Promise<void> {
+  const { watch } = await import("chokidar");
+  const logger = new AuditLogger();
+
+  const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
+
+  if (!opts.quiet) {
+    console.error(fmt.info(`Watching ${watchPath} for changes (${engine}). Press Ctrl+C to exit.`));
+  }
+
+  // Do an initial scan
+  const stats = fs.statSync(watchPath);
+  const initialResults = stats.isDirectory()
+    ? await scanDirectory(watchPath, engine, scanCfg)
+    : await scanFile(watchPath, engine, scanCfg);
+
+  if (initialResults.length > 0) {
+    console.log(fmt.warning(`\n[Initial scan] Found secrets:`));
+    outputScanResults(initialResults, { ...opts, quiet: false }, undefined, /* exitOnFindings= */ false);
+    logWatchFindings(logger, initialResults);
+  } else if (!opts.quiet) {
+    console.log(fmt.success(`[Initial scan] No secrets detected`));
+  }
+
+  const watcher = watch(watchPath, {
+    ignoreInitial: true,
+    persistent: true,
+    ignored: /(^|[/\\])\../,
+  });
+
+  watcher.on("change", async (filePath: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    if (!opts.quiet) {
+      console.error(`\n[${timestamp}] Changed: ${filePath}`);
+    }
+
+    if (!fs.existsSync(filePath)) return;
+    const fileStats = fs.statSync(filePath);
+    if (!fileStats.isFile()) return;
+
+    const results = await scanFile(filePath, engine, scanCfg);
+    if (results.length > 0) {
+      outputScanResults(results, { ...opts, quiet: false }, undefined, /* exitOnFindings= */ false);
+      logWatchFindings(logger, results);
+    } else if (!opts.quiet) {
+      console.log(fmt.success(`  No secrets detected`));
+    }
+  });
+
+  watcher.on("add", async (filePath: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    if (!opts.quiet) {
+      console.error(`\n[${timestamp}] Added: ${filePath}`);
+    }
+
+    const fileStats = fs.statSync(filePath);
+    if (!fileStats.isFile()) return;
+
+    const results = await scanFile(filePath, engine, scanCfg);
+    if (results.length > 0) {
+      outputScanResults(results, { ...opts, quiet: false }, undefined, /* exitOnFindings= */ false);
+      logWatchFindings(logger, results);
+    } else if (!opts.quiet) {
+      console.log(fmt.success(`  No secrets detected`));
+    }
+  });
+
+  // Keep process alive until Ctrl+C
+  await new Promise<void>((resolve) => {
+    process.on("SIGINT", () => {
+      if (!opts.quiet) {
+        console.log(fmt.info("\nWatch mode stopped."));
+      }
+      watcher.close();
+      resolve();
+    });
+  });
+}
+
+/**
+ * Log watch findings to audit log
+ */
+function logWatchFindings(logger: AuditLogger, results: ScanResult[]): void {
+  for (const result of results) {
+    for (const match of result.matches) {
+      logger.log({
+        eventType: "secret_detected",
+        securityCheck: {
+          passed: false,
+          reason: `${match.pattern.name} detected in ${result.file}`,
+          details: {
+            file: result.file,
+            line: match.line,
+            pattern: match.pattern.name,
+            severity: match.pattern.severity,
+            watchMode: true,
+          },
+        },
+        resolution: {
+          actionTaken: "allowed",
+        },
+      });
+    }
   }
 }
