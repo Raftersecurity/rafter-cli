@@ -1095,7 +1095,7 @@ def audit_skill(
     resolved = Path(skill_path).resolve()
     if not resolved.exists():
         print(f"Error: Skill file not found: {skill_path}", file=sys.stderr)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=2)
 
     skill_content = resolved.read_text(encoding="utf-8")
     skill_name = resolved.name
@@ -1129,10 +1129,9 @@ def audit_skill(
             "openClawAvailable": openclaw_available,
             "rafterSkillInstalled": rafter_skill_installed,
         }
+        has_findings = quick_scan.secrets > 0 or len(quick_scan.high_risk_commands) > 0
         print(json.dumps(result, indent=2))
-        if quick_scan.secrets > 0 or len(quick_scan.high_risk_commands) > 0:
-            raise typer.Exit(code=1)
-        return
+        raise typer.Exit(code=1 if has_findings else 0)
 
     # Check if we can use OpenClaw
     if openclaw_available and not skip_openclaw:
