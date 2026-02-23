@@ -15,7 +15,7 @@ import { setAgentMode } from "./utils/formatter.js";
 
 dotenv.config();
 
-const VERSION = "0.5.4";
+const VERSION = "0.5.5";
 
 const program = new Command()
   .name("rafter")
