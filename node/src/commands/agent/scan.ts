@@ -4,6 +4,7 @@ import { GitleaksScanner } from "../../scanners/gitleaks.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { execSync, execFileSync } from "child_process";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { fmt } from "../../utils/formatter.js";
 
@@ -14,6 +15,42 @@ interface ScanOpts {
   engine?: string;
   staged?: boolean;
   diff?: string;
+  baseline?: boolean;
+}
+
+interface BaselineEntry {
+  file: string;
+  line: number | null;
+  pattern: string;
+}
+
+function loadBaselineEntries(): BaselineEntry[] {
+  const baselinePath = path.join(os.homedir(), ".rafter", "baseline.json");
+  if (!fs.existsSync(baselinePath)) return [];
+  try {
+    const data = JSON.parse(fs.readFileSync(baselinePath, "utf-8"));
+    return (data.entries as BaselineEntry[]) || [];
+  } catch {
+    return [];
+  }
+}
+
+function applyBaseline(results: ScanResult[], entries: BaselineEntry[]): ScanResult[] {
+  if (entries.length === 0) return results;
+  return results
+    .map((r) => ({
+      ...r,
+      matches: r.matches.filter(
+        (m) =>
+          !entries.some(
+            (e) =>
+              e.file === r.file &&
+              e.pattern === m.pattern.name &&
+              (e.line == null || e.line === (m.line ?? null)),
+          ),
+      ),
+    }))
+    .filter((r) => r.matches.length > 0);
 }
 
 export function createScanCommand(): Command {
@@ -26,21 +63,24 @@ export function createScanCommand(): Command {
     .option("--staged", "Scan only git staged files")
     .option("--diff <ref>", "Scan files changed since a git ref")
     .option("--engine <engine>", "Scan engine: gitleaks or patterns", "auto")
+    .option("--baseline", "Filter findings present in the saved baseline")
     .action(async (scanPath, opts: ScanOpts) => {
       // Load policy-merged config for excludePaths/customPatterns
       const manager = new ConfigManager();
       const cfg = manager.loadWithPolicy();
       const scanCfg = cfg.agent?.scan;
 
+      const baselineEntries = opts.baseline ? loadBaselineEntries() : [];
+
       // Handle --diff flag
       if (opts.diff) {
-        await scanDiffFiles(opts.diff, opts, scanCfg);
+        await scanDiffFiles(opts.diff, opts, scanCfg, baselineEntries);
         return;
       }
 
       // Handle --staged flag
       if (opts.staged) {
-        await scanStagedFiles(opts, scanCfg);
+        await scanStagedFiles(opts, scanCfg, baselineEntries);
         return;
       }
 
@@ -71,7 +111,7 @@ export function createScanCommand(): Command {
         results = await scanFile(resolvedPath, engine, scanCfg);
       }
 
-      outputScanResults(results, opts);
+      outputScanResults(applyBaseline(results, baselineEntries), opts);
     });
 }
 
@@ -109,13 +149,14 @@ function outputSarif(results: ScanResult[]): void {
   }
 
   const sarif = {
-    $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+    $schema: "https://json.schemastore.org/sarif-2.1.0.json",
     version: "2.1.0",
     runs: [
       {
         tool: {
           driver: {
             name: "rafter",
+            version: "0.5.5",
             informationUri: "https://rafter.so",
             rules: Array.from(rules.values()),
           },
@@ -138,6 +179,11 @@ function outputScanResults(
   context?: string,
 ): void {
   const format = opts.format ?? (opts.json ? "json" : "text");
+
+  if (!["text", "json", "sarif"].includes(format)) {
+    console.error(`Invalid format: ${format}. Valid values: text, json, sarif`);
+    process.exit(2);
+  }
 
   if (format === "sarif") {
     outputSarif(results);
@@ -203,6 +249,7 @@ async function scanDiffFiles(
   ref: string,
   opts: ScanOpts,
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+  baselineEntries: BaselineEntry[] = [],
 ): Promise<void> {
   try {
     const diffOutput = execFileSync("git", ["diff", "--name-only", "--diff-filter=ACM", ref], {
@@ -236,7 +283,7 @@ async function scanDiffFiles(
       allResults.push(...results);
     }
 
-    outputScanResults(allResults, opts, `files changed since ${ref}`);
+    outputScanResults(applyBaseline(allResults, baselineEntries), opts, `files changed since ${ref}`);
   } catch (error: any) {
     if (error.status === 128) {
       console.error("Error: Not in a git repository or invalid ref");
@@ -252,6 +299,7 @@ async function scanDiffFiles(
 async function scanStagedFiles(
   opts: ScanOpts,
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+  baselineEntries: BaselineEntry[] = [],
 ): Promise<void> {
   try {
     const stagedFilesOutput = execSync("git diff --cached --name-only --diff-filter=ACM", {
@@ -285,7 +333,7 @@ async function scanStagedFiles(
       allResults.push(...results);
     }
 
-    outputScanResults(allResults, opts, "staged files");
+    outputScanResults(applyBaseline(allResults, baselineEntries), opts, "staged files");
   } catch (error: any) {
     if (error.status === 128) {
       console.error("Error: Not in a git repository");

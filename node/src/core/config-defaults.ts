@@ -44,6 +44,10 @@ export function getDefaultConfig(): RafterConfig {
         logAllActions: true,
         retentionDays: 30,
         logLevel: "info"
+      },
+      notifications: {
+        webhook: undefined,
+        minRiskLevel: "high"
       }
     }
   };

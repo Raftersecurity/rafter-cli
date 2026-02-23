@@ -21,9 +21,10 @@ export const HIGH_PATTERNS: RegExp[] = [
   /chmod\s+777/,
   /curl.*\|\s*(bash|sh|zsh|dash)\b/,
   /wget.*\|\s*(bash|sh|zsh|dash)\b/,
-  /git\s+push\s+(--force|-f)\b/,
-  /git\s+push\s+--force-(with-lease|if-includes)\b/,
-  /git\s+push\s+\S*\s+\+\S+/,  // refspec force: git push origin +main
+  /git\s+push\b.*\s--force\b/,                           // --force anywhere after push
+  /git\s+push\b.*\s-[a-zA-Z]*f\b/,                      // -f or combined flags like -vf
+  /git\s+push\b.*\s--force-(with-lease|if-includes)\b/,  // specific force variants
+  /git\s+push\s+\S*\s+\+/,                               // refspec force: git push origin +main
   /docker\s+system\s+prune/,
   /npm\s+publish/,
   /pypi.*upload/,
@@ -57,6 +58,7 @@ export const DEFAULT_REQUIRE_APPROVAL: string[] = [
   "git push -f",
   "git push --force-with-lease",
   "git push --force-if-includes",
+  "git push .* \\+",
 ];
 
 /**

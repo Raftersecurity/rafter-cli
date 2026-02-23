@@ -29,7 +29,7 @@ async function auditSkill(
   // Validate skill file exists
   if (!fs.existsSync(skillPath)) {
     console.error(`Error: Skill file not found: ${skillPath}`);
-    process.exit(1);
+    process.exit(2);
   }
 
   const absolutePath = path.resolve(skillPath);

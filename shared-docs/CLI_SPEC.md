@@ -246,6 +246,48 @@ The audit log is written to `~/.rafter/audit.jsonl` as newline-delimited JSON (J
 | `agent.audit.retentionDays` | number | `30` | Days to retain log entries |
 | `agent.audit.logLevel` | string | `"info"` | Stored but not currently used for filtering |
 
+#### Webhook Notifications
+
+When configured, the audit logger sends a POST request to a webhook URL for events at or above a minimum risk level. This works with Slack incoming webhooks, Discord webhooks, and generic HTTP endpoints.
+
+**Configuration** (in `~/.rafter/config.json` or `.rafter.yml`):
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agent.notifications.webhook` | string | — | Webhook URL to POST notifications to |
+| `agent.notifications.minRiskLevel` | string | `"high"` | Minimum risk level to trigger notification (`"high"` or `"critical"`) |
+
+**Webhook payload:**
+
+```json
+{
+  "event": "command_intercepted",
+  "risk": "high",
+  "command": "git push --force",
+  "timestamp": "2026-02-21T10:30:45.123Z",
+  "agent": "claude-code",
+  "text": "[rafter] high-risk event: command_intercepted — git push --force",
+  "content": "[rafter] high-risk event: command_intercepted — git push --force"
+}
+```
+
+The `text` field provides Slack compatibility. The `content` field provides Discord compatibility. Both contain a human-readable summary.
+
+Webhook delivery is fire-and-forget with a 5-second timeout. Failures are silently ignored to avoid disrupting audit logging.
+
+**Setup examples:**
+
+```bash
+# Configure webhook URL
+rafter agent config set agent.notifications.webhook https://hooks.slack.com/services/T.../B.../xxx
+
+# Only notify on critical events
+rafter agent config set agent.notifications.minRiskLevel critical
+
+# Disable notifications
+rafter agent config set agent.notifications.webhook ""
+```
+
 ### rafter agent install-hook [OPTIONS]
 
 Install git pre-commit hook for automatic secret scanning.
@@ -260,7 +302,7 @@ Manage agent configuration (dot-notation paths).
 - `rafter agent config get <key>` — read value
 - `rafter agent config set <key> <value>` — write value
 
-Config keys: `agent.riskLevel`, `agent.commandPolicy.mode`, `agent.commandPolicy.blockedPatterns`, `agent.commandPolicy.requireApproval`, `agent.outputFiltering.redactSecrets`, `agent.audit.logAllActions`, `agent.audit.retentionDays`, `agent.audit.logLevel`.
+Config keys: `agent.riskLevel`, `agent.commandPolicy.mode`, `agent.commandPolicy.blockedPatterns`, `agent.commandPolicy.requireApproval`, `agent.outputFiltering.redactSecrets`, `agent.audit.logAllActions`, `agent.audit.retentionDays`, `agent.audit.logLevel`, `agent.notifications.webhook`, `agent.notifications.minRiskLevel`.
 
 ### rafter ci init [OPTIONS]
 

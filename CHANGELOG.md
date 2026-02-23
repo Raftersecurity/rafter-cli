@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-02-22
+
+### Added
+- **`rafter agent install-hook --push`** (Node + Python): new flag installs a pre-push git hook that scans commits being pushed using `rafter agent scan --diff <remote_sha>`. Blocks the push if secrets are detected. Works alongside existing `--pre-commit` hook.
+- **`rafter agent baseline`** subcommand (Node + Python): manage a persistent allowlist at `~/.rafter/baseline.json`. Subcommands: `create` (snapshot current findings), `show` (list entries), `clear` (wipe all), `add <file> <pattern>` (add single entry). Entries support null-line matching to suppress all instances of a pattern in a file.
+- **`rafter agent scan --baseline`** (Node + Python): filters scan output against the saved baseline, suppressing known/accepted findings.
+- **Webhook/Slack notifications** (Node + Python): `agent.notifications.webhook` (URL) and `agent.notifications.minRiskLevel` (`high`/`critical`) config keys. When an audit event meets or exceeds the threshold, a JSON payload is POSTed to the webhook. Compatible with Slack incoming webhooks, Discord, and generic HTTP endpoints.
+- **Shell completions expanded** (Node): `rafter completion` now generates bash, zsh, and fish scripts. Added completions for `baseline`, `update-gitleaks`, and `status` subcommands.
+
+### Fixed
+- **Force push detection** (Node + Python): risk rules now detect all force-push variants regardless of flag position: `--force`, `-f`, combined flags (`-vf`), `--force-with-lease`, `--force-if-includes`, and refspec notation (`git push origin +main`).
+- **SARIF output** (Node): corrected `$schema` URL to `https://json.schemastore.org/sarif-2.1.0.json`, added `tool.driver.version`, and invalid `--format` values now exit with code 2.
+- **`audit-skill` exit codes** (Node + Python): file-not-found exits 2 (was 1); clean scan exits 0; findings exit 1.
+
+## [0.5.4] - 2026-02-21
+
+### Added
+- **`rafter agent update-gitleaks`** (Node + Python): new subcommand to reinstall or upgrade the managed gitleaks binary. Accepts `--version X.Y.Z` to pin a specific release; defaults to the bundled version. Shows current version before updating.
+- **`rafter agent init --update`** (Node + Python): re-downloads gitleaks and reinstalls hooks/skills without touching existing config or risk level. Useful for repair or upgrading after a broken install.
+- **Windows zip extraction** (Node + Python): `rafter agent init` and `update-gitleaks` now work on Windows. Node uses PowerShell's `Expand-Archive`; Python uses the built-in `zipfile` module. Previously both threw `NotImplementedError`/`"Windows support coming soon"`.
+
+### Fixed
+- **Gitleaks extraction broken by `strip:1`** (Node): `binary-manager.ts` `extractTarball` used `strip: 1`, which collapses single-component paths (like the root-level `gitleaks` binary) to empty strings—the filter never matched and the binary was silently skipped. Removed `strip: 1`; the basename filter alone is correct and sufficient.
+- **`tarfile.extract(filter=)` TypeError on Python < 3.12** (Python): `filter="data"` was introduced in Python 3.12; passing it on 3.11 raised `TypeError`. Now conditional on `sys.version_info >= (3, 12)`.
+
 ## [0.5.3] - 2026-02-21
 
 ### Added
