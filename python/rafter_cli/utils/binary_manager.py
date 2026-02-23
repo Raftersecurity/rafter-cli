@@ -10,6 +10,7 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -143,8 +144,17 @@ class BinaryManager:
 
         return "\n".join(lines)
 
-    def download_gitleaks(self, on_progress: Optional[Callable[[str], None]] = None) -> None:
-        """Download, extract, chmod, and verify the gitleaks binary."""
+    def download_gitleaks(
+        self,
+        on_progress: Optional[Callable[[str], None]] = None,
+        version: str = GITLEAKS_VERSION,
+    ) -> None:
+        """Download, extract, chmod, and verify the gitleaks binary.
+
+        Args:
+            on_progress: Optional callback for progress messages.
+            version: Gitleaks version to install (defaults to GITLEAKS_VERSION).
+        """
         log = on_progress or (lambda _: None)
 
         if not self.is_platform_supported():
@@ -156,9 +166,9 @@ class BinaryManager:
 
         plat = self._platform_string()
         arch = self._arch_string()
-        url = self._build_download_url(plat, arch)
+        url = self._build_download_url(plat, arch, version)
 
-        log(f"Downloading Gitleaks v{GITLEAKS_VERSION} for {plat}/{arch}...")
+        log(f"Downloading Gitleaks v{version} for {plat}/{arch}...")
         log(f"  URL: {url}")
 
         archive_name = "gitleaks.zip" if plat == "windows" else "gitleaks.tar.gz"
@@ -172,7 +182,7 @@ class BinaryManager:
 
             log("Extracting binary...")
             if plat == "windows":
-                raise NotImplementedError("Windows zip extraction not yet implemented")
+                self._extract_zip(archive_path)
             else:
                 self._extract_tarball(archive_path)
 
@@ -211,11 +221,11 @@ class BinaryManager:
 
     # ── private helpers ───────────────────────────────────────────────
 
-    def _build_download_url(self, platform_str: str, arch_str: str) -> str:
-        base = f"https://github.com/gitleaks/gitleaks/releases/download/v{GITLEAKS_VERSION}"
+    def _build_download_url(self, platform_str: str, arch_str: str, version: str = GITLEAKS_VERSION) -> str:
+        base = f"https://github.com/gitleaks/gitleaks/releases/download/v{version}"
         if platform_str == "windows":
-            return f"{base}/gitleaks_{GITLEAKS_VERSION}_windows_{arch_str}.zip"
-        return f"{base}/gitleaks_{GITLEAKS_VERSION}_{platform_str}_{arch_str}.tar.gz"
+            return f"{base}/gitleaks_{version}_windows_{arch_str}.zip"
+        return f"{base}/gitleaks_{version}_{platform_str}_{arch_str}.tar.gz"
 
     def _download_file(
         self,
@@ -251,12 +261,41 @@ class BinaryManager:
                             on_progress(f"  Downloading... {pct}%")
                             last_pct = pct
 
+    def _extract_zip(self, archive_path: Path) -> None:
+        """Extract only the gitleaks binary from a Windows zip archive."""
+        with tempfile.TemporaryDirectory(prefix="rafter-gitleaks-") as tmp:
+            tmp_path = Path(tmp)
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                zf.extractall(tmp_path)
+
+            # Locate gitleaks.exe — may be at root or inside a subdirectory
+            found: Path | None = None
+            for candidate in tmp_path.rglob("gitleaks.exe"):
+                found = candidate
+                break
+            # Fallback: plain "gitleaks" binary (unlikely on Windows but handle it)
+            if found is None:
+                for candidate in tmp_path.rglob("gitleaks"):
+                    found = candidate
+                    break
+
+            if found is None:
+                raise RuntimeError("gitleaks binary not found in archive")
+
+            target = self.bin_dir / found.name
+            shutil.copy2(str(found), str(target))
+
     def _extract_tarball(self, archive_path: Path) -> None:
         """Extract only the gitleaks binary from the tarball."""
+        # filter="data" was added in Python 3.12; fall back gracefully on older runtimes.
+        _extract_kwargs: dict = {}
+        if sys.version_info >= (3, 12):
+            _extract_kwargs["filter"] = "data"
+
         with tarfile.open(archive_path, "r:gz") as tf:
             for member in tf.getmembers():
                 base = os.path.basename(member.name)
                 if base in ("gitleaks", "gitleaks.exe"):
                     # Flatten: extract directly to bin_dir with just the binary name
                     member.name = base
-                    tf.extract(member, path=self.bin_dir, filter="data")
+                    tf.extract(member, path=self.bin_dir, **_extract_kwargs)
