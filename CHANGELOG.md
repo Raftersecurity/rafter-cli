@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-02-22
+
+### Added
+- **`rafter agent install-hook --push`** (Node + Python): new flag installs a pre-push git hook that scans commits being pushed using `rafter agent scan --diff <remote_sha>`. Blocks the push if secrets are detected. Works alongside existing `--pre-commit` hook.
+- **`rafter agent baseline`** subcommand (Node + Python): manage a persistent allowlist at `~/.rafter/baseline.json`. Subcommands: `create` (snapshot current findings), `show` (list entries), `clear` (wipe all), `add <file> <pattern>` (add single entry). Entries support null-line matching to suppress all instances of a pattern in a file.
+- **`rafter agent scan --baseline`** (Node + Python): filters scan output against the saved baseline, suppressing known/accepted findings.
+- **Webhook/Slack notifications** (Node + Python): `agent.notifications.webhook` (URL) and `agent.notifications.minRiskLevel` (`high`/`critical`) config keys. When an audit event meets or exceeds the threshold, a JSON payload is POSTed to the webhook. Compatible with Slack incoming webhooks, Discord, and generic HTTP endpoints.
+- **Shell completions expanded** (Node): `rafter completion` now generates bash, zsh, and fish scripts. Added completions for `baseline`, `update-gitleaks`, and `status` subcommands.
+
+### Fixed
+- **Force push detection** (Node + Python): risk rules now detect all force-push variants regardless of flag position: `--force`, `-f`, combined flags (`-vf`), `--force-with-lease`, `--force-if-includes`, and refspec notation (`git push origin +main`).
+- **SARIF output** (Node): corrected `$schema` URL to `https://json.schemastore.org/sarif-2.1.0.json`, added `tool.driver.version`, and invalid `--format` values now exit with code 2.
+- **`audit-skill` exit codes** (Node + Python): file-not-found exits 2 (was 1); clean scan exits 0; findings exit 1.
+
 ## [0.5.4] - 2026-02-21
 
 ### Added
