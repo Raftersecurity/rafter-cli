@@ -55,7 +55,7 @@ function applyBaseline(results: ScanResult[], entries: BaselineEntry[]): ScanRes
     .filter((r) => r.matches.length > 0);
 }
 
-export function createScanCommand(): Command {
+export function createScanCommand(options?: { deprecated?: boolean }): Command {
   return new Command("scan")
     .description("Scan files or directories for secrets")
     .argument("[path]", "File or directory to scan", ".")
@@ -68,6 +68,9 @@ export function createScanCommand(): Command {
     .option("--baseline", "Filter findings present in the saved baseline")
     .option("--watch", "Watch for file changes and re-scan on change")
     .action(async (scanPath, opts: ScanOpts) => {
+      if (options?.deprecated) {
+        console.error("Warning: 'rafter agent scan' is deprecated. Use 'rafter scan local' instead. This alias will be removed in a future major version.");
+      }
       // Load policy-merged config for excludePaths/customPatterns
       const manager = new ConfigManager();
       const cfg = manager.loadWithPolicy();
@@ -165,7 +168,7 @@ function outputSarif(results: ScanResult[]): void {
         tool: {
           driver: {
             name: "rafter",
-            version: "0.5.5",
+            version: "0.5.7",
             informationUri: "https://rafter.so",
             rules: Array.from(rules.values()),
           },

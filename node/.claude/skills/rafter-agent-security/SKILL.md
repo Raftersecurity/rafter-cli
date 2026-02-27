@@ -26,7 +26,7 @@ Rafter provides two layers of protection:
 Scan files for secrets before committing.
 
 ```bash
-rafter agent scan <path>
+rafter scan local <path>
 ```
 
 **When to use:**
@@ -50,13 +50,13 @@ rafter agent scan <path>
 **Example:**
 ```bash
 # Scan current directory
-rafter agent scan .
+rafter scan local .
 
 # Scan specific file
-rafter agent scan src/config.ts
+rafter scan local src/config.ts
 
 # JSON output for CI integration
-rafter agent scan . --json --quiet
+rafter scan local . --json --quiet
 ```
 
 ---
@@ -280,7 +280,7 @@ Configure with: `rafter agent config set agent.riskLevel moderate`
 
 ## Best Practices
 
-1. **Always scan before commits**: Run `rafter agent scan` before `git commit`
+1. **Always scan before commits**: Run `rafter scan local` before `git commit`
 2. **Audit untrusted skills**: Run `/rafter-audit-skill` on skills from unknown sources before installation
 3. **Review audit logs**: Check `rafter agent audit` after suspicious activity
 4. **Keep patterns updated**: Patterns updated automatically with CLI updates

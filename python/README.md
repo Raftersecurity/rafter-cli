@@ -36,8 +36,8 @@ rafter usage                                  # check quota
 
 ```bash
 rafter agent init                # initialize + auto-detect agents
-rafter agent scan .              # scan for secrets
-rafter agent scan --diff HEAD~1  # scan changed files
+rafter scan local .              # scan for secrets
+rafter scan local --diff HEAD~1  # scan changed files
 rafter agent exec "git commit"   # execute with risk assessment
 rafter agent audit               # view security logs
 rafter agent config show         # view configuration

@@ -103,12 +103,12 @@ This single command:
 Scan files and directories for leaked credentials. 21+ built-in patterns covering AWS, GitHub, Google, Slack, Stripe, Twilio, database connection strings, JWTs, private keys, npm/PyPI tokens, and generic API keys.
 
 ```sh
-rafter agent scan .              # scan directory
-rafter agent scan ./config.js    # scan specific file
-rafter agent scan --staged       # scan git staged files only
-rafter agent scan --diff HEAD~1  # scan files changed since a git ref
-rafter agent scan --json         # structured output
-rafter agent scan --quiet        # silent unless secrets found (CI-friendly)
+rafter scan local .              # scan directory
+rafter scan local ./config.js    # scan specific file
+rafter scan local --staged       # scan git staged files only
+rafter scan local --diff HEAD~1  # scan files changed since a git ref
+rafter scan local --json         # structured output
+rafter scan local --quiet        # silent unless secrets found (CI-friendly)
 ```
 
 Exit code 1 if secrets found, 0 if clean.

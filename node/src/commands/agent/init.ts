@@ -270,7 +270,7 @@ export function createInitCommand(): Command {
       if (claudeCodeOk) {
         console.log("  - Restart Claude Code to load skills");
       }
-      console.log("  - Run: rafter agent scan . (test secret scanning)");
+      console.log("  - Run: rafter scan local . (test secret scanning)");
       console.log("  - Configure: rafter agent config show");
       console.log();
     });

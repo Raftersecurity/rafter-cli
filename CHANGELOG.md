@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-02-27
+
+### Changed
+- **`rafter scan` is now a command group** (Node + Python): `rafter scan local [path]` runs the local secret scanner (formerly `rafter agent scan`). `rafter scan remote` triggers the remote backend scan. `rafter scan` with no subcommand defaults to the remote backend scan (same as `rafter run`).
+- **`rafter agent scan` is deprecated** (Node + Python): still works but prints a deprecation warning to stderr. Use `rafter scan local` instead. Will be removed in a future major version.
+- **Hook scripts updated**: pre-commit and pre-push hooks now invoke `rafter scan local` instead of `rafter agent scan`.
+- **CI templates updated**: `rafter ci init` now generates workflows using `rafter scan local`.
+- **`rafter run` no longer aliases `scan`**: `rafter run` remains a standalone command for the remote backend scan.
+
 ## [0.5.6] - 2026-02-26
 
 ### Added

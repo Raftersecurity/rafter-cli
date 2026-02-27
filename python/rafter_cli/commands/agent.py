@@ -281,7 +281,7 @@ def init(
         rprint("  - Restart OpenClaw to load skill")
     if claude_code_ok:
         rprint("  - Restart Claude Code to load hooks")
-    rprint("  - Run: rafter agent scan . (test secret scanning)")
+    rprint("  - Run: rafter scan local . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
     rprint()
 
@@ -531,19 +531,18 @@ def _output_sarif(results: list[ScanResult]) -> None:
     raise typer.Exit(code=1 if results else 0)
 
 
-@agent_app.command()
-def scan(
-    path: str = typer.Argument(".", help="File or directory to scan"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Only output if secrets found"),
-    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
-    format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
-    staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
-    diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
-    engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
-    baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
-    watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
-):
-    """Scan files or directories for secrets."""
+def _run_local_scan(
+    path: str,
+    quiet: bool,
+    json_output: bool,
+    format: str,
+    staged: bool,
+    diff: str | None,
+    engine: str,
+    baseline: bool,
+    watch: bool,
+) -> None:
+    """Core local scan logic shared by `rafter agent scan` and `rafter scan local`."""
     manager = ConfigManager()
     cfg = manager.load_with_policy()
     scan_cfg = cfg.agent.scan
@@ -639,6 +638,30 @@ def scan(
 
     filtered = _apply_baseline(results, baseline_entries)
     _output_scan_results(filtered, json_output, quiet, format=format)
+
+
+@agent_app.command()
+def scan(
+    path: str = typer.Argument(".", help="File or directory to scan"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Only output if secrets found"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
+    staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
+    diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
+    engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
+    baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
+    watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
+):
+    """Scan files or directories for secrets.
+
+    .. deprecated:: Use 'rafter scan local' instead.
+    """
+    print(
+        "Warning: 'rafter agent scan' is deprecated. Use 'rafter scan local' instead. "
+        "This alias will be removed in a future major version.",
+        file=sys.stderr,
+    )
+    _run_local_scan(path, quiet, json_output, format, staged, diff, engine, baseline, watch)
 
 
 # ── audit ────────────────────────────────────────────────────────────
@@ -759,7 +782,7 @@ def exec_cmd(
                 if results:
                     rprint(f"\n{fmt.warning('Secrets detected in staged files!')}\n")
                     print(f"Found {total} secret(s) in {len(results)} file(s)", file=sys.stderr)
-                    rprint(f"\nRun 'rafter agent scan' for details.\n")
+                    rprint(f"\nRun 'rafter scan local' for details.\n")
                     interceptor.log_evaluation(evaluation, "blocked")
                     raise typer.Exit(code=1)
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -1115,7 +1138,7 @@ def _display_quick_scan(scan: QuickScanResults, skill_name: str) -> None:
     else:
         print(f"\u26a0\ufe0f  Secrets: {scan.secrets} found")
         print("   \u2192 API keys, tokens, or credentials detected")
-        print("   \u2192 Run: rafter agent scan <path> for details")
+        print("   \u2192 Run: rafter scan local <path> for details")
 
     # URLs
     if not scan.urls:
