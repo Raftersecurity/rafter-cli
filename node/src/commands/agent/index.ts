@@ -17,7 +17,7 @@ export function createAgentCommand(): Command {
 
   // Add subcommands
   agent.addCommand(createInitCommand());
-  agent.addCommand(createScanCommand());
+  agent.addCommand(createScanCommand({ deprecated: true }));
   agent.addCommand(createExecCommand());
   agent.addCommand(createConfigCommand());
   agent.addCommand(createAuditCommand());

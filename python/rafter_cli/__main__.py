@@ -10,6 +10,7 @@ from .commands.ci import ci_app
 from .commands.hook import hook_app
 from .commands.mcp_server import mcp_app
 from .commands.policy import policy_app
+from .commands.scan import scan_app
 from .utils.formatter import set_agent_mode
 
 app = typer.Typer(
@@ -82,6 +83,7 @@ def completion(
 register_backend_commands(app)
 
 # Sub-apps
+app.add_typer(scan_app)
 app.add_typer(agent_app)
 app.add_typer(ci_app)
 app.add_typer(hook_app)

@@ -80,7 +80,7 @@ function evaluateBash(command: string): HookDecision {
       audit.logSecretDetected("staged files", `${scanResult.count} secret(s)`, "blocked");
       return {
         decision: "deny",
-        reason: `${scanResult.count} secret(s) detected in ${scanResult.files} staged file(s). Run 'rafter agent scan --staged' for details.`,
+        reason: `${scanResult.count} secret(s) detected in ${scanResult.files} staged file(s). Run 'rafter scan local --staged' for details.`,
       };
     }
   }

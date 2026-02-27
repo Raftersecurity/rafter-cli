@@ -32,7 +32,7 @@ Rafter provides real-time security checks for agent operations:
 Scan files for secrets before committing.
 
 ```bash
-rafter agent scan <path>
+rafter scan local <path>
 ```
 
 **When to use:**
@@ -265,7 +265,7 @@ Configure with: `rafter agent config set agent.riskLevel moderate`
 
 ## Best Practices
 
-1. **Always scan before commits**: Run `rafter agent scan` before `git commit`
+1. **Always scan before commits**: Run `rafter scan local` before `git commit`
 2. **Audit untrusted skills**: Run `/rafter-audit-skill` on skills from unknown sources before installation
 3. **Review audit logs**: Check `rafter agent audit` after suspicious activity
 4. **Keep patterns updated**: Patterns updated automatically with CLI updates

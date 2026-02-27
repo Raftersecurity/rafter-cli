@@ -20,7 +20,7 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 | 2 | Scan not found (HTTP 404) |
 | 3 | Quota exhausted (HTTP 429) |
 
-### Agent Scan (`rafter agent scan`)
+### Agent Scan (`rafter scan local`)
 
 | Code | Meaning |
 |------|---------|
@@ -44,9 +44,7 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 
 ### rafter run [OPTIONS]
 
-Alias: `rafter scan`
-
-Trigger a new security scan for a repository.
+Trigger a new security scan for a repository. `rafter scan` (with no subcommand) and `rafter scan remote` also invoke this handler.
 
 - `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
 - `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
@@ -93,7 +91,7 @@ Initialize agent security system. Creates config, downloads Gitleaks, auto-detec
 - `--skip-codex` — skip Codex CLI skill installation
 - `--skip-gitleaks` — skip Gitleaks binary download
 
-### rafter agent scan [PATH] [OPTIONS]
+### rafter scan local [PATH] [OPTIONS]
 
 Scan files or directories for secrets (21+ patterns).
 
@@ -408,8 +406,8 @@ fi
 rafter agent init
 
 # Scan for secrets
-rafter agent scan .
-rafter agent scan --staged --quiet  # CI-friendly
+rafter scan local .
+rafter scan local --staged --quiet  # CI-friendly
 
 # Pre-commit hook
 rafter agent install-hook --global

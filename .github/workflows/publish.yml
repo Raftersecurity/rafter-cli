@@ -205,14 +205,14 @@ jobs:
       - name: Verify rafter --help
         run: rafter --help
 
-      - name: Verify rafter agent scan detects secrets
+      - name: Verify rafter scan local detects secrets
         run: |
           # Scan fixture file with fake secret — must exit 1 (secrets found)
-          if rafter agent scan .github/fixtures/fake-secret.txt --engine patterns; then
+          if rafter scan local .github/fixtures/fake-secret.txt --engine patterns; then
             echo "FAIL: scan should have exited non-zero (secrets found)"
             exit 1
           fi
-          echo "OK: rafter agent scan correctly detected fake secret"
+          echo "OK: rafter scan local correctly detected fake secret"
 
   smoke-test-python:
     needs: [publish-python, create-release]
@@ -238,11 +238,11 @@ jobs:
       - name: Verify rafter --help
         run: /tmp/rafter-smoke/bin/rafter --help
 
-      - name: Verify rafter agent scan detects secrets
+      - name: Verify rafter scan local detects secrets
         run: |
           # Scan fixture file with fake secret — must exit 1 (secrets found)
-          if /tmp/rafter-smoke/bin/rafter agent scan .github/fixtures/fake-secret.txt --engine patterns; then
+          if /tmp/rafter-smoke/bin/rafter scan local .github/fixtures/fake-secret.txt --engine patterns; then
             echo "FAIL: scan should have exited non-zero (secrets found)"
             exit 1
           fi
-          echo "OK: rafter agent scan correctly detected fake secret"
+          echo "OK: rafter scan local correctly detected fake secret"
