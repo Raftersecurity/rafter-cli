@@ -1,0 +1,19 @@
+- id: rafter-scan
+  name: Rafter Secret Scan
+  description: Scan staged files for hardcoded secrets
+  entry: rafter agent scan --staged --quiet
+  language: node
+  additional_dependencies: ['@rafter-security/cli']
+  always_run: true
+  pass_filenames: false
+  stages: [pre-commit]
+
+- id: rafter-scan-python
+  name: Rafter Secret Scan (Python)
+  description: Scan staged files for hardcoded secrets
+  entry: rafter agent scan --staged --quiet
+  language: python
+  additional_dependencies: ['rafter-cli']
+  always_run: true
+  pass_filenames: false
+  stages: [pre-commit]
