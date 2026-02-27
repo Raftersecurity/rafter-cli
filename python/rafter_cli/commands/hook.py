@@ -13,6 +13,41 @@ from ..scanners.regex_scanner import RegexScanner
 
 hook_app = typer.Typer(name="hook", help="Hook handlers for agent platform integration", no_args_is_help=True)
 
+_RISK_LABELS = {
+    "critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW",
+}
+
+_RISK_DESCRIPTIONS = {
+    "critical": "irreversible system damage",
+    "high": "significant system changes",
+    "medium": "moderate risk operation",
+    "low": "minimal risk",
+}
+
+
+def _format_blocked_message(command: str, evaluation) -> str:
+    cmd_display = command[:60] + "..." if len(command) > 60 else command
+    rule = evaluation.matched_pattern or "policy violation"
+    label = _RISK_LABELS.get(evaluation.risk_level, evaluation.risk_level.upper())
+    desc = _RISK_DESCRIPTIONS.get(evaluation.risk_level, "")
+    return f"\u2717 Rafter blocked: {cmd_display}\n  Rule: {rule}\n  Risk: {label}\u2014{desc}"
+
+
+def _format_approval_message(command: str, evaluation) -> str:
+    cmd_display = command[:60] + "..." if len(command) > 60 else command
+    rule = evaluation.matched_pattern or "policy match"
+    label = _RISK_LABELS.get(evaluation.risk_level, evaluation.risk_level.upper())
+    desc = _RISK_DESCRIPTIONS.get(evaluation.risk_level, "")
+    return (
+        f"\u26a0 Rafter: approval required\n"
+        f"  Command: {cmd_display}\n"
+        f"  Rule: {rule}\n"
+        f"  Risk: {label}\u2014{desc}\n"
+        f"\n"
+        f'To approve: rafter agent exec --approve "{command}"\n'
+        f"To configure: rafter agent config set agent.riskLevel minimal"
+    )
+
 
 def _read_stdin() -> str:
     return sys.stdin.read()
@@ -49,12 +84,12 @@ def _evaluate_bash(command: str) -> dict:
     # Blocked — hard deny
     if not evaluation.allowed and not evaluation.requires_approval:
         audit.log_command_intercepted(command, False, "blocked", evaluation.reason)
-        return {"decision": "deny", "reason": f"Blocked by Rafter policy: {evaluation.reason}"}
+        return {"decision": "deny", "reason": _format_blocked_message(command, evaluation)}
 
     # Requires approval — deny (hook can't prompt interactively)
     if evaluation.requires_approval:
         audit.log_command_intercepted(command, False, "blocked", evaluation.reason)
-        return {"decision": "deny", "reason": f"Rafter policy requires approval: {evaluation.reason}"}
+        return {"decision": "deny", "reason": _format_approval_message(command, evaluation)}
 
     # Git commit/push — scan staged files
     trimmed = command.strip()

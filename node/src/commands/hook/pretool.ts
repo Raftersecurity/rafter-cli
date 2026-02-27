@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { CommandInterceptor } from "../../core/command-interceptor.js";
+import { CommandInterceptor, CommandEvaluation } from "../../core/command-interceptor.js";
 import { RegexScanner } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { execSync } from "child_process";
@@ -13,6 +13,33 @@ interface HookInput {
 interface HookDecision {
   decision: "allow" | "deny";
   reason?: string;
+}
+
+const RISK_LABELS: Record<string, string> = {
+  critical: "CRITICAL", high: "HIGH", medium: "MEDIUM", low: "LOW",
+};
+
+const RISK_DESCRIPTIONS: Record<string, string> = {
+  critical: "irreversible system damage",
+  high: "significant system changes",
+  medium: "moderate risk operation",
+  low: "minimal risk",
+};
+
+function formatBlockedMessage(command: string, evaluation: CommandEvaluation): string {
+  const cmdDisplay = command.length > 60 ? command.slice(0, 60) + "..." : command;
+  const rule = evaluation.matchedPattern ?? "policy violation";
+  const label = RISK_LABELS[evaluation.riskLevel] ?? evaluation.riskLevel.toUpperCase();
+  const desc = RISK_DESCRIPTIONS[evaluation.riskLevel] ?? "";
+  return `\u2717 Rafter blocked: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}`;
+}
+
+function formatApprovalMessage(command: string, evaluation: CommandEvaluation): string {
+  const cmdDisplay = command.length > 60 ? command.slice(0, 60) + "..." : command;
+  const rule = evaluation.matchedPattern ?? "policy match";
+  const label = RISK_LABELS[evaluation.riskLevel] ?? evaluation.riskLevel.toUpperCase();
+  const desc = RISK_DESCRIPTIONS[evaluation.riskLevel] ?? "";
+  return `\u26a0 Rafter: approval required\n  Command: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}\n\nTo approve: rafter agent exec --approve "${command}"\nTo configure: rafter agent config set agent.riskLevel minimal`;
 }
 
 export function createHookPretoolCommand(): Command {
@@ -59,7 +86,7 @@ function evaluateBash(command: string): HookDecision {
     audit.logCommandIntercepted(command, false, "blocked", evaluation.reason);
     return {
       decision: "deny",
-      reason: `Blocked by Rafter policy: ${evaluation.reason}`,
+      reason: formatBlockedMessage(command, evaluation),
     };
   }
 
@@ -68,7 +95,7 @@ function evaluateBash(command: string): HookDecision {
     audit.logCommandIntercepted(command, false, "blocked", evaluation.reason);
     return {
       decision: "deny",
-      reason: `Rafter policy requires approval: ${evaluation.reason}`,
+      reason: formatApprovalMessage(command, evaluation),
     };
   }
 
