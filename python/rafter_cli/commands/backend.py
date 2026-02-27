@@ -81,6 +81,51 @@ def _handle_scan_status_interactive(
     return write_payload(data, fmt, quiet)
 
 
+def _do_remote_scan(
+    repo: "str | None",
+    branch: "str | None",
+    api_key: "str | None",
+    fmt: str,
+    skip_interactive: bool,
+    quiet: bool,
+) -> None:
+    """Shared implementation for remote backend scan — used by both `rafter run` and `rafter scan`."""
+    key = resolve_key(api_key)
+    try:
+        repo_slug, branch_name = detect_repo(repo, branch)
+    except RuntimeError as e:
+        print(str(e), file=sys.stderr)
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
+
+    if not (repo and branch) and not quiet:
+        print(f"Repo auto-detected: {repo_slug} @ {branch_name} (note: scanning remote)", file=sys.stderr)
+
+    headers = {"x-api-key": key, "Content-Type": "application/json"}
+
+    resp = requests.post(
+        f"{API_BASE}/static/scan",
+        headers=headers,
+        json={"repository_name": repo_slug, "branch_name": branch_name},
+        timeout=API_TIMEOUT,
+    )
+
+    if resp.status_code == 429:
+        print("Quota exhausted", file=sys.stderr)
+        raise typer.Exit(code=EXIT_QUOTA_EXHAUSTED)
+    elif resp.status_code != 200:
+        print(f"Error: {resp.text}", file=sys.stderr)
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
+
+    scan_id = resp.json()["scan_id"]
+    if not quiet:
+        print(f"Scan ID: {scan_id}", file=sys.stderr)
+
+    if skip_interactive:
+        return
+
+    _handle_scan_status_interactive(scan_id, headers, fmt, quiet)
+
+
 def register_backend_commands(app: typer.Typer) -> None:
     """Register run/get/usage on the root typer app."""
 
@@ -94,40 +139,7 @@ def register_backend_commands(app: typer.Typer) -> None:
         quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
     ):
         """Trigger a security scan."""
-        key = resolve_key(api_key)
-        try:
-            repo_slug, branch_name = detect_repo(repo, branch)
-        except RuntimeError as e:
-            print(str(e), file=sys.stderr)
-            raise typer.Exit(code=EXIT_GENERAL_ERROR)
-
-        if not (repo and branch) and not quiet:
-            print(f"Repo auto-detected: {repo_slug} @ {branch_name} (note: scanning remote)", file=sys.stderr)
-
-        headers = {"x-api-key": key, "Content-Type": "application/json"}
-
-        resp = requests.post(
-            f"{API_BASE}/static/scan",
-            headers=headers,
-            json={"repository_name": repo_slug, "branch_name": branch_name},
-            timeout=API_TIMEOUT,
-        )
-
-        if resp.status_code == 429:
-            print("Quota exhausted", file=sys.stderr)
-            raise typer.Exit(code=EXIT_QUOTA_EXHAUSTED)
-        elif resp.status_code != 200:
-            print(f"Error: {resp.text}", file=sys.stderr)
-            raise typer.Exit(code=EXIT_GENERAL_ERROR)
-
-        scan_id = resp.json()["scan_id"]
-        if not quiet:
-            print(f"Scan ID: {scan_id}", file=sys.stderr)
-
-        if skip_interactive:
-            return
-
-        _handle_scan_status_interactive(scan_id, headers, fmt, quiet)
+        _do_remote_scan(repo, branch, api_key, fmt, skip_interactive, quiet)
 
     @app.command()
     def get(

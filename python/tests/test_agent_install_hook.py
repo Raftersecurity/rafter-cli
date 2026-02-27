@@ -25,7 +25,7 @@ class TestGetHookTemplate:
 
     def test_includes_scan_command(self):
         content = _get_hook_template()
-        assert "rafter agent scan" in content
+        assert "rafter scan local" in content
 
 
 class TestInstallLocalHook:

@@ -281,7 +281,7 @@ def init(
         rprint("  - Restart OpenClaw to load skill")
     if claude_code_ok:
         rprint("  - Restart Claude Code to load hooks")
-    rprint("  - Run: rafter agent scan . (test secret scanning)")
+    rprint("  - Run: rafter scan local . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
     rprint()
 
@@ -543,7 +543,12 @@ def scan(
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
 ):
-    """Scan files or directories for secrets."""
+    """Scan files or directories for secrets. [deprecated: use 'rafter scan local' instead]"""
+    print(
+        "Warning: rafter agent scan is deprecated and will be removed in a future major version. "
+        "Use rafter scan local instead.",
+        file=sys.stderr,
+    )
     manager = ConfigManager()
     cfg = manager.load_with_policy()
     scan_cfg = cfg.agent.scan
@@ -759,7 +764,7 @@ def exec_cmd(
                 if results:
                     rprint(f"\n{fmt.warning('Secrets detected in staged files!')}\n")
                     print(f"Found {total} secret(s) in {len(results)} file(s)", file=sys.stderr)
-                    rprint(f"\nRun 'rafter agent scan' for details.\n")
+                    rprint(f"\nRun 'rafter scan local' for details.\n")
                     interceptor.log_evaluation(evaluation, "blocked")
                     raise typer.Exit(code=1)
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -1115,7 +1120,7 @@ def _display_quick_scan(scan: QuickScanResults, skill_name: str) -> None:
     else:
         print(f"\u26a0\ufe0f  Secrets: {scan.secrets} found")
         print("   \u2192 API keys, tokens, or credentials detected")
-        print("   \u2192 Run: rafter agent scan <path> for details")
+        print("   \u2192 Run: rafter scan local <path> for details")
 
     # URLs
     if not scan.urls:
