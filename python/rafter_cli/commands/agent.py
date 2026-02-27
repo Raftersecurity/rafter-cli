@@ -1,9 +1,11 @@
 """Agent security commands: init, scan, audit, exec, config, install-hook, verify, audit-skill."""
 from __future__ import annotations
 
+import hashlib
 import importlib.resources
 import json
 import os
+import platform
 import re
 import shutil
 import stat
@@ -17,6 +19,7 @@ from typing import Any
 import typer
 from rich import print as rprint
 
+from .. import __version__
 from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
 from ..core.config_manager import ConfigManager
@@ -673,8 +676,13 @@ def audit(
     event: str = typer.Option(None, "--event", help="Filter by event type"),
     agent_type: str = typer.Option(None, "--agent", help="Filter by agent type"),
     since: str = typer.Option(None, "--since", help="Show entries since date (YYYY-MM-DD)"),
+    share: bool = typer.Option(False, "--share", help="Generate a redacted excerpt for issue reports"),
 ):
     """View audit log entries."""
+    if share:
+        _audit_share()
+        return
+
     logger = AuditLogger()
 
     since_dt = None
@@ -725,6 +733,85 @@ def audit(
         if res.get("override_reason"):
             print(f"   Override: {res['override_reason']}")
         print()
+
+
+# ── audit share helpers ───────────────────────────────────────────────
+
+
+def _truncate_command(cmd: str, max_len: int = 60) -> str:
+    if len(cmd) <= max_len:
+        return cmd
+    return cmd[:max_len] + "..."
+
+
+def _format_share_detail(entry: dict) -> str:
+    action = (entry.get("resolution") or {}).get("action_taken", "unknown")
+    suffix = f"[{action}]"
+    event_type = entry.get("event_type", "")
+    sc = entry.get("security_check") or {}
+    action_block = entry.get("action") or {}
+
+    if event_type == "secret_detected":
+        reason = sc.get("reason", "")
+        return f"{reason} {suffix}"
+
+    if action_block.get("command"):
+        return f"{_truncate_command(action_block['command'])} {suffix}"
+
+    if sc.get("reason"):
+        return f"{sc['reason']} {suffix}"
+
+    return suffix
+
+
+def _audit_share() -> None:
+    version = __version__
+    os_info = f"{platform.system().lower()}/{platform.machine()}"
+    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    manager = ConfigManager()
+    cfg = manager.load_with_policy()
+    patterns = cfg.agent.command_policy.require_approval if cfg.agent and cfg.agent.command_policy else []
+    risk_level = cfg.agent.risk_level if cfg.agent else "moderate"
+
+    payload = json.dumps(sorted(patterns))
+    policy_hash = hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+    logger = AuditLogger()
+    entries = logger.read(limit=5)
+
+    lines = [
+        "Rafter Audit Excerpt",
+        f"Generated: {timestamp}",
+        "",
+        "Environment:",
+        f"  CLI:    {version}",
+        f"  OS:     {os_info}",
+        f"  Policy: sha256:{policy_hash} ({risk_level})",
+        "",
+        "Recent events (last 5):",
+    ]
+
+    if not entries:
+        lines.append("  (no entries)")
+    else:
+        for e in entries:
+            ts = e.get("timestamp", "")
+            try:
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            except Exception:
+                pass
+            event_type = e.get("event_type", "unknown")
+            event_pad = event_type.ljust(20)
+            risk_raw = (e.get("action") or {}).get("risk_level", "low")
+            risk_pad = risk_raw.upper().ljust(8)
+            detail = _format_share_detail(e)
+            lines.append(f"  {ts}  {event_pad}  {risk_pad} {detail}")
+
+    lines.append("")
+    lines.append("Share this excerpt when reporting issues at https://github.com/Raftersecurity/rafter-cli/issues")
+
+    print("\n".join(lines))
 
 
 # ── exec ─────────────────────────────────────────────────────────────
