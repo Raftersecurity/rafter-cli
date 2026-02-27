@@ -91,3 +91,53 @@ def test_load_with_policy_merges(manager, tmp_path, monkeypatch):
     cfg = manager.load_with_policy()
     assert cfg.agent.risk_level == "aggressive"
     assert "vendor" in cfg.agent.scan.exclude_paths
+
+
+def test_migrate_old_curl_sh_pattern(manager, cfg_path):
+    """Old broad curl.*|.*sh pattern must be upgraded on load."""
+    # Write a config with the old, overly broad patterns (as an older rafter would have)
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    old_data = {
+        "version": "1.0.0",
+        "initialized": "2026-01-01T00:00:00Z",
+        "backend": {"endpoint": "https://rafter.so/api/"},
+        "agent": {
+            "riskLevel": "moderate",
+            "commandPolicy": {
+                "mode": "approve-dangerous",
+                "blockedPatterns": [],
+                "requireApproval": [
+                    "rm -rf",
+                    "sudo rm",
+                    r"curl.*\|.*sh",
+                    r"wget.*\|.*sh",
+                    "chmod 777",
+                ],
+            },
+            "outputFiltering": {"redactSecrets": True, "blockPatterns": True},
+            "audit": {"logAllActions": True, "retentionDays": 30, "logLevel": "info"},
+            "notifications": {},
+        },
+    }
+    cfg_path.write_text(json.dumps(old_data))
+
+    loaded = manager.load()
+    patterns = loaded.agent.command_policy.require_approval
+
+    assert r"curl.*\|\s*(bash|sh|zsh|dash)\b" in patterns
+    assert r"wget.*\|\s*(bash|sh|zsh|dash)\b" in patterns
+    assert r"curl.*\|.*sh" not in patterns
+    assert r"wget.*\|.*sh" not in patterns
+    # Unrelated patterns preserved
+    assert "rm -rf" in patterns
+    assert "chmod 777" in patterns
+
+
+def test_migrate_does_not_change_precise_patterns(manager):
+    """Configs already using precise patterns are not modified."""
+    cfg = get_default_config()
+    manager.save(cfg)
+    original = list(cfg.agent.command_policy.require_approval)
+
+    loaded = manager.load()
+    assert loaded.agent.command_policy.require_approval == original

@@ -6,8 +6,8 @@ openclaw:
   always: false
   requires:
     bins: [rafter]
-version: 0.4.0
-last_updated: 2026-02-03
+version: 0.5.7
+last_updated: 2026-02-26
 ---
 
 # Rafter Security
@@ -32,7 +32,7 @@ Rafter provides real-time security checks for agent operations:
 Scan files for secrets before committing.
 
 ```bash
-rafter agent scan <path>
+rafter scan local <path>
 ```
 
 **When to use:**
@@ -57,21 +57,17 @@ rafter agent scan <path>
 
 ### /rafter-bash
 
-Execute shell command with security validation.
+Explicitly run a command through Rafter's security validator.
 
 ```bash
 rafter agent exec <command>
 ```
 
-**Features:**
-- Blocks destructive commands (rm -rf /, fork bombs)
-- Requires approval for dangerous operations
-- Logs all command attempts
-- Scans staged files before git commits
+**When to use:** Only needed in environments where the `PreToolUse` hook is not installed. When `rafter agent init` has been run, all shell commands are validated automatically — you do not need to route commands through this.
 
 **Risk levels:**
 - **Critical** (blocked): rm -rf /, fork bombs, dd to /dev
-- **High** (approval required): sudo rm, chmod 777, curl|bash
+- **High** (approval required): sudo rm, chmod 777, curl | bash
 - **Medium** (approval on moderate+): sudo, chmod, kill -9
 - **Low** (allowed): npm install, git commit, ls
 
@@ -269,7 +265,7 @@ Configure with: `rafter agent config set agent.riskLevel moderate`
 
 ## Best Practices
 
-1. **Always scan before commits**: Run `rafter agent scan` before `git commit`
+1. **Always scan before commits**: Run `rafter scan local` before `git commit`
 2. **Audit untrusted skills**: Run `/rafter-audit-skill` on skills from unknown sources before installation
 3. **Review audit logs**: Check `rafter agent audit` after suspicious activity
 4. **Keep patterns updated**: Patterns updated automatically with CLI updates

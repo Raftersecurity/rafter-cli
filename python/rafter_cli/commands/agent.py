@@ -1,9 +1,11 @@
 """Agent security commands: init, scan, audit, exec, config, install-hook, verify, audit-skill."""
 from __future__ import annotations
 
+import hashlib
 import importlib.resources
 import json
 import os
+import platform
 import re
 import shutil
 import stat
@@ -17,6 +19,7 @@ from typing import Any
 import typer
 from rich import print as rprint
 
+from .. import __version__
 from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
 from ..core.config_manager import ConfigManager
@@ -249,8 +252,10 @@ def init(
                 ))
 
     # Install OpenClaw skill if applicable
+    openclaw_ok = False
     if has_openclaw and not skip_openclaw:
         ok, source, dest, error = _install_openclaw_skill()
+        openclaw_ok = ok
         if ok:
             rprint(fmt.success(f"Installed Rafter Security skill to {dest}"))
             manager.set("agent.environments.openclaw.enabled", True)
@@ -262,10 +267,12 @@ def init(
                 rprint(fmt.warning(f"  Error: {error}"))
 
     # Install Claude Code hooks
+    claude_code_ok = False
     if has_claude_code and not skip_claude_code:
         try:
             _install_claude_code_hooks()
             manager.set("agent.environments.claude_code.enabled", True)
+            claude_code_ok = True
         except Exception as e:
             rprint(fmt.error(f"Failed to install Claude Code hooks: {e}"))
 
@@ -273,11 +280,11 @@ def init(
     rprint(fmt.success("Agent security initialized!"))
     rprint()
     rprint("Next steps:")
-    if has_openclaw and not skip_openclaw:
+    if openclaw_ok:
         rprint("  - Restart OpenClaw to load skill")
-    if has_claude_code and not skip_claude_code:
+    if claude_code_ok:
         rprint("  - Restart Claude Code to load hooks")
-    rprint("  - Run: rafter agent scan . (test secret scanning)")
+    rprint("  - Run: rafter scan local . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
     rprint()
 
@@ -346,6 +353,7 @@ def _output_scan_results(
     quiet: bool,
     context: str | None = None,
     format: str = "text",
+    exit_on_findings: bool = True,
 ) -> None:
     if format == "sarif":
         _output_sarif(results)
@@ -361,13 +369,17 @@ def _output_scan_results(
             for r in results
         ]
         print(json.dumps(out, indent=2))
-        raise typer.Exit(code=1 if results else 0)
+        if exit_on_findings:
+            raise typer.Exit(code=1 if results else 0)
+        return
 
     if not results:
         if not quiet:
             msg = f"No secrets detected in {context}" if context else "No secrets detected"
             rprint(f"\n{fmt.success(msg)}\n")
-        raise typer.Exit(code=0)
+        if exit_on_findings:
+            raise typer.Exit(code=0)
+        return
 
     rprint(f"\n{fmt.warning(f'Found secrets in {len(results)} file(s):')}\n")
 
@@ -387,10 +399,96 @@ def _output_scan_results(
 
     if context == "staged files":
         rprint(f"{fmt.error('Commit blocked. Remove secrets before committing.')}\n")
-    else:
+    elif exit_on_findings:
         rprint("Run 'rafter agent audit' to see the security log.\n")
 
-    raise typer.Exit(code=1)
+    if exit_on_findings:
+        raise typer.Exit(code=1)
+
+
+def _watch_and_scan(
+    watch_path: str,
+    engine: str,
+    quiet: bool,
+    json_output: bool,
+    format: str,
+    custom_patterns,
+    scan_cfg,
+) -> None:
+    """Watch a path for changes and re-scan on each change. Ctrl+C exits."""
+    try:
+        from watchdog.observers import Observer
+        from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent
+    except ImportError:
+        print("Error: watchdog package required for --watch mode. Install with: pip install watchdog", file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    logger = AuditLogger()
+    eng = _select_engine(engine, quiet)
+
+    if not quiet:
+        print(fmt.info(f"Watching {watch_path} for changes ({eng}). Press Ctrl+C to exit."), file=sys.stderr)
+
+    # Initial scan
+    if os.path.isdir(watch_path):
+        initial_results = _scan_directory(watch_path, eng, scan_cfg)
+    else:
+        initial_results = _scan_file(watch_path, eng, custom_patterns)
+
+    if initial_results:
+        rprint(fmt.warning("\n[Initial scan] Found secrets:"))
+        _output_scan_results(initial_results, json_output, False, format=format, exit_on_findings=False)
+        _log_watch_findings(logger, initial_results)
+    elif not quiet:
+        rprint(fmt.success("[Initial scan] No secrets detected"))
+
+    class _Handler(FileSystemEventHandler):
+        def _handle(self, file_path: str) -> None:
+            if not os.path.isfile(file_path):
+                return
+            from datetime import datetime as _dt
+            ts = _dt.now().strftime("%H:%M:%S")
+            if not quiet:
+                print(f"\n[{ts}] Changed: {file_path}", file=sys.stderr)
+            results = _scan_file(file_path, eng, custom_patterns)
+            if results:
+                _output_scan_results(results, json_output, False, format=format, exit_on_findings=False)
+                _log_watch_findings(logger, results)
+            elif not quiet:
+                rprint(fmt.success("  No secrets detected"))
+
+        def on_modified(self, event):
+            if not event.is_directory:
+                self._handle(event.src_path)
+
+        def on_created(self, event):
+            if not event.is_directory:
+                self._handle(event.src_path)
+
+    event_handler = _Handler()
+    observer = Observer()
+    observer.schedule(event_handler, watch_path, recursive=True)
+    observer.start()
+
+    try:
+        import time
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        observer.stop()
+        if not quiet:
+            rprint(fmt.info("\nWatch mode stopped."))
+    observer.join()
+
+
+def _log_watch_findings(logger: AuditLogger, results: list[ScanResult]) -> None:
+    for result in results:
+        for match in result.matches:
+            logger.log_secret_detected(
+                location=result.file,
+                secret_type=match.pattern.name,
+                action_taken="allowed",
+            )
 
 
 def _output_sarif(results: list[ScanResult]) -> None:
@@ -446,8 +544,14 @@ def scan(
     diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
     engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
+    watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
 ):
-    """Scan files or directories for secrets."""
+    """Scan files or directories for secrets. [deprecated: use 'rafter scan local' instead]"""
+    print(
+        "Warning: rafter agent scan is deprecated and will be removed in a future major version. "
+        "Use rafter scan local instead.",
+        file=sys.stderr,
+    )
     manager = ConfigManager()
     cfg = manager.load_with_policy()
     scan_cfg = cfg.agent.scan
@@ -525,6 +629,11 @@ def scan(
         print(f"Error: Path not found: {resolved_path}", file=sys.stderr)
         raise typer.Exit(code=2)
 
+    # --watch
+    if watch:
+        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg)
+        return
+
     eng = _select_engine(engine, quiet)
 
     if os.path.isdir(resolved_path):
@@ -567,8 +676,13 @@ def audit(
     event: str = typer.Option(None, "--event", help="Filter by event type"),
     agent_type: str = typer.Option(None, "--agent", help="Filter by agent type"),
     since: str = typer.Option(None, "--since", help="Show entries since date (YYYY-MM-DD)"),
+    share: bool = typer.Option(False, "--share", help="Generate a redacted excerpt for issue reports"),
 ):
     """View audit log entries."""
+    if share:
+        _audit_share()
+        return
+
     logger = AuditLogger()
 
     since_dt = None
@@ -621,6 +735,85 @@ def audit(
         print()
 
 
+# ── audit share helpers ───────────────────────────────────────────────
+
+
+def _truncate_command(cmd: str, max_len: int = 60) -> str:
+    if len(cmd) <= max_len:
+        return cmd
+    return cmd[:max_len] + "..."
+
+
+def _format_share_detail(entry: dict) -> str:
+    action = (entry.get("resolution") or {}).get("action_taken", "unknown")
+    suffix = f"[{action}]"
+    event_type = entry.get("event_type", "")
+    sc = entry.get("security_check") or {}
+    action_block = entry.get("action") or {}
+
+    if event_type == "secret_detected":
+        reason = sc.get("reason", "")
+        return f"{reason} {suffix}"
+
+    if action_block.get("command"):
+        return f"{_truncate_command(action_block['command'])} {suffix}"
+
+    if sc.get("reason"):
+        return f"{sc['reason']} {suffix}"
+
+    return suffix
+
+
+def _audit_share() -> None:
+    version = __version__
+    os_info = f"{platform.system().lower()}/{platform.machine()}"
+    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    manager = ConfigManager()
+    cfg = manager.load_with_policy()
+    patterns = cfg.agent.command_policy.require_approval if cfg.agent and cfg.agent.command_policy else []
+    risk_level = cfg.agent.risk_level if cfg.agent else "moderate"
+
+    payload = json.dumps(sorted(patterns))
+    policy_hash = hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+    logger = AuditLogger()
+    entries = logger.read(limit=5)
+
+    lines = [
+        "Rafter Audit Excerpt",
+        f"Generated: {timestamp}",
+        "",
+        "Environment:",
+        f"  CLI:    {version}",
+        f"  OS:     {os_info}",
+        f"  Policy: sha256:{policy_hash} ({risk_level})",
+        "",
+        "Recent events (last 5):",
+    ]
+
+    if not entries:
+        lines.append("  (no entries)")
+    else:
+        for e in entries:
+            ts = e.get("timestamp", "")
+            try:
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            except Exception:
+                pass
+            event_type = e.get("event_type", "unknown")
+            event_pad = event_type.ljust(20)
+            risk_raw = (e.get("action") or {}).get("risk_level", "low")
+            risk_pad = risk_raw.upper().ljust(8)
+            detail = _format_share_detail(e)
+            lines.append(f"  {ts}  {event_pad}  {risk_pad} {detail}")
+
+    lines.append("")
+    lines.append("Share this excerpt when reporting issues at https://github.com/Raftersecurity/rafter-cli/issues")
+
+    print("\n".join(lines))
+
+
 # ── exec ─────────────────────────────────────────────────────────────
 
 
@@ -658,7 +851,7 @@ def exec_cmd(
                 if results:
                     rprint(f"\n{fmt.warning('Secrets detected in staged files!')}\n")
                     print(f"Found {total} secret(s) in {len(results)} file(s)", file=sys.stderr)
-                    rprint(f"\nRun 'rafter agent scan' for details.\n")
+                    rprint(f"\nRun 'rafter scan local' for details.\n")
                     interceptor.log_evaluation(evaluation, "blocked")
                     raise typer.Exit(code=1)
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -834,6 +1027,8 @@ def _check_gitleaks() -> _CheckResult:
         return _CheckResult(name, True, result["stdout"] or gitleaks_path)
 
     detail = f"Found at {gitleaks_path} but failed to execute"
+    if result["stdout"]:
+        detail += f"\n   stdout: {result['stdout']}"
     if result["stderr"]:
         detail += f"\n   stderr: {result['stderr']}"
     diag = bm.collect_binary_diagnostics(binary_path=Path(gitleaks_path))
@@ -1012,7 +1207,7 @@ def _display_quick_scan(scan: QuickScanResults, skill_name: str) -> None:
     else:
         print(f"\u26a0\ufe0f  Secrets: {scan.secrets} found")
         print("   \u2192 API keys, tokens, or credentials detected")
-        print("   \u2192 Run: rafter agent scan <path> for details")
+        print("   \u2192 Run: rafter scan local <path> for details")
 
     # URLs
     if not scan.urls:

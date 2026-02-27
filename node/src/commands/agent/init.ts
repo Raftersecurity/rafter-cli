@@ -229,9 +229,11 @@ export function createInitCommand(): Command {
       }
 
       // Install OpenClaw skill if applicable
+      let openclawOk = false;
       if (hasOpenClaw && !opts.skipOpenclaw) {
         const skillManager = new SkillManager();
         const result = await skillManager.installRafterSkillVerbose();
+        openclawOk = result.ok;
         if (result.ok) {
           console.log(fmt.success("Installed Rafter Security skill to ~/.openclaw/skills/rafter-security.md"));
           manager.set("agent.environments.openclaw.enabled", true);
@@ -246,11 +248,13 @@ export function createInitCommand(): Command {
       }
 
       // Install Claude Code skills + hooks if applicable
+      let claudeCodeOk = false;
       if (hasClaudeCode && !opts.skipClaudeCode) {
         try {
           await installClaudeCodeSkills();
           installClaudeCodeHooks();
           manager.set("agent.environments.claudeCode.enabled", true);
+          claudeCodeOk = true;
         } catch (e) {
           console.error(fmt.error(`Failed to install Claude Code integration: ${e}`));
         }
@@ -260,13 +264,13 @@ export function createInitCommand(): Command {
       console.log(fmt.success("Agent security initialized!"));
       console.log();
       console.log("Next steps:");
-      if (hasOpenClaw && !opts.skipOpenclaw) {
+      if (openclawOk) {
         console.log("  - Restart OpenClaw to load skill");
       }
-      if (hasClaudeCode && !opts.skipClaudeCode) {
+      if (claudeCodeOk) {
         console.log("  - Restart Claude Code to load skills");
       }
-      console.log("  - Run: rafter agent scan . (test secret scanning)");
+      console.log("  - Run: rafter scan local . (test secret scanning)");
       console.log("  - Configure: rafter agent config show");
       console.log();
     });

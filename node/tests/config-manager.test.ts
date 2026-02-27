@@ -90,4 +90,38 @@ describe("ConfigManager", () => {
 
     expect(manager.exists()).toBe(true);
   });
+
+  it("should migrate old broad curl|sh pattern to word-bounded version", () => {
+    // Simulate a config written by an older version of rafter
+    const oldConfig = manager.load();
+    oldConfig.agent!.commandPolicy!.requireApproval = [
+      "rm -rf",
+      "sudo rm",
+      "curl.*\\|.*sh",
+      "wget.*\\|.*sh",
+      "chmod 777",
+    ];
+    manager.save(oldConfig);
+
+    // Loading should auto-migrate
+    const loaded = manager.load();
+    const patterns = loaded.agent!.commandPolicy!.requireApproval;
+
+    expect(patterns).toContain("curl.*\\|\\s*(bash|sh|zsh|dash)\\b");
+    expect(patterns).toContain("wget.*\\|\\s*(bash|sh|zsh|dash)\\b");
+    expect(patterns).not.toContain("curl.*\\|.*sh");
+    expect(patterns).not.toContain("wget.*\\|.*sh");
+    // Other patterns unchanged
+    expect(patterns).toContain("rm -rf");
+    expect(patterns).toContain("chmod 777");
+  });
+
+  it("should not modify configs that already have the precise pattern", () => {
+    const config = manager.load();
+    const original = [...config.agent!.commandPolicy!.requireApproval];
+    manager.save(config);
+
+    const loaded = manager.load();
+    expect(loaded.agent!.commandPolicy!.requireApproval).toEqual(original);
+  });
 });

@@ -1,22 +1,21 @@
 ---
 name: rafter-agent-security
-description: "Local security features for agents: scan files for secrets, validate command execution, audit Claude Code skills. Use for: pre-commit secret scanning, safe command execution, skill security analysis, audit logs."
-version: 0.4.0
+description: "Local security tools for agents: scan files for secrets before commits, audit Claude Code skills before installation, view security audit logs. Use for: pre-commit secret scanning, skill security analysis, audit log review. Note: command blocking is handled automatically by the PreToolUse hook—you do not need to invoke /rafter-bash for normal commands."
+version: 0.5.7
 disable-model-invocation: true
 allowed-tools: [Bash, Read, Glob, Grep]
 ---
 
 # Rafter Agent Security
 
-Security layer for autonomous agents. Scans code, intercepts dangerous commands, audits skills, and prevents vulnerabilities.
+Local security tools for scanning files, auditing skills, and reviewing security events.
 
 ## Overview
 
-Rafter provides real-time security checks for agent operations:
-- **Secret Detection**: Scan files before commits
-- **Command Validation**: Block dangerous shell commands
-- **Skill Auditing**: Comprehensive security analysis of Claude Code skills
-- **Audit Logging**: Track all security events
+Rafter provides two layers of protection:
+
+- **Automatic (hook-based)**: When `rafter agent init` is run, a `PreToolUse` hook intercepts all Bash tool calls and blocks dangerous commands transparently. You do not need to invoke any skill command for this to work.
+- **Explicit (this skill)**: The commands below are for on-demand use—scanning files before commits, auditing skills before installation, and reviewing security logs.
 
 ---
 
@@ -27,7 +26,7 @@ Rafter provides real-time security checks for agent operations:
 Scan files for secrets before committing.
 
 ```bash
-rafter agent scan <path>
+rafter scan local <path>
 ```
 
 **When to use:**
@@ -51,45 +50,32 @@ rafter agent scan <path>
 **Example:**
 ```bash
 # Scan current directory
-rafter agent scan .
+rafter scan local .
 
 # Scan specific file
-rafter agent scan src/config.ts
+rafter scan local src/config.ts
 
 # JSON output for CI integration
-rafter agent scan . --json --quiet
+rafter scan local . --json --quiet
 ```
 
 ---
 
 ### /rafter-bash
 
-Execute shell command with security validation.
+Explicitly run a command through Rafter's security validator.
 
 ```bash
 rafter agent exec <command>
 ```
 
-**Features:**
-- Blocks destructive commands (rm -rf /, fork bombs)
-- Requires approval for dangerous operations
-- Logs all command attempts
-- Scans staged files before git commits
+**When to use:** Only needed in environments where the `PreToolUse` hook is not installed. When `rafter agent init` has been run, all Bash tool calls are validated automatically—you do not need to route commands through this.
 
 **Risk levels:**
 - **Critical** (blocked): rm -rf /, fork bombs, dd to /dev
-- **High** (approval required): sudo rm, chmod 777, curl|bash
+- **High** (approval required): sudo rm, chmod 777, curl | bash
 - **Medium** (approval on moderate+): sudo, chmod, kill -9
 - **Low** (allowed): npm install, git commit, ls
-
-**Example:**
-```bash
-# Safe command
-rafter agent exec "git status"
-
-# Risky command (requires approval)
-rafter agent exec "sudo systemctl restart nginx"
-```
 
 ---
 
@@ -294,7 +280,7 @@ Configure with: `rafter agent config set agent.riskLevel moderate`
 
 ## Best Practices
 
-1. **Always scan before commits**: Run `rafter agent scan` before `git commit`
+1. **Always scan before commits**: Run `rafter scan local` before `git commit`
 2. **Audit untrusted skills**: Run `/rafter-audit-skill` on skills from unknown sources before installation
 3. **Review audit logs**: Check `rafter agent audit` after suspicious activity
 4. **Keep patterns updated**: Patterns updated automatically with CLI updates

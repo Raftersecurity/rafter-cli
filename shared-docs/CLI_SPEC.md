@@ -20,7 +20,7 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 | 2 | Scan not found (HTTP 404) |
 | 3 | Quota exhausted (HTTP 429) |
 
-### Agent Scan (`rafter agent scan`)
+### Local Secret Scan (`rafter scan local` / `rafter agent scan`)
 
 | Code | Meaning |
 |------|---------|
@@ -44,7 +44,7 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 
 ### rafter run [OPTIONS]
 
-Alias: `rafter scan`
+Aliases: `rafter scan`, `rafter scan remote`
 
 Trigger a new security scan for a repository.
 
@@ -93,7 +93,9 @@ Initialize agent security system. Creates config, downloads Gitleaks, auto-detec
 - `--skip-codex` — skip Codex CLI skill installation
 - `--skip-gitleaks` — skip Gitleaks binary download
 
-### rafter agent scan [PATH] [OPTIONS]
+### rafter scan local [PATH] [OPTIONS]
+
+Alias: `rafter agent scan` (deprecated — use `rafter scan local`)
 
 Scan files or directories for secrets (21+ patterns).
 
@@ -103,8 +105,11 @@ Scan files or directories for secrets (21+ patterns).
 - `--staged` — scan git staged files only
 - `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
 - `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
+- `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
+
+> **Note:** `--watch` mode does not exit on findings — it prints results inline and keeps watching. Findings are logged to `audit.jsonl` in real time. Requires `chokidar` (Node, bundled) or `watchdog` (Python: `pip install watchdog`).
 
 #### JSON Output (`--json`)
 
@@ -405,8 +410,11 @@ fi
 rafter agent init
 
 # Scan for secrets
-rafter agent scan .
-rafter agent scan --staged --quiet  # CI-friendly
+rafter scan local .
+rafter scan local --staged --quiet  # CI-friendly
+
+# Old command still works (deprecated)
+# rafter agent scan .  — deprecated, use rafter scan local
 
 # Pre-commit hook
 rafter agent install-hook --global
