@@ -68,6 +68,15 @@ export function createScanCommand(): Command {
     .option("--baseline", "Filter findings present in the saved baseline")
     .option("--watch", "Watch for file changes and re-scan on change")
     .action(async (scanPath, opts: ScanOpts) => {
+      // Deprecation notice — only when invoked as `rafter agent scan`, not as `rafter scan local`
+      const argv = process.argv;
+      const isAgentScan = argv.includes("agent") && argv.includes("scan") &&
+        argv.indexOf("agent") < argv.indexOf("scan");
+      if (isAgentScan) {
+        process.stderr.write(
+          "Warning: rafter agent scan is deprecated and will be removed in a future major version. Use rafter scan local instead.\n"
+        );
+      }
       // Load policy-merged config for excludePaths/customPatterns
       const manager = new ConfigManager();
       const cfg = manager.loadWithPolicy();
@@ -165,7 +174,7 @@ function outputSarif(results: ScanResult[]): void {
         tool: {
           driver: {
             name: "rafter",
-            version: "0.5.5",
+            version: "0.5.7",
             informationUri: "https://rafter.so",
             rules: Array.from(rules.values()),
           },

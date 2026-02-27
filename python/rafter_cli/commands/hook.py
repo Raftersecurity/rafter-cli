@@ -65,7 +65,7 @@ def _evaluate_bash(command: str) -> dict:
             return {
                 "decision": "deny",
                 "reason": f"{result['count']} secret(s) detected in {result['files']} staged file(s). "
-                          "Run 'rafter agent scan --staged' for details.",
+                          "Run 'rafter scan local --staged' for details.",
             }
 
     audit.log_command_intercepted(command, True, "allowed")
