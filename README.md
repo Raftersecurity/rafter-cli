@@ -224,6 +224,42 @@ rafter ci init --platform circleci      # CircleCI
 rafter ci init --with-backend           # include backend security audit job
 ```
 
+#### GitHub Action
+
+Use as a reusable action in any GitHub Actions workflow:
+
+```yaml
+- uses: Raftersecurity/rafter-cli@v0
+  with:
+    scan-path: '.'       # default
+    args: '--quiet'      # default; override for verbose output
+    # install-method: 'pip'  # use pip instead of npm
+```
+
+Inputs:
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `scan-path` | `.` | Path to scan |
+| `args` | `--quiet` | Additional args to `rafter agent scan` |
+| `version` | `latest` | CLI version to install |
+| `install-method` | `npm` | `npm` or `pip` |
+
+#### Pre-Commit Framework
+
+Add to `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/Raftersecurity/rafter-cli
+    rev: v0.5.6
+    hooks:
+      - id: rafter-scan           # Node.js
+      # - id: rafter-scan-python  # Python alternative
+```
+
+This integrates with the [pre-commit](https://pre-commit.com/) framework to scan staged files on every commit.
+
 ### MCP Server
 
 Expose Rafter security tools to **any MCP-compatible client** (Cursor, Windsurf, Claude Desktop, Cline, etc.) over stdio:

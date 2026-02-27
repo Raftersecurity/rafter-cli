@@ -1,0 +1,55 @@
+# Rafter Security — GitHub Action
+# Usage:
+#   - uses: Raftersecurity/rafter-cli@v0
+#     with:
+#       scan-path: '.'
+name: Rafter Security Scan
+description: Scan for hardcoded secrets with Rafter CLI (local, no API key required)
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  scan-path:
+    description: Path to scan for secrets
+    required: false
+    default: '.'
+  args:
+    description: Additional arguments passed to `rafter agent scan`
+    required: false
+    default: '--quiet'
+  version:
+    description: Rafter CLI version to install (e.g. "0.5.6", "latest")
+    required: false
+    default: 'latest'
+  install-method:
+    description: Installation method — "npm" or "pip"
+    required: false
+    default: 'npm'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rafter CLI (npm)
+      if: inputs.install-method == 'npm'
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          npm install -g @rafter-security/cli
+        else
+          npm install -g @rafter-security/cli@${{ inputs.version }}
+        fi
+
+    - name: Install Rafter CLI (pip)
+      if: inputs.install-method == 'pip'
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          pip install rafter-cli
+        else
+          pip install rafter-cli==${{ inputs.version }}
+        fi
+
+    - name: Scan for secrets
+      shell: bash
+      run: rafter agent scan ${{ inputs.scan-path }} ${{ inputs.args }}

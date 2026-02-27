@@ -317,6 +317,32 @@ Generate CI/CD pipeline configuration for secret scanning.
 
 Auto-detection: checks for `.github/`, `.gitlab-ci.yml`, `.circleci/` in cwd.
 
+### GitHub Action (`action.yml`)
+
+Composite action at repo root. Usage:
+
+```yaml
+- uses: Raftersecurity/rafter-cli@v0
+  with:
+    scan-path: '.'        # default
+    args: '--quiet'       # default
+    version: 'latest'     # default
+    install-method: 'npm' # or 'pip'
+```
+
+### Pre-Commit Framework (`.pre-commit-hooks.yaml`)
+
+Integration with [pre-commit](https://pre-commit.com/):
+
+```yaml
+repos:
+  - repo: https://github.com/Raftersecurity/rafter-cli
+    rev: v0.5.6
+    hooks:
+      - id: rafter-scan           # Node.js
+      # - id: rafter-scan-python  # Python alternative
+```
+
 ---
 
 ## Policy File (`.rafter.yml`)
