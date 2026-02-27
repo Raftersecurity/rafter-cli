@@ -1,0 +1,7 @@
+- id: rafter-scan
+  name: Rafter Secret Scanner
+  description: Scan staged files for secrets (21+ patterns, Gitleaks integration)
+  entry: rafter agent scan --staged --quiet
+  language: system
+  stages: [pre-commit]
+  pass_filenames: false

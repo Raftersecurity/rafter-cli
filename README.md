@@ -126,6 +126,20 @@ rafter agent install-hook --global  # all repos on this machine
 
 Blocks commits when secrets are detected. Bypass with `git commit --no-verify` (not recommended).
 
+#### pre-commit Framework
+
+Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/Raftersecurity/rafter-cli
+    rev: v0.5.6
+    hooks:
+      - id: rafter-scan
+```
+
+Requires `rafter` in PATH (install via `npm i -g @rafter-security/cli` or `pip install rafter-cli`).
+
 ### Command Interception
 
 Execute shell commands through a risk-assessment layer. AI agents route commands through `rafter agent exec` to get guardrails on destructive operations.
