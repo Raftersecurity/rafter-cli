@@ -249,8 +249,10 @@ def init(
                 ))
 
     # Install OpenClaw skill if applicable
+    openclaw_ok = False
     if has_openclaw and not skip_openclaw:
         ok, source, dest, error = _install_openclaw_skill()
+        openclaw_ok = ok
         if ok:
             rprint(fmt.success(f"Installed Rafter Security skill to {dest}"))
             manager.set("agent.environments.openclaw.enabled", True)
@@ -262,10 +264,12 @@ def init(
                 rprint(fmt.warning(f"  Error: {error}"))
 
     # Install Claude Code hooks
+    claude_code_ok = False
     if has_claude_code and not skip_claude_code:
         try:
             _install_claude_code_hooks()
             manager.set("agent.environments.claude_code.enabled", True)
+            claude_code_ok = True
         except Exception as e:
             rprint(fmt.error(f"Failed to install Claude Code hooks: {e}"))
 
@@ -273,9 +277,9 @@ def init(
     rprint(fmt.success("Agent security initialized!"))
     rprint()
     rprint("Next steps:")
-    if has_openclaw and not skip_openclaw:
+    if openclaw_ok:
         rprint("  - Restart OpenClaw to load skill")
-    if has_claude_code and not skip_claude_code:
+    if claude_code_ok:
         rprint("  - Restart Claude Code to load hooks")
     rprint("  - Run: rafter agent scan . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
@@ -931,6 +935,8 @@ def _check_gitleaks() -> _CheckResult:
         return _CheckResult(name, True, result["stdout"] or gitleaks_path)
 
     detail = f"Found at {gitleaks_path} but failed to execute"
+    if result["stdout"]:
+        detail += f"\n   stdout: {result['stdout']}"
     if result["stderr"]:
         detail += f"\n   stderr: {result['stderr']}"
     diag = bm.collect_binary_diagnostics(binary_path=Path(gitleaks_path))
