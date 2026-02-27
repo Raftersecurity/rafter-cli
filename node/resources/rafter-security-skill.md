@@ -6,8 +6,8 @@ openclaw:
   always: false
   requires:
     bins: [rafter]
-version: 0.4.0
-last_updated: 2026-02-03
+version: 0.5.6
+last_updated: 2026-02-26
 ---
 
 # Rafter Security
@@ -57,21 +57,17 @@ rafter agent scan <path>
 
 ### /rafter-bash
 
-Execute shell command with security validation.
+Explicitly run a command through Rafter's security validator.
 
 ```bash
 rafter agent exec <command>
 ```
 
-**Features:**
-- Blocks destructive commands (rm -rf /, fork bombs)
-- Requires approval for dangerous operations
-- Logs all command attempts
-- Scans staged files before git commits
+**When to use:** Only needed in environments where the `PreToolUse` hook is not installed. When `rafter agent init` has been run, all shell commands are validated automatically — you do not need to route commands through this.
 
 **Risk levels:**
 - **Critical** (blocked): rm -rf /, fork bombs, dd to /dev
-- **High** (approval required): sudo rm, chmod 777, curl|bash
+- **High** (approval required): sudo rm, chmod 777, curl | bash
 - **Medium** (approval on moderate+): sudo, chmod, kill -9
 - **Low** (allowed): npm install, git commit, ls
 

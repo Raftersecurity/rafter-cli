@@ -1,7 +1,7 @@
 ---
 name: rafter-agent-security
 description: "Local security tools for agents: scan files for secrets before commits, audit Claude Code skills before installation, view security audit logs. Use for: pre-commit secret scanning, skill security analysis, audit log review. Note: command blocking is handled automatically by the PreToolUse hook—you do not need to invoke /rafter-bash for normal commands."
-version: 0.4.0
+version: 0.5.6
 disable-model-invocation: true
 allowed-tools: [Bash, Read, Glob, Grep]
 ---
