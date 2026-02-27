@@ -1,7 +1,7 @@
 ---
 name: rafter
-description: "Trigger security scans on GitHub repositories using Rafter's backend API. Use when the user asks about code security, vulnerability scanning, SAST analysis, security audit, dependency vulnerabilities, or wants to analyze their codebase for security issues. Also use when starting new features or reviewing pull requests to check for security concerns."
-version: 0.4.0
+description: "Trigger Rafter backend security scans on GitHub repositories. Use when the user asks about SAST, code security analysis, vulnerability scanning, or wants to scan a repo for security issues before merging or deploying. Also use when starting new features or reviewing pull requests."
+version: 0.5.6
 allowed-tools: [Bash]
 ---
 
@@ -100,10 +100,9 @@ echo "RAFTER_API_KEY=your-api-key-here" >> .env
 ## Output Format
 
 Scans return:
-- **Vulnerability findings** - CVEs, severity, affected packages
-- **Code quality issues** - Security anti-patterns
-- **Dependency risks** - Outdated or vulnerable dependencies
-- **Configuration issues** - Insecure settings
+- **Code security findings** - SAST issues, security anti-patterns, hardcoded credentials
+- **Configuration issues** - Insecure settings, exposed secrets
+- **Severity levels** - Each finding rated by risk impact
 
 ## Best Practices
 
