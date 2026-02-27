@@ -1,0 +1,17 @@
+- id: rafter-scan
+  name: Rafter Secret Scan
+  description: Scan staged files for secrets using the Rafter CLI
+  entry: rafter agent scan --staged --quiet
+  language: system
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]
+
+- id: rafter-scan-push
+  name: Rafter Secret Scan (pre-push)
+  description: Scan commits for secrets before pushing
+  entry: rafter agent scan . --quiet
+  language: system
+  pass_filenames: false
+  always_run: true
+  stages: [pre-push]

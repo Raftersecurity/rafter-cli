@@ -198,3 +198,9 @@ def ci_init(
     step = "3" if with_backend else "2"
     rprint(f"  {step}. Commit and push to trigger the pipeline")
     rprint()
+    if plat == "github":
+        rprint("Alternatives:")
+        rprint("  • Composite action:     uses: Raftersecurity/rafter-cli@v0.5")
+        rprint("  • Reusable workflow:    uses: Raftersecurity/rafter-cli/.github/workflows/rafter-scan.yml@main")
+        rprint("  • pre-commit framework: see .pre-commit-hooks.yaml")
+        rprint()
