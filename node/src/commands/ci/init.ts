@@ -54,6 +54,13 @@ export function createCiInitCommand(): Command {
 
       console.log(`  ${opts.withBackend ? "3" : "2"}. Commit and push to trigger the pipeline`);
       console.log();
+      if (platform === "github") {
+        console.log("Alternatives:");
+        console.log("  • Composite action:     uses: Raftersecurity/rafter-cli@v0.5");
+        console.log("  • Reusable workflow:    uses: Raftersecurity/rafter-cli/.github/workflows/rafter-scan.yml@main");
+        console.log("  • pre-commit framework: see .pre-commit-hooks.yaml");
+        console.log();
+      }
     });
 }
 

@@ -1,0 +1,64 @@
+name: "Rafter Security Scan"
+description: "Scan for secrets and vulnerabilities using the Rafter CLI"
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  version:
+    description: "Rafter CLI version to install (e.g., 0.5.6). Defaults to latest."
+    required: false
+    default: "latest"
+  args:
+    description: "Arguments to pass to `rafter agent scan` (e.g., --quiet --json)"
+    required: false
+    default: ". --quiet"
+  runtime:
+    description: "Install via npm or pip"
+    required: false
+    default: "node"
+  api-key:
+    description: "Rafter API key for backend scanning (optional)"
+    required: false
+  run-backend:
+    description: "Run backend security audit after local scan (requires api-key)"
+    required: false
+    default: "false"
+  backend-args:
+    description: "Arguments to pass to `rafter run` for backend scanning"
+    required: false
+    default: "--format json --quiet"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rafter CLI (Node)
+      if: inputs.runtime == 'node'
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          npm install -g @rafter-security/cli
+        else
+          npm install -g @rafter-security/cli@${{ inputs.version }}
+        fi
+
+    - name: Install Rafter CLI (Python)
+      if: inputs.runtime == 'pip'
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          pip install rafter-cli
+        else
+          pip install rafter-cli==${{ inputs.version }}
+        fi
+
+    - name: Scan for secrets
+      shell: bash
+      run: rafter agent scan ${{ inputs.args }}
+
+    - name: Run backend audit
+      if: inputs.run-backend == 'true'
+      shell: bash
+      env:
+        RAFTER_API_KEY: ${{ inputs.api-key }}
+      run: rafter run ${{ inputs.backend-args }}

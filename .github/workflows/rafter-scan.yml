@@ -1,0 +1,125 @@
+# Reusable workflow for Rafter security scanning
+# Usage in another repo:
+#   jobs:
+#     security:
+#       uses: Raftersecurity/rafter-cli/.github/workflows/rafter-scan.yml@main
+#       secrets:
+#         api-key: ${{ secrets.RAFTER_API_KEY }}  # optional
+name: Rafter Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Rafter CLI version (default: latest)"
+        required: false
+        type: string
+        default: "latest"
+      runtime:
+        description: "Install via npm or pip"
+        required: false
+        type: string
+        default: "node"
+      scan-args:
+        description: "Arguments for rafter agent scan"
+        required: false
+        type: string
+        default: ". --quiet"
+      run-backend:
+        description: "Run backend security audit after local scan"
+        required: false
+        type: boolean
+        default: false
+      backend-args:
+        description: "Arguments for rafter run (backend mode)"
+        required: false
+        type: string
+        default: "--format json --quiet"
+    secrets:
+      api-key:
+        description: "Rafter API key for backend scanning"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        if: inputs.runtime == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Python
+        if: inputs.runtime == 'pip'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rafter CLI (Node)
+        if: inputs.runtime == 'node'
+        run: |
+          if [ "${{ inputs.version }}" = "latest" ]; then
+            npm install -g @rafter-security/cli
+          else
+            npm install -g @rafter-security/cli@${{ inputs.version }}
+          fi
+
+      - name: Install Rafter CLI (Python)
+        if: inputs.runtime == 'pip'
+        run: |
+          if [ "${{ inputs.version }}" = "latest" ]; then
+            pip install rafter-cli
+          else
+            pip install rafter-cli==${{ inputs.version }}
+          fi
+
+      - name: Scan for secrets
+        run: rafter agent scan ${{ inputs.scan-args }}
+
+  security-audit:
+    if: inputs.run-backend
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        if: inputs.runtime == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Python
+        if: inputs.runtime == 'pip'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rafter CLI (Node)
+        if: inputs.runtime == 'node'
+        run: |
+          if [ "${{ inputs.version }}" = "latest" ]; then
+            npm install -g @rafter-security/cli
+          else
+            npm install -g @rafter-security/cli@${{ inputs.version }}
+          fi
+
+      - name: Install Rafter CLI (Python)
+        if: inputs.runtime == 'pip'
+        run: |
+          if [ "${{ inputs.version }}" = "latest" ]; then
+            pip install rafter-cli
+          else
+            pip install rafter-cli==${{ inputs.version }}
+          fi
+
+      - name: Run security audit
+        env:
+          RAFTER_API_KEY: ${{ secrets.api-key }}
+        run: rafter run ${{ inputs.backend-args }}
