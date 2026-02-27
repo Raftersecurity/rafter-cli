@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-02-27
+
+### Added
+- **`rafter agent audit --share`** (Node + Python): generates a redacted diagnostic excerpt safe for pasting into GitHub issues. Includes CLI version, OS/arch, a 16-char SHA-256 fingerprint of the effective policy (including `.rafter.yml` overrides), and the last 5 audit events with truncated commands.
+- **90-second quickstart** in README: concrete walkthrough showing scan, hook install, commit block, and audit review.
+
+### Changed
+- **Structured pretool hook messages** (Node + Python): block and approval-required messages now show the matched rule, risk level with human-readable description, and actionable next steps (`rafter agent exec --approve`, config adjustment).
+
+### Fixed
+- **Gitleaks version check** (Python): `verify_gitleaks_verbose` checked for `"gitleaks version"` in stdout, but gitleaks v8.x outputs just the version string. Now checks exit code 0 + non-empty output.
+
 ## [0.5.7] - 2026-02-27
 
 ### Added
