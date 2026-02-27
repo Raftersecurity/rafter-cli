@@ -10,6 +10,49 @@ Multi-language CLI for [Rafter](https://rafter.so) — zero-setup security for A
 
 The CLI follows UNIX principles: scan data to stdout, status to stderr, predictable exit codes, no file writing. Everything pipes cleanly.
 
+## 90-Second Quickstart
+
+See what Rafter does before reading another word.
+
+**1. Scan a directory for leaked credentials**
+
+```sh
+# Drop a .env file with credentials in a test repo
+echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' > .env
+
+rafter scan local .
+# → CRITICAL  .env:1  aws-access-key-id  AKIA***AMPLE
+# → exit 1
+```
+
+**2. Install the pre-commit hook**
+
+```sh
+rafter agent init
+# → Installs pre-commit hook in .git/hooks/pre-commit
+# → Downloads Gitleaks (or falls back to built-in scanner)
+```
+
+**3. Try to commit—hook blocks it**
+
+```sh
+git add . && git commit -m 'add config'
+# → [rafter] Scanning staged files for secrets...
+# → CRITICAL  .env:1  aws-access-key-id
+# → Commit blocked. Remove secrets or use git commit --no-verify to bypass.
+```
+
+**4. Review the audit log**
+
+```sh
+rafter agent audit --last 3
+# → 2026-02-27T...  secret_detected  .env  aws-access-key-id
+```
+
+That's the core loop: scan → protect → audit. Everything works offline, no API key needed.
+
+---
+
 ## Installation
 
 ### Node.js (full features: backend + agent security)
