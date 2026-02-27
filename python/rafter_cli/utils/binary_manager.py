@@ -79,7 +79,12 @@ class BinaryManager:
         return self.get_gitleaks_path().exists()
 
     def verify_gitleaks_verbose(self, binary_path: Optional[Path] = None) -> dict:
-        """Run 'gitleaks version' and return {ok, stdout, stderr}."""
+        """Run 'gitleaks version' and return {ok, stdout, stderr}.
+
+        gitleaks v8.x outputs just the version string (e.g. "v8.18.2"), not
+        "gitleaks version v8.18.2".  We accept any successful exit (code 0
+        with non-empty output) rather than looking for a specific prefix.
+        """
         path = binary_path or self.get_gitleaks_path()
         try:
             result = subprocess.run(
@@ -88,7 +93,7 @@ class BinaryManager:
                 text=True,
                 timeout=5,
             )
-            ok = "gitleaks version" in result.stdout
+            ok = result.returncode == 0 and bool(result.stdout.strip())
             return {"ok": ok, "stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
         except Exception as e:
             return {"ok": False, "stdout": "", "stderr": str(e)}
