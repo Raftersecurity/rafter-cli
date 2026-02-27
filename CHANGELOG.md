@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-02-26
+
+### Added
+- **`rafter agent scan --watch`** (Node + Python): new flag polls the target path on a 5-second interval, re-running the scan on every change. Useful for continuous feedback during development.
+
+### Fixed
+- **Gitleaks version check** (Node + Python): `verifyGitleaks` was checking for the string `"gitleaks version"` in stdout, but gitleaks v8.x outputs only the version string (`v8.18.2`). The check always returned false, causing `rafter agent verify` to report a working binary as failed. Now accepts any successful exit (code 0) with non-empty stdout. Stdout is also surfaced in the error detail when the binary genuinely fails.
+- **OpenClaw install silent failure** (Node + Python): `rafter agent init` printed "Restart OpenClaw to load skill" in Next Steps even when the skill install had just failed. Next Steps suggestions are now gated on actual install success.
+- **Broad `curl|sh` pattern migration** (Node + Python): existing `~/.rafter/config.json` files written by older installs contained `curl.*\|.*sh` / `wget.*\|.*sh` as literal regex strings. Because `|` is alternation in regex, these matched any command containing `sh`—including `git push`, `grep` with shell patterns, and `.sh` filenames. `ConfigManager` now silently upgrades the old patterns to word-bounded equivalents (`curl.*\|\s*(bash|sh|zsh|dash)\b`) on first load.
+
 ## [0.5.5] - 2026-02-22
 
 ### Added
