@@ -88,12 +88,54 @@ def test_twilio_api_key():
 # -- Generic --------------------------------------------------------------
 
 def test_generic_api_key():
-    matches = _engine().scan("api_key=abcdefghijklmnopqrstuv")
+    matches = _engine().scan('api_key="abcdefghijklmnopqrstuv"')
     assert any(m.pattern.name == "Generic API Key" for m in matches)
 
 
 def test_generic_secret():
-    matches = _engine().scan("password=MyS3cretP@ss!")
+    matches = _engine().scan("password='MyS3cretP@ss!'")
+    assert any(m.pattern.name == "Generic Secret" for m in matches)
+
+
+# -- False positive tests (rc-0as) -------------------------------------------
+
+def test_no_false_positive_anthropic_api_key():
+    """Variable names containing api_key should not trigger generic detection."""
+    matches = _engine().scan('anthropic_api_key = "sk-ant-something"')
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_settings_password():
+    """Compound variable names containing password should not trigger generic detection."""
+    matches = _engine().scan('settings.user_password = get_password()')
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_unquoted_api_key():
+    """Unquoted values assigned to api_key should not match (likely variable refs)."""
+    matches = _engine().scan("api_key = some_variable_name")
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_compound_secret():
+    """my_secret_value should not trigger the generic secret pattern."""
+    matches = _engine().scan('app_secret = "not-a-real-secret"')
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_generic_api_key_still_matches_standalone():
+    """Standalone api_key with quoted value should still match."""
+    matches = _engine().scan('api_key = "a1b2c3d4e5f6g7h8"')
+    assert any(m.pattern.name == "Generic API Key" for m in matches)
+
+
+def test_generic_secret_still_matches_standalone():
+    """Standalone password with quoted value should still match."""
+    matches = _engine().scan('password = "Sup3rS3cr3t!"')
     assert any(m.pattern.name == "Generic Secret" for m in matches)
 
 
