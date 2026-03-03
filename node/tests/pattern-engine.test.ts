@@ -17,7 +17,7 @@ describe("PatternEngine", () => {
     },
     {
       name: "Generic API Key",
-      regex: "(?i)api[_-]?key[\\s]*[:=][\\s]*['\"]?[0-9a-zA-Z\\-_]{16,}['\"]?",
+      regex: "(?i)(?<![a-zA-Z0-9_])api[_-]?key[\\s]*[:=][\\s]*['\"][0-9a-zA-Z\\-_]{16,}['\"]",
       severity: "high",
       description: "Generic API key pattern"
     }
@@ -103,6 +103,26 @@ line 3`;
     const githubMatch = matches.find(m => m.pattern.name === "GitHub Token");
     expect(awsMatch).toBeDefined();
     expect(githubMatch).toBeDefined();
+  });
+
+  it("should not match compound variable names like anthropic_api_key", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = 'anthropic_api_key = "sk-ant-something"';
+
+    const matches = engine.scan(text);
+
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should not match unquoted values for generic api key", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key = some_variable_name_here";
+
+    const matches = engine.scan(text);
+
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
   });
 
   it("should filter by severity", () => {
