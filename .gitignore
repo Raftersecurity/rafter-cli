@@ -25,3 +25,4 @@ node/package */
 .runtime/
 .claude/commands/
 .logs/
+.beads/
