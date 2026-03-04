@@ -24,6 +24,10 @@ export function getDefaultConfig(): RafterConfig {
         claudeCode: {
           enabled: false,
           mcpPath: path.join(os.homedir(), ".claude", "mcp", "rafter-security.json")
+        },
+        codex: {
+          enabled: false,
+          skillsDir: path.join(os.homedir(), ".agents", "skills")
         }
       },
       skills: {

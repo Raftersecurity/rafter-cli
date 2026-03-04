@@ -86,6 +86,17 @@ export function createStatusCommand(): Command {
         console.log("OpenClaw:     not detected (optional)");
       }
 
+      // --- Codex CLI skills ---
+      const codexDir = path.join(home, ".codex");
+      const codexSkillPath = path.join(home, ".agents", "skills", "rafter", "SKILL.md");
+      if (fs.existsSync(codexSkillPath)) {
+        console.log(`Codex CLI:    skills installed (${path.join(home, ".agents", "skills")})`);
+      } else if (fs.existsSync(codexDir)) {
+        console.log("Codex CLI:    detected but skills missing — run: rafter agent init");
+      } else {
+        console.log("Codex CLI:    not detected (optional)");
+      }
+
       // --- Audit log summary ---
       console.log(`\nAudit log:    ${auditPath}`);
       if (fs.existsSync(auditPath)) {

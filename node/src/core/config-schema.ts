@@ -30,6 +30,10 @@ export interface RafterConfig {
         enabled: boolean;
         mcpPath: string;
       };
+      codex?: {
+        enabled: boolean;
+        skillsDir: string;
+      };
     };
     skills: {
       autoUpdate: boolean;

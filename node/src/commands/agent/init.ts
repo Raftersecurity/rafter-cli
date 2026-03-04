@@ -110,12 +110,50 @@ async function installClaudeCodeSkills(): Promise<void> {
   }
 }
 
+function installCodexSkills(): void {
+  const homeDir = os.homedir();
+  const agentsSkillsDir = path.join(homeDir, ".agents", "skills");
+
+  // Install Backend Skill
+  const backendDir = path.join(agentsSkillsDir, "rafter");
+  const backendSkillPath = path.join(backendDir, "SKILL.md");
+  const backendTemplatePath = path.join(__dirname, "..", "..", "..", ".claude", "skills", "rafter", "SKILL.md");
+
+  if (!fs.existsSync(backendDir)) {
+    fs.mkdirSync(backendDir, { recursive: true });
+  }
+
+  if (fs.existsSync(backendTemplatePath)) {
+    fs.copyFileSync(backendTemplatePath, backendSkillPath);
+    console.log(fmt.success(`Installed Rafter Backend skill to ${backendSkillPath}`));
+  } else {
+    console.log(fmt.warning(`Backend skill template not found at ${backendTemplatePath}`));
+  }
+
+  // Install Agent Security Skill
+  const agentDir = path.join(agentsSkillsDir, "rafter-agent-security");
+  const agentSkillPath = path.join(agentDir, "SKILL.md");
+  const agentTemplatePath = path.join(__dirname, "..", "..", "..", ".claude", "skills", "rafter-agent-security", "SKILL.md");
+
+  if (!fs.existsSync(agentDir)) {
+    fs.mkdirSync(agentDir, { recursive: true });
+  }
+
+  if (fs.existsSync(agentTemplatePath)) {
+    fs.copyFileSync(agentTemplatePath, agentSkillPath);
+    console.log(fmt.success(`Installed Rafter Agent Security skill to ${agentSkillPath}`));
+  } else {
+    console.log(fmt.warning(`Agent Security skill template not found at ${agentTemplatePath}`));
+  }
+}
+
 export function createInitCommand(): Command {
   return new Command("init")
     .description("Initialize agent security system")
     .option("--risk-level <level>", "Set risk level (minimal, moderate, aggressive)", "moderate")
     .option("--skip-openclaw", "Skip OpenClaw skill installation")
     .option("--skip-claude-code", "Skip Claude Code skill installation")
+    .option("--skip-codex", "Skip Codex CLI skill installation")
     .option("--claude-code", "Force Claude Code skill installation")
     .option("--skip-gitleaks", "Skip Gitleaks binary download")
     .option("--update", "Re-download gitleaks and reinstall integrations without resetting config")
@@ -129,6 +167,7 @@ export function createInitCommand(): Command {
       // Detect environments
       const hasOpenClaw = fs.existsSync(path.join(os.homedir(), ".openclaw"));
       const hasClaudeCode = opts.claudeCode || fs.existsSync(path.join(os.homedir(), ".claude"));
+      const hasCodex = fs.existsSync(path.join(os.homedir(), ".codex"));
 
       if (hasOpenClaw) {
         console.log(fmt.success("Detected environment: OpenClaw"));
@@ -140,6 +179,12 @@ export function createInitCommand(): Command {
         console.log(fmt.success("Detected environment: Claude Code"));
       } else {
         console.log(fmt.info("Claude Code not detected"));
+      }
+
+      if (hasCodex) {
+        console.log(fmt.success("Detected environment: Codex CLI"));
+      } else {
+        console.log(fmt.info("Codex CLI not detected"));
       }
 
       // Initialize directory structure
@@ -260,6 +305,18 @@ export function createInitCommand(): Command {
         }
       }
 
+      // Install Codex CLI skills if applicable
+      let codexOk = false;
+      if (hasCodex && !opts.skipCodex) {
+        try {
+          installCodexSkills();
+          manager.set("agent.environments.codex.enabled", true);
+          codexOk = true;
+        } catch (e) {
+          console.error(fmt.error(`Failed to install Codex CLI integration: ${e}`));
+        }
+      }
+
       console.log();
       console.log(fmt.success("Agent security initialized!"));
       console.log();
@@ -269,6 +326,9 @@ export function createInitCommand(): Command {
       }
       if (claudeCodeOk) {
         console.log("  - Restart Claude Code to load skills");
+      }
+      if (codexOk) {
+        console.log("  - Restart Codex CLI to load skills");
       }
       console.log("  - Run: rafter scan local . (test secret scanning)");
       console.log("  - Configure: rafter agent config show");
