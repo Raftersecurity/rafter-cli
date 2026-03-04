@@ -88,7 +88,7 @@ def test_twilio_api_key():
 # -- Generic --------------------------------------------------------------
 
 def test_generic_api_key():
-    matches = _engine().scan('api_key="abcdefghijklmnopqrstuv"')
+    matches = _engine().scan('api_key="a1b2c3d4e5f6g7h8i9j0"')
     assert any(m.pattern.name == "Generic API Key" for m in matches)
 
 
@@ -137,6 +137,43 @@ def test_generic_secret_still_matches_standalone():
     """Standalone password with quoted value should still match."""
     matches = _engine().scan('password = "Sup3rS3cr3t!"')
     assert any(m.pattern.name == "Generic Secret" for m in matches)
+
+
+# -- False positive tests: env var name values (rc-uos) ----------------------
+
+def test_no_false_positive_env_var_name_as_api_key_value():
+    """api_key = 'ANTHROPIC_API_KEY' should not match (value is an env var name)."""
+    matches = _engine().scan("api_key = 'ANTHROPIC_API_KEY'")
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_env_var_name_as_api_key_value_colon():
+    """api_key: 'GOOGLE_PLACES_API_KEY' should not match."""
+    matches = _engine().scan("api_key: 'GOOGLE_PLACES_API_KEY'")
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_env_var_name_as_secret_value():
+    """password = 'DATABASE_PASSWORD' should not match (value is a name, not a secret)."""
+    matches = _engine().scan("password = 'DATABASE_PASSWORD'")
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_identifier_as_secret_value():
+    """secret = 'my_app_secret_key' should not match (value looks like an identifier)."""
+    matches = _engine().scan("secret = 'my_app_secret_key'")
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_generic_api_key_all_letters_no_match():
+    """api_key with all-letter value should not match (no entropy indicators)."""
+    matches = _engine().scan('api_key = "abcdefghijklmnopqrstuv"')
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
 
 
 def test_private_key():
