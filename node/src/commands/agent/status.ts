@@ -86,6 +86,51 @@ export function createStatusCommand(): Command {
         console.log("OpenClaw:     not detected (optional)");
       }
 
+      // --- MCP-native AI engine integrations ---
+      const mcpAgents: Array<{ name: string; configDir: string; configFile: string; needle: string }> = [
+        { name: "Gemini CLI", configDir: path.join(home, ".gemini"), configFile: path.join(home, ".gemini", "settings.json"), needle: "rafter" },
+        { name: "Cursor", configDir: path.join(home, ".cursor"), configFile: path.join(home, ".cursor", "mcp.json"), needle: "rafter" },
+        { name: "Windsurf", configDir: path.join(home, ".codeium", "windsurf"), configFile: path.join(home, ".codeium", "windsurf", "mcp_config.json"), needle: "rafter" },
+        { name: "Continue.dev", configDir: path.join(home, ".continue"), configFile: path.join(home, ".continue", "config.json"), needle: "rafter" },
+      ];
+
+      for (const agent of mcpAgents) {
+        const label = `${agent.name}:`.padEnd(14);
+        if (fs.existsSync(agent.configFile)) {
+          try {
+            const content = fs.readFileSync(agent.configFile, "utf-8");
+            if (content.includes(agent.needle)) {
+              console.log(`${label}MCP installed (${agent.configFile})`);
+            } else {
+              console.log(`${label}detected but MCP missing — run: rafter agent init`);
+            }
+          } catch {
+            console.log(`${label}config unreadable (${agent.configFile})`);
+          }
+        } else if (fs.existsSync(agent.configDir)) {
+          console.log(`${label}detected but MCP missing — run: rafter agent init`);
+        } else {
+          console.log(`${label}not detected (optional)`);
+        }
+      }
+
+      // --- Aider ---
+      const aiderConfig = path.join(home, ".aider.conf.yml");
+      if (fs.existsSync(aiderConfig)) {
+        try {
+          const content = fs.readFileSync(aiderConfig, "utf-8");
+          if (content.includes("rafter mcp serve")) {
+            console.log(`Aider:        MCP installed (${aiderConfig})`);
+          } else {
+            console.log("Aider:        detected but MCP missing — run: rafter agent init");
+          }
+        } catch {
+          console.log(`Aider:        config unreadable (${aiderConfig})`);
+        }
+      } else {
+        console.log("Aider:        not detected (optional)");
+      }
+
       // --- Audit log summary ---
       console.log(`\nAudit log:    ${auditPath}`);
       if (fs.existsSync(auditPath)) {
