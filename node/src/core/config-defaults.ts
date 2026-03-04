@@ -24,6 +24,26 @@ export function getDefaultConfig(): RafterConfig {
         claudeCode: {
           enabled: false,
           mcpPath: path.join(os.homedir(), ".claude", "mcp", "rafter-security.json")
+        },
+        gemini: {
+          enabled: false,
+          configPath: path.join(os.homedir(), ".gemini", "settings.json")
+        },
+        aider: {
+          enabled: false,
+          configPath: path.join(os.homedir(), ".aider.conf.yml")
+        },
+        cursor: {
+          enabled: false,
+          mcpPath: path.join(os.homedir(), ".cursor", "mcp.json")
+        },
+        windsurf: {
+          enabled: false,
+          mcpPath: path.join(os.homedir(), ".codeium", "windsurf", "mcp_config.json")
+        },
+        continueDev: {
+          enabled: false,
+          configPath: path.join(os.homedir(), ".continue", "config.json")
         }
       },
       skills: {
