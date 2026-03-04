@@ -34,6 +34,26 @@ export interface RafterConfig {
         enabled: boolean;
         skillsDir: string;
       };
+      gemini?: {
+        enabled: boolean;
+        configPath: string;
+      };
+      aider?: {
+        enabled: boolean;
+        configPath: string;
+      };
+      cursor?: {
+        enabled: boolean;
+        mcpPath: string;
+      };
+      windsurf?: {
+        enabled: boolean;
+        mcpPath: string;
+      };
+      continueDev?: {
+        enabled: boolean;
+        configPath: string;
+      };
     };
     skills: {
       autoUpdate: boolean;
