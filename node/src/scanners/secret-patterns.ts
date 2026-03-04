@@ -98,13 +98,13 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   // Generic patterns
   {
     name: "Generic API Key",
-    regex: "(?i)(?<![a-zA-Z0-9_])(api[_-]?key|apikey)[\\s]*[:=][\\s]*['\"][0-9a-zA-Z\\-_]{16,}['\"]",
+    regex: "(?i)(?<![a-zA-Z0-9_])(api[_-]?key|apikey)[\\s]*[:=][\\s]*['\"](?=[0-9a-zA-Z\\-_]*[0-9])[0-9a-zA-Z\\-_]{16,}['\"]",
     severity: "high",
     description: "Generic API key pattern detected"
   },
   {
     name: "Generic Secret",
-    regex: "(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)[\\s]*[:=][\\s]*['\"][0-9a-zA-Z\\-_!@#$%^&*()]{8,}['\"]",
+    regex: "(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)[\\s]*[:=][\\s]*['\"](?=[^\\s'\"]*[0-9!@#$%^&*()])[0-9a-zA-Z\\-_!@#$%^&*()]{8,}['\"]",
     severity: "high",
     description: "Generic secret pattern detected"
   },

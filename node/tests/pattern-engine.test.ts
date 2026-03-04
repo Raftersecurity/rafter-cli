@@ -17,9 +17,15 @@ describe("PatternEngine", () => {
     },
     {
       name: "Generic API Key",
-      regex: "(?i)(?<![a-zA-Z0-9_])api[_-]?key[\\s]*[:=][\\s]*['\"][0-9a-zA-Z\\-_]{16,}['\"]",
+      regex: "(?i)(?<![a-zA-Z0-9_])api[_-]?key[\\s]*[:=][\\s]*['\"](?=[0-9a-zA-Z\\-_]*[0-9])[0-9a-zA-Z\\-_]{16,}['\"]",
       severity: "high",
       description: "Generic API key pattern"
+    },
+    {
+      name: "Generic Secret",
+      regex: "(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)[\\s]*[:=][\\s]*['\"](?=[^\\s'\"]*[0-9!@#$%^&*()])[0-9a-zA-Z\\-_!@#$%^&*()]{8,}['\"]",
+      severity: "high",
+      description: "Generic secret pattern"
     }
   ];
 
@@ -121,6 +127,60 @@ line 3`;
 
     const matches = engine.scan(text);
 
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should not match env var name as api key value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key = 'ANTHROPIC_API_KEY'";
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should not match env var name as api key value with colon", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key: 'GOOGLE_PLACES_API_KEY'";
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should not match env var name as secret value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "password = 'DATABASE_PASSWORD'";
+
+    const matches = engine.scan(text);
+    const secretMatch = matches.find(m => m.pattern.name === "Generic Secret");
+    expect(secretMatch).toBeUndefined();
+  });
+
+  it("should not match identifier as secret value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "secret = 'my_app_secret_key'";
+
+    const matches = engine.scan(text);
+    const secretMatch = matches.find(m => m.pattern.name === "Generic Secret");
+    expect(secretMatch).toBeUndefined();
+  });
+
+  it("should match generic secret with digits/special chars", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = 'password = "Sup3rS3cr3t!"';
+
+    const matches = engine.scan(text);
+    const secretMatch = matches.find(m => m.pattern.name === "Generic Secret");
+    expect(secretMatch).toBeDefined();
+  });
+
+  it("should not match all-letter api key value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = 'api_key = "abcdefghijklmnopqrstuv"';
+
+    const matches = engine.scan(text);
     const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
     expect(apiKeyMatch).toBeUndefined();
   });
