@@ -6,8 +6,8 @@ openclaw:
   always: false
   requires:
     bins: [rafter]
-version: 0.4.0
-last_updated: 2026-02-03
+version: 0.5.8
+last_updated: 2026-03-04
 ---
 
 # Rafter Security

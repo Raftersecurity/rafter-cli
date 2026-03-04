@@ -171,12 +171,44 @@ def _install_openclaw_skill() -> tuple[bool, str, str, str]:
         return False, source_path, str(dest_path), str(e)
 
 
+def _install_codex_skills() -> tuple[bool, str]:
+    """Install Rafter skills to ~/.agents/skills/ for Codex CLI. Returns (ok, error)."""
+    home = Path.home()
+    agents_skills_dir = home / ".agents" / "skills"
+
+    try:
+        # Install backend skill
+        backend_dir = agents_skills_dir / "rafter"
+        backend_dir.mkdir(parents=True, exist_ok=True)
+        backend_source = Path(__file__).parent.parent.parent / ".claude" / "skills" / "rafter" / "SKILL.md"
+        if backend_source.exists():
+            shutil.copy2(backend_source, backend_dir / "SKILL.md")
+            rprint(fmt.success(f"Installed Rafter Backend skill to {backend_dir / 'SKILL.md'}"))
+        else:
+            rprint(fmt.warning(f"Backend skill template not found at {backend_source}"))
+
+        # Install agent security skill
+        agent_dir = agents_skills_dir / "rafter-agent-security"
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        agent_source = Path(__file__).parent.parent.parent / ".claude" / "skills" / "rafter-agent-security" / "SKILL.md"
+        if agent_source.exists():
+            shutil.copy2(agent_source, agent_dir / "SKILL.md")
+            rprint(fmt.success(f"Installed Rafter Agent Security skill to {agent_dir / 'SKILL.md'}"))
+        else:
+            rprint(fmt.warning(f"Agent Security skill template not found at {agent_source}"))
+
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
 @agent_app.command()
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
     skip_gitleaks: bool = typer.Option(False, "--skip-gitleaks", help="Skip gitleaks check"),
     skip_openclaw: bool = typer.Option(False, "--skip-openclaw", help="Skip OpenClaw skill installation"),
     skip_claude_code: bool = typer.Option(False, "--skip-claude-code", help="Skip Claude Code hook installation"),
+    skip_codex: bool = typer.Option(False, "--skip-codex", help="Skip Codex CLI skill installation"),
     claude_code: bool = typer.Option(False, "--claude-code", help="Force Claude Code detection"),
     update: bool = typer.Option(False, "--update", help="Re-download gitleaks and reinstall integrations without resetting config"),
 ):
@@ -191,6 +223,7 @@ def init(
     home = Path.home()
     has_openclaw = (home / ".openclaw").exists()
     has_claude_code = claude_code or (home / ".claude").exists()
+    has_codex = (home / ".codex").exists()
 
     if has_openclaw:
         rprint(fmt.success("Detected environment: OpenClaw"))
@@ -201,6 +234,11 @@ def init(
         rprint(fmt.success("Detected environment: Claude Code"))
     else:
         rprint(fmt.info("Claude Code not detected"))
+
+    if has_codex:
+        rprint(fmt.success("Detected environment: Codex CLI"))
+    else:
+        rprint(fmt.info("Codex CLI not detected"))
 
     # Initialize
     manager.initialize()
@@ -276,6 +314,19 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Claude Code hooks: {e}"))
 
+    # Install Codex CLI skills
+    codex_ok = False
+    if has_codex and not skip_codex:
+        try:
+            ok, error = _install_codex_skills()
+            codex_ok = ok
+            if ok:
+                manager.set("agent.environments.codex.enabled", True)
+            else:
+                rprint(fmt.error(f"Failed to install Codex CLI skills: {error}"))
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Codex CLI integration: {e}"))
+
     rprint()
     rprint(fmt.success("Agent security initialized!"))
     rprint()
@@ -284,6 +335,8 @@ def init(
         rprint("  - Restart OpenClaw to load skill")
     if claude_code_ok:
         rprint("  - Restart Claude Code to load hooks")
+    if codex_ok:
+        rprint("  - Restart Codex CLI to load skills")
     rprint("  - Run: rafter scan local . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
     rprint()
@@ -1488,6 +1541,16 @@ def status():
         print("OpenClaw:     detected but skill missing — run: rafter agent init")
     else:
         print("OpenClaw:     not detected (optional)")
+
+    # --- Codex CLI skills ---
+    codex_dir = Path.home() / ".codex"
+    codex_skill_path = Path.home() / ".agents" / "skills" / "rafter" / "SKILL.md"
+    if codex_skill_path.exists():
+        print(f"Codex CLI:    skills installed ({Path.home() / '.agents' / 'skills'})")
+    elif codex_dir.exists():
+        print("Codex CLI:    detected but skills missing — run: rafter agent init")
+    else:
+        print("Codex CLI:    not detected (optional)")
 
     # --- Audit log summary ---
     print(f"\nAudit log:    {audit_path}")

@@ -216,6 +216,7 @@ class ConfigManager:
             environments=EnvironmentsConfig(
                 openclaw=EnvironmentConfig(**cls._pick_fields(EnvironmentConfig, envs_raw.get("openclaw") or {})),
                 claude_code=EnvironmentConfig(**cls._pick_fields(EnvironmentConfig, envs_raw.get("claudeCode") or envs_raw.get("claude_code") or {})),
+                codex=EnvironmentConfig(**cls._pick_fields(EnvironmentConfig, envs_raw.get("codex") or {})),
             ),
             command_policy=CommandPolicyConfig(**cls._pick_fields(CommandPolicyConfig, agent_raw.get("commandPolicy") or agent_raw.get("command_policy") or {})),
             output_filtering=OutputFilteringConfig(**cls._pick_fields(OutputFilteringConfig, agent_raw.get("outputFiltering") or agent_raw.get("output_filtering") or {})),
