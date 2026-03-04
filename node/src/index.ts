@@ -11,6 +11,7 @@ import { createHookCommand } from "./commands/hook/index.js";
 import { createMcpCommand } from "./commands/mcp/index.js";
 import { createPolicyCommand } from "./commands/policy/index.js";
 import { createCompletionCommand } from "./commands/completion.js";
+import { createIssuesCommand } from "./commands/issues/index.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 
@@ -54,6 +55,9 @@ program.addCommand(createMcpCommand());
 
 // Policy commands
 program.addCommand(createPolicyCommand());
+
+// GitHub Issues integration
+program.addCommand(createIssuesCommand());
 
 // Shell completions
 program.addCommand(createCompletionCommand());
