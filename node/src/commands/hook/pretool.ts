@@ -46,19 +46,30 @@ export function createHookPretoolCommand(): Command {
   return new Command("pretool")
     .description("PreToolUse hook handler (reads stdin, writes JSON decision to stdout)")
     .action(async () => {
-      const input = await readStdin();
-      let payload: HookInput;
-
       try {
-        payload = JSON.parse(input);
-      } catch {
-        // Can't parse → fail open
-        writeDecision({ decision: "allow" });
-        return;
-      }
+        const input = await readStdin();
+        let payload: HookInput;
 
-      const decision = evaluateToolCall(payload);
-      writeDecision(decision);
+        try {
+          payload = JSON.parse(input);
+        } catch {
+          // Can't parse → fail open
+          writeDecision({ decision: "allow" });
+          return;
+        }
+
+        // Validate payload is an object with expected shape
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+          writeDecision({ decision: "allow" });
+          return;
+        }
+
+        const decision = evaluateToolCall(payload);
+        writeDecision(decision);
+      } catch {
+        // Any unexpected error → fail open
+        writeDecision({ decision: "allow" });
+      }
     });
 }
 
@@ -66,11 +77,11 @@ function evaluateToolCall(payload: HookInput): HookDecision {
   const { tool_name, tool_input } = payload;
 
   if (tool_name === "Bash") {
-    return evaluateBash(tool_input.command || "");
+    return evaluateBash(tool_input?.command || "");
   }
 
   if (tool_name === "Write" || tool_name === "Edit") {
-    return evaluateWrite(tool_input);
+    return evaluateWrite(tool_input || {});
   }
 
   return { decision: "allow" };
@@ -168,12 +179,16 @@ function scanStagedFiles(): { secretsFound: boolean; count: number; files: numbe
   }
 }
 
+const STDIN_TIMEOUT_MS = 5000;
+
 function readStdin(): Promise<string> {
   return new Promise((resolve) => {
     let data = "";
+    const timeout = setTimeout(() => { resolve(data); }, STDIN_TIMEOUT_MS);
     process.stdin.setEncoding("utf-8");
     process.stdin.on("data", (chunk) => { data += chunk; });
-    process.stdin.on("end", () => { resolve(data); });
+    process.stdin.on("end", () => { clearTimeout(timeout); resolve(data); });
+    process.stdin.on("error", () => { clearTimeout(timeout); resolve(data); });
     process.stdin.resume();
   });
 }
