@@ -49,8 +49,20 @@ def _format_approval_message(command: str, evaluation) -> str:
     )
 
 
+_STDIN_TIMEOUT_S = 5
+
 def _read_stdin() -> str:
-    return sys.stdin.read()
+    import threading
+    result: list[str] = [""]
+    def _reader() -> None:
+        try:
+            result[0] = sys.stdin.read()
+        except Exception:
+            pass
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+    t.join(timeout=_STDIN_TIMEOUT_S)
+    return result[0]
 
 
 def _write_decision(decision: dict) -> None:
@@ -130,71 +142,92 @@ def _evaluate_write(tool_input: dict) -> dict:
 @hook_app.command("pretool")
 def pretool():
     """PreToolUse hook handler. Reads tool input JSON from stdin, writes decision to stdout."""
-    raw = _read_stdin()
-
     try:
-        payload = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
+        raw = _read_stdin()
+
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            _write_decision({"decision": "allow"})
+            return
+
+        # Validate payload is a dict with expected shape
+        if not isinstance(payload, dict):
+            _write_decision({"decision": "allow"})
+            return
+
+        tool_name = payload.get("tool_name", "")
+        tool_input = payload.get("tool_input") or {}
+
+        if not isinstance(tool_input, dict):
+            tool_input = {}
+
+        if tool_name == "Bash":
+            decision = _evaluate_bash(tool_input.get("command", ""))
+        elif tool_name in ("Write", "Edit"):
+            decision = _evaluate_write(tool_input)
+        else:
+            decision = {"decision": "allow"}
+
+        _write_decision(decision)
+    except Exception:
+        # Any unexpected error -> fail open
         _write_decision({"decision": "allow"})
-        return
-
-    tool_name = payload.get("tool_name", "")
-    tool_input = payload.get("tool_input", {})
-
-    if tool_name == "Bash":
-        decision = _evaluate_bash(tool_input.get("command", ""))
-    elif tool_name in ("Write", "Edit"):
-        decision = _evaluate_write(tool_input)
-    else:
-        decision = {"decision": "allow"}
-
-    _write_decision(decision)
 
 
 @hook_app.command("posttool")
 def posttool():
     """PostToolUse hook handler. Reads tool response JSON from stdin, redacts secrets in output, writes action to stdout."""
-    raw = _read_stdin()
-
     try:
-        payload = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
+        raw = _read_stdin()
+
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            _write_decision({"action": "continue"})
+            return
+
+        # Validate payload is a dict
+        if not isinstance(payload, dict):
+            _write_decision({"action": "continue"})
+            return
+
+        tool_response = payload.get("tool_response")
+        tool_name = payload.get("tool_name", "unknown")
+
+        # No response body — pass through
+        if not tool_response or not isinstance(tool_response, dict):
+            _write_decision({"action": "continue"})
+            return
+
+        scanner = RegexScanner()
+        modified = False
+        redacted = dict(tool_response)
+
+        # Scan and redact output field
+        output_text = tool_response.get("output", "")
+        if output_text and isinstance(output_text, str) and scanner.has_secrets(output_text):
+            redacted["output"] = scanner.redact(output_text)
+            modified = True
+
+        # Scan and redact content field (used by some tools)
+        content_text = tool_response.get("content", "")
+        if content_text and isinstance(content_text, str) and scanner.has_secrets(content_text):
+            redacted["content"] = scanner.redact(content_text)
+            modified = True
+
+        if modified:
+            audit = AuditLogger()
+            match_count = 0
+            if output_text and isinstance(output_text, str):
+                match_count += len(scanner.scan_text(output_text))
+            if content_text and isinstance(content_text, str):
+                match_count += len(scanner.scan_text(content_text))
+            audit.log_content_sanitized(f"{tool_name} tool response", match_count)
+            _write_decision({"action": "modify", "tool_response": redacted})
+            return
+
         _write_decision({"action": "continue"})
-        return
-
-    tool_response = payload.get("tool_response")
-    tool_name = payload.get("tool_name", "unknown")
-
-    # No response body — pass through
-    if not tool_response:
+    except Exception:
+        # Any unexpected error -> fail open
         _write_decision({"action": "continue"})
-        return
-
-    scanner = RegexScanner()
-    modified = False
-    redacted = dict(tool_response)
-
-    # Scan and redact output field
-    output_text = tool_response.get("output", "")
-    if output_text and isinstance(output_text, str) and scanner.has_secrets(output_text):
-        redacted["output"] = scanner.redact(output_text)
-        modified = True
-
-    # Scan and redact content field (used by some tools)
-    content_text = tool_response.get("content", "")
-    if content_text and isinstance(content_text, str) and scanner.has_secrets(content_text):
-        redacted["content"] = scanner.redact(content_text)
-        modified = True
-
-    if modified:
-        audit = AuditLogger()
-        match_count = 0
-        if output_text and isinstance(output_text, str):
-            match_count += len(scanner.scan_text(output_text))
-        if content_text and isinstance(content_text, str):
-            match_count += len(scanner.scan_text(content_text))
-        audit.log_content_sanitized(f"{tool_name} tool response", match_count)
-        _write_decision({"action": "modify", "tool_response": redacted})
-        return
-
-    _write_decision({"action": "continue"})
