@@ -185,6 +185,54 @@ line 3`;
     expect(apiKeyMatch).toBeUndefined();
   });
 
+  // rc-1qd: variable name false positive tests
+  it("should not match env var name with digits as api key value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key = 'OPENAI_API_KEY_V2'";
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should not match uppercase env var name with digits as secret value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "password = 'DATABASE_PASSWORD_1'";
+
+    const matches = engine.scan(text);
+    const secretMatch = matches.find(m => m.pattern.name === "Generic Secret");
+    expect(secretMatch).toBeUndefined();
+  });
+
+  it("should not match lowercase identifier with digits as api key value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key = 'my_app_api_key_v2'";
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should still match real mixed-case api key with digits", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = 'api_key = "aB3xY9kL2mN5pQ8r"';
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeDefined();
+  });
+
+  it("should not redact variable name values", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key = 'OPENAI_API_KEY_V2'";
+    expect(engine.redactText(text)).toBe(text);
+  });
+
+  it("should not report hasMatches for variable name values", () => {
+    const engine = new PatternEngine(testPatterns);
+    expect(engine.hasMatches("api_key = 'OPENAI_API_KEY_V2'")).toBe(false);
+  });
+
   it("should filter by severity", () => {
     const engine = new PatternEngine(testPatterns);
     const critical = engine.getPatternsBySeverity("critical");

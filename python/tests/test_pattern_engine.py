@@ -176,6 +176,61 @@ def test_generic_api_key_all_letters_no_match():
     assert len(generic) == 0
 
 
+# -- False positive tests: variable names with digits (rc-1qd) ----------------
+
+def test_no_false_positive_env_var_name_with_digits():
+    """api_key = 'OPENAI_API_KEY_V2' should not match (env var name with digit)."""
+    matches = _engine().scan("api_key = 'OPENAI_API_KEY_V2'")
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_uppercase_secret_var_name():
+    """password = 'DATABASE_PASSWORD_1' should not match (env var name with digit)."""
+    matches = _engine().scan("password = 'DATABASE_PASSWORD_1'")
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_lowercase_ident_with_digits():
+    """api_key = 'my_app_api_key_v2' should not match (lowercase identifier)."""
+    matches = _engine().scan("api_key = 'my_app_api_key_v2'")
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_lowercase_secret_ident():
+    """secret = 'app_secret_token_1' should not match (lowercase identifier)."""
+    matches = _engine().scan("secret = 'app_secret_token_1'")
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_real_key_still_matches_mixed_case():
+    """api_key = 'aB3xY9kL2mN5pQ8r' should still match (real key, mixed case)."""
+    matches = _engine().scan('api_key = "aB3xY9kL2mN5pQ8r"')
+    assert any(m.pattern.name == "Generic API Key" for m in matches)
+
+
+def test_real_secret_with_special_chars_still_matches():
+    """password = 'P@ssw0rd!XyZ' should still match (real secret)."""
+    matches = _engine().scan('password = "P@ssw0rd!XyZ"')
+    assert any(m.pattern.name == "Generic Secret" for m in matches)
+
+
+def test_no_false_positive_redact_preserves_var_names():
+    """redact_text should not redact variable name values."""
+    engine = _engine()
+    text = "api_key = 'OPENAI_API_KEY_V2'"
+    assert engine.redact_text(text) == text
+
+
+def test_has_matches_excludes_var_names():
+    """has_matches should return False for variable name values."""
+    engine = _engine()
+    assert not engine.has_matches("api_key = 'OPENAI_API_KEY_V2'")
+
+
 def test_private_key():
     matches = _engine().scan("-----BEGIN RSA PRIVATE KEY-----")
     assert any(m.pattern.name == "Private Key" for m in matches)
