@@ -85,13 +85,19 @@ All agent commands work locally. No API key required.
 
 ### rafter agent init [OPTIONS]
 
-Initialize agent security system. Creates config, downloads Gitleaks, auto-detects and installs skills for Claude Code, Codex CLI, and OpenClaw.
+Initialize agent security system. Creates config and detects available agent environments. Integrations are opt-in — use `--with-*` flags or `--all` to install.
 
 - `--risk-level <level>` — `minimal`, `moderate` (default), or `aggressive`
-- `--skip-openclaw` — skip OpenClaw skill installation
-- `--skip-claude-code` — skip Claude Code skill installation
-- `--skip-codex` — skip Codex CLI skill installation
-- `--skip-gitleaks` — skip Gitleaks binary download
+- `--with-openclaw` — install OpenClaw integration
+- `--with-claude-code` — install Claude Code integration
+- `--with-codex` — install Codex CLI integration
+- `--with-gemini` — install Gemini CLI integration
+- `--with-aider` — install Aider integration
+- `--with-cursor` — install Cursor integration
+- `--with-windsurf` — install Windsurf integration
+- `--with-continue` — install Continue.dev integration
+- `--with-gitleaks` — download and install Gitleaks binary
+- `--all` — install all detected integrations and download Gitleaks
 
 ### rafter scan local [PATH] [OPTIONS]
 

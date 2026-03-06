@@ -34,7 +34,7 @@ export function createStatusCommand(): Command {
 
       // --- Gitleaks ---
       const localGitleaks = path.join(getBinDir(), "gitleaks");
-      let gitleaksStatus = "not found — run: rafter agent init";
+      let gitleaksStatus = "not found — run: rafter agent init --with-gitleaks";
       try {
         const ver = execSync("gitleaks version", { timeout: 5000, encoding: "utf-8" }).trim();
         gitleaksStatus = `${ver} (PATH)`;
@@ -72,8 +72,8 @@ export function createStatusCommand(): Command {
           // unreadable settings
         }
       }
-      console.log(`PreToolUse:   ${pretoolOk ? "installed" : "not installed — run: rafter agent init"}`);
-      console.log(`PostToolUse:  ${posttoolOk ? "installed" : "not installed — run: rafter agent init"}`);
+      console.log(`PreToolUse:   ${pretoolOk ? "installed" : "not installed — run: rafter agent init --with-claude-code"}`);
+      console.log(`PostToolUse:  ${posttoolOk ? "installed" : "not installed — run: rafter agent init --with-claude-code"}`);
 
       // --- OpenClaw skill ---
       const skillPath = path.join(home, ".openclaw", "skills", "rafter-security.md");
@@ -81,7 +81,7 @@ export function createStatusCommand(): Command {
       if (fs.existsSync(skillPath)) {
         console.log(`OpenClaw:     skill installed (${skillPath})`);
       } else if (fs.existsSync(openclawDir)) {
-        console.log("OpenClaw:     detected but skill missing — run: rafter agent init");
+        console.log("OpenClaw:     detected but skill missing — run: rafter agent init --with-openclaw");
       } else {
         console.log("OpenClaw:     not detected (optional)");
       }
@@ -92,17 +92,17 @@ export function createStatusCommand(): Command {
       if (fs.existsSync(codexSkillPath)) {
         console.log(`Codex CLI:    skills installed (${path.join(home, ".agents", "skills")})`);
       } else if (fs.existsSync(codexDir)) {
-        console.log("Codex CLI:    detected but skills missing — run: rafter agent init");
+        console.log("Codex CLI:    detected but skills missing — run: rafter agent init --with-codex");
       } else {
         console.log("Codex CLI:    not detected (optional)");
       }
 
       // --- MCP-native AI engine integrations ---
-      const mcpAgents: Array<{ name: string; configDir: string; configFile: string; needle: string }> = [
-        { name: "Gemini CLI", configDir: path.join(home, ".gemini"), configFile: path.join(home, ".gemini", "settings.json"), needle: "rafter" },
-        { name: "Cursor", configDir: path.join(home, ".cursor"), configFile: path.join(home, ".cursor", "mcp.json"), needle: "rafter" },
-        { name: "Windsurf", configDir: path.join(home, ".codeium", "windsurf"), configFile: path.join(home, ".codeium", "windsurf", "mcp_config.json"), needle: "rafter" },
-        { name: "Continue.dev", configDir: path.join(home, ".continue"), configFile: path.join(home, ".continue", "config.json"), needle: "rafter" },
+      const mcpAgents: Array<{ name: string; flag: string; configDir: string; configFile: string; needle: string }> = [
+        { name: "Gemini CLI", flag: "--with-gemini", configDir: path.join(home, ".gemini"), configFile: path.join(home, ".gemini", "settings.json"), needle: "rafter" },
+        { name: "Cursor", flag: "--with-cursor", configDir: path.join(home, ".cursor"), configFile: path.join(home, ".cursor", "mcp.json"), needle: "rafter" },
+        { name: "Windsurf", flag: "--with-windsurf", configDir: path.join(home, ".codeium", "windsurf"), configFile: path.join(home, ".codeium", "windsurf", "mcp_config.json"), needle: "rafter" },
+        { name: "Continue.dev", flag: "--with-continue", configDir: path.join(home, ".continue"), configFile: path.join(home, ".continue", "config.json"), needle: "rafter" },
       ];
 
       for (const agent of mcpAgents) {
@@ -113,13 +113,13 @@ export function createStatusCommand(): Command {
             if (content.includes(agent.needle)) {
               console.log(`${label}MCP installed (${agent.configFile})`);
             } else {
-              console.log(`${label}detected but MCP missing — run: rafter agent init`);
+              console.log(`${label}detected but MCP missing — run: rafter agent init ${agent.flag}`);
             }
           } catch {
             console.log(`${label}config unreadable (${agent.configFile})`);
           }
         } else if (fs.existsSync(agent.configDir)) {
-          console.log(`${label}detected but MCP missing — run: rafter agent init`);
+          console.log(`${label}detected but MCP missing — run: rafter agent init ${agent.flag}`);
         } else {
           console.log(`${label}not detected (optional)`);
         }
@@ -133,7 +133,7 @@ export function createStatusCommand(): Command {
           if (content.includes("rafter mcp serve")) {
             console.log(`Aider:        MCP installed (${aiderConfig})`);
           } else {
-            console.log("Aider:        detected but MCP missing — run: rafter agent init");
+            console.log("Aider:        detected but MCP missing — run: rafter agent init --with-aider");
           }
         } catch {
           console.log(`Aider:        config unreadable (${aiderConfig})`);
