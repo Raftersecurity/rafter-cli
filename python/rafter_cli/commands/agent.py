@@ -205,11 +205,11 @@ def _install_codex_skills() -> tuple[bool, str]:
 @agent_app.command()
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
-    skip_gitleaks: bool = typer.Option(False, "--skip-gitleaks", help="Skip gitleaks check"),
-    skip_openclaw: bool = typer.Option(False, "--skip-openclaw", help="Skip OpenClaw skill installation"),
-    skip_claude_code: bool = typer.Option(False, "--skip-claude-code", help="Skip Claude Code hook installation"),
-    skip_codex: bool = typer.Option(False, "--skip-codex", help="Skip Codex CLI skill installation"),
-    claude_code: bool = typer.Option(False, "--claude-code", help="Force Claude Code detection"),
+    with_gitleaks: bool = typer.Option(False, "--with-gitleaks", help="Download and install Gitleaks binary"),
+    with_openclaw: bool = typer.Option(False, "--with-openclaw", help="Install OpenClaw integration"),
+    with_claude_code: bool = typer.Option(False, "--with-claude-code", help="Install Claude Code integration"),
+    with_codex: bool = typer.Option(False, "--with-codex", help="Install Codex CLI integration"),
+    all_integrations: bool = typer.Option(False, "--all", help="Install all detected integrations and download Gitleaks"),
     update: bool = typer.Option(False, "--update", help="Re-download gitleaks and reinstall integrations without resetting config"),
 ):
     """Initialize agent security system."""
@@ -222,23 +222,36 @@ def init(
     # Detect environments
     home = Path.home()
     has_openclaw = (home / ".openclaw").exists()
-    has_claude_code = claude_code or (home / ".claude").exists()
+    has_claude_code = (home / ".claude").exists()
     has_codex = (home / ".codex").exists()
 
+    # Resolve opt-in flags (--all enables all detected)
+    want_openclaw = with_openclaw or all_integrations
+    want_claude_code = with_claude_code or all_integrations
+    want_codex = with_codex or all_integrations
+    want_gitleaks = with_gitleaks or all_integrations
+
+    # Show detected environments
+    detected = []
     if has_openclaw:
-        rprint(fmt.success("Detected environment: OpenClaw"))
-    else:
-        rprint(fmt.info("OpenClaw not detected"))
-
+        detected.append("OpenClaw")
     if has_claude_code:
-        rprint(fmt.success("Detected environment: Claude Code"))
-    else:
-        rprint(fmt.info("Claude Code not detected"))
-
+        detected.append("Claude Code")
     if has_codex:
-        rprint(fmt.success("Detected environment: Codex CLI"))
+        detected.append("Codex CLI")
+
+    if detected:
+        rprint(fmt.info(f"Detected environments: {', '.join(detected)}"))
     else:
-        rprint(fmt.info("Codex CLI not detected"))
+        rprint(fmt.info("No agent environments detected"))
+
+    # Warn about requested but undetected environments
+    if want_openclaw and not has_openclaw:
+        rprint(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"))
+    if want_claude_code and not has_claude_code:
+        rprint(fmt.warning("Claude Code requested but not detected (~/.claude not found)"))
+    if want_codex and not has_codex:
+        rprint(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"))
 
     # Initialize
     manager.initialize()
@@ -254,8 +267,8 @@ def init(
     manager.set("agent.risk_level", risk_level)
     rprint(fmt.success(f"Set risk level: {risk_level}"))
 
-    # Gitleaks check
-    if not skip_gitleaks:
+    # Gitleaks check (opt-in via --with-gitleaks or --all)
+    if want_gitleaks:
         _gitleaks_on_path = None if update else shutil.which("gitleaks")
         _rafter_bin = Path.home() / ".rafter" / "bin" / "gitleaks"
         if _gitleaks_on_path:
@@ -289,9 +302,9 @@ def init(
                     "and ensure it is on PATH, then re-run 'rafter agent init'."
                 ))
 
-    # Install OpenClaw skill if applicable
+    # Install OpenClaw skill if opted in
     openclaw_ok = False
-    if has_openclaw and not skip_openclaw:
+    if has_openclaw and want_openclaw:
         ok, source, dest, error = _install_openclaw_skill()
         openclaw_ok = ok
         if ok:
@@ -304,9 +317,9 @@ def init(
             if error:
                 rprint(fmt.warning(f"  Error: {error}"))
 
-    # Install Claude Code hooks
+    # Install Claude Code hooks if opted in
     claude_code_ok = False
-    if has_claude_code and not skip_claude_code:
+    if has_claude_code and want_claude_code:
         try:
             _install_claude_code_hooks()
             manager.set("agent.environments.claude_code.enabled", True)
@@ -314,9 +327,9 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Claude Code hooks: {e}"))
 
-    # Install Codex CLI skills
+    # Install Codex CLI skills if opted in
     codex_ok = False
-    if has_codex and not skip_codex:
+    if has_codex and want_codex:
         try:
             ok, error = _install_codex_skills()
             codex_ok = ok
@@ -330,13 +343,30 @@ def init(
     rprint()
     rprint(fmt.success("Agent security initialized!"))
     rprint()
-    rprint("Next steps:")
-    if openclaw_ok:
-        rprint("  - Restart OpenClaw to load skill")
-    if claude_code_ok:
-        rprint("  - Restart Claude Code to load hooks")
-    if codex_ok:
-        rprint("  - Restart Codex CLI to load skills")
+
+    any_integration = openclaw_ok or claude_code_ok or codex_ok
+
+    if any_integration:
+        rprint("Next steps:")
+        if openclaw_ok:
+            rprint("  - Restart OpenClaw to load skill")
+        if claude_code_ok:
+            rprint("  - Restart Claude Code to load hooks")
+        if codex_ok:
+            rprint("  - Restart Codex CLI to load skills")
+    elif detected:
+        rprint("No integrations were installed. To install, re-run with opt-in flags:")
+        rprint("  rafter agent init --all                  # Install all detected")
+        if has_claude_code:
+            rprint("  rafter agent init --with-claude-code     # Claude Code only")
+        if has_openclaw:
+            rprint("  rafter agent init --with-openclaw        # OpenClaw only")
+        if has_codex:
+            rprint("  rafter agent init --with-codex           # Codex CLI only")
+    else:
+        rprint("No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
+
+    rprint()
     rprint("  - Run: rafter scan local . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
     rprint()
@@ -1112,7 +1142,7 @@ def _check_claude_code() -> _CheckResult:
     claude_dir = home / ".claude"
 
     if not claude_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --claude-code' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-claude-code' to enable", optional=True)
 
     settings_path = claude_dir / "settings.json"
     if not settings_path.exists():
@@ -1129,7 +1159,7 @@ def _check_claude_code() -> _CheckResult:
         for entry in hooks
     )
     if not has_rafter:
-        return _CheckResult(name, False, "Rafter hooks not installed — run 'rafter agent init --claude-code'", optional=True)
+        return _CheckResult(name, False, "Rafter hooks not installed — run 'rafter agent init --with-claude-code'", optional=True)
     return _CheckResult(name, True, "Hooks installed")
 
 
@@ -1140,11 +1170,11 @@ def _check_openclaw() -> _CheckResult:
     skills_dir = home / ".openclaw" / "skills"
 
     if not skills_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-openclaw' to enable", optional=True)
 
     skill_path = skills_dir / "rafter-security.md"
     if not skill_path.exists():
-        return _CheckResult(name, False, "Rafter skill not installed — run 'rafter agent init'", optional=True)
+        return _CheckResult(name, False, "Rafter skill not installed — run 'rafter agent init --with-openclaw'", optional=True)
 
     # Try to extract version from frontmatter
     version = ""
@@ -1508,7 +1538,7 @@ def status():
     elif Path(gl_path).exists():
         print(f"Gitleaks:     {gl_path} (local)")
     else:
-        print("Gitleaks:     not found — run: rafter agent init")
+        print("Gitleaks:     not found — run: rafter agent init --with-gitleaks")
 
     # --- Claude Code hooks ---
     claude_dir = Path.home() / ".claude"
@@ -1528,8 +1558,8 @@ def status():
                         posttool_ok = True
         except Exception:
             pass
-    pretool_status = "installed" if pretool_ok else "not installed — run: rafter agent init"
-    posttool_status = "installed" if posttool_ok else "not installed — run: rafter agent init"
+    pretool_status = "installed" if pretool_ok else "not installed — run: rafter agent init --with-claude-code"
+    posttool_status = "installed" if posttool_ok else "not installed — run: rafter agent init --with-claude-code"
     print(f"PreToolUse:   {pretool_status}")
     print(f"PostToolUse:  {posttool_status}")
 
@@ -1538,7 +1568,7 @@ def status():
     if skill_path.exists():
         print(f"OpenClaw:     skill installed ({skill_path})")
     elif (Path.home() / ".openclaw").exists():
-        print("OpenClaw:     detected but skill missing — run: rafter agent init")
+        print("OpenClaw:     detected but skill missing — run: rafter agent init --with-openclaw")
     else:
         print("OpenClaw:     not detected (optional)")
 
@@ -1548,7 +1578,7 @@ def status():
     if codex_skill_path.exists():
         print(f"Codex CLI:    skills installed ({Path.home() / '.agents' / 'skills'})")
     elif codex_dir.exists():
-        print("Codex CLI:    detected but skills missing — run: rafter agent init")
+        print("Codex CLI:    detected but skills missing — run: rafter agent init --with-codex")
     else:
         print("Codex CLI:    not detected (optional)")
 

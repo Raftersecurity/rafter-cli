@@ -28,8 +28,8 @@ rafter scan local .
 **2. Install the pre-commit hook**
 
 ```sh
-rafter agent init
-# → Installs pre-commit hook in .git/hooks/pre-commit
+rafter agent init --all
+# → Installs all detected integrations
 # → Downloads Gitleaks (or falls back to built-in scanner)
 ```
 
@@ -132,14 +132,15 @@ Local security features for autonomous AI agents. Everything below works offline
 ### Setup
 
 ```sh
-rafter agent init
+rafter agent init --all           # install all detected integrations
+rafter agent init --with-claude-code  # or install specific ones
 ```
 
-This single command:
+This command:
 - Creates `~/.rafter/` config and audit log
-- Auto-detects Claude Code, Codex CLI, and OpenClaw
-- Installs Rafter skills/extensions to each detected agent
-- Downloads [Gitleaks](https://github.com/gitleaks/gitleaks) for enhanced secret scanning (falls back to built-in 21-pattern regex scanner)
+- Auto-detects Claude Code, Codex CLI, OpenClaw, Gemini, Cursor, Windsurf, Continue.dev, and Aider
+- With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
+- With `--with-gitleaks` or `--all`: downloads [Gitleaks](https://github.com/gitleaks/gitleaks) for enhanced secret scanning (falls back to built-in 21-pattern regex scanner)
 
 ### Secret Scanning
 
@@ -304,7 +305,7 @@ Add to any MCP client config:
 | Codex CLI | `~/.codex` | `~/.agents/skills/rafter/` and `rafter-agent-security/` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/rafter-security.md` |
 
-`rafter agent init` auto-detects which agents are installed and installs the appropriate skills. Two skills per agent:
+`rafter agent init` auto-detects which agents are installed. Use `--with-*` flags or `--all` to install the appropriate skills. Two skills per agent:
 
 - **Rafter Security Audits** — Safe for the agent to auto-invoke (read-only API calls). Triggers remote scans, retrieves results.
 - **Agent Security** — User-invoked only (local file access, command execution). Secret scanning, command interception, skill auditing, audit log.

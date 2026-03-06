@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`rafter agent init` UX: opt-in not skip** (Node + Python): replaced `--skip-*` flags with `--with-*` opt-in flags. Integrations are no longer installed by default — use `--with-claude-code`, `--with-openclaw`, etc. or `--all` to install all detected. This prevents agents from needing to enumerate skip flags for integrations they don't want.
+
 ## [0.5.8] - 2026-02-27
 
 ### Added
