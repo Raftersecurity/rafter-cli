@@ -202,6 +202,139 @@ def _install_codex_skills() -> tuple[bool, str]:
         return False, str(e)
 
 
+# ── MCP server entry (shared across MCP-native clients) ──────────────
+
+_RAFTER_MCP_ENTRY = {
+    "command": "rafter",
+    "args": ["mcp", "serve"],
+}
+
+
+def _install_gemini_mcp() -> bool:
+    """Install MCP server config for Gemini CLI (~/.gemini/settings.json)."""
+    home = Path.home()
+    gemini_dir = home / ".gemini"
+    settings_path = gemini_dir / "settings.json"
+
+    gemini_dir.mkdir(parents=True, exist_ok=True)
+
+    settings: dict[str, Any] = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Gemini settings.json was unreadable, creating new one"))
+
+    if "mcpServers" not in settings:
+        settings["mcpServers"] = {}
+    settings["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {settings_path}"))
+    return True
+
+
+def _install_cursor_mcp() -> bool:
+    """Install MCP server config for Cursor (~/.cursor/mcp.json)."""
+    home = Path.home()
+    cursor_dir = home / ".cursor"
+    mcp_path = cursor_dir / "mcp.json"
+
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+
+    config: dict[str, Any] = {}
+    if mcp_path.exists():
+        try:
+            config = json.loads(mcp_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Cursor mcp.json was unreadable, creating new one"))
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = {}
+    config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    mcp_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
+    return True
+
+
+def _install_windsurf_mcp() -> bool:
+    """Install MCP server config for Windsurf (~/.codeium/windsurf/mcp_config.json)."""
+    home = Path.home()
+    windsurf_dir = home / ".codeium" / "windsurf"
+    mcp_path = windsurf_dir / "mcp_config.json"
+
+    windsurf_dir.mkdir(parents=True, exist_ok=True)
+
+    config: dict[str, Any] = {}
+    if mcp_path.exists():
+        try:
+            config = json.loads(mcp_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Windsurf mcp_config.json was unreadable, creating new one"))
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = {}
+    config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    mcp_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
+    return True
+
+
+def _install_continue_dev_mcp() -> bool:
+    """Install MCP server config for Continue.dev (~/.continue/config.json)."""
+    home = Path.home()
+    continue_dir = home / ".continue"
+    config_path = continue_dir / "config.json"
+
+    continue_dir.mkdir(parents=True, exist_ok=True)
+
+    config: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Continue.dev config.json was unreadable, creating new one"))
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = []
+
+    # Array format (older Continue.dev) vs object format (newer)
+    if isinstance(config["mcpServers"], list):
+        config["mcpServers"] = [s for s in config["mcpServers"] if s.get("name") != "rafter"]
+        config["mcpServers"].append({
+            "name": "rafter",
+            "command": _RAFTER_MCP_ENTRY["command"],
+            "args": _RAFTER_MCP_ENTRY["args"],
+        })
+    else:
+        config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    return True
+
+
+def _install_aider_mcp() -> bool:
+    """Install MCP config for Aider (~/.aider.conf.yml)."""
+    home = Path.home()
+    config_path = home / ".aider.conf.yml"
+
+    content = ""
+    if config_path.exists():
+        content = config_path.read_text()
+
+    if "rafter mcp serve" in content:
+        rprint(fmt.success("Rafter MCP already configured in Aider config"))
+        return True
+
+    mcp_line = "\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n"
+    config_path.write_text(content + mcp_line)
+    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    return True
+
+
 @agent_app.command()
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
@@ -209,6 +342,11 @@ def init(
     with_openclaw: bool = typer.Option(False, "--with-openclaw", help="Install OpenClaw integration"),
     with_claude_code: bool = typer.Option(False, "--with-claude-code", help="Install Claude Code integration"),
     with_codex: bool = typer.Option(False, "--with-codex", help="Install Codex CLI integration"),
+    with_gemini: bool = typer.Option(False, "--with-gemini", help="Install Gemini CLI integration"),
+    with_aider: bool = typer.Option(False, "--with-aider", help="Install Aider integration"),
+    with_cursor: bool = typer.Option(False, "--with-cursor", help="Install Cursor integration"),
+    with_windsurf: bool = typer.Option(False, "--with-windsurf", help="Install Windsurf integration"),
+    with_continue: bool = typer.Option(False, "--with-continue", help="Install Continue.dev integration"),
     all_integrations: bool = typer.Option(False, "--all", help="Install all detected integrations and download Gitleaks"),
     update: bool = typer.Option(False, "--update", help="Re-download gitleaks and reinstall integrations without resetting config"),
 ):
@@ -224,11 +362,21 @@ def init(
     has_openclaw = (home / ".openclaw").exists()
     has_claude_code = (home / ".claude").exists()
     has_codex = (home / ".codex").exists()
+    has_gemini = (home / ".gemini").exists()
+    has_cursor = (home / ".cursor").exists()
+    has_windsurf = (home / ".codeium" / "windsurf").exists()
+    has_continue_dev = (home / ".continue").exists()
+    has_aider = (home / ".aider.conf.yml").exists()
 
     # Resolve opt-in flags (--all enables all detected)
     want_openclaw = with_openclaw or all_integrations
     want_claude_code = with_claude_code or all_integrations
     want_codex = with_codex or all_integrations
+    want_gemini = with_gemini or all_integrations
+    want_cursor = with_cursor or all_integrations
+    want_windsurf = with_windsurf or all_integrations
+    want_continue = with_continue or all_integrations
+    want_aider = with_aider or all_integrations
     want_gitleaks = with_gitleaks or all_integrations
 
     # Show detected environments
@@ -239,6 +387,16 @@ def init(
         detected.append("Claude Code")
     if has_codex:
         detected.append("Codex CLI")
+    if has_gemini:
+        detected.append("Gemini CLI")
+    if has_cursor:
+        detected.append("Cursor")
+    if has_windsurf:
+        detected.append("Windsurf")
+    if has_continue_dev:
+        detected.append("Continue.dev")
+    if has_aider:
+        detected.append("Aider")
 
     if detected:
         rprint(fmt.info(f"Detected environments: {', '.join(detected)}"))
@@ -252,6 +410,16 @@ def init(
         rprint(fmt.warning("Claude Code requested but not detected (~/.claude not found)"))
     if want_codex and not has_codex:
         rprint(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"))
+    if want_gemini and not has_gemini:
+        rprint(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"))
+    if want_cursor and not has_cursor:
+        rprint(fmt.warning("Cursor requested but not detected (~/.cursor not found)"))
+    if want_windsurf and not has_windsurf:
+        rprint(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"))
+    if want_continue and not has_continue_dev:
+        rprint(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
+    if want_aider and not has_aider:
+        rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
 
     # Initialize
     manager.initialize()
@@ -340,11 +508,61 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Codex CLI integration: {e}"))
 
+    # Install Gemini CLI MCP if opted in
+    gemini_ok = False
+    if has_gemini and want_gemini:
+        try:
+            gemini_ok = _install_gemini_mcp()
+            if gemini_ok:
+                manager.set("agent.environments.gemini.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Gemini CLI integration: {e}"))
+
+    # Install Cursor MCP if opted in
+    cursor_ok = False
+    if has_cursor and want_cursor:
+        try:
+            cursor_ok = _install_cursor_mcp()
+            if cursor_ok:
+                manager.set("agent.environments.cursor.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Cursor integration: {e}"))
+
+    # Install Windsurf MCP if opted in
+    windsurf_ok = False
+    if has_windsurf and want_windsurf:
+        try:
+            windsurf_ok = _install_windsurf_mcp()
+            if windsurf_ok:
+                manager.set("agent.environments.windsurf.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Windsurf integration: {e}"))
+
+    # Install Continue.dev MCP if opted in
+    continue_ok = False
+    if has_continue_dev and want_continue:
+        try:
+            continue_ok = _install_continue_dev_mcp()
+            if continue_ok:
+                manager.set("agent.environments.continue_dev.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Continue.dev integration: {e}"))
+
+    # Install Aider MCP if opted in
+    aider_ok = False
+    if has_aider and want_aider:
+        try:
+            aider_ok = _install_aider_mcp()
+            if aider_ok:
+                manager.set("agent.environments.aider.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Aider integration: {e}"))
+
     rprint()
     rprint(fmt.success("Agent security initialized!"))
     rprint()
 
-    any_integration = openclaw_ok or claude_code_ok or codex_ok
+    any_integration = openclaw_ok or claude_code_ok or codex_ok or gemini_ok or cursor_ok or windsurf_ok or continue_ok or aider_ok
 
     if any_integration:
         rprint("Next steps:")
@@ -354,6 +572,16 @@ def init(
             rprint("  - Restart Claude Code to load hooks")
         if codex_ok:
             rprint("  - Restart Codex CLI to load skills")
+        if gemini_ok:
+            rprint("  - Restart Gemini CLI to load MCP server")
+        if cursor_ok:
+            rprint("  - Restart Cursor to load MCP server")
+        if windsurf_ok:
+            rprint("  - Restart Windsurf to load MCP server")
+        if continue_ok:
+            rprint("  - Restart Continue.dev to load MCP server")
+        if aider_ok:
+            rprint("  - Restart Aider to load MCP server")
     elif detected:
         rprint("No integrations were installed. To install, re-run with opt-in flags:")
         rprint("  rafter agent init --all                  # Install all detected")
@@ -363,6 +591,16 @@ def init(
             rprint("  rafter agent init --with-openclaw        # OpenClaw only")
         if has_codex:
             rprint("  rafter agent init --with-codex           # Codex CLI only")
+        if has_gemini:
+            rprint("  rafter agent init --with-gemini          # Gemini CLI only")
+        if has_cursor:
+            rprint("  rafter agent init --with-cursor          # Cursor only")
+        if has_windsurf:
+            rprint("  rafter agent init --with-windsurf        # Windsurf only")
+        if has_continue_dev:
+            rprint("  rafter agent init --with-continue        # Continue.dev only")
+        if has_aider:
+            rprint("  rafter agent init --with-aider           # Aider only")
     else:
         rprint("No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
 
@@ -1581,6 +1819,47 @@ def status():
         print("Codex CLI:    detected but skills missing — run: rafter agent init --with-codex")
     else:
         print("Codex CLI:    not detected (optional)")
+
+    # --- MCP-native AI engine integrations ---
+    home = Path.home()
+    mcp_agents = [
+        {"name": "Gemini CLI", "flag": "--with-gemini", "config_dir": home / ".gemini", "config_file": home / ".gemini" / "settings.json", "needle": "rafter"},
+        {"name": "Cursor", "flag": "--with-cursor", "config_dir": home / ".cursor", "config_file": home / ".cursor" / "mcp.json", "needle": "rafter"},
+        {"name": "Windsurf", "flag": "--with-windsurf", "config_dir": home / ".codeium" / "windsurf", "config_file": home / ".codeium" / "windsurf" / "mcp_config.json", "needle": "rafter"},
+        {"name": "Continue.dev", "flag": "--with-continue", "config_dir": home / ".continue", "config_file": home / ".continue" / "config.json", "needle": "rafter"},
+    ]
+
+    for agent in mcp_agents:
+        label = f"{agent['name']}:".ljust(14)
+        config_file = agent["config_file"]
+        config_dir = agent["config_dir"]
+        if config_file.exists():
+            try:
+                content = config_file.read_text()
+                if agent["needle"] in content:
+                    print(f"{label}MCP installed ({config_file})")
+                else:
+                    print(f"{label}detected but MCP missing — run: rafter agent init {agent['flag']}")
+            except OSError:
+                print(f"{label}config unreadable ({config_file})")
+        elif config_dir.exists():
+            print(f"{label}detected but MCP missing — run: rafter agent init {agent['flag']}")
+        else:
+            print(f"{label}not detected (optional)")
+
+    # --- Aider ---
+    aider_config = home / ".aider.conf.yml"
+    if aider_config.exists():
+        try:
+            content = aider_config.read_text()
+            if "rafter mcp serve" in content:
+                print(f"Aider:        MCP installed ({aider_config})")
+            else:
+                print("Aider:        detected but MCP missing — run: rafter agent init --with-aider")
+        except OSError:
+            print(f"Aider:        config unreadable ({aider_config})")
+    else:
+        print("Aider:        not detected (optional)")
 
     # --- Audit log summary ---
     print(f"\nAudit log:    {audit_path}")
