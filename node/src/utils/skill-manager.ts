@@ -194,8 +194,10 @@ export class SkillManager {
     const skillPath = this.getRafterSkillPath();
     const sourcePath = this.getRafterSkillSourcePath();
 
-    if (!this.isOpenClawInstalled()) {
-      return { ok: false, sourcePath, destPath: skillPath, error: `OpenClaw skills directory not found: ${this.getOpenClawSkillsDir()}` };
+    // Check if ~/.openclaw exists (the parent dir), not just the skills subdir
+    const openclawDir = path.join(os.homedir(), ".openclaw");
+    if (!fs.existsSync(openclawDir)) {
+      return { ok: false, sourcePath, destPath: skillPath, error: `OpenClaw not found: ${openclawDir}` };
     }
 
     // Check if already installed and not forcing
@@ -204,7 +206,7 @@ export class SkillManager {
     }
 
     try {
-      // Ensure skills directory exists
+      // Ensure skills directory exists (may not exist on fresh OpenClaw installs)
       const skillsDir = this.getOpenClawSkillsDir();
       if (!fs.existsSync(skillsDir)) {
         fs.mkdirSync(skillsDir, { recursive: true });
