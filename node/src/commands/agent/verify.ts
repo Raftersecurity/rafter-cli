@@ -99,6 +99,23 @@ function checkOpenClaw(): CheckResult {
   return { name, passed: true, detail: `Rafter skill installed${version ? ` (v${version})` : ""}` };
 }
 
+function checkCodex(): CheckResult {
+  const name = "Codex CLI";
+  const homeDir = os.homedir();
+  const codexDir = path.join(homeDir, ".codex");
+
+  if (!fs.existsSync(codexDir)) {
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-codex' to enable` };
+  }
+
+  const skillPath = path.join(homeDir, ".agents", "skills", "rafter", "SKILL.md");
+  if (!fs.existsSync(skillPath)) {
+    return { name, passed: false, optional: true, detail: `Rafter skills not installed — run 'rafter agent init --with-codex'` };
+  }
+
+  return { name, passed: true, detail: `Skills installed (${path.join(homeDir, ".agents", "skills")})` };
+}
+
 export function createVerifyCommand(): Command {
   return new Command("verify")
     .description("Check agent security integration status")
@@ -112,6 +129,7 @@ export function createVerifyCommand(): Command {
         await checkGitleaks(),
         checkClaudeCode(),
         checkOpenClaw(),
+        checkCodex(),
       ];
 
       for (const r of results) {
