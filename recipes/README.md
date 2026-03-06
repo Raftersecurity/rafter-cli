@@ -9,6 +9,11 @@ Copy-paste integration snippets for common setups. Each recipe is self-contained
 | [Policy File](rafter-policy.yml) | Per-project security rules (`.rafter.yml`) |
 | [Claude Code](claude-code.md) | Hook + skill setup for Claude Code |
 | [Codex CLI](codex-cli.md) | Skill + policy setup for OpenAI Codex |
+| [Gemini CLI](gemini-cli.md) | MCP server setup for Google Gemini CLI |
+| [Cursor](cursor.md) | MCP server setup for Cursor |
+| [Windsurf](windsurf.md) | MCP server setup for Windsurf (Codeium) |
+| [Continue.dev](continue-dev.md) | MCP server setup for Continue.dev |
+| [Aider](aider.md) | MCP server setup for Aider |
 | [OpenClaw](openclaw.md) | Skill setup for OpenClaw agents |
 
 ## Quick start
