@@ -156,8 +156,12 @@ def _install_openclaw_skill() -> tuple[bool, str, str, str]:
     except Exception:
         source_path = "(bundled resource)"
 
-    if not skills_dir.exists():
-        return False, source_path, str(dest_path), f"OpenClaw skills directory not found: {skills_dir}"
+    openclaw_dir = home / ".openclaw"
+    if not openclaw_dir.exists():
+        return False, source_path, str(dest_path), f"OpenClaw not found: {openclaw_dir}"
+
+    # Ensure skills directory exists (may not exist on fresh OpenClaw installs)
+    skills_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         content = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md").read_text(encoding="utf-8")
@@ -180,22 +184,23 @@ def _install_codex_skills() -> tuple[bool, str]:
         # Install backend skill
         backend_dir = agents_skills_dir / "rafter"
         backend_dir.mkdir(parents=True, exist_ok=True)
-        backend_source = Path(__file__).parent.parent.parent / ".claude" / "skills" / "rafter" / "SKILL.md"
-        if backend_source.exists():
-            shutil.copy2(backend_source, backend_dir / "SKILL.md")
+        res = importlib.resources.files("rafter_cli.resources")
+        try:
+            content = res.joinpath("skills", "rafter", "SKILL.md").read_text(encoding="utf-8")
+            (backend_dir / "SKILL.md").write_text(content, encoding="utf-8")
             rprint(fmt.success(f"Installed Rafter Backend skill to {backend_dir / 'SKILL.md'}"))
-        else:
-            rprint(fmt.warning(f"Backend skill template not found at {backend_source}"))
+        except Exception:
+            rprint(fmt.warning("Backend skill template not found in package resources"))
 
         # Install agent security skill
         agent_dir = agents_skills_dir / "rafter-agent-security"
         agent_dir.mkdir(parents=True, exist_ok=True)
-        agent_source = Path(__file__).parent.parent.parent / ".claude" / "skills" / "rafter-agent-security" / "SKILL.md"
-        if agent_source.exists():
-            shutil.copy2(agent_source, agent_dir / "SKILL.md")
+        try:
+            content = res.joinpath("skills", "rafter-agent-security", "SKILL.md").read_text(encoding="utf-8")
+            (agent_dir / "SKILL.md").write_text(content, encoding="utf-8")
             rprint(fmt.success(f"Installed Rafter Agent Security skill to {agent_dir / 'SKILL.md'}"))
-        else:
-            rprint(fmt.warning(f"Agent Security skill template not found at {agent_source}"))
+        except Exception:
+            rprint(fmt.warning("Agent Security skill template not found in package resources"))
 
         return True, ""
     except Exception as e:
@@ -1429,6 +1434,21 @@ def _check_openclaw() -> _CheckResult:
     return _CheckResult(name, True, detail)
 
 
+def _check_codex() -> _CheckResult:
+    """Check if Codex CLI integration is healthy."""
+    name = "Codex CLI"
+    home = Path.home()
+
+    if not (home / ".codex").exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-codex' to enable", optional=True)
+
+    skill_path = home / ".agents" / "skills" / "rafter" / "SKILL.md"
+    if not skill_path.exists():
+        return _CheckResult(name, False, "Rafter skills not installed — run 'rafter agent init --with-codex'", optional=True)
+
+    return _CheckResult(name, True, f"Skills installed ({home / '.agents' / 'skills'})")
+
+
 @agent_app.command()
 def verify():
     """Check agent security integration status."""
@@ -1441,6 +1461,7 @@ def verify():
         _check_gitleaks(),
         _check_claude_code(),
         _check_openclaw(),
+        _check_codex(),
     ]
 
     for r in results:
