@@ -1,0 +1,48 @@
+# .rafter.yml — Per-project security policy
+#
+# Drop this file in your project root. Rafter walks from cwd to git root
+# looking for it. Values here override ~/.rafter/config.json.
+#
+# Docs: https://docs.rafter.so/cli/policy
+
+version: "1"
+
+# Risk tolerance: minimal | moderate (default) | aggressive
+risk_level: moderate
+
+command_policy:
+  # Mode: allow-all | approve-dangerous (default) | deny-list
+  mode: approve-dangerous
+
+  # Always blocked (regex patterns)
+  blocked_patterns:
+    - "rm -rf /"
+    - "mkfs\\."
+    - ":(){ :|:& };:"
+
+  # Require explicit approval (regex patterns)
+  require_approval:
+    - "npm publish"
+    - "git push --force"
+    - "curl.*\\|.*sh"
+
+scan:
+  # Paths to skip during secret scanning (glob patterns)
+  exclude_paths:
+    - "vendor/"
+    - "third_party/"
+    - "node_modules/"
+    - "*.min.js"
+
+  # Project-specific secret patterns
+  custom_patterns:
+    - name: "Internal API Key"
+      regex: "INTERNAL_[A-Z0-9]{32}"
+      severity: critical
+    # - name: "My Service Token"
+    #   regex: "myservice_[a-z0-9]{40}"
+    #   severity: high
+
+audit:
+  retention_days: 90       # default: 30
+  log_level: info
