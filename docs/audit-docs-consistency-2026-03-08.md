@@ -9,19 +9,20 @@
 
 14 inconsistencies found across the Rome-1/docs repository when compared against
 the raftercli v0.5.9 source code. 3 are high-priority (broken flags/missing
-features), 5 are medium, and 6 are low.
+features), 5 are medium, and 6 are low. **1 resolved** (see strikethrough items).
 
 ---
 
 ## HIGH Priority (documented flags/features that don't work)
 
-### 1. `rafter ci init` documented as "coming soon" but is implemented
+### 1. ~~`rafter ci init` documented as "coming soon" but is implemented~~ ✅ RESOLVED
 
 - **Doc file:** `guides/ci-cd.mdx`
-- **Issue:** Note says "rafter ci init is coming soon" — but the command is fully
+- **Issue:** Note said "rafter ci init is coming soon" — but the command is fully
   implemented in `node/src/commands/ci/init.ts` with `--platform`, `--output`,
   and `--with-backend` flags.
-- **Fix:** Remove the "coming soon" note and document the command properly.
+- **Fix:** "Coming soon" note removed. `ci-cd.mdx` now documents the command with
+  a tip block pointing to the command reference.
 - **Bead:** rc-0ud
 
 ### 2. `rafter agent audit` flag names wrong
