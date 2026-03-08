@@ -291,11 +291,16 @@ async function scanDiffFiles(
       console.error(`Scanning ${changedFiles.length} file(s) changed since ${ref}...`);
     }
 
+    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+
     const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
 
     const allResults: ScanResult[] = [];
     for (const file of changedFiles) {
-      const filePath = path.resolve(file);
+      const filePath = path.resolve(repoRoot, file);
       if (!fs.existsSync(filePath)) continue;
       const stats = fs.statSync(filePath);
       if (!stats.isFile()) continue;
@@ -341,11 +346,16 @@ async function scanStagedFiles(
       console.error(`Scanning ${stagedFiles.length} staged file(s)...`);
     }
 
+    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+
     const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
 
     const allResults: ScanResult[] = [];
     for (const file of stagedFiles) {
-      const filePath = path.resolve(file);
+      const filePath = path.resolve(repoRoot, file);
       if (!fs.existsSync(filePath)) continue;
       const stats = fs.statSync(filePath);
       if (!stats.isFile()) continue;
