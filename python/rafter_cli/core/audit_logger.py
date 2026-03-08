@@ -80,7 +80,7 @@ class AuditLogger:
     def __init__(self, log_path: Path | None = None):
         self._path = log_path or get_audit_log_path()
         self._session_id = f"{int(time.time() * 1000)}-{random.randbytes(4).hex()}"
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     def log(self, entry: dict[str, Any]) -> None:
         """Append an audit entry (JSONL)."""
@@ -94,8 +94,11 @@ class AuditLogger:
             "session_id": self._session_id,
             **entry,
         }
-        with open(self._path, "a") as f:
-            f.write(json.dumps(full) + "\n")
+        fd = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, (json.dumps(full) + "\n").encode())
+        finally:
+            os.close(fd)
 
         # Send webhook notification if configured and risk meets threshold
         self._send_notification(full, config)
