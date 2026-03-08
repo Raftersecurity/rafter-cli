@@ -54,11 +54,26 @@ When making CLI changes, update these files in Rome-1/docs:
 ## Common Pitfalls
 
 1. **Deprecated commands**: When deprecating a command, update ALL docs files that reference it (not just the primary one). Use grep to find all occurrences.
-2. **Flag names**: Verify exact flag names against CLI_SPEC.md. Common mistakes: `--limit` vs `--last`, flags that don't exist.
+2. **Flag names**: Verify exact flag names against CLI_SPEC.md. Common mistakes: `--limit` vs `--last`, `--skip-*` vs `--with-*`, flags that don't exist.
 3. **File paths**: `audit.jsonl` not `audit.log`. Always check CLI_SPEC.md for canonical paths.
 4. **Exit codes**: Local scan has 3 exit codes (0/1/2), backend has 4 (0/1/2/3). Keep them separate.
 5. **Config keys**: Only document keys listed in CLI_SPEC.md. Don't invent config paths.
 6. **Skills per agent**: Each agent gets TWO skills (`rafter/` and `rafter-agent-security/`), not one.
+
+## Known Doc Errors (pending fix in Rome-1/docs)
+
+### `--skip-*` flags on init don't exist (rc-lya)
+
+**File:** `guides/agent-security/getting-started.mdx` (auto-detection table)
+
+The table lists `--skip-claude-code`, `--skip-codex`, and `--skip-openclaw` as
+flags for `rafter agent init`. These flags do not exist. The `init` command uses
+opt-in `--with-*` flags (e.g., `--with-claude-code`, `--with-codex`,
+`--with-openclaw`). Remove the `--skip-*` column/rows from the auto-detection
+table entirely.
+
+Note: `--skip-openclaw` does exist, but only on `rafter agent audit-skill`, not
+on `init`.
 
 ## Sync Process
 
