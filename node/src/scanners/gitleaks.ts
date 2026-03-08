@@ -85,12 +85,7 @@ export class GitleaksScanner {
         matches: results.map(r => this.convertToPatternMatch(r))
       };
     } catch (e: any) {
-      // Clean up report
-      if (fs.existsSync(tmpReport)) {
-        fs.unlinkSync(tmpReport);
-      }
-
-      // Gitleaks exits with code 1 when leaks found
+      // Gitleaks exits with code 1 when leaks found — read report before cleanup
       if (e.code === 1 && fs.existsSync(tmpReport)) {
         const results = this.parseResults(tmpReport);
         fs.unlinkSync(tmpReport);
@@ -99,6 +94,11 @@ export class GitleaksScanner {
           file: filePath,
           matches: results.map(r => this.convertToPatternMatch(r))
         };
+      }
+
+      // Clean up report for non-leak errors
+      if (fs.existsSync(tmpReport)) {
+        fs.unlinkSync(tmpReport);
       }
 
       throw new Error(`Gitleaks scan failed: ${e.message}`);
