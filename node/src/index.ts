@@ -14,10 +14,12 @@ import { createCompletionCommand } from "./commands/completion.js";
 import { createIssuesCommand } from "./commands/issues/index.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
+import { createRequire } from "module";
 
 dotenv.config();
 
-const VERSION = "0.5.7";
+const require = createRequire(import.meta.url);
+const { version: VERSION } = require("../../package.json");
 
 const program = new Command()
   .name("rafter")
