@@ -171,11 +171,29 @@ function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFil
       }
     }
     if (policy.scan.customPatterns !== undefined) {
-      if (!Array.isArray(policy.scan.customPatterns) || !policy.scan.customPatterns.every((v: any) =>
-        v && typeof v === "object" && typeof v.name === "string" && v.name !== "" && typeof v.regex === "string" && v.regex !== "" && typeof v.severity === "string"
-      )) {
-        console.error(`Warning: "scan.custom_patterns" must be an array of objects with name, regex, severity — ignoring.`);
+      if (!Array.isArray(policy.scan.customPatterns)) {
+        console.error(`Warning: "scan.custom_patterns" must be an array — ignoring.`);
         delete policy.scan.customPatterns;
+      } else {
+        const valid: PolicyCustomPattern[] = [];
+        for (const v of policy.scan.customPatterns) {
+          if (!v || typeof v !== "object" || typeof v.name !== "string" || !v.name || typeof v.regex !== "string" || !v.regex || typeof v.severity !== "string") {
+            console.error(`Warning: skipping malformed custom_patterns entry — must have name, regex, severity.`);
+            continue;
+          }
+          try {
+            new RegExp(v.regex);
+          } catch {
+            console.error(`Warning: skipping custom pattern "${v.name}" — invalid regex.`);
+            continue;
+          }
+          valid.push(v);
+        }
+        if (valid.length > 0) {
+          policy.scan.customPatterns = valid;
+        } else {
+          delete policy.scan.customPatterns;
+        }
       }
     }
   }
