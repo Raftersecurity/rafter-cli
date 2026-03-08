@@ -216,5 +216,5 @@ class TestInstallHookPush:
         from rafter_cli.commands.agent import _get_hook_template
         content = _get_hook_template("pre-push")
         assert "Rafter Security Pre-Push Hook" in content
-        assert "rafter agent scan" in content
+        assert "rafter scan local" in content
         assert "git push --no-verify" in content

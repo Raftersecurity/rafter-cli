@@ -27,14 +27,14 @@ fi
 echo "🔍 Rafter: Scanning staged files for secrets..."
 
 # Scan staged files
-rafter agent scan --staged --quiet
+rafter scan local --staged --quiet
 
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
     echo -e "${RED}❌ Commit blocked: Secrets detected in staged files${NC}"
     echo ""
-    echo "   Run: rafter agent scan --staged"
+    echo "   Run: rafter scan local --staged"
     echo "   To see details and remediate."
     echo ""
     echo "   To bypass (NOT recommended): git commit --no-verify"

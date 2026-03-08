@@ -63,7 +63,7 @@ _rafter_completions() {
       ;;
     init)
       if [[ "\${COMP_WORDS[1]}" == "agent" ]]; then
-        COMPREPLY=( $(compgen -W "--risk-level --skip-openclaw --skip-claude-code --claude-code --skip-gitleaks --help" -- "\${cur}") )
+        COMPREPLY=( $(compgen -W "--risk-level --with-openclaw --with-claude-code --with-codex --with-gemini --with-aider --with-cursor --with-windsurf --with-continue --with-gitleaks --all --help" -- "\${cur}") )
       elif [[ "\${COMP_WORDS[1]}" == "ci" ]]; then
         COMPREPLY=( $(compgen -W "--platform --output --with-backend --help" -- "\${cur}") )
       fi
@@ -149,10 +149,16 @@ _rafter() {
                 init)
                   _arguments \\
                     '--risk-level[Risk level]:level:(minimal moderate aggressive)' \\
-                    '--skip-openclaw[Skip OpenClaw installation]' \\
-                    '--skip-claude-code[Skip Claude Code installation]' \\
-                    '--claude-code[Force Claude Code installation]' \\
-                    '--skip-gitleaks[Skip Gitleaks download]'
+                    '--with-openclaw[Install OpenClaw integration]' \\
+                    '--with-claude-code[Install Claude Code integration]' \\
+                    '--with-codex[Install Codex CLI integration]' \\
+                    '--with-gemini[Install Gemini CLI integration]' \\
+                    '--with-aider[Install Aider integration]' \\
+                    '--with-cursor[Install Cursor integration]' \\
+                    '--with-windsurf[Install Windsurf integration]' \\
+                    '--with-continue[Install Continue.dev integration]' \\
+                    '--with-gitleaks[Download Gitleaks binary]' \\
+                    '--all[Install all detected integrations]'
                   ;;
                 audit)
                   _arguments \\
@@ -300,10 +306,16 @@ complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcom
 
 # agent init options
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l risk-level -d 'Risk level' -ra 'minimal moderate aggressive'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l skip-openclaw -d 'Skip OpenClaw'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l skip-claude-code -d 'Skip Claude Code'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l claude-code -d 'Force Claude Code'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l skip-gitleaks -d 'Skip Gitleaks'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-openclaw -d 'Install OpenClaw'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-claude-code -d 'Install Claude Code'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-codex -d 'Install Codex CLI'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-gemini -d 'Install Gemini CLI'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-aider -d 'Install Aider'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-cursor -d 'Install Cursor'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-windsurf -d 'Install Windsurf'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-continue -d 'Install Continue.dev'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-gitleaks -d 'Install Gitleaks'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l all -d 'Install all detected'
 
 # agent audit options
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from audit' -l last -d 'Show last N entries' -r

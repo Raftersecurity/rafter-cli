@@ -14,6 +14,7 @@ from rafter_cli.commands.agent import (
     _check_gitleaks,
     _check_claude_code,
     _check_openclaw,
+    _check_codex,
     _CheckResult,
 )
 
@@ -171,6 +172,34 @@ class TestCheckOpenClaw:
         assert "0.5.2" in r.detail
 
 
+# ── _check_codex ─────────────────────────────────────────────────────
+
+class TestCheckCodex:
+    def test_warns_when_codex_not_detected(self, tmp_path):
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_codex()
+        assert not r.passed
+        assert r.optional
+        assert "Not detected" in r.detail
+
+    def test_warns_when_skills_missing(self, tmp_path):
+        (tmp_path / ".codex").mkdir()
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_codex()
+        assert not r.passed
+        assert r.optional
+        assert "not installed" in r.detail.lower()
+
+    def test_passes_when_skills_installed(self, tmp_path):
+        (tmp_path / ".codex").mkdir()
+        skill_dir = tmp_path / ".agents" / "skills" / "rafter"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("# Rafter Backend")
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_codex()
+        assert r.passed
+
+
 # ── verify command (exit code contract) ──────────────────────────────
 
 class TestVerifyCommand:
@@ -186,12 +215,14 @@ class TestVerifyCommand:
              patch("rafter_cli.commands.agent._check_claude_code",
                    return_value=_CheckResult("Claude Code", False, "not configured", optional=True)), \
              patch("rafter_cli.commands.agent._check_openclaw",
-                   return_value=_CheckResult("OpenClaw", False, "not installed", optional=True)):
+                   return_value=_CheckResult("OpenClaw", False, "not installed", optional=True)), \
+             patch("rafter_cli.commands.agent._check_codex",
+                   return_value=_CheckResult("Codex CLI", False, "not detected", optional=True)):
             result = runner.invoke(agent_app, ["verify"])
         assert result.exit_code == 0
 
     def test_exits_0_with_all_checks_passing(self, tmp_path):
-        """All four checks pass → exit 0, no warnings."""
+        """All checks pass → exit 0, no warnings."""
         with patch("rafter_cli.commands.agent._check_config",
                    return_value=_CheckResult("Config", True, "ok")), \
              patch("rafter_cli.commands.agent._check_gitleaks",
@@ -199,7 +230,9 @@ class TestVerifyCommand:
              patch("rafter_cli.commands.agent._check_claude_code",
                    return_value=_CheckResult("Claude Code", True, "ok")), \
              patch("rafter_cli.commands.agent._check_openclaw",
-                   return_value=_CheckResult("OpenClaw", True, "ok")):
+                   return_value=_CheckResult("OpenClaw", True, "ok")), \
+             patch("rafter_cli.commands.agent._check_codex",
+                   return_value=_CheckResult("Codex CLI", True, "ok")):
             result = runner.invoke(agent_app, ["verify"])
         assert result.exit_code == 0
 
@@ -212,7 +245,9 @@ class TestVerifyCommand:
              patch("rafter_cli.commands.agent._check_claude_code",
                    return_value=_CheckResult("Claude Code", False, "not configured", optional=True)), \
              patch("rafter_cli.commands.agent._check_openclaw",
-                   return_value=_CheckResult("OpenClaw", False, "not installed", optional=True)):
+                   return_value=_CheckResult("OpenClaw", False, "not installed", optional=True)), \
+             patch("rafter_cli.commands.agent._check_codex",
+                   return_value=_CheckResult("Codex CLI", False, "not detected", optional=True)):
             result = runner.invoke(agent_app, ["verify"])
         assert result.exit_code == 1
 
@@ -225,7 +260,9 @@ class TestVerifyCommand:
              patch("rafter_cli.commands.agent._check_claude_code",
                    return_value=_CheckResult("Claude Code", False, "absent", optional=True)), \
              patch("rafter_cli.commands.agent._check_openclaw",
-                   return_value=_CheckResult("OpenClaw", False, "absent", optional=True)):
+                   return_value=_CheckResult("OpenClaw", False, "absent", optional=True)), \
+             patch("rafter_cli.commands.agent._check_codex",
+                   return_value=_CheckResult("Codex CLI", False, "absent", optional=True)):
             result = runner.invoke(agent_app, ["verify"])
         assert result.exit_code == 1
 
@@ -238,7 +275,9 @@ class TestVerifyCommand:
              patch("rafter_cli.commands.agent._check_claude_code",
                    return_value=_CheckResult("Claude Code", False, "absent", optional=True)), \
              patch("rafter_cli.commands.agent._check_openclaw",
-                   return_value=_CheckResult("OpenClaw", False, "absent", optional=True)):
+                   return_value=_CheckResult("OpenClaw", False, "absent", optional=True)), \
+             patch("rafter_cli.commands.agent._check_codex",
+                   return_value=_CheckResult("Codex CLI", False, "absent", optional=True)):
             result = runner.invoke(agent_app, ["verify"])
         assert result.exit_code == 0
         assert "optional" in result.output.lower() or "not configured" in result.output.lower()

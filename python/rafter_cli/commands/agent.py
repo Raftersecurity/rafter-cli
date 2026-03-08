@@ -1,9 +1,11 @@
 """Agent security commands: init, scan, audit, exec, config, install-hook, verify, audit-skill."""
 from __future__ import annotations
 
+import hashlib
 import importlib.resources
 import json
 import os
+import platform
 import re
 import shutil
 import stat
@@ -17,6 +19,7 @@ from typing import Any
 import typer
 from rich import print as rprint
 
+from .. import __version__
 from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
 from ..core.config_manager import ConfigManager
@@ -153,8 +156,12 @@ def _install_openclaw_skill() -> tuple[bool, str, str, str]:
     except Exception:
         source_path = "(bundled resource)"
 
-    if not skills_dir.exists():
-        return False, source_path, str(dest_path), f"OpenClaw skills directory not found: {skills_dir}"
+    openclaw_dir = home / ".openclaw"
+    if not openclaw_dir.exists():
+        return False, source_path, str(dest_path), f"OpenClaw not found: {openclaw_dir}"
+
+    # Ensure skills directory exists (may not exist on fresh OpenClaw installs)
+    skills_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         content = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md").read_text(encoding="utf-8")
@@ -168,13 +175,184 @@ def _install_openclaw_skill() -> tuple[bool, str, str, str]:
         return False, source_path, str(dest_path), str(e)
 
 
+def _install_codex_skills() -> tuple[bool, str]:
+    """Install Rafter skills to ~/.agents/skills/ for Codex CLI. Returns (ok, error)."""
+    home = Path.home()
+    agents_skills_dir = home / ".agents" / "skills"
+
+    try:
+        # Install backend skill
+        backend_dir = agents_skills_dir / "rafter"
+        backend_dir.mkdir(parents=True, exist_ok=True)
+        res = importlib.resources.files("rafter_cli.resources")
+        try:
+            content = res.joinpath("skills", "rafter", "SKILL.md").read_text(encoding="utf-8")
+            (backend_dir / "SKILL.md").write_text(content, encoding="utf-8")
+            rprint(fmt.success(f"Installed Rafter Backend skill to {backend_dir / 'SKILL.md'}"))
+        except Exception:
+            rprint(fmt.warning("Backend skill template not found in package resources"))
+
+        # Install agent security skill
+        agent_dir = agents_skills_dir / "rafter-agent-security"
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            content = res.joinpath("skills", "rafter-agent-security", "SKILL.md").read_text(encoding="utf-8")
+            (agent_dir / "SKILL.md").write_text(content, encoding="utf-8")
+            rprint(fmt.success(f"Installed Rafter Agent Security skill to {agent_dir / 'SKILL.md'}"))
+        except Exception:
+            rprint(fmt.warning("Agent Security skill template not found in package resources"))
+
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+# ── MCP server entry (shared across MCP-native clients) ──────────────
+
+_RAFTER_MCP_ENTRY = {
+    "command": "rafter",
+    "args": ["mcp", "serve"],
+}
+
+
+def _install_gemini_mcp() -> bool:
+    """Install MCP server config for Gemini CLI (~/.gemini/settings.json)."""
+    home = Path.home()
+    gemini_dir = home / ".gemini"
+    settings_path = gemini_dir / "settings.json"
+
+    gemini_dir.mkdir(parents=True, exist_ok=True)
+
+    settings: dict[str, Any] = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Gemini settings.json was unreadable, creating new one"))
+
+    if "mcpServers" not in settings:
+        settings["mcpServers"] = {}
+    settings["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {settings_path}"))
+    return True
+
+
+def _install_cursor_mcp() -> bool:
+    """Install MCP server config for Cursor (~/.cursor/mcp.json)."""
+    home = Path.home()
+    cursor_dir = home / ".cursor"
+    mcp_path = cursor_dir / "mcp.json"
+
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+
+    config: dict[str, Any] = {}
+    if mcp_path.exists():
+        try:
+            config = json.loads(mcp_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Cursor mcp.json was unreadable, creating new one"))
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = {}
+    config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    mcp_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
+    return True
+
+
+def _install_windsurf_mcp() -> bool:
+    """Install MCP server config for Windsurf (~/.codeium/windsurf/mcp_config.json)."""
+    home = Path.home()
+    windsurf_dir = home / ".codeium" / "windsurf"
+    mcp_path = windsurf_dir / "mcp_config.json"
+
+    windsurf_dir.mkdir(parents=True, exist_ok=True)
+
+    config: dict[str, Any] = {}
+    if mcp_path.exists():
+        try:
+            config = json.loads(mcp_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Windsurf mcp_config.json was unreadable, creating new one"))
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = {}
+    config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    mcp_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
+    return True
+
+
+def _install_continue_dev_mcp() -> bool:
+    """Install MCP server config for Continue.dev (~/.continue/config.json)."""
+    home = Path.home()
+    continue_dir = home / ".continue"
+    config_path = continue_dir / "config.json"
+
+    continue_dir.mkdir(parents=True, exist_ok=True)
+
+    config: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Continue.dev config.json was unreadable, creating new one"))
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = []
+
+    # Array format (older Continue.dev) vs object format (newer)
+    if isinstance(config["mcpServers"], list):
+        config["mcpServers"] = [s for s in config["mcpServers"] if s.get("name") != "rafter"]
+        config["mcpServers"].append({
+            "name": "rafter",
+            "command": _RAFTER_MCP_ENTRY["command"],
+            "args": _RAFTER_MCP_ENTRY["args"],
+        })
+    else:
+        config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    return True
+
+
+def _install_aider_mcp() -> bool:
+    """Install MCP config for Aider (~/.aider.conf.yml)."""
+    home = Path.home()
+    config_path = home / ".aider.conf.yml"
+
+    content = ""
+    if config_path.exists():
+        content = config_path.read_text()
+
+    if "rafter mcp serve" in content:
+        rprint(fmt.success("Rafter MCP already configured in Aider config"))
+        return True
+
+    mcp_line = "\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n"
+    config_path.write_text(content + mcp_line)
+    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    return True
+
+
 @agent_app.command()
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
-    skip_gitleaks: bool = typer.Option(False, "--skip-gitleaks", help="Skip gitleaks check"),
-    skip_openclaw: bool = typer.Option(False, "--skip-openclaw", help="Skip OpenClaw skill installation"),
-    skip_claude_code: bool = typer.Option(False, "--skip-claude-code", help="Skip Claude Code hook installation"),
-    claude_code: bool = typer.Option(False, "--claude-code", help="Force Claude Code detection"),
+    with_gitleaks: bool = typer.Option(False, "--with-gitleaks", help="Download and install Gitleaks binary"),
+    with_openclaw: bool = typer.Option(False, "--with-openclaw", help="Install OpenClaw integration"),
+    with_claude_code: bool = typer.Option(False, "--with-claude-code", help="Install Claude Code integration"),
+    with_codex: bool = typer.Option(False, "--with-codex", help="Install Codex CLI integration"),
+    with_gemini: bool = typer.Option(False, "--with-gemini", help="Install Gemini CLI integration"),
+    with_aider: bool = typer.Option(False, "--with-aider", help="Install Aider integration"),
+    with_cursor: bool = typer.Option(False, "--with-cursor", help="Install Cursor integration"),
+    with_windsurf: bool = typer.Option(False, "--with-windsurf", help="Install Windsurf integration"),
+    with_continue: bool = typer.Option(False, "--with-continue", help="Install Continue.dev integration"),
+    all_integrations: bool = typer.Option(False, "--all", help="Install all detected integrations and download Gitleaks"),
     update: bool = typer.Option(False, "--update", help="Re-download gitleaks and reinstall integrations without resetting config"),
 ):
     """Initialize agent security system."""
@@ -187,17 +365,66 @@ def init(
     # Detect environments
     home = Path.home()
     has_openclaw = (home / ".openclaw").exists()
-    has_claude_code = claude_code or (home / ".claude").exists()
+    has_claude_code = (home / ".claude").exists()
+    has_codex = (home / ".codex").exists()
+    has_gemini = (home / ".gemini").exists()
+    has_cursor = (home / ".cursor").exists()
+    has_windsurf = (home / ".codeium" / "windsurf").exists()
+    has_continue_dev = (home / ".continue").exists()
+    has_aider = (home / ".aider.conf.yml").exists()
 
+    # Resolve opt-in flags (--all enables all detected)
+    want_openclaw = with_openclaw or all_integrations
+    want_claude_code = with_claude_code or all_integrations
+    want_codex = with_codex or all_integrations
+    want_gemini = with_gemini or all_integrations
+    want_cursor = with_cursor or all_integrations
+    want_windsurf = with_windsurf or all_integrations
+    want_continue = with_continue or all_integrations
+    want_aider = with_aider or all_integrations
+    want_gitleaks = with_gitleaks or all_integrations
+
+    # Show detected environments
+    detected = []
     if has_openclaw:
-        rprint(fmt.success("Detected environment: OpenClaw"))
-    else:
-        rprint(fmt.info("OpenClaw not detected"))
-
+        detected.append("OpenClaw")
     if has_claude_code:
-        rprint(fmt.success("Detected environment: Claude Code"))
+        detected.append("Claude Code")
+    if has_codex:
+        detected.append("Codex CLI")
+    if has_gemini:
+        detected.append("Gemini CLI")
+    if has_cursor:
+        detected.append("Cursor")
+    if has_windsurf:
+        detected.append("Windsurf")
+    if has_continue_dev:
+        detected.append("Continue.dev")
+    if has_aider:
+        detected.append("Aider")
+
+    if detected:
+        rprint(fmt.info(f"Detected environments: {', '.join(detected)}"))
     else:
-        rprint(fmt.info("Claude Code not detected"))
+        rprint(fmt.info("No agent environments detected"))
+
+    # Warn about requested but undetected environments
+    if want_openclaw and not has_openclaw:
+        rprint(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"))
+    if want_claude_code and not has_claude_code:
+        rprint(fmt.warning("Claude Code requested but not detected (~/.claude not found)"))
+    if want_codex and not has_codex:
+        rprint(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"))
+    if want_gemini and not has_gemini:
+        rprint(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"))
+    if want_cursor and not has_cursor:
+        rprint(fmt.warning("Cursor requested but not detected (~/.cursor not found)"))
+    if want_windsurf and not has_windsurf:
+        rprint(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"))
+    if want_continue and not has_continue_dev:
+        rprint(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
+    if want_aider and not has_aider:
+        rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
 
     # Initialize
     manager.initialize()
@@ -213,8 +440,8 @@ def init(
     manager.set("agent.risk_level", risk_level)
     rprint(fmt.success(f"Set risk level: {risk_level}"))
 
-    # Gitleaks check
-    if not skip_gitleaks:
+    # Gitleaks check (opt-in via --with-gitleaks or --all)
+    if want_gitleaks:
         _gitleaks_on_path = None if update else shutil.which("gitleaks")
         _rafter_bin = Path.home() / ".rafter" / "bin" / "gitleaks"
         if _gitleaks_on_path:
@@ -248,9 +475,11 @@ def init(
                     "and ensure it is on PATH, then re-run 'rafter agent init'."
                 ))
 
-    # Install OpenClaw skill if applicable
-    if has_openclaw and not skip_openclaw:
+    # Install OpenClaw skill if opted in
+    openclaw_ok = False
+    if has_openclaw and want_openclaw:
         ok, source, dest, error = _install_openclaw_skill()
+        openclaw_ok = ok
         if ok:
             rprint(fmt.success(f"Installed Rafter Security skill to {dest}"))
             manager.set("agent.environments.openclaw.enabled", True)
@@ -261,23 +490,127 @@ def init(
             if error:
                 rprint(fmt.warning(f"  Error: {error}"))
 
-    # Install Claude Code hooks
-    if has_claude_code and not skip_claude_code:
+    # Install Claude Code hooks if opted in
+    claude_code_ok = False
+    if has_claude_code and want_claude_code:
         try:
             _install_claude_code_hooks()
             manager.set("agent.environments.claude_code.enabled", True)
+            claude_code_ok = True
         except Exception as e:
             rprint(fmt.error(f"Failed to install Claude Code hooks: {e}"))
+
+    # Install Codex CLI skills if opted in
+    codex_ok = False
+    if has_codex and want_codex:
+        try:
+            ok, error = _install_codex_skills()
+            codex_ok = ok
+            if ok:
+                manager.set("agent.environments.codex.enabled", True)
+            else:
+                rprint(fmt.error(f"Failed to install Codex CLI skills: {error}"))
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Codex CLI integration: {e}"))
+
+    # Install Gemini CLI MCP if opted in
+    gemini_ok = False
+    if has_gemini and want_gemini:
+        try:
+            gemini_ok = _install_gemini_mcp()
+            if gemini_ok:
+                manager.set("agent.environments.gemini.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Gemini CLI integration: {e}"))
+
+    # Install Cursor MCP if opted in
+    cursor_ok = False
+    if has_cursor and want_cursor:
+        try:
+            cursor_ok = _install_cursor_mcp()
+            if cursor_ok:
+                manager.set("agent.environments.cursor.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Cursor integration: {e}"))
+
+    # Install Windsurf MCP if opted in
+    windsurf_ok = False
+    if has_windsurf and want_windsurf:
+        try:
+            windsurf_ok = _install_windsurf_mcp()
+            if windsurf_ok:
+                manager.set("agent.environments.windsurf.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Windsurf integration: {e}"))
+
+    # Install Continue.dev MCP if opted in
+    continue_ok = False
+    if has_continue_dev and want_continue:
+        try:
+            continue_ok = _install_continue_dev_mcp()
+            if continue_ok:
+                manager.set("agent.environments.continue_dev.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Continue.dev integration: {e}"))
+
+    # Install Aider MCP if opted in
+    aider_ok = False
+    if has_aider and want_aider:
+        try:
+            aider_ok = _install_aider_mcp()
+            if aider_ok:
+                manager.set("agent.environments.aider.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Aider integration: {e}"))
 
     rprint()
     rprint(fmt.success("Agent security initialized!"))
     rprint()
-    rprint("Next steps:")
-    if has_openclaw and not skip_openclaw:
-        rprint("  - Restart OpenClaw to load skill")
-    if has_claude_code and not skip_claude_code:
-        rprint("  - Restart Claude Code to load hooks")
-    rprint("  - Run: rafter agent scan . (test secret scanning)")
+
+    any_integration = openclaw_ok or claude_code_ok or codex_ok or gemini_ok or cursor_ok or windsurf_ok or continue_ok or aider_ok
+
+    if any_integration:
+        rprint("Next steps:")
+        if openclaw_ok:
+            rprint("  - Restart OpenClaw to load skill")
+        if claude_code_ok:
+            rprint("  - Restart Claude Code to load hooks")
+        if codex_ok:
+            rprint("  - Restart Codex CLI to load skills")
+        if gemini_ok:
+            rprint("  - Restart Gemini CLI to load MCP server")
+        if cursor_ok:
+            rprint("  - Restart Cursor to load MCP server")
+        if windsurf_ok:
+            rprint("  - Restart Windsurf to load MCP server")
+        if continue_ok:
+            rprint("  - Restart Continue.dev to load MCP server")
+        if aider_ok:
+            rprint("  - Restart Aider to load MCP server")
+    elif detected:
+        rprint("No integrations were installed. To install, re-run with opt-in flags:")
+        rprint("  rafter agent init --all                  # Install all detected")
+        if has_claude_code:
+            rprint("  rafter agent init --with-claude-code     # Claude Code only")
+        if has_openclaw:
+            rprint("  rafter agent init --with-openclaw        # OpenClaw only")
+        if has_codex:
+            rprint("  rafter agent init --with-codex           # Codex CLI only")
+        if has_gemini:
+            rprint("  rafter agent init --with-gemini          # Gemini CLI only")
+        if has_cursor:
+            rprint("  rafter agent init --with-cursor          # Cursor only")
+        if has_windsurf:
+            rprint("  rafter agent init --with-windsurf        # Windsurf only")
+        if has_continue_dev:
+            rprint("  rafter agent init --with-continue        # Continue.dev only")
+        if has_aider:
+            rprint("  rafter agent init --with-aider           # Aider only")
+    else:
+        rprint("No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
+
+    rprint()
+    rprint("  - Run: rafter scan local . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
     rprint()
 
@@ -346,6 +679,7 @@ def _output_scan_results(
     quiet: bool,
     context: str | None = None,
     format: str = "text",
+    exit_on_findings: bool = True,
 ) -> None:
     if format == "sarif":
         _output_sarif(results)
@@ -361,13 +695,17 @@ def _output_scan_results(
             for r in results
         ]
         print(json.dumps(out, indent=2))
-        raise typer.Exit(code=1 if results else 0)
+        if exit_on_findings:
+            raise typer.Exit(code=1 if results else 0)
+        return
 
     if not results:
         if not quiet:
             msg = f"No secrets detected in {context}" if context else "No secrets detected"
             rprint(f"\n{fmt.success(msg)}\n")
-        raise typer.Exit(code=0)
+        if exit_on_findings:
+            raise typer.Exit(code=0)
+        return
 
     rprint(f"\n{fmt.warning(f'Found secrets in {len(results)} file(s):')}\n")
 
@@ -387,10 +725,96 @@ def _output_scan_results(
 
     if context == "staged files":
         rprint(f"{fmt.error('Commit blocked. Remove secrets before committing.')}\n")
-    else:
+    elif exit_on_findings:
         rprint("Run 'rafter agent audit' to see the security log.\n")
 
-    raise typer.Exit(code=1)
+    if exit_on_findings:
+        raise typer.Exit(code=1)
+
+
+def _watch_and_scan(
+    watch_path: str,
+    engine: str,
+    quiet: bool,
+    json_output: bool,
+    format: str,
+    custom_patterns,
+    scan_cfg,
+) -> None:
+    """Watch a path for changes and re-scan on each change. Ctrl+C exits."""
+    try:
+        from watchdog.observers import Observer
+        from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent
+    except ImportError:
+        print("Error: watchdog package required for --watch mode. Install with: pip install watchdog", file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    logger = AuditLogger()
+    eng = _select_engine(engine, quiet)
+
+    if not quiet:
+        print(fmt.info(f"Watching {watch_path} for changes ({eng}). Press Ctrl+C to exit."), file=sys.stderr)
+
+    # Initial scan
+    if os.path.isdir(watch_path):
+        initial_results = _scan_directory(watch_path, eng, scan_cfg)
+    else:
+        initial_results = _scan_file(watch_path, eng, custom_patterns)
+
+    if initial_results:
+        rprint(fmt.warning("\n[Initial scan] Found secrets:"))
+        _output_scan_results(initial_results, json_output, False, format=format, exit_on_findings=False)
+        _log_watch_findings(logger, initial_results)
+    elif not quiet:
+        rprint(fmt.success("[Initial scan] No secrets detected"))
+
+    class _Handler(FileSystemEventHandler):
+        def _handle(self, file_path: str) -> None:
+            if not os.path.isfile(file_path):
+                return
+            from datetime import datetime as _dt
+            ts = _dt.now().strftime("%H:%M:%S")
+            if not quiet:
+                print(f"\n[{ts}] Changed: {file_path}", file=sys.stderr)
+            results = _scan_file(file_path, eng, custom_patterns)
+            if results:
+                _output_scan_results(results, json_output, False, format=format, exit_on_findings=False)
+                _log_watch_findings(logger, results)
+            elif not quiet:
+                rprint(fmt.success("  No secrets detected"))
+
+        def on_modified(self, event):
+            if not event.is_directory:
+                self._handle(event.src_path)
+
+        def on_created(self, event):
+            if not event.is_directory:
+                self._handle(event.src_path)
+
+    event_handler = _Handler()
+    observer = Observer()
+    observer.schedule(event_handler, watch_path, recursive=True)
+    observer.start()
+
+    try:
+        import time
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        observer.stop()
+        if not quiet:
+            rprint(fmt.info("\nWatch mode stopped."))
+    observer.join()
+
+
+def _log_watch_findings(logger: AuditLogger, results: list[ScanResult]) -> None:
+    for result in results:
+        for match in result.matches:
+            logger.log_secret_detected(
+                location=result.file,
+                secret_type=match.pattern.name,
+                action_taken="allowed",
+            )
 
 
 def _output_sarif(results: list[ScanResult]) -> None:
@@ -446,8 +870,14 @@ def scan(
     diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
     engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
+    watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
 ):
-    """Scan files or directories for secrets."""
+    """Scan files or directories for secrets. [deprecated: use 'rafter scan local' instead]"""
+    print(
+        "Warning: rafter agent scan is deprecated and will be removed in a future major version. "
+        "Use rafter scan local instead.",
+        file=sys.stderr,
+    )
     manager = ConfigManager()
     cfg = manager.load_with_policy()
     scan_cfg = cfg.agent.scan
@@ -525,6 +955,11 @@ def scan(
         print(f"Error: Path not found: {resolved_path}", file=sys.stderr)
         raise typer.Exit(code=2)
 
+    # --watch
+    if watch:
+        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg)
+        return
+
     eng = _select_engine(engine, quiet)
 
     if os.path.isdir(resolved_path):
@@ -567,8 +1002,13 @@ def audit(
     event: str = typer.Option(None, "--event", help="Filter by event type"),
     agent_type: str = typer.Option(None, "--agent", help="Filter by agent type"),
     since: str = typer.Option(None, "--since", help="Show entries since date (YYYY-MM-DD)"),
+    share: bool = typer.Option(False, "--share", help="Generate a redacted excerpt for issue reports"),
 ):
     """View audit log entries."""
+    if share:
+        _audit_share()
+        return
+
     logger = AuditLogger()
 
     since_dt = None
@@ -621,6 +1061,85 @@ def audit(
         print()
 
 
+# ── audit share helpers ───────────────────────────────────────────────
+
+
+def _truncate_command(cmd: str, max_len: int = 60) -> str:
+    if len(cmd) <= max_len:
+        return cmd
+    return cmd[:max_len] + "..."
+
+
+def _format_share_detail(entry: dict) -> str:
+    action = (entry.get("resolution") or {}).get("action_taken", "unknown")
+    suffix = f"[{action}]"
+    event_type = entry.get("event_type", "")
+    sc = entry.get("security_check") or {}
+    action_block = entry.get("action") or {}
+
+    if event_type == "secret_detected":
+        reason = sc.get("reason", "")
+        return f"{reason} {suffix}"
+
+    if action_block.get("command"):
+        return f"{_truncate_command(action_block['command'])} {suffix}"
+
+    if sc.get("reason"):
+        return f"{sc['reason']} {suffix}"
+
+    return suffix
+
+
+def _audit_share() -> None:
+    version = __version__
+    os_info = f"{platform.system().lower()}/{platform.machine()}"
+    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    manager = ConfigManager()
+    cfg = manager.load_with_policy()
+    patterns = cfg.agent.command_policy.require_approval if cfg.agent and cfg.agent.command_policy else []
+    risk_level = cfg.agent.risk_level if cfg.agent else "moderate"
+
+    payload = json.dumps(sorted(patterns))
+    policy_hash = hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+    logger = AuditLogger()
+    entries = logger.read(limit=5)
+
+    lines = [
+        "Rafter Audit Excerpt",
+        f"Generated: {timestamp}",
+        "",
+        "Environment:",
+        f"  CLI:    {version}",
+        f"  OS:     {os_info}",
+        f"  Policy: sha256:{policy_hash} ({risk_level})",
+        "",
+        "Recent events (last 5):",
+    ]
+
+    if not entries:
+        lines.append("  (no entries)")
+    else:
+        for e in entries:
+            ts = e.get("timestamp", "")
+            try:
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            except Exception:
+                pass
+            event_type = e.get("event_type", "unknown")
+            event_pad = event_type.ljust(20)
+            risk_raw = (e.get("action") or {}).get("risk_level", "low")
+            risk_pad = risk_raw.upper().ljust(8)
+            detail = _format_share_detail(e)
+            lines.append(f"  {ts}  {event_pad}  {risk_pad} {detail}")
+
+    lines.append("")
+    lines.append("Share this excerpt when reporting issues at https://github.com/Raftersecurity/rafter-cli/issues")
+
+    print("\n".join(lines))
+
+
 # ── exec ─────────────────────────────────────────────────────────────
 
 
@@ -658,7 +1177,7 @@ def exec_cmd(
                 if results:
                     rprint(f"\n{fmt.warning('Secrets detected in staged files!')}\n")
                     print(f"Found {total} secret(s) in {len(results)} file(s)", file=sys.stderr)
-                    rprint(f"\nRun 'rafter agent scan' for details.\n")
+                    rprint(f"\nRun 'rafter scan local' for details.\n")
                     interceptor.log_evaluation(evaluation, "blocked")
                     raise typer.Exit(code=1)
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -834,6 +1353,8 @@ def _check_gitleaks() -> _CheckResult:
         return _CheckResult(name, True, result["stdout"] or gitleaks_path)
 
     detail = f"Found at {gitleaks_path} but failed to execute"
+    if result["stdout"]:
+        detail += f"\n   stdout: {result['stdout']}"
     if result["stderr"]:
         detail += f"\n   stderr: {result['stderr']}"
     diag = bm.collect_binary_diagnostics(binary_path=Path(gitleaks_path))
@@ -864,7 +1385,7 @@ def _check_claude_code() -> _CheckResult:
     claude_dir = home / ".claude"
 
     if not claude_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --claude-code' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-claude-code' to enable", optional=True)
 
     settings_path = claude_dir / "settings.json"
     if not settings_path.exists():
@@ -881,7 +1402,7 @@ def _check_claude_code() -> _CheckResult:
         for entry in hooks
     )
     if not has_rafter:
-        return _CheckResult(name, False, "Rafter hooks not installed — run 'rafter agent init --claude-code'", optional=True)
+        return _CheckResult(name, False, "Rafter hooks not installed — run 'rafter agent init --with-claude-code'", optional=True)
     return _CheckResult(name, True, "Hooks installed")
 
 
@@ -892,11 +1413,11 @@ def _check_openclaw() -> _CheckResult:
     skills_dir = home / ".openclaw" / "skills"
 
     if not skills_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-openclaw' to enable", optional=True)
 
     skill_path = skills_dir / "rafter-security.md"
     if not skill_path.exists():
-        return _CheckResult(name, False, "Rafter skill not installed — run 'rafter agent init'", optional=True)
+        return _CheckResult(name, False, "Rafter skill not installed — run 'rafter agent init --with-openclaw'", optional=True)
 
     # Try to extract version from frontmatter
     version = ""
@@ -913,6 +1434,21 @@ def _check_openclaw() -> _CheckResult:
     return _CheckResult(name, True, detail)
 
 
+def _check_codex() -> _CheckResult:
+    """Check if Codex CLI integration is healthy."""
+    name = "Codex CLI"
+    home = Path.home()
+
+    if not (home / ".codex").exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-codex' to enable", optional=True)
+
+    skill_path = home / ".agents" / "skills" / "rafter" / "SKILL.md"
+    if not skill_path.exists():
+        return _CheckResult(name, False, "Rafter skills not installed — run 'rafter agent init --with-codex'", optional=True)
+
+    return _CheckResult(name, True, f"Skills installed ({home / '.agents' / 'skills'})")
+
+
 @agent_app.command()
 def verify():
     """Check agent security integration status."""
@@ -925,6 +1461,7 @@ def verify():
         _check_gitleaks(),
         _check_claude_code(),
         _check_openclaw(),
+        _check_codex(),
     ]
 
     for r in results:
@@ -1012,7 +1549,7 @@ def _display_quick_scan(scan: QuickScanResults, skill_name: str) -> None:
     else:
         print(f"\u26a0\ufe0f  Secrets: {scan.secrets} found")
         print("   \u2192 API keys, tokens, or credentials detected")
-        print("   \u2192 Run: rafter agent scan <path> for details")
+        print("   \u2192 Run: rafter scan local <path> for details")
 
     # URLs
     if not scan.urls:
@@ -1260,7 +1797,7 @@ def status():
     elif Path(gl_path).exists():
         print(f"Gitleaks:     {gl_path} (local)")
     else:
-        print("Gitleaks:     not found — run: rafter agent init")
+        print("Gitleaks:     not found — run: rafter agent init --with-gitleaks")
 
     # --- Claude Code hooks ---
     claude_dir = Path.home() / ".claude"
@@ -1280,8 +1817,8 @@ def status():
                         posttool_ok = True
         except Exception:
             pass
-    pretool_status = "installed" if pretool_ok else "not installed — run: rafter agent init"
-    posttool_status = "installed" if posttool_ok else "not installed — run: rafter agent init"
+    pretool_status = "installed" if pretool_ok else "not installed — run: rafter agent init --with-claude-code"
+    posttool_status = "installed" if posttool_ok else "not installed — run: rafter agent init --with-claude-code"
     print(f"PreToolUse:   {pretool_status}")
     print(f"PostToolUse:  {posttool_status}")
 
@@ -1290,9 +1827,60 @@ def status():
     if skill_path.exists():
         print(f"OpenClaw:     skill installed ({skill_path})")
     elif (Path.home() / ".openclaw").exists():
-        print("OpenClaw:     detected but skill missing — run: rafter agent init")
+        print("OpenClaw:     detected but skill missing — run: rafter agent init --with-openclaw")
     else:
         print("OpenClaw:     not detected (optional)")
+
+    # --- Codex CLI skills ---
+    codex_dir = Path.home() / ".codex"
+    codex_skill_path = Path.home() / ".agents" / "skills" / "rafter" / "SKILL.md"
+    if codex_skill_path.exists():
+        print(f"Codex CLI:    skills installed ({Path.home() / '.agents' / 'skills'})")
+    elif codex_dir.exists():
+        print("Codex CLI:    detected but skills missing — run: rafter agent init --with-codex")
+    else:
+        print("Codex CLI:    not detected (optional)")
+
+    # --- MCP-native AI engine integrations ---
+    home = Path.home()
+    mcp_agents = [
+        {"name": "Gemini CLI", "flag": "--with-gemini", "config_dir": home / ".gemini", "config_file": home / ".gemini" / "settings.json", "needle": "rafter"},
+        {"name": "Cursor", "flag": "--with-cursor", "config_dir": home / ".cursor", "config_file": home / ".cursor" / "mcp.json", "needle": "rafter"},
+        {"name": "Windsurf", "flag": "--with-windsurf", "config_dir": home / ".codeium" / "windsurf", "config_file": home / ".codeium" / "windsurf" / "mcp_config.json", "needle": "rafter"},
+        {"name": "Continue.dev", "flag": "--with-continue", "config_dir": home / ".continue", "config_file": home / ".continue" / "config.json", "needle": "rafter"},
+    ]
+
+    for agent in mcp_agents:
+        label = f"{agent['name']}:".ljust(14)
+        config_file = agent["config_file"]
+        config_dir = agent["config_dir"]
+        if config_file.exists():
+            try:
+                content = config_file.read_text()
+                if agent["needle"] in content:
+                    print(f"{label}MCP installed ({config_file})")
+                else:
+                    print(f"{label}detected but MCP missing — run: rafter agent init {agent['flag']}")
+            except OSError:
+                print(f"{label}config unreadable ({config_file})")
+        elif config_dir.exists():
+            print(f"{label}detected but MCP missing — run: rafter agent init {agent['flag']}")
+        else:
+            print(f"{label}not detected (optional)")
+
+    # --- Aider ---
+    aider_config = home / ".aider.conf.yml"
+    if aider_config.exists():
+        try:
+            content = aider_config.read_text()
+            if "rafter mcp serve" in content:
+                print(f"Aider:        MCP installed ({aider_config})")
+            else:
+                print("Aider:        detected but MCP missing — run: rafter agent init --with-aider")
+        except OSError:
+            print(f"Aider:        config unreadable ({aider_config})")
+    else:
+        print("Aider:        not detected (optional)")
 
     # --- Audit log summary ---
     print(f"\nAudit log:    {audit_path}")

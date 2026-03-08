@@ -22,18 +22,29 @@ export function createHookPosttoolCommand(): Command {
   return new Command("posttool")
     .description("PostToolUse hook handler (reads stdin, redacts secrets in output, writes JSON to stdout)")
     .action(async () => {
-      const input = await readStdin();
-      let payload: PostToolInput;
-
       try {
-        payload = JSON.parse(input);
-      } catch {
-        writeOutput({ action: "continue" });
-        return;
-      }
+        const input = await readStdin();
+        let payload: PostToolInput;
 
-      const output = evaluateToolResponse(payload);
-      writeOutput(output);
+        try {
+          payload = JSON.parse(input);
+        } catch {
+          writeOutput({ action: "continue" });
+          return;
+        }
+
+        // Validate payload is an object with expected shape
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+          writeOutput({ action: "continue" });
+          return;
+        }
+
+        const output = evaluateToolResponse(payload);
+        writeOutput(output);
+      } catch {
+        // Any unexpected error → fail open
+        writeOutput({ action: "continue" });
+      }
     });
 }
 
@@ -86,12 +97,16 @@ function countMatches(scanner: RegexScanner, tool_response: PostToolInput["tool_
   return count;
 }
 
+const STDIN_TIMEOUT_MS = 5000;
+
 function readStdin(): Promise<string> {
   return new Promise((resolve) => {
     let data = "";
+    const timeout = setTimeout(() => { resolve(data); }, STDIN_TIMEOUT_MS);
     process.stdin.setEncoding("utf-8");
     process.stdin.on("data", (chunk) => { data += chunk; });
-    process.stdin.on("end", () => { resolve(data); });
+    process.stdin.on("end", () => { clearTimeout(timeout); resolve(data); });
+    process.stdin.on("error", () => { clearTimeout(timeout); resolve(data); });
     process.stdin.resume();
   });
 }

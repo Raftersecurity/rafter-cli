@@ -153,17 +153,29 @@ Initialize agent security system.
 
 **Options:**
 - `--risk-level <level>` - Set risk level: `minimal`, `moderate`, or `aggressive` (default: `moderate`)
-- `--skip-openclaw` - Skip OpenClaw skill installation
+- `--with-openclaw` - Install OpenClaw integration
+- `--with-claude-code` - Install Claude Code integration
+- `--with-codex` - Install Codex CLI integration
+- `--with-gemini` - Install Gemini CLI integration
+- `--with-aider` - Install Aider integration
+- `--with-cursor` - Install Cursor integration
+- `--with-windsurf` - Install Windsurf integration
+- `--with-continue` - Install Continue.dev integration
+- `--with-gitleaks` - Download and install Gitleaks binary
+- `--all` - Install all detected integrations and download Gitleaks
 
 **What it does:**
 - Creates `~/.rafter/config.json` configuration
 - Initializes directory structure
-- Detects and installs OpenClaw skill (if present)
+- Detects available agent environments
+- Installs opted-in integrations (skills, hooks, MCP servers)
 - Sets up audit logging
 
 **Example:**
 ```bash
-rafter agent init
+rafter agent init                      # Config only, detect environments
+rafter agent init --all                # Install all detected integrations
+rafter agent init --with-claude-code   # Install Claude Code integration only
 rafter agent init --risk-level aggressive
 ```
 

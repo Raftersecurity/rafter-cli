@@ -76,7 +76,18 @@ export class RegexScanner {
       ".next",
       "coverage",
       ".vscode",
-      ".idea"
+      ".idea",
+      // Vendored / virtual-env / generated dirs that cause false positives
+      "vendor",
+      ".venv",
+      "venv",
+      "__pycache__",
+      ".tox",
+      ".mypy_cache",
+      ".pytest_cache",
+      "results",
+      ".terraform",
+      "bower_components"
     ];
 
     // Merge policy excludePaths into the exclude list

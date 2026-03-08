@@ -20,7 +20,7 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 | 2 | Scan not found (HTTP 404) |
 | 3 | Quota exhausted (HTTP 429) |
 
-### Agent Scan (`rafter agent scan`)
+### Local Secret Scan (`rafter scan local` / `rafter agent scan`)
 
 | Code | Meaning |
 |------|---------|
@@ -44,7 +44,7 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 
 ### rafter run [OPTIONS]
 
-Alias: `rafter scan`
+Aliases: `rafter scan`, `rafter scan remote`
 
 Trigger a new security scan for a repository.
 
@@ -85,15 +85,23 @@ All agent commands work locally. No API key required.
 
 ### rafter agent init [OPTIONS]
 
-Initialize agent security system. Creates config, downloads Gitleaks, auto-detects and installs skills for Claude Code, Codex CLI, and OpenClaw.
+Initialize agent security system. Creates config and detects available agent environments. Integrations are opt-in — use `--with-*` flags or `--all` to install.
 
 - `--risk-level <level>` — `minimal`, `moderate` (default), or `aggressive`
-- `--skip-openclaw` — skip OpenClaw skill installation
-- `--skip-claude-code` — skip Claude Code skill installation
-- `--skip-codex` — skip Codex CLI skill installation
-- `--skip-gitleaks` — skip Gitleaks binary download
+- `--with-openclaw` — install OpenClaw integration
+- `--with-claude-code` — install Claude Code integration
+- `--with-codex` — install Codex CLI integration
+- `--with-gemini` — install Gemini CLI integration
+- `--with-aider` — install Aider integration
+- `--with-cursor` — install Cursor integration
+- `--with-windsurf` — install Windsurf integration
+- `--with-continue` — install Continue.dev integration
+- `--with-gitleaks` — download and install Gitleaks binary
+- `--all` — install all detected integrations and download Gitleaks
 
-### rafter agent scan [PATH] [OPTIONS]
+### rafter scan local [PATH] [OPTIONS]
+
+Alias: `rafter agent scan` (deprecated — use `rafter scan local`)
 
 Scan files or directories for secrets (21+ patterns).
 
@@ -103,8 +111,11 @@ Scan files or directories for secrets (21+ patterns).
 - `--staged` — scan git staged files only
 - `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
 - `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
+- `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
+
+> **Note:** `--watch` mode does not exit on findings — it prints results inline and keeps watching. Findings are logged to `audit.jsonl` in real time. Requires `chokidar` (Node, bundled) or `watchdog` (Python: `pip install watchdog`).
 
 #### JSON Output (`--json`)
 
@@ -314,6 +325,32 @@ Generate CI/CD pipeline configuration for secret scanning.
 
 Auto-detection: checks for `.github/`, `.gitlab-ci.yml`, `.circleci/` in cwd.
 
+### GitHub Action (`action.yml`)
+
+Composite action at repo root. Usage:
+
+```yaml
+- uses: Raftersecurity/rafter-cli@v0
+  with:
+    scan-path: '.'        # default
+    args: '--quiet'       # default
+    version: 'latest'     # default
+    install-method: 'npm' # or 'pip'
+```
+
+### Pre-Commit Framework (`.pre-commit-hooks.yaml`)
+
+Integration with [pre-commit](https://pre-commit.com/):
+
+```yaml
+repos:
+  - repo: https://github.com/Raftersecurity/rafter-cli
+    rev: v0.5.6
+    hooks:
+      - id: rafter-scan           # Node.js
+      # - id: rafter-scan-python  # Python alternative
+```
+
 ---
 
 ## Policy File (`.rafter.yml`)
@@ -405,8 +442,11 @@ fi
 rafter agent init
 
 # Scan for secrets
-rafter agent scan .
-rafter agent scan --staged --quiet  # CI-friendly
+rafter scan local .
+rafter scan local --staged --quiet  # CI-friendly
+
+# Old command still works (deprecated)
+# rafter agent scan .  — deprecated, use rafter scan local
 
 # Pre-commit hook
 rafter agent install-hook --global

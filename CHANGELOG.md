@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-03-08
+
+### Fixed
+- **[CRITICAL] Gitleaks file-scan false negatives** (Node): catch block in `gitleaks.ts` deleted tmpReport before checking exit code 1 (leaks found), making leak recovery unreachable. Reordered to read report before cleanup.
+- **Staged/diff path resolution** (Node): `--staged` and `--diff` scans resolved file paths relative to cwd instead of git repo root, causing missed files when run from subdirectories. Now uses `git rev-parse --show-toplevel`.
+- **Output format consistency** (Node): `--staged`/`--diff` with no files output plain text even when `--format json` was set. Early returns now route through `outputScanResults` to respect format flag.
+- **Gitleaks verify false failures** (Node + Python): `binary-manager` required specific stdout content from `gitleaks version`. Now accepts any exit code 0 regardless of output format.
+- **Engine/format validation** (Node): invalid `--engine` values (e.g. `--engine nope`) were silently accepted and ran as auto. Invalid `--format` values started scanning before failing. Both now validate before any work begins.
+
+### Changed
+- **Reduced false positives** (Node): added default directory excludes (`.venv`, `vendor`, `results`, `__pycache__`, `.terraform`, etc.) to regex scanner. Tightened Generic Secret regex (requires 12+ chars with both digits and letters) and Bearer Token regex (requires 20+ chars) to reduce noise on code/docs text.
+- **`rafter agent init` UX: opt-in not skip** (Node + Python): replaced `--skip-*` flags with `--with-*` opt-in flags. Integrations are no longer installed by default — use `--with-claude-code`, `--with-openclaw`, etc. or `--all` to install all detected.
+
+## [0.5.8] - 2026-02-27
+
+### Added
+- **`rafter agent audit --share`** (Node + Python): generates a redacted diagnostic excerpt safe for pasting into GitHub issues. Includes CLI version, OS/arch, a 16-char SHA-256 fingerprint of the effective policy (including `.rafter.yml` overrides), and the last 5 audit events with truncated commands.
+- **90-second quickstart** in README: concrete walkthrough showing scan, hook install, commit block, and audit review.
+
+### Changed
+- **Structured pretool hook messages** (Node + Python): block and approval-required messages now show the matched rule, risk level with human-readable description, and actionable next steps (`rafter agent exec --approve`, config adjustment).
+
+### Fixed
+- **Gitleaks version check** (Python): `verify_gitleaks_verbose` checked for `"gitleaks version"` in stdout, but gitleaks v8.x outputs just the version string. Now checks exit code 0 + non-empty output.
+
+## [0.5.7] - 2026-02-27
+
+### Added
+- **`rafter scan` command group** (Node + Python): new top-level command with two subcommands.
+  - `rafter scan` / `rafter scan remote` — triggers a remote backend scan (same as `rafter run`)
+  - `rafter scan local [path]` — runs the local secret scanner (formerly `rafter agent scan`)
+- **`rafter run`** unchanged; continues to work as before.
+
+### Deprecated
+- **`rafter agent scan`** — still works but now prints a deprecation warning to stderr: `"Warning: rafter agent scan is deprecated and will be removed in a future major version. Use rafter scan local instead."` Will be removed in a future major version.
+
+### Changed
+- All hook scripts, CI templates, skill files, and user-facing output updated to reference `rafter scan local` instead of `rafter agent scan`.
+
+## [0.5.6] - 2026-02-26
+
+### Added
+- **`rafter agent scan --watch`** (Node + Python): new flag polls the target path on a 5-second interval, re-running the scan on every change. Useful for continuous feedback during development.
+
+### Fixed
+- **Gitleaks version check** (Node + Python): `verifyGitleaks` was checking for the string `"gitleaks version"` in stdout, but gitleaks v8.x outputs only the version string (`v8.18.2`). The check always returned false, causing `rafter agent verify` to report a working binary as failed. Now accepts any successful exit (code 0) with non-empty stdout. Stdout is also surfaced in the error detail when the binary genuinely fails.
+- **OpenClaw install silent failure** (Node + Python): `rafter agent init` printed "Restart OpenClaw to load skill" in Next Steps even when the skill install had just failed. Next Steps suggestions are now gated on actual install success.
+- **Broad `curl|sh` pattern migration** (Node + Python): existing `~/.rafter/config.json` files written by older installs contained `curl.*\|.*sh` / `wget.*\|.*sh` as literal regex strings. Because `|` is alternation in regex, these matched any command containing `sh`—including `git push`, `grep` with shell patterns, and `.sh` filenames. `ConfigManager` now silently upgrades the old patterns to word-bounded equivalents (`curl.*\|\s*(bash|sh|zsh|dash)\b`) on first load.
+
 ## [0.5.5] - 2026-02-22
 
 ### Added

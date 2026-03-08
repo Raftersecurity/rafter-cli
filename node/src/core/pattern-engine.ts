@@ -13,6 +13,11 @@ export interface PatternMatch {
   redacted?: string;
 }
 
+const GENERIC_PATTERN_NAMES = new Set(["Generic API Key", "Generic Secret"]);
+const VARIABLE_NAME_RE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
+const LOWERCASE_IDENT_RE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
+const QUOTED_VALUE_RE = /['"]([^'"]+)['"]/;
+
 export class PatternEngine {
   private patterns: Pattern[];
 
@@ -31,6 +36,7 @@ export class PatternEngine {
       let match;
 
       while ((match = regex.exec(text)) !== null) {
+        if (this.isFalsePositive(pattern, match[0])) continue;
         matches.push({
           pattern,
           match: match[0],
@@ -57,6 +63,7 @@ export class PatternEngine {
         let match;
 
         while ((match = regex.exec(line)) !== null) {
+          if (this.isFalsePositive(pattern, match[0])) continue;
           matches.push({
             pattern,
             match: match[0],
@@ -79,7 +86,9 @@ export class PatternEngine {
 
     for (const pattern of this.patterns) {
       const regex = this.createRegex(pattern.regex);
-      redacted = redacted.replace(regex, (match) => this.redact(match));
+      redacted = redacted.replace(regex, (match) =>
+        this.isFalsePositive(pattern, match) ? match : this.redact(match)
+      );
     }
 
     return redacted;
@@ -97,6 +106,20 @@ export class PatternEngine {
    */
   getPatternsBySeverity(severity: "low" | "medium" | "high" | "critical"): Pattern[] {
     return this.patterns.filter(p => p.severity === severity);
+  }
+
+  /**
+   * Check if a match from a generic pattern looks like a variable name
+   * rather than an actual secret value.
+   */
+  private isFalsePositive(pattern: Pattern, matchText: string): boolean {
+    if (!GENERIC_PATTERN_NAMES.has(pattern.name)) return false;
+    const m = QUOTED_VALUE_RE.exec(matchText);
+    if (!m) return false;
+    const value = m[1];
+    if (VARIABLE_NAME_RE.test(value)) return true;
+    if (LOWERCASE_IDENT_RE.test(value)) return true;
+    return false;
   }
 
   /**

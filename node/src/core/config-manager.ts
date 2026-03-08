@@ -208,10 +208,30 @@ export class ConfigManager {
    * Migrate config to latest version
    */
   private migrate(config: RafterConfig): RafterConfig {
-    // For now, just ensure version is current
-    // In future, handle version-specific migrations
+    let dirty = false;
+
     if (config.version !== CONFIG_VERSION) {
       config.version = CONFIG_VERSION;
+      dirty = true;
+    }
+
+    // Fix overly broad curl/wget pipe-to-shell patterns.
+    // Old pattern: "curl.*\|.*sh" — matches any command containing "sh" after a pipe
+    // (e.g. `grep "curl\|sh"` or `git push`). Replace with word-bounded shell names.
+    const badToGood: Record<string, string> = {
+      "curl.*\\|.*sh": "curl.*\\|\\s*(bash|sh|zsh|dash)\\b",
+      "wget.*\\|.*sh": "wget.*\\|\\s*(bash|sh|zsh|dash)\\b",
+    };
+    const approval = config.agent?.commandPolicy?.requireApproval;
+    if (Array.isArray(approval)) {
+      const fixed = approval.map(p => badToGood[p] ?? p);
+      if (fixed.some((p, i) => p !== approval[i])) {
+        config.agent!.commandPolicy!.requireApproval = fixed;
+        dirty = true;
+      }
+    }
+
+    if (dirty) {
       this.save(config);
     }
     return config;

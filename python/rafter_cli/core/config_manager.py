@@ -29,7 +29,8 @@ class ConfigManager:
             return get_default_config()
         try:
             raw = json.loads(self._path.read_text())
-            return self._from_dict(raw)
+            config = self._from_dict(raw)
+            return self._migrate(config)
         except (json.JSONDecodeError, KeyError) as exc:
             print(f"rafter: malformed config, using defaults: {exc}", file=sys.stderr)
             return get_default_config()
@@ -105,6 +106,22 @@ class ConfigManager:
 
     def exists(self) -> bool:
         return self._path.exists()
+
+    def _migrate(self, config: RafterConfig) -> RafterConfig:
+        """Upgrade known-bad config values from older installs."""
+        # Fix overly broad curl/wget pipe-to-shell patterns.
+        # Old pattern: r"curl.*\|.*sh" — matches any command containing "sh" after a pipe
+        # (e.g. `grep "curl\|sh"` or `git stash`). Replace with word-bounded shell names.
+        _bad_to_good = {
+            r"curl.*\|.*sh": r"curl.*\|\s*(bash|sh|zsh|dash)\b",
+            r"wget.*\|.*sh": r"wget.*\|\s*(bash|sh|zsh|dash)\b",
+        }
+        policy = config.agent.command_policy
+        fixed = [_bad_to_good.get(p, p) for p in policy.require_approval]
+        if fixed != policy.require_approval:
+            policy.require_approval = fixed
+            self.save(config)
+        return config
 
     # ------------------------------------------------------------------
     # Policy-merged config
@@ -199,6 +216,7 @@ class ConfigManager:
             environments=EnvironmentsConfig(
                 openclaw=EnvironmentConfig(**cls._pick_fields(EnvironmentConfig, envs_raw.get("openclaw") or {})),
                 claude_code=EnvironmentConfig(**cls._pick_fields(EnvironmentConfig, envs_raw.get("claudeCode") or envs_raw.get("claude_code") or {})),
+                codex=EnvironmentConfig(**cls._pick_fields(EnvironmentConfig, envs_raw.get("codex") or {})),
             ),
             command_policy=CommandPolicyConfig(**cls._pick_fields(CommandPolicyConfig, agent_raw.get("commandPolicy") or agent_raw.get("command_policy") or {})),
             output_filtering=OutputFilteringConfig(**cls._pick_fields(OutputFilteringConfig, agent_raw.get("outputFiltering") or agent_raw.get("output_filtering") or {})),

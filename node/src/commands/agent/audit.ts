@@ -1,5 +1,10 @@
+import { createHash } from "crypto";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { Command } from "commander";
-import { AuditLogger, EventType, AgentType } from "../../core/audit-logger.js";
+import { AuditLogger, AuditLogEntry, EventType, AgentType } from "../../core/audit-logger.js";
+import { ConfigManager } from "../../core/config-manager.js";
 import { fmt } from "../../utils/formatter.js";
 import { isAgentMode } from "../../utils/formatter.js";
 
@@ -10,7 +15,13 @@ export function createAuditCommand(): Command {
     .option("--event <type>", "Filter by event type")
     .option("--agent <type>", "Filter by agent type (openclaw, claude-code)")
     .option("--since <date>", "Show entries since date (YYYY-MM-DD)")
+    .option("--share", "Generate a redacted excerpt for issue reports")
     .action((opts) => {
+      if (opts.share) {
+        generateShareExcerpt();
+        return;
+      }
+
       const logger = new AuditLogger();
 
       const filter: any = {
@@ -70,6 +81,104 @@ export function createAuditCommand(): Command {
         console.log("");
       }
     });
+}
+
+export function generateShareExcerpt(): void {
+  const version = getPkgVersion();
+  const os = `${process.platform}/${process.arch}`;
+  const timestamp = new Date().toISOString();
+
+  const config = new ConfigManager().loadWithPolicy();
+  const policyHash = computePolicyHash(config);
+  const riskLevel = getRiskLevel(config);
+
+  const logger = new AuditLogger();
+  const entries = logger.read({ limit: 5 });
+
+  const lines: string[] = [
+    "Rafter Audit Excerpt",
+    `Generated: ${timestamp}`,
+    "",
+    "Environment:",
+    `  CLI:    ${version}`,
+    `  OS:     ${os}`,
+    `  Policy: sha256:${policyHash} (${riskLevel})`,
+    "",
+    "Recent events (last 5):",
+  ];
+
+  if (entries.length === 0) {
+    lines.push("  (no entries)");
+  } else {
+    for (const entry of entries) {
+      const ts = entry.timestamp.replace("T", " ").replace(/\.\d+Z$/, "Z");
+      const eventPad = entry.eventType.padEnd(20);
+      const riskRaw = entry.action?.riskLevel ?? "low";
+      const riskPad = riskRaw.toUpperCase().padEnd(8);
+      const detail = formatShareDetail(entry);
+      lines.push(`  ${ts}  ${eventPad}  ${riskPad} ${detail}`);
+    }
+  }
+
+  lines.push("");
+  lines.push("Share this excerpt when reporting issues at https://github.com/Raftersecurity/rafter-cli/issues");
+
+  console.log(lines.join("\n"));
+}
+
+export function getPkgVersion(): string {
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    // Walk up from dist/commands/agent/ to find package.json
+    let dir = __dirname;
+    for (let i = 0; i < 6; i++) {
+      const candidate = path.join(dir, "package.json");
+      if (fs.existsSync(candidate)) {
+        const pkg = JSON.parse(fs.readFileSync(candidate, "utf-8"));
+        if (pkg.version) return pkg.version;
+      }
+      dir = path.dirname(dir);
+    }
+  } catch {
+    // fall through
+  }
+  return "unknown";
+}
+
+export function computePolicyHash(config: any): string {
+  const patterns: string[] = config?.agent?.commandPolicy?.requireApproval ?? [];
+  const payload = JSON.stringify(patterns.slice().sort());
+  return createHash("sha256").update(payload).digest("hex").slice(0, 16);
+}
+
+export function getRiskLevel(config: any): string {
+  return config?.agent?.riskLevel ?? "moderate";
+}
+
+export function formatShareDetail(entry: AuditLogEntry): string {
+  const action = entry.resolution.actionTaken;
+  const suffix = `[${action}]`;
+
+  if (entry.eventType === "secret_detected") {
+    const reason = entry.securityCheck.reason ?? "";
+    return `${reason} ${suffix}`;
+  }
+
+  if (entry.action?.command) {
+    return `${truncateCommand(entry.action.command, 60)} ${suffix}`;
+  }
+
+  if (entry.securityCheck.reason) {
+    return `${entry.securityCheck.reason} ${suffix}`;
+  }
+
+  return suffix;
+}
+
+export function truncateCommand(cmd: string, maxLen: number = 60): string {
+  if (cmd.length <= maxLen) return cmd;
+  return cmd.slice(0, maxLen) + "...";
 }
 
 function getEventIndicator(eventType: EventType): string {

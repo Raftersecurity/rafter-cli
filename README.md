@@ -10,6 +10,49 @@ Multi-language CLI for [Rafter](https://rafter.so) — zero-setup security for A
 
 The CLI follows UNIX principles: scan data to stdout, status to stderr, predictable exit codes, no file writing. Everything pipes cleanly.
 
+## 90-Second Quickstart
+
+See what Rafter does before reading another word.
+
+**1. Scan a directory for leaked credentials**
+
+```sh
+# Drop a .env file with credentials in a test repo
+echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' > .env
+
+rafter scan local .
+# → CRITICAL  .env:1  aws-access-key-id  AKIA***AMPLE
+# → exit 1
+```
+
+**2. Install the pre-commit hook**
+
+```sh
+rafter agent init --all
+# → Installs all detected integrations
+# → Downloads Gitleaks (or falls back to built-in scanner)
+```
+
+**3. Try to commit—hook blocks it**
+
+```sh
+git add . && git commit -m 'add config'
+# → [rafter] Scanning staged files for secrets...
+# → CRITICAL  .env:1  aws-access-key-id
+# → Commit blocked. Remove secrets or use git commit --no-verify to bypass.
+```
+
+**4. Review the audit log**
+
+```sh
+rafter agent audit --last 3
+# → 2026-02-27T...  secret_detected  .env  aws-access-key-id
+```
+
+That's the core loop: scan → protect → audit. Everything works offline, no API key needed.
+
+---
+
 ## Installation
 
 ### Node.js (full features: backend + agent security)
@@ -89,14 +132,15 @@ Local security features for autonomous AI agents. Everything below works offline
 ### Setup
 
 ```sh
-rafter agent init
+rafter agent init --all           # install all detected integrations
+rafter agent init --with-claude-code  # or install specific ones
 ```
 
-This single command:
+This command:
 - Creates `~/.rafter/` config and audit log
-- Auto-detects Claude Code, Codex CLI, and OpenClaw
-- Installs Rafter skills/extensions to each detected agent
-- Downloads [Gitleaks](https://github.com/gitleaks/gitleaks) for enhanced secret scanning (falls back to built-in 21-pattern regex scanner)
+- Auto-detects Claude Code, Codex CLI, OpenClaw, Gemini, Cursor, Windsurf, Continue.dev, and Aider
+- With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
+- With `--with-gitleaks` or `--all`: downloads [Gitleaks](https://github.com/gitleaks/gitleaks) for enhanced secret scanning (falls back to built-in 21-pattern regex scanner)
 
 ### Secret Scanning
 
@@ -125,6 +169,20 @@ rafter agent install-hook --global  # all repos on this machine
 ```
 
 Blocks commits when secrets are detected. Bypass with `git commit --no-verify` (not recommended).
+
+#### pre-commit Framework
+
+Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/Raftersecurity/rafter-cli
+    rev: v0.5.6
+    hooks:
+      - id: rafter-scan
+```
+
+Requires `rafter` in PATH (install via `npm i -g @rafter-security/cli` or `pip install rafter-cli`).
 
 ### Command Interception
 
@@ -224,6 +282,42 @@ rafter ci init --platform circleci      # CircleCI
 rafter ci init --with-backend           # include backend security audit job
 ```
 
+#### GitHub Action
+
+Use as a reusable action in any GitHub Actions workflow:
+
+```yaml
+- uses: Raftersecurity/rafter-cli@v0
+  with:
+    scan-path: '.'       # default
+    args: '--quiet'      # default; override for verbose output
+    # install-method: 'pip'  # use pip instead of npm
+```
+
+Inputs:
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `scan-path` | `.` | Path to scan |
+| `args` | `--quiet` | Additional args to `rafter agent scan` |
+| `version` | `latest` | CLI version to install |
+| `install-method` | `npm` | `npm` or `pip` |
+
+#### Pre-Commit Framework
+
+Add to `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/Raftersecurity/rafter-cli
+    rev: v0.5.6
+    hooks:
+      - id: rafter-scan           # Node.js
+      # - id: rafter-scan-python  # Python alternative
+```
+
+This integrates with the [pre-commit](https://pre-commit.com/) framework to scan staged files on every commit.
+
 ### MCP Server
 
 Expose Rafter security tools to **any MCP-compatible client** (Cursor, Windsurf, Claude Desktop, Cline, etc.) over stdio:
@@ -261,7 +355,7 @@ Add to any MCP client config:
 | Codex CLI | `~/.codex` | `~/.agents/skills/rafter/` and `rafter-agent-security/` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/rafter-security.md` |
 
-`rafter agent init` auto-detects which agents are installed and installs the appropriate skills. Two skills per agent:
+`rafter agent init` auto-detects which agents are installed. Use `--with-*` flags or `--all` to install the appropriate skills. Two skills per agent:
 
 - **Rafter Security Audits** — Safe for the agent to auto-invoke (read-only API calls). Triggers remote scans, retrieves results.
 - **Agent Security** — User-invoked only (local file access, command execution). Secret scanning, command interception, skill auditing, audit log.

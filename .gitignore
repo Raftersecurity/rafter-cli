@@ -6,6 +6,7 @@ build/
 *.egg-info/
 .venv/
 venv/
+uv.lock
 
 # Node
 node_modules/
@@ -25,3 +26,5 @@ node/package */
 .runtime/
 .claude/commands/
 .logs/
+.beads/
+package-lock.json
