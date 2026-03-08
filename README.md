@@ -90,8 +90,8 @@ rafter usage                                  # check quota
 ### Piping and Automation
 
 ```sh
-# Filter critical vulnerabilities
-rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="critical")'
+# Filter high-severity vulnerabilities (SARIF levels: error, warning, note)
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="error")'
 
 # Count vulnerabilities
 rafter get SCAN_ID --format json | jq '.vulnerabilities | length'

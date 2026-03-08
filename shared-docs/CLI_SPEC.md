@@ -66,6 +66,8 @@ Retrieve results from a scan.
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
 
+**Vulnerability levels (JSON output):** The `level` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
+
 ### rafter usage [OPTIONS]
 
 Check API quota and usage statistics.
@@ -394,7 +396,7 @@ rafter scan --repo myorg/myrepo --branch main
 rafter get SCAN_ID --format json
 
 # Pipe to jq
-rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="critical")'
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="error")'
 
 # Count vulnerabilities
 rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
