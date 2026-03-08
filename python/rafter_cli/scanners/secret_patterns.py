@@ -109,21 +109,21 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
     ),
     Pattern(
         name="Bearer Token",
-        regex=r"(?i)bearer\s+[a-zA-Z0-9\-_\.=]+",
+        regex=r"(?i)bearer\s+[a-zA-Z0-9\-_\.=]{1,512}",
         severity="high",
         description="Bearer token detected",
     ),
     # Database
     Pattern(
         name="Database Connection String",
-        regex=r"(?i)(postgres|mysql|mongodb)://[^\s]+:[^\s]+@[^\s]+",
+        regex=r"(?i)(postgres|mysql|mongodb)://[^\s:@]+:[^\s@]+@[^\s]+",
         severity="critical",
         description="Database connection string with credentials detected",
     ),
     # JWT
     Pattern(
         name="JSON Web Token",
-        regex=r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+        regex=r"eyJ[A-Za-z0-9_-]{10,2048}\.[A-Za-z0-9_-]{10,2048}\.[A-Za-z0-9_-]{10,2048}",
         severity="high",
         description="JWT token detected",
     ),
@@ -137,7 +137,7 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
     # PyPI
     Pattern(
         name="PyPI Token",
-        regex=r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\-_]{50,}",
+        regex=r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\-_]{50,1024}",
         severity="critical",
         description="PyPI API token detected",
     ),
