@@ -6,7 +6,7 @@ Multi-language CLI for [Rafter](https://rafter.so) — zero-setup security for A
 
 1. **Rafter Security Audits** — Trigger remote SAST/SCA scans on GitHub repos via the Rafter API. Get structured vulnerability reports in JSON or Markdown, pipe them anywhere.
 
-2. **Agent Security** — Local-first protection for autonomous AI agents. Secret scanning (21+ patterns, Gitleaks integration), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. **No API key required.**
+2. **Agent Security** — Local-first protection for autonomous AI agents. Secret scanning (21+ patterns, Gitleaks integration), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, and Aider. **No API key required.**
 
 The CLI follows UNIX principles: scan data to stdout, status to stderr, predictable exit codes, no file writing. Everything pipes cleanly.
 
@@ -349,16 +349,25 @@ Add to any MCP client config:
 
 ### Supported Agents
 
-| Agent | Detection | Skills installed to |
-|-------|-----------|-------------------|
-| Claude Code | `~/.claude` | `~/.claude/skills/rafter/` and `rafter-agent-security/` |
-| Codex CLI | `~/.codex` | `~/.agents/skills/rafter/` and `rafter-agent-security/` |
-| OpenClaw | `~/.openclaw` | `~/.openclaw/skills/rafter-security.md` |
+| Agent | Integration | Detection | Config installed to |
+|-------|-------------|-----------|-------------------|
+| Claude Code | Hooks + Skills | `~/.claude` | `~/.claude/skills/rafter/` and `rafter-agent-security/` |
+| Codex CLI | Skills | `~/.codex` | `~/.agents/skills/rafter/` and `rafter-agent-security/` |
+| OpenClaw | Skills | `~/.openclaw` | `~/.openclaw/skills/rafter-security.md` |
+| Gemini CLI | MCP server | `~/.gemini` | `~/.gemini/settings.json` |
+| Cursor | MCP server | `~/.cursor` | `~/.cursor/mcp.json` |
+| Windsurf | MCP server | `~/.codeium/windsurf` | `~/.codeium/windsurf/mcp_config.json` |
+| Continue.dev | MCP server | `~/.continue` | `~/.continue/config.json` |
+| Aider | MCP server | `~/.aider.conf.yml` | `~/.aider.conf.yml` |
 
-`rafter agent init` auto-detects which agents are installed. Use `--with-*` flags or `--all` to install the appropriate skills. Two skills per agent:
+`rafter agent init` auto-detects which agents are installed. Use `--with-*` flags or `--all` to install integrations.
+
+**Skill-based agents** (Claude Code, Codex, OpenClaw) get two skills per agent:
 
 - **Rafter Security Audits** — Safe for the agent to auto-invoke (read-only API calls). Triggers remote scans, retrieves results.
 - **Agent Security** — User-invoked only (local file access, command execution). Secret scanning, command interception, skill auditing, audit log.
+
+**MCP-based agents** (Gemini, Cursor, Windsurf, Continue.dev, Aider) connect to the Rafter MCP server (`rafter mcp serve`), which exposes `scan_secrets`, `evaluate_command`, `read_audit_log`, and `get_config` tools. See individual setup recipes in [`recipes/`](recipes/).
 
 ---
 

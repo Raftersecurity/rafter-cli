@@ -38,6 +38,11 @@ When making CLI changes, update these files in Rome-1/docs:
 - [ ] `guides/agent-security/claude-code-integration.mdx` — Claude Code hooks/skills
 - [ ] `guides/agent-security/codex-integration.mdx` — Codex CLI skills
 - [ ] `guides/agent-security/openclaw-integration.mdx` — OpenClaw skills
+- [ ] `guides/agent-security/gemini-integration.mdx` — Gemini CLI MCP setup
+- [ ] `guides/agent-security/cursor-integration.mdx` — Cursor MCP setup
+- [ ] `guides/agent-security/windsurf-integration.mdx` — Windsurf MCP setup
+- [ ] `guides/agent-security/continue-integration.mdx` — Continue.dev MCP setup
+- [ ] `guides/agent-security/aider-integration.mdx` — Aider MCP setup
 - [ ] `guides/agent-security/mcp-integration.mdx` — MCP server tools/resources
 
 ### After version bumps
