@@ -1,7 +1,12 @@
 """Output formatter with agent/human modes."""
 from __future__ import annotations
 
+import sys
+
+from rich.console import Console
+
 _agent_mode: bool = False
+_stderr_console = Console(stderr=True)
 
 
 def set_agent_mode(enabled: bool) -> None:
@@ -11,6 +16,14 @@ def set_agent_mode(enabled: bool) -> None:
 
 def is_agent_mode() -> bool:
     return _agent_mode
+
+
+def print_stderr(msg: str) -> None:
+    """Print a message to stderr, rendering Rich markup when not in agent mode."""
+    if _agent_mode:
+        print(msg, file=sys.stderr)
+    else:
+        _stderr_console.print(msg)
 
 
 class fmt:
