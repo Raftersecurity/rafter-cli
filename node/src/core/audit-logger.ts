@@ -150,7 +150,7 @@ export class AuditLogger {
     // Ensure log directory exists
     const dir = path.dirname(this.logPath);
     if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
   }
 
@@ -173,7 +173,7 @@ export class AuditLogger {
 
     // Append to log file
     const line = JSON.stringify(fullEntry) + "\n";
-    fs.appendFileSync(this.logPath, line, "utf-8");
+    fs.appendFileSync(this.logPath, line, { encoding: "utf-8", mode: 0o600 });
 
     // Send webhook notification if configured and risk meets threshold
     this.sendNotification(fullEntry, config);
@@ -378,7 +378,7 @@ export class AuditLogger {
 
     // Rewrite log file with only retained entries
     const content = filtered.map(e => JSON.stringify(e)).join("\n") + "\n";
-    fs.writeFileSync(this.logPath, content, "utf-8");
+    fs.writeFileSync(this.logPath, content, { encoding: "utf-8", mode: 0o600 });
   }
 
   /**
