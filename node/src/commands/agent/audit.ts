@@ -66,16 +66,20 @@ export function createAuditCommand(): Command {
           console.log(`   Risk: ${entry.action.riskLevel}`);
         }
 
-        console.log(`   Check: ${entry.securityCheck.passed ? "PASSED" : "FAILED"}`);
+        if (entry.securityCheck) {
+          console.log(`   Check: ${entry.securityCheck.passed ? "PASSED" : "FAILED"}`);
 
-        if (entry.securityCheck.reason) {
-          console.log(`   Reason: ${entry.securityCheck.reason}`);
+          if (entry.securityCheck.reason) {
+            console.log(`   Reason: ${entry.securityCheck.reason}`);
+          }
         }
 
-        console.log(`   Action: ${entry.resolution.actionTaken}`);
+        if (entry.resolution) {
+          console.log(`   Action: ${entry.resolution.actionTaken}`);
 
-        if (entry.resolution.overrideReason) {
-          console.log(`   Override: ${entry.resolution.overrideReason}`);
+          if (entry.resolution.overrideReason) {
+            console.log(`   Override: ${entry.resolution.overrideReason}`);
+          }
         }
 
         console.log("");
@@ -157,11 +161,11 @@ export function getRiskLevel(config: any): string {
 }
 
 export function formatShareDetail(entry: AuditLogEntry): string {
-  const action = entry.resolution.actionTaken;
+  const action = entry.resolution?.actionTaken ?? "unknown";
   const suffix = `[${action}]`;
 
   if (entry.eventType === "secret_detected") {
-    const reason = entry.securityCheck.reason ?? "";
+    const reason = entry.securityCheck?.reason ?? "";
     return `${reason} ${suffix}`;
   }
 
@@ -169,7 +173,7 @@ export function formatShareDetail(entry: AuditLogEntry): string {
     return `${truncateCommand(entry.action.command, 60)} ${suffix}`;
   }
 
-  if (entry.securityCheck.reason) {
+  if (entry.securityCheck?.reason) {
     return `${entry.securityCheck.reason} ${suffix}`;
   }
 
