@@ -81,3 +81,36 @@ def test_binary_files_skipped(scanner, tmp_path):
     (tmp_path / "image.png").write_bytes(b"\x89PNG\r\n" + b"AKIAIOSFODNN7EXAMPLE")
     results = scanner.scan_directory(str(tmp_path))
     assert len(results) == 0
+
+
+def test_symlinks_not_followed(scanner, tmp_path):
+    """Symlinks should be skipped to prevent traversal outside intended scope."""
+    # Create an "outside" directory with a secret
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("AKIAIOSFODNN7EXAMPLE\n")
+
+    # Create the scan target with a symlink pointing outside
+    scan_dir = tmp_path / "project"
+    scan_dir.mkdir()
+    (scan_dir / "clean.txt").write_text("no secrets here\n")
+    (scan_dir / "link_to_outside").symlink_to(outside)
+
+    results = scanner.scan_directory(str(scan_dir))
+    # The symlinked directory should not be followed
+    assert len(results) == 0
+
+
+def test_symlinked_file_not_followed(scanner, tmp_path):
+    """Symlinked files should be skipped to prevent reading outside scope."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret_file = outside / "secret.txt"
+    secret_file.write_text("AKIAIOSFODNN7EXAMPLE\n")
+
+    scan_dir = tmp_path / "project"
+    scan_dir.mkdir()
+    (scan_dir / "link_to_secret.txt").symlink_to(secret_file)
+
+    results = scanner.scan_directory(str(scan_dir))
+    assert len(results) == 0
