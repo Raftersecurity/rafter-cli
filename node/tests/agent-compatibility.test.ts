@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { randomBytes } from "crypto";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -104,7 +105,7 @@ function evaluateToolResponse(payload: PostToolInput): PostToolOutput {
 // ── Temp dir helpers ─────────────────────────────────────────────────────
 
 function createTempDir(prefix: string): string {
-  const dir = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
+  const dir = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${randomBytes(6).toString("hex")}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
