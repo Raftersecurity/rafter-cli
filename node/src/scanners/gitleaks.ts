@@ -1,5 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { randomBytes } from "crypto";
 import { BinaryManager } from "../utils/binary-manager.js";
 import { PatternMatch } from "../core/pattern-engine.js";
 import fs from "fs";
@@ -60,7 +61,7 @@ export class GitleaksScanner {
     }
 
     const gitleaksPath = this.binaryManager.getGitleaksPath();
-    const tmpReport = path.join(os.tmpdir(), `gitleaks-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+    const tmpReport = path.join(os.tmpdir(), `gitleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
 
     try {
       // Run gitleaks detect on file
@@ -134,7 +135,7 @@ export class GitleaksScanner {
     }
 
     const gitleaksPath = this.binaryManager.getGitleaksPath();
-    const tmpReport = path.join(os.tmpdir(), `gitleaks-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+    const tmpReport = path.join(os.tmpdir(), `gitleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
 
     try {
       // Run gitleaks detect on directory
