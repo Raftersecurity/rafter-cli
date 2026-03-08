@@ -104,7 +104,7 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   },
   {
     name: "Generic Secret",
-    regex: "(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)[\\s]*[:=][\\s]*['\"](?=[^\\s'\"]*[0-9!@#$%^&*()])[0-9a-zA-Z\\-_!@#$%^&*()]{8,}['\"]",
+    regex: "(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)[\\s]*[:=][\\s]*['\"](?=[^\\s'\"]*[0-9])(?=[^\\s'\"]*[a-zA-Z])[0-9a-zA-Z\\-_!@#$%^&*()]{12,}['\"]",
     severity: "high",
     description: "Generic secret pattern detected"
   },
@@ -116,7 +116,7 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   },
   {
     name: "Bearer Token",
-    regex: "(?i)bearer[\\s]+[a-zA-Z0-9\\-_\\.=]+",
+    regex: "(?i)bearer[\\s]+(?=[a-zA-Z0-9\\-_\\.=]*[0-9])(?=[a-zA-Z0-9\\-_\\.=]*[a-zA-Z])[a-zA-Z0-9\\-_\\.=]{20,}",
     severity: "high",
     description: "Bearer token detected"
   },
