@@ -1,15 +1,18 @@
 """JSONL audit logger."""
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import random
+import socket
 import tempfile
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .config_schema import get_audit_log_path
 
@@ -19,6 +22,58 @@ RISK_SEVERITY: dict[str, int] = {
     "high": 2,
     "critical": 3,
 }
+
+
+def _is_private_ip(addr: str) -> bool:
+    """Check if an IP address is private, loopback, link-local, or reserved."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return True  # Treat unparseable addresses as private (safe default)
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+
+
+def validate_webhook_url(raw_url: str) -> None:
+    """Validate a webhook URL to prevent SSRF attacks.
+
+    Raises ValueError if the URL is unsafe (non-HTTP(S) scheme, resolves to
+    private/internal IP, etc.).
+    """
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Webhook URL must use http or https, got {parsed.scheme!r}")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"Webhook URL has no hostname: {raw_url}")
+
+    # If hostname is already an IP literal, check directly
+    try:
+        ipaddress.ip_address(hostname)
+        # It parsed as an IP — check if it's private
+        if _is_private_ip(hostname):
+            raise ValueError(
+                f"Webhook URL must not point to a private/internal address: {hostname}"
+            )
+        return  # Valid public IP
+    except ValueError as exc:
+        if "private/internal" in str(exc):
+            raise  # Re-raise our own private-IP error
+        # Not a valid IP literal — fall through to DNS resolution
+
+    # Resolve hostname and check all resulting IPs
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError(f"Could not resolve webhook hostname: {hostname}") from exc
+
+    for info in infos:
+        addr = info[4][0]
+        if _is_private_ip(addr):
+            raise ValueError(
+                f"Webhook URL must not point to a private/internal address: "
+                f"{hostname} resolved to {addr}"
+            )
 
 
 class AuditLogger:
@@ -76,6 +131,7 @@ class AuditLogger:
 
         def _post() -> None:
             try:
+                validate_webhook_url(webhook_url)
                 import urllib.request
                 req = urllib.request.Request(
                     webhook_url,
@@ -85,7 +141,7 @@ class AuditLogger:
                 )
                 urllib.request.urlopen(req, timeout=5)
             except Exception:
-                pass  # Silently ignore webhook failures
+                pass  # Silently ignore webhook failures (including validation)
 
         threading.Thread(target=_post, daemon=True).start()
 
