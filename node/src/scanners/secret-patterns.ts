@@ -98,13 +98,13 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   // Generic patterns
   {
     name: "Generic API Key",
-    regex: "(?i)(?<![a-zA-Z0-9_])(api[_-]?key|apikey)[\\s]*[:=][\\s]*['\"](?=[0-9a-zA-Z\\-_]*[0-9])[0-9a-zA-Z\\-_]{16,}['\"]",
+    regex: "(?i)(?<![a-zA-Z0-9_])(api[_-]?key|apikey)[\\s]*[:=][\\s]*['\"](?=[0-9a-zA-Z\\-_]*[0-9])[0-9a-zA-Z\\-_]{16,256}['\"]",
     severity: "high",
     description: "Generic API key pattern detected"
   },
   {
     name: "Generic Secret",
-    regex: "(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)[\\s]*[:=][\\s]*['\"](?=[^\\s'\"]*[0-9])(?=[^\\s'\"]*[a-zA-Z])[0-9a-zA-Z\\-_!@#$%^&*()]{12,}['\"]",
+    regex: "(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)[\\s]*[:=][\\s]*['\"](?=[^\\s'\"]*[0-9])(?=[^\\s'\"]*[a-zA-Z])[0-9a-zA-Z\\-_!@#$%^&*()]{12,256}['\"]",
     severity: "high",
     description: "Generic secret pattern detected"
   },
@@ -116,7 +116,7 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   },
   {
     name: "Bearer Token",
-    regex: "(?i)bearer[\\s]+(?=[a-zA-Z0-9\\-_\\.=]*[0-9])(?=[a-zA-Z0-9\\-_\\.=]*[a-zA-Z])[a-zA-Z0-9\\-_\\.=]{20,}",
+    regex: "(?i)bearer[\\s]+(?=[a-zA-Z0-9\\-_\\.=]*[0-9])(?=[a-zA-Z0-9\\-_\\.=]*[a-zA-Z])[a-zA-Z0-9\\-_\\.=]{20,512}",
     severity: "high",
     description: "Bearer token detected"
   },
@@ -124,7 +124,7 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   // Database connection strings
   {
     name: "Database Connection String",
-    regex: "(?i)(postgres|mysql|mongodb)://[^\\s]+:[^\\s]+@[^\\s]+",
+    regex: "(?i)(postgres|mysql|mongodb)://[^\\s:@]+:[^\\s@]+@[^\\s]+",
     severity: "critical",
     description: "Database connection string with credentials detected"
   },
@@ -132,7 +132,7 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   // JWT
   {
     name: "JSON Web Token",
-    regex: "eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+    regex: "eyJ[A-Za-z0-9_-]{10,2048}\\.[A-Za-z0-9_-]{10,2048}\\.[A-Za-z0-9_-]{10,2048}",
     severity: "high",
     description: "JWT token detected"
   },
@@ -148,7 +148,7 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   // PyPI token
   {
     name: "PyPI Token",
-    regex: "pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\\-_]{50,}",
+    regex: "pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\\-_]{50,1024}",
     severity: "critical",
     description: "PyPI API token detected"
   }
