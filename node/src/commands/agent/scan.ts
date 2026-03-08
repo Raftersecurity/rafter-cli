@@ -279,10 +279,8 @@ async function scanDiffFiles(
     }).trim();
 
     if (!diffOutput) {
-      if (!opts.quiet) {
-        console.log(fmt.success(`No files changed since ${ref}`));
-      }
-      process.exit(0);
+      outputScanResults([], opts, `files changed since ${ref}`);
+      return;
     }
 
     const changedFiles = diffOutput.split("\n").map(f => f.trim()).filter(f => f);
@@ -334,10 +332,8 @@ async function scanStagedFiles(
     }).trim();
 
     if (!stagedFilesOutput) {
-      if (!opts.quiet) {
-        console.log(fmt.success("No files staged for commit"));
-      }
-      process.exit(0);
+      outputScanResults([], opts, "staged files");
+      return;
     }
 
     const stagedFiles = stagedFilesOutput.split("\n").map(f => f.trim()).filter(f => f);
