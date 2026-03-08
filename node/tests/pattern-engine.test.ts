@@ -17,13 +17,13 @@ describe("PatternEngine", () => {
     },
     {
       name: "Generic API Key",
-      regex: "(?i)(?<![a-zA-Z0-9_])api[_-]?key[\\s]*[:=][\\s]*['\"](?=[0-9a-zA-Z\\-_]*[0-9])[0-9a-zA-Z\\-_]{16,}['\"]",
+      regex: "(?i)(?<![a-zA-Z0-9_])api[_-]?key[\\s]*[:=][\\s]*['\"](?=[0-9a-zA-Z\\-_]*[0-9])[0-9a-zA-Z\\-_]{16,256}['\"]",
       severity: "high",
       description: "Generic API key pattern"
     },
     {
       name: "Generic Secret",
-      regex: "(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)[\\s]*[:=][\\s]*['\"](?=[^\\s'\"]*[0-9!@#$%^&*()])[0-9a-zA-Z\\-_!@#$%^&*()]{8,}['\"]",
+      regex: "(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)[\\s]*[:=][\\s]*['\"](?=[^\\s'\"]*[0-9!@#$%^&*()])[0-9a-zA-Z\\-_!@#$%^&*()]{8,256}['\"]",
       severity: "high",
       description: "Generic secret pattern"
     }
