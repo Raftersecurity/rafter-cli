@@ -1,9 +1,9 @@
 """Load custom secret patterns from ~/.rafter/patterns/ and suppression rules from .rafterignore."""
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -126,17 +126,19 @@ def is_suppressed(file_path: str, pattern_name: str, suppressions: list[Suppress
     return False
 
 
-def _match_glob(glob: str, file_path: str) -> bool:
-    """Minimal glob matcher: supports * (within segment) and ** (cross-segment)."""
-    g = glob.replace("\\", "/")
+def _match_glob(glob_pattern: str, file_path: str) -> bool:
+    """Match a file path against a glob pattern using fnmatch.
+
+    Uses fnmatch.fnmatch for well-tested glob semantics. Patterns without
+    a path separator are matched against the basename so that e.g. "*.env"
+    matches "config/.env".
+    """
+    g = glob_pattern.replace("\\", "/")
     f = file_path.replace("\\", "/")
 
-    # Escape regex special chars except * which we handle
-    escaped = re.escape(g)
-    # re.escape turns * into \* — undo that for our glob handling
-    escaped = escaped.replace(r"\*\*", "\x00").replace(r"\*", "[^/]*").replace("\x00", ".*")
+    # If the pattern has no path separator, match against the basename
+    # (similar to minimatch's matchBase behaviour).
+    if "/" not in g:
+        f = f.rsplit("/", 1)[-1]
 
-    try:
-        return bool(re.search(rf"(^|/){escaped}(/|$)", f))
-    except re.error:
-        return False
+    return fnmatch.fnmatch(f, g)

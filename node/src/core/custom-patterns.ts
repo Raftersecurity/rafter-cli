@@ -5,6 +5,7 @@
 
 import fs from "fs";
 import path from "path";
+import { minimatch } from "minimatch";
 import { Pattern } from "./pattern-engine.js";
 import { getRafterDir } from "./config-defaults.js";
 
@@ -152,24 +153,13 @@ export function isSuppressed(
 }
 
 /**
- * Minimal glob matcher: supports * (within segment) and ** (cross-segment).
- * Not full micromatch — covers the 90% case for .rafterignore.
+ * Match a file path against a glob pattern using minimatch.
+ *
+ * Uses `matchBase` so bare patterns like "*.env" match against the basename
+ * (e.g. "config/.env"), and `dot` so dotfiles are included.
  */
 function matchGlob(glob: string, filePath: string): boolean {
-  // Normalise separators
   const g = glob.replace(/\\/g, "/");
   const f = filePath.replace(/\\/g, "/");
-
-  // Escape regex special chars except * which we handle specially
-  const escaped = g
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, "\x00") // placeholder for **
-    .replace(/\*/g, "[^/]*")  // * = anything within one segment
-    .replace(/\x00/g, ".*");  // ** = anything including /
-
-  try {
-    return new RegExp(`(^|/)${escaped}(/|$)`).test(f);
-  } catch {
-    return false;
-  }
+  return minimatch(f, g, { dot: true, matchBase: true });
 }
