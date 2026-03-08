@@ -110,6 +110,26 @@ describe("formatShareDetail", () => {
     const result = formatShareDetail(entry);
     expect(result).toBe("[allowed]");
   });
+
+  it("handles entry with missing securityCheck and resolution", () => {
+    const entry = makeEntry({
+      eventType: "scan_executed",
+      securityCheck: undefined as any,
+      resolution: undefined as any,
+    });
+    const result = formatShareDetail(entry);
+    expect(result).toBe("[unknown]");
+  });
+
+  it("handles secret_detected with missing securityCheck", () => {
+    const entry = makeEntry({
+      eventType: "secret_detected",
+      securityCheck: undefined as any,
+      resolution: undefined as any,
+    });
+    const result = formatShareDetail(entry);
+    expect(result).toBe(" [unknown]");
+  });
 });
 
 // ── computePolicyHash ────────────────────────────────────────────────

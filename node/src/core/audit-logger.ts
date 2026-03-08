@@ -26,12 +26,12 @@ export interface AuditLogEntry {
     tool?: string;
     riskLevel?: RiskLevel;
   };
-  securityCheck: {
+  securityCheck?: {
     passed: boolean;
     reason?: string;
     details?: any;
   };
-  resolution: {
+  resolution?: {
     actionTaken: ActionTaken;
     overrideReason?: string;
   };
