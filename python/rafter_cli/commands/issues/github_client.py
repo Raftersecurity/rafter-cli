@@ -38,9 +38,13 @@ def create_issue(
         for label in labels:
             args.extend(["--label", label])
 
-    result = subprocess.run(
-        args, capture_output=True, text=True, check=True
-    )
+    try:
+        result = subprocess.run(
+            args, capture_output=True, text=True, check=True
+        )
+    except subprocess.CalledProcessError as e:
+        msg = e.stderr.strip() if e.stderr else f"gh exited with code {e.returncode}"
+        raise RuntimeError(f"Failed to create issue: {msg}") from None
     url = result.stdout.strip()
 
     # Extract issue number from URL
