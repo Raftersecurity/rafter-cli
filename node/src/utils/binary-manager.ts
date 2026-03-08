@@ -365,8 +365,11 @@ export class BinaryManager {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gitleaks-"));
     try {
       // PowerShell 5+ ships on all supported Windows versions
+      // Escape single quotes to prevent shell injection ('' is the PS escape for ')
+      const safeZipPath = zipPath.replace(/'/g, "''");
+      const safeTempDir = tempDir.replace(/'/g, "''");
       await execAsync(
-        `powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath '${zipPath}' -DestinationPath '${tempDir}'"`,
+        `powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath '${safeZipPath}' -DestinationPath '${safeTempDir}'"`,
         { timeout: 30000 }
       );
 
