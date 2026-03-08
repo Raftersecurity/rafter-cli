@@ -122,8 +122,8 @@ Export Rafter policy for agent platforms.
 ## Piping and Automation
 
 ```bash
-# Filter critical vulnerabilities
-rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="critical")'
+# Filter high-severity vulnerabilities (SARIF levels: error, warning, note)
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="error")'
 
 # CI gate
 if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then
