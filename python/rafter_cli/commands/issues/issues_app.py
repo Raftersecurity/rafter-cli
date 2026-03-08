@@ -197,12 +197,16 @@ def from_text(
         sys.stdout.write(json.dumps(parsed, indent=2))
         return
 
-    issue = create_issue(
-        repo=target_repo,
-        title=parsed["title"],
-        body=parsed["body"],
-        labels=parsed["labels"],
-    )
+    try:
+        issue = create_issue(
+            repo=target_repo,
+            title=parsed["title"],
+            body=parsed["body"],
+            labels=parsed["labels"],
+        )
+    except Exception as e:
+        print(fmt.error(f"Failed to create issue: {e}"), file=sys.stderr)
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     if not quiet:
         print(fmt.success(f"Created: {issue.html_url}"), file=sys.stderr)
