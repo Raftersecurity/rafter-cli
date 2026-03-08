@@ -88,12 +88,10 @@ export class BinaryManager {
     }
 
     try {
-      const { stdout } = await execAsync(`"${this.getGitleaksPath()}" version`, {
-        timeout: 5000
-      });
-      // gitleaks v8.x outputs just the version string (e.g. "v8.18.2"), not
-      // "gitleaks version v8.18.2".  Accept any successful exit with non-empty output.
-      return stdout.trim().length > 0;
+      // execAsync rejects on non-zero exit, so reaching here means exit code 0.
+      // Accept any successful exit — don't require specific stdout content.
+      await execAsync(`"${this.getGitleaksPath()}" version`, { timeout: 5000 });
+      return true;
     } catch {
       return false;
     }
@@ -106,10 +104,9 @@ export class BinaryManager {
     const gitleaksPath = binaryPath ?? this.getGitleaksPath();
     try {
       const { stdout, stderr } = await execAsync(`"${gitleaksPath}" version`, { timeout: 5000 });
-      // gitleaks v8.x outputs just the version string (e.g. "v8.18.2"), not
-      // "gitleaks version v8.18.2".  Accept any successful exit with non-empty output.
-      const ok = stdout.trim().length > 0;
-      return { ok, stdout: stdout.trim(), stderr: stderr.trim() };
+      // execAsync rejects on non-zero exit, so reaching here means exit code 0.
+      // Accept any successful exit — don't require specific stdout content.
+      return { ok: true, stdout: stdout.trim(), stderr: stderr.trim() };
     } catch (e: unknown) {
       const err = e as { stdout?: string; stderr?: string };
       return {
