@@ -45,7 +45,7 @@ class GitleaksScanner:
                 [self._path, "version"],
                 capture_output=True, text=True, timeout=5,
             )
-            ok = "gitleaks version" in result.stdout or result.returncode == 0
+            ok = result.returncode == 0
             return GitleaksCheckResult(
                 available=ok,
                 stdout=result.stdout.strip(),
