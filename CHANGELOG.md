@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-03-08
+
+### Fixed
+- **[CRITICAL] Gitleaks file-scan false negatives** (Node): catch block in `gitleaks.ts` deleted tmpReport before checking exit code 1 (leaks found), making leak recovery unreachable. Reordered to read report before cleanup.
+- **Staged/diff path resolution** (Node): `--staged` and `--diff` scans resolved file paths relative to cwd instead of git repo root, causing missed files when run from subdirectories. Now uses `git rev-parse --show-toplevel`.
+- **Output format consistency** (Node): `--staged`/`--diff` with no files output plain text even when `--format json` was set. Early returns now route through `outputScanResults` to respect format flag.
+- **Gitleaks verify false failures** (Node + Python): `binary-manager` required specific stdout content from `gitleaks version`. Now accepts any exit code 0 regardless of output format.
+- **Engine/format validation** (Node): invalid `--engine` values (e.g. `--engine nope`) were silently accepted and ran as auto. Invalid `--format` values started scanning before failing. Both now validate before any work begins.
+
 ### Changed
-- **`rafter agent init` UX: opt-in not skip** (Node + Python): replaced `--skip-*` flags with `--with-*` opt-in flags. Integrations are no longer installed by default — use `--with-claude-code`, `--with-openclaw`, etc. or `--all` to install all detected. This prevents agents from needing to enumerate skip flags for integrations they don't want.
+- **Reduced false positives** (Node): added default directory excludes (`.venv`, `vendor`, `results`, `__pycache__`, `.terraform`, etc.) to regex scanner. Tightened Generic Secret regex (requires 12+ chars with both digits and letters) and Bearer Token regex (requires 20+ chars) to reduce noise on code/docs text.
+- **`rafter agent init` UX: opt-in not skip** (Node + Python): replaced `--skip-*` flags with `--with-*` opt-in flags. Integrations are no longer installed by default — use `--with-claude-code`, `--with-openclaw`, etc. or `--all` to install all detected.
 
 ## [0.5.8] - 2026-02-27
 
