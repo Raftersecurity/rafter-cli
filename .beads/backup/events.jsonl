@@ -497,3 +497,14 @@
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T09:16:19Z","event_type":"closed","id":586,"issue_id":"rc-wisp-p3kxc","new_value":"Closed","old_value":""}
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T09:16:27Z","event_type":"claimed","id":587,"issue_id":"rc-wisp-wpcy1","new_value":"","old_value":""}
 {"actor":"mayor","comment":"","created_at":"2026-03-06T09:16:58Z","event_type":"closed","id":588,"issue_id":"rc-wisp-uqrbd","new_value":"burned: polecat nuked","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-03-08T02:19:49Z","event_type":"created","id":589,"issue_id":"rc-raftercli-polecat-obsidian","new_value":"","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-03-08T02:20:06Z","event_type":"created","id":590,"issue_id":"rc-raftercli-polecat-quartz","new_value":"","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-03-08T02:20:16Z","event_type":"created","id":591,"issue_id":"rc-raftercli-polecat-jasper","new_value":"","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-03-08T02:20:27Z","event_type":"created","id":592,"issue_id":"rc-raftercli-polecat-onyx","new_value":"","old_value":""}
+{"actor":"raftercli/refinery","comment":"","created_at":"2026-03-08T02:20:32Z","event_type":"closed","id":593,"issue_id":"rc-wisp-o88ep","new_value":"patrol cycle complete: Patrol cycle complete. Merge queue empty, inbox clear, no integration branches to land. Session healthy.","old_value":""}
+{"actor":"raftercli/refinery","comment":"","created_at":"2026-03-08T02:20:43Z","event_type":"closed","id":594,"issue_id":"rc-wisp-6avyj","new_value":"patrol cycle complete: Patrol cycle 2: merge queue empty, inbox clear, session healthy. Standing by.","old_value":""}
+{"actor":"raftercli/witness","comment":"","created_at":"2026-03-08T02:20:56Z","event_type":"closed","id":595,"issue_id":"rc-wisp-0cwck","new_value":"patrol cycle complete: 4 polecats active (obsidian/quartz/jasper/onyx). All working on assigned tasks. Refinery healthy, queue empty. Deacon alive. No incidents.","old_value":""}
+{"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-08T02:21:41Z","event_type":"created","id":596,"issue_id":"rc-wisp-ucv1q","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-08T02:21:50Z","event_type":"created","id":597,"issue_id":"rc-wisp-lddw6","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-08T02:23:29Z","event_type":"created","id":598,"issue_id":"rc-wisp-jo0wo","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/onyx","comment":"","created_at":"2026-03-08T02:24:48Z","event_type":"created","id":599,"issue_id":"rc-wisp-r9csc","new_value":"","old_value":""}
