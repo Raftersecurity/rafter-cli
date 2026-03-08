@@ -128,7 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Two MCP resources: `rafter://config`, `rafter://policy`
 - `rafter hook pretool` command — PreToolUse hook handler for Claude Code
 - `rafter policy export --format claude|codex` — generate agent platform configs
-- `rafter agent init --claude-code` — auto-install PreToolUse hooks into Claude Code settings
+- `rafter agent init --with-claude-code` — auto-install PreToolUse hooks into Claude Code settings
 - `.rafter.yml` schema validation with field-level warnings and graceful degradation
 
 ### Fixed
