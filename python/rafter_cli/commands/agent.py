@@ -27,7 +27,7 @@ from ..core.pattern_engine import PatternEngine
 from ..scanners.gitleaks import GitleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
-from ..utils.formatter import fmt, is_agent_mode
+from ..utils.formatter import fmt, is_agent_mode, print_stderr
 from ..utils.skill_manager import SkillManager
 from ..utils.binary_manager import BinaryManager
 
@@ -629,7 +629,7 @@ def _select_engine(preference: str, quiet: bool) -> str:
     if preference == "gitleaks":
         if not available:
             if not quiet:
-                print(fmt.warning("Gitleaks requested but not available, using patterns"), file=sys.stderr)
+                print_stderr(fmt.warning("Gitleaks requested but not available, using patterns"))
             return "patterns"
         return "gitleaks"
 
@@ -753,7 +753,7 @@ def _watch_and_scan(
     eng = _select_engine(engine, quiet)
 
     if not quiet:
-        print(fmt.info(f"Watching {watch_path} for changes ({eng}). Press Ctrl+C to exit."), file=sys.stderr)
+        print_stderr(fmt.info(f"Watching {watch_path} for changes ({eng}). Press Ctrl+C to exit."))
 
     # Initial scan
     if os.path.isdir(watch_path):
