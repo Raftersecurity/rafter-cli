@@ -73,11 +73,22 @@ function loadJsonPatterns(file: string): Pattern[] {
     if (!Array.isArray(data)) return [];
     const patterns: Pattern[] = [];
     for (const entry of data) {
-      if (typeof entry.pattern !== "string") continue;
+      if (typeof entry.pattern !== "string" || !entry.pattern) continue;
+      try {
+        new RegExp(entry.pattern);
+      } catch {
+        console.error(`Warning: skipping custom pattern in ${path.basename(file)} — invalid regex: ${entry.pattern}`);
+        continue;
+      }
+      const severity = entry.severity ?? "high";
+      if (!["low", "medium", "high", "critical"].includes(severity)) {
+        console.error(`Warning: skipping custom pattern in ${path.basename(file)} — invalid severity: ${severity}`);
+        continue;
+      }
       patterns.push({
         name: entry.name ?? `Custom (${path.basename(file, ".json")})`,
         regex: entry.pattern,
-        severity: (entry.severity as Pattern["severity"]) ?? "high",
+        severity: severity as Pattern["severity"],
         description: entry.description,
       });
     }

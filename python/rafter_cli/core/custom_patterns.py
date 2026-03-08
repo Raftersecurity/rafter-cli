@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -54,6 +55,9 @@ def _load_txt(path: Path) -> list[Pattern]:
         return []
 
 
+_VALID_SEVERITIES = {"low", "medium", "high", "critical"}
+
+
 def _load_json(path: Path) -> list[Pattern]:
     try:
         data = json.loads(path.read_text())
@@ -61,12 +65,21 @@ def _load_json(path: Path) -> list[Pattern]:
             return []
         patterns: list[Pattern] = []
         for entry in data:
-            if not isinstance(entry.get("pattern"), str):
+            if not isinstance(entry.get("pattern"), str) or not entry["pattern"]:
+                continue
+            try:
+                re.compile(entry["pattern"])
+            except re.error:
+                print(f"Warning: skipping custom pattern in {path.name} — invalid regex: {entry['pattern']}", file=sys.stderr)
+                continue
+            severity = entry.get("severity", "high")
+            if severity not in _VALID_SEVERITIES:
+                print(f"Warning: skipping custom pattern in {path.name} — invalid severity: {severity}", file=sys.stderr)
                 continue
             patterns.append(Pattern(
                 name=entry.get("name", f"Custom ({path.stem})"),
                 regex=entry["pattern"],
-                severity=entry.get("severity", "high"),
+                severity=severity,
                 description=entry.get("description"),
             ))
         return patterns
