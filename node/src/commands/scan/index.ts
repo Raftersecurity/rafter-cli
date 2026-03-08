@@ -33,6 +33,7 @@ export function createScanGroupCommand(): Command {
     .description(
       "Scan for security issues. Default: remote backend scan. Use 'scan local' for local secret scanning."
     )
+    .enablePositionalOptions()
     .option("-r, --repo <repo>", "org/repo (default: current)")
     .option("-b, --branch <branch>", "branch (default: current else main)")
     .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")

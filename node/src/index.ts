@@ -25,6 +25,7 @@ const program = new Command()
   .name("rafter")
   .description("Rafter CLI")
   .version(VERSION)
+  .enablePositionalOptions()
   .option("-a, --agent", "Plain output for AI agents (no colors/emoji)");
 
 // Set agent mode before any subcommand runs
