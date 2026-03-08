@@ -38,7 +38,7 @@ while read local_ref local_sha remote_ref remote_sha; do
 
     echo "🔍 Rafter: Scanning commits being pushed ($local_ref)..."
 
-    rafter agent scan --diff "$ref_arg" --quiet
+    rafter scan local --diff "$ref_arg" --quiet
     EXIT_CODE=$?
 
     if [ $EXIT_CODE -ne 0 ]; then
@@ -49,7 +49,7 @@ done
 if [ $FOUND_SECRETS -ne 0 ]; then
     echo -e "${RED}❌ Push blocked: Secrets detected in commits being pushed${NC}"
     echo ""
-    echo "   Run: rafter agent scan --diff <remote-sha>"
+    echo "   Run: rafter scan local --diff <remote-sha>"
     echo "   To see details and remediate."
     echo ""
     echo "   To bypass (NOT recommended): git push --no-verify"

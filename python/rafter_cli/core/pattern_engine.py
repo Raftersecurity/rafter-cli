@@ -23,6 +23,13 @@ class PatternMatch:
     redacted: str = ""
 
 
+_GENERIC_PATTERN_NAMES = frozenset({"Generic API Key", "Generic Secret"})
+
+_VARIABLE_NAME_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
+_LOWERCASE_IDENT_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
+_QUOTED_VALUE_RE = re.compile(r"""['\"]([^'\"]+)['\"]""")
+
+
 class PatternEngine:
     def __init__(self, patterns: Sequence[Pattern]):
         self._patterns = list(patterns)
@@ -35,6 +42,8 @@ class PatternEngine:
             if compiled is None:
                 continue
             for m in compiled.finditer(text):
+                if self._is_false_positive(pattern, m.group(0)):
+                    continue
                 matches.append(PatternMatch(
                     pattern=pattern,
                     match=m.group(0),
@@ -51,6 +60,8 @@ class PatternEngine:
                 if compiled is None:
                     continue
                 for m in compiled.finditer(line):
+                    if self._is_false_positive(pattern, m.group(0)):
+                        continue
                     matches.append(PatternMatch(
                         pattern=pattern,
                         match=m.group(0),
@@ -67,13 +78,31 @@ class PatternEngine:
             compiled = self._compile(pattern.regex)
             if compiled is None:
                 continue
-            result = compiled.sub(lambda m: self._redact(m.group(0)), result)
+            result = compiled.sub(
+                lambda m, p=pattern: m.group(0) if self._is_false_positive(p, m.group(0)) else self._redact(m.group(0)),
+                result,
+            )
         return result
 
     def has_matches(self, text: str) -> bool:
         return len(self.scan(text)) > 0
 
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_false_positive(pattern: Pattern, match_text: str) -> bool:
+        """Return True if match looks like a variable name rather than a real secret."""
+        if pattern.name not in _GENERIC_PATTERN_NAMES:
+            return False
+        m = _QUOTED_VALUE_RE.search(match_text)
+        if not m:
+            return False
+        value = m.group(1)
+        if _VARIABLE_NAME_RE.match(value):
+            return True
+        if _LOWERCASE_IDENT_RE.match(value):
+            return True
+        return False
 
     @staticmethod
     def _compile(regex_str: str) -> re.Pattern | None:

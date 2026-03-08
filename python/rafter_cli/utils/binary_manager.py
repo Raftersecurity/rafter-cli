@@ -79,7 +79,11 @@ class BinaryManager:
         return self.get_gitleaks_path().exists()
 
     def verify_gitleaks_verbose(self, binary_path: Optional[Path] = None) -> dict:
-        """Run 'gitleaks version' and return {ok, stdout, stderr}."""
+        """Run 'gitleaks version' and return {ok, stdout, stderr}.
+
+        Accept any successful exit (code 0) rather than requiring specific
+        stdout content — some gitleaks builds output to stderr or vary format.
+        """
         path = binary_path or self.get_gitleaks_path()
         try:
             result = subprocess.run(
@@ -88,7 +92,7 @@ class BinaryManager:
                 text=True,
                 timeout=5,
             )
-            ok = "gitleaks version" in result.stdout
+            ok = result.returncode == 0
             return {"ok": ok, "stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
         except Exception as e:
             return {"ok": False, "stdout": "", "stderr": str(e)}

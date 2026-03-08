@@ -88,13 +88,147 @@ def test_twilio_api_key():
 # -- Generic --------------------------------------------------------------
 
 def test_generic_api_key():
-    matches = _engine().scan("api_key=abcdefghijklmnopqrstuv")
+    matches = _engine().scan('api_key="a1b2c3d4e5f6g7h8i9j0"')
     assert any(m.pattern.name == "Generic API Key" for m in matches)
 
 
 def test_generic_secret():
-    matches = _engine().scan("password=MyS3cretP@ss!")
+    matches = _engine().scan("password='MyS3cretP@ss!'")
     assert any(m.pattern.name == "Generic Secret" for m in matches)
+
+
+# -- False positive tests (rc-0as) -------------------------------------------
+
+def test_no_false_positive_anthropic_api_key():
+    """Variable names containing api_key should not trigger generic detection."""
+    matches = _engine().scan('anthropic_api_key = "sk-ant-something"')
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_settings_password():
+    """Compound variable names containing password should not trigger generic detection."""
+    matches = _engine().scan('settings.user_password = get_password()')
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_unquoted_api_key():
+    """Unquoted values assigned to api_key should not match (likely variable refs)."""
+    matches = _engine().scan("api_key = some_variable_name")
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_compound_secret():
+    """my_secret_value should not trigger the generic secret pattern."""
+    matches = _engine().scan('app_secret = "not-a-real-secret"')
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_generic_api_key_still_matches_standalone():
+    """Standalone api_key with quoted value should still match."""
+    matches = _engine().scan('api_key = "a1b2c3d4e5f6g7h8"')
+    assert any(m.pattern.name == "Generic API Key" for m in matches)
+
+
+def test_generic_secret_still_matches_standalone():
+    """Standalone password with quoted value should still match."""
+    matches = _engine().scan('password = "Sup3rS3cr3t!"')
+    assert any(m.pattern.name == "Generic Secret" for m in matches)
+
+
+# -- False positive tests: env var name values (rc-uos) ----------------------
+
+def test_no_false_positive_env_var_name_as_api_key_value():
+    """api_key = 'ANTHROPIC_API_KEY' should not match (value is an env var name)."""
+    matches = _engine().scan("api_key = 'ANTHROPIC_API_KEY'")
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_env_var_name_as_api_key_value_colon():
+    """api_key: 'GOOGLE_PLACES_API_KEY' should not match."""
+    matches = _engine().scan("api_key: 'GOOGLE_PLACES_API_KEY'")
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_env_var_name_as_secret_value():
+    """password = 'DATABASE_PASSWORD' should not match (value is a name, not a secret)."""
+    matches = _engine().scan("password = 'DATABASE_PASSWORD'")
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_identifier_as_secret_value():
+    """secret = 'my_app_secret_key' should not match (value looks like an identifier)."""
+    matches = _engine().scan("secret = 'my_app_secret_key'")
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_generic_api_key_all_letters_no_match():
+    """api_key with all-letter value should not match (no entropy indicators)."""
+    matches = _engine().scan('api_key = "abcdefghijklmnopqrstuv"')
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+# -- False positive tests: variable names with digits (rc-1qd) ----------------
+
+def test_no_false_positive_env_var_name_with_digits():
+    """api_key = 'OPENAI_API_KEY_V2' should not match (env var name with digit)."""
+    matches = _engine().scan("api_key = 'OPENAI_API_KEY_V2'")
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_uppercase_secret_var_name():
+    """password = 'DATABASE_PASSWORD_1' should not match (env var name with digit)."""
+    matches = _engine().scan("password = 'DATABASE_PASSWORD_1'")
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_lowercase_ident_with_digits():
+    """api_key = 'my_app_api_key_v2' should not match (lowercase identifier)."""
+    matches = _engine().scan("api_key = 'my_app_api_key_v2'")
+    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
+    assert len(generic) == 0
+
+
+def test_no_false_positive_lowercase_secret_ident():
+    """secret = 'app_secret_token_1' should not match (lowercase identifier)."""
+    matches = _engine().scan("secret = 'app_secret_token_1'")
+    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
+    assert len(generic) == 0
+
+
+def test_real_key_still_matches_mixed_case():
+    """api_key = 'aB3xY9kL2mN5pQ8r' should still match (real key, mixed case)."""
+    matches = _engine().scan('api_key = "aB3xY9kL2mN5pQ8r"')
+    assert any(m.pattern.name == "Generic API Key" for m in matches)
+
+
+def test_real_secret_with_special_chars_still_matches():
+    """password = 'P@ssw0rd!XyZ' should still match (real secret)."""
+    matches = _engine().scan('password = "P@ssw0rd!XyZ"')
+    assert any(m.pattern.name == "Generic Secret" for m in matches)
+
+
+def test_no_false_positive_redact_preserves_var_names():
+    """redact_text should not redact variable name values."""
+    engine = _engine()
+    text = "api_key = 'OPENAI_API_KEY_V2'"
+    assert engine.redact_text(text) == text
+
+
+def test_has_matches_excludes_var_names():
+    """has_matches should return False for variable name values."""
+    engine = _engine()
+    assert not engine.has_matches("api_key = 'OPENAI_API_KEY_V2'")
 
 
 def test_private_key():

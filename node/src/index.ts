@@ -4,18 +4,20 @@ import * as dotenv from "dotenv";
 import { createRunCommand } from "./commands/backend/run.js";
 import { createGetCommand } from "./commands/backend/get.js";
 import { createUsageCommand } from "./commands/backend/usage.js";
+import { createScanGroupCommand } from "./commands/scan/index.js";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createCiCommand } from "./commands/ci/index.js";
 import { createHookCommand } from "./commands/hook/index.js";
 import { createMcpCommand } from "./commands/mcp/index.js";
 import { createPolicyCommand } from "./commands/policy/index.js";
 import { createCompletionCommand } from "./commands/completion.js";
+import { createIssuesCommand } from "./commands/issues/index.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 
 dotenv.config();
 
-const VERSION = "0.5.5";
+const VERSION = "0.5.7";
 
 const program = new Command()
   .name("rafter")
@@ -31,10 +33,13 @@ program.hook("preAction", (thisCommand) => {
   }
 });
 
-// Backend commands (existing)
+// Backend commands
 program.addCommand(createRunCommand());
 program.addCommand(createGetCommand());
 program.addCommand(createUsageCommand());
+
+// Scan command group (default: remote backend scan; subcommands: local, remote)
+program.addCommand(createScanGroupCommand());
 
 // Agent commands
 program.addCommand(createAgentCommand());
@@ -50,6 +55,9 @@ program.addCommand(createMcpCommand());
 
 // Policy commands
 program.addCommand(createPolicyCommand());
+
+// GitHub Issues integration
+program.addCommand(createIssuesCommand());
 
 // Shell completions
 program.addCommand(createCompletionCommand());

@@ -17,9 +17,15 @@ describe("PatternEngine", () => {
     },
     {
       name: "Generic API Key",
-      regex: "(?i)api[_-]?key[\\s]*[:=][\\s]*['\"]?[0-9a-zA-Z\\-_]{16,}['\"]?",
+      regex: "(?i)(?<![a-zA-Z0-9_])api[_-]?key[\\s]*[:=][\\s]*['\"](?=[0-9a-zA-Z\\-_]*[0-9])[0-9a-zA-Z\\-_]{16,}['\"]",
       severity: "high",
       description: "Generic API key pattern"
+    },
+    {
+      name: "Generic Secret",
+      regex: "(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)[\\s]*[:=][\\s]*['\"](?=[^\\s'\"]*[0-9!@#$%^&*()])[0-9a-zA-Z\\-_!@#$%^&*()]{8,}['\"]",
+      severity: "high",
+      description: "Generic secret pattern"
     }
   ];
 
@@ -103,6 +109,128 @@ line 3`;
     const githubMatch = matches.find(m => m.pattern.name === "GitHub Token");
     expect(awsMatch).toBeDefined();
     expect(githubMatch).toBeDefined();
+  });
+
+  it("should not match compound variable names like anthropic_api_key", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = 'anthropic_api_key = "sk-ant-something"';
+
+    const matches = engine.scan(text);
+
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should not match unquoted values for generic api key", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key = some_variable_name_here";
+
+    const matches = engine.scan(text);
+
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should not match env var name as api key value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key = 'ANTHROPIC_API_KEY'";
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should not match env var name as api key value with colon", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key: 'GOOGLE_PLACES_API_KEY'";
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should not match env var name as secret value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "password = 'DATABASE_PASSWORD'";
+
+    const matches = engine.scan(text);
+    const secretMatch = matches.find(m => m.pattern.name === "Generic Secret");
+    expect(secretMatch).toBeUndefined();
+  });
+
+  it("should not match identifier as secret value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "secret = 'my_app_secret_key'";
+
+    const matches = engine.scan(text);
+    const secretMatch = matches.find(m => m.pattern.name === "Generic Secret");
+    expect(secretMatch).toBeUndefined();
+  });
+
+  it("should match generic secret with digits/special chars", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = 'password = "Sup3rS3cr3t!"';
+
+    const matches = engine.scan(text);
+    const secretMatch = matches.find(m => m.pattern.name === "Generic Secret");
+    expect(secretMatch).toBeDefined();
+  });
+
+  it("should not match all-letter api key value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = 'api_key = "abcdefghijklmnopqrstuv"';
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  // rc-1qd: variable name false positive tests
+  it("should not match env var name with digits as api key value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key = 'OPENAI_API_KEY_V2'";
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should not match uppercase env var name with digits as secret value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "password = 'DATABASE_PASSWORD_1'";
+
+    const matches = engine.scan(text);
+    const secretMatch = matches.find(m => m.pattern.name === "Generic Secret");
+    expect(secretMatch).toBeUndefined();
+  });
+
+  it("should not match lowercase identifier with digits as api key value", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key = 'my_app_api_key_v2'";
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeUndefined();
+  });
+
+  it("should still match real mixed-case api key with digits", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = 'api_key = "aB3xY9kL2mN5pQ8r"';
+
+    const matches = engine.scan(text);
+    const apiKeyMatch = matches.find(m => m.pattern.name === "Generic API Key");
+    expect(apiKeyMatch).toBeDefined();
+  });
+
+  it("should not redact variable name values", () => {
+    const engine = new PatternEngine(testPatterns);
+    const text = "api_key = 'OPENAI_API_KEY_V2'";
+    expect(engine.redactText(text)).toBe(text);
+  });
+
+  it("should not report hasMatches for variable name values", () => {
+    const engine = new PatternEngine(testPatterns);
+    expect(engine.hasMatches("api_key = 'OPENAI_API_KEY_V2'")).toBe(false);
   });
 
   it("should filter by severity", () => {

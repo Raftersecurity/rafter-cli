@@ -91,13 +91,13 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
     # Generic
     Pattern(
         name="Generic API Key",
-        regex=r"(?i)(api[_\-]?key|apikey)\s*[:=]\s*['\"]?[0-9a-zA-Z\-_]{16,256}['\"]?",
+        regex=r"(?i)(?<![a-zA-Z0-9_])(api[_\-]?key|apikey)\s*[:=]\s*['\"](?=[0-9a-zA-Z\-_]*[0-9])[0-9a-zA-Z\-_]{16,256}['\"]",
         severity="high",
         description="Generic API key pattern detected",
     ),
     Pattern(
         name="Generic Secret",
-        regex=r"(?i)(secret|password|passwd|pwd)\s*[:=]\s*['\"]?[0-9a-zA-Z\-_!@#$%^&*()]{8,256}['\"]?",
+        regex=r"(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)\s*[:=]\s*['\"](?=[^\s'\"]*[0-9!@#$%^&*()])[0-9a-zA-Z\-_!@#$%^&*()]{8,256}['\"]",
         severity="high",
         description="Generic secret pattern detected",
     ),

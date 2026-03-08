@@ -83,6 +83,9 @@ class EnvironmentsConfig:
     claude_code: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(
         path=os.path.join(os.path.expanduser("~"), ".claude", "mcp", "rafter-security.json"),
     ))
+    codex: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(
+        path=os.path.join(os.path.expanduser("~"), ".agents", "skills"),
+    ))
 
 
 @dataclass

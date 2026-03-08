@@ -60,7 +60,7 @@ function checkClaudeCode(): CheckResult {
   const claudeDir = path.join(homeDir, ".claude");
 
   if (!fs.existsSync(claudeDir)) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --claude-code' to enable` };
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-claude-code' to enable` };
   }
 
   const settingsPath = path.join(claudeDir, "settings.json");
@@ -75,7 +75,7 @@ function checkClaudeCode(): CheckResult {
       (entry.hooks || []).some((h: any) => h.command === "rafter hook pretool")
     );
     if (!hasRafterHook) {
-      return { name, passed: false, optional: true, detail: "Rafter hooks not installed — run 'rafter agent init --claude-code'" };
+      return { name, passed: false, optional: true, detail: "Rafter hooks not installed — run 'rafter agent init --with-claude-code'" };
     }
     return { name, passed: true, detail: "Hooks installed" };
   } catch (e) {
@@ -88,15 +88,32 @@ function checkOpenClaw(): CheckResult {
   const skillManager = new SkillManager();
 
   if (!skillManager.isOpenClawInstalled()) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init' to enable` };
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-openclaw' to enable` };
   }
 
   if (!skillManager.isRafterSkillInstalled()) {
-    return { name, passed: false, optional: true, detail: `Rafter skill not installed — run 'rafter agent init'` };
+    return { name, passed: false, optional: true, detail: `Rafter skill not installed — run 'rafter agent init --with-openclaw'` };
   }
 
   const version = skillManager.getInstalledVersion();
   return { name, passed: true, detail: `Rafter skill installed${version ? ` (v${version})` : ""}` };
+}
+
+function checkCodex(): CheckResult {
+  const name = "Codex CLI";
+  const homeDir = os.homedir();
+  const codexDir = path.join(homeDir, ".codex");
+
+  if (!fs.existsSync(codexDir)) {
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-codex' to enable` };
+  }
+
+  const skillPath = path.join(homeDir, ".agents", "skills", "rafter", "SKILL.md");
+  if (!fs.existsSync(skillPath)) {
+    return { name, passed: false, optional: true, detail: `Rafter skills not installed — run 'rafter agent init --with-codex'` };
+  }
+
+  return { name, passed: true, detail: `Skills installed (${path.join(homeDir, ".agents", "skills")})` };
 }
 
 export function createVerifyCommand(): Command {
@@ -112,6 +129,7 @@ export function createVerifyCommand(): Command {
         await checkGitleaks(),
         checkClaudeCode(),
         checkOpenClaw(),
+        checkCodex(),
       ];
 
       for (const r of results) {

@@ -35,7 +35,8 @@ rafter usage                                  # check quota
 ### Agent Security
 
 ```bash
-rafter agent init                # initialize + auto-detect agents
+rafter agent init                # initialize config + detect environments
+rafter agent init --all          # install all detected integrations
 rafter agent scan .              # scan for secrets
 rafter agent scan --diff HEAD~1  # scan changed files
 rafter agent exec "git commit"   # execute with risk assessment
@@ -46,7 +47,7 @@ rafter agent config show         # view configuration
 ### Pretool Hooks (Claude Code)
 
 ```bash
-rafter agent init --claude-code  # install PreToolUse hooks
+rafter agent init --with-claude-code  # install PreToolUse hooks
 rafter hook pretool              # hook handler (reads stdin, writes decision)
 rafter policy export --format claude  # export hook config
 ```
