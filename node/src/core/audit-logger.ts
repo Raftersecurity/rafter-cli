@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import fs from "fs";
 import path from "path";
 import { getAuditLogPath } from "./config-defaults.js";
@@ -287,7 +288,7 @@ export class AuditLogger {
    * Generate a unique session ID
    */
   private generateSessionId(): string {
-    return `${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    return `${Date.now()}-${randomBytes(8).toString("hex")}`;
   }
 
   /**
