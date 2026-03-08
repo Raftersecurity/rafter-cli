@@ -68,6 +68,21 @@ export function createScanCommand(): Command {
     .option("--baseline", "Filter findings present in the saved baseline")
     .option("--watch", "Watch for file changes and re-scan on change")
     .action(async (scanPath, opts: ScanOpts) => {
+      // Validate flags before doing any work
+      const validEngines = ["auto", "gitleaks", "patterns"];
+      const engineValue = opts.engine || "auto";
+      if (!validEngines.includes(engineValue)) {
+        console.error(`Invalid engine: ${engineValue}. Valid values: ${validEngines.join(", ")}`);
+        process.exit(2);
+      }
+
+      const format = opts.format ?? (opts.json ? "json" : "text");
+      const validFormats = ["text", "json", "sarif"];
+      if (!validFormats.includes(format)) {
+        console.error(`Invalid format: ${format}. Valid values: ${validFormats.join(", ")}`);
+        process.exit(2);
+      }
+
       // Deprecation notice — only when invoked as `rafter agent scan`, not as `rafter scan local`
       const argv = process.argv;
       const isAgentScan = argv.includes("agent") && argv.includes("scan") &&
@@ -388,6 +403,11 @@ async function selectEngine(preference: string, quiet: boolean): Promise<"gitlea
       return "patterns";
     }
     return "gitleaks";
+  }
+
+  if (preference !== "auto") {
+    console.error(`Invalid engine: ${preference}. Valid values: auto, gitleaks, patterns`);
+    process.exit(2);
   }
 
   // Auto mode: try Gitleaks, fall back to patterns
