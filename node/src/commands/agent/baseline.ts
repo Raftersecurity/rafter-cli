@@ -60,6 +60,13 @@ function createBaselineCreateCommand(): Command {
     .argument("[path]", "Path to scan", ".")
     .option("--engine <engine>", "Scan engine: gitleaks or patterns", "auto")
     .action(async (scanPath: string, opts: { engine?: string }) => {
+      const validEngines = ["auto", "gitleaks", "patterns"];
+      const engineValue = opts.engine || "auto";
+      if (!validEngines.includes(engineValue)) {
+        console.error(`Invalid engine: ${engineValue}. Valid values: ${validEngines.join(", ")}`);
+        process.exit(2);
+      }
+
       const resolvedPath = path.resolve(scanPath);
       if (!fs.existsSync(resolvedPath)) {
         console.error(`Error: Path not found: ${resolvedPath}`);
@@ -202,6 +209,10 @@ async function selectEngine(preference: string): Promise<"gitleaks" | "patterns"
   if (preference === "gitleaks") {
     const g = new GitleaksScanner();
     return (await g.isAvailable()) ? "gitleaks" : "patterns";
+  }
+  if (preference !== "auto") {
+    console.error(`Invalid engine: ${preference}. Valid values: auto, gitleaks, patterns`);
+    process.exit(2);
   }
   const g = new GitleaksScanner();
   return (await g.isAvailable()) ? "gitleaks" : "patterns";
