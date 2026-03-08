@@ -99,6 +99,9 @@ class RegexScanner:
             for entry in os.scandir(directory):
                 if entry.name in exclude:
                     continue
+                # Skip symlinks to prevent traversal outside intended scope
+                if entry.is_symlink():
+                    continue
                 if entry.is_dir(follow_symlinks=False):
                     files.extend(RegexScanner._walk(entry.path, exclude, max_depth, depth + 1))
                 elif entry.is_file(follow_symlinks=False):

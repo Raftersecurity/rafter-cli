@@ -140,6 +140,11 @@ export class RegexScanner {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
 
       for (const entry of entries) {
+        // Skip symlinks to prevent traversal outside intended scope
+        if (entry.isSymbolicLink()) {
+          continue;
+        }
+
         const fullPath = path.join(dir, entry.name);
 
         // Skip excluded directories
