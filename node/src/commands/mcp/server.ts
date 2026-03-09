@@ -45,7 +45,7 @@ function errorResult(message: string) {
 
 function createServer(): Server {
   const server = new Server(
-    { name: "rafter", version: "0.5.0" },
+    { name: "rafter", version: "0.6.1" },
     { capabilities: { tools: {}, resources: {} } },
   );
 

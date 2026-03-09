@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-09
+
+### Fixed
+- **Claude Code hook errors** (Python): `rafter agent init --with-claude-code` registered hooks with bare `rafter` command, which fails in Claude Code's minimal shell environment (no user PATH). Now resolves the absolute path to the rafter binary at install time.
+- **CI broken since v0.6.0**: `validate-release` and `publish` workflows used pnpm@9, but `pnpm-workspace.yaml` uses pnpm v10 features (`onlyBuiltDependencies`, workspace-level `overrides`), causing `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` on every run. Upgraded to pnpm@10.
+- **MCP server version hardcoded** (Node): `rafter mcp serve` reported version `0.5.0` to MCP clients. Now reports correct version.
+- **GitHub Action uses deprecated command**: `action.yml` referenced `rafter agent scan` (deprecated since v0.5.7). Updated to `rafter scan local`.
+- **Pre-commit hooks use deprecated command**: `.pre-commit-hooks.yaml` entries referenced `rafter agent scan`. Updated to `rafter scan local`.
+- **README pre-commit rev outdated**: pinned revision updated from `v0.5.6` to `v0.6.1`.
+
 ## [0.6.0] - 2026-03-08
 
 ### Security
