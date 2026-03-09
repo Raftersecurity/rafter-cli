@@ -340,19 +340,26 @@ class BinaryManager:
 
     def _extract_zip(self, archive_path: Path) -> None:
         """Extract only the gitleaks binary from a Windows zip archive."""
+        allowed = {"gitleaks", "gitleaks.exe"}
         with tempfile.TemporaryDirectory(prefix="rafter-gitleaks-") as tmp:
             tmp_path = Path(tmp)
             with zipfile.ZipFile(archive_path, "r") as zf:
-                zf.extractall(tmp_path)
+                for info in zf.infolist():
+                    # Reject path-traversal entries (zip-slip)
+                    if info.filename.startswith("/") or ".." in info.filename:
+                        continue
+                    basename = os.path.basename(info.filename)
+                    if basename not in allowed:
+                        continue
+                    # Extract only the matching binary, flattened into tmp
+                    info.filename = basename
+                    zf.extract(info, tmp_path)
 
-            # Locate gitleaks.exe — may be at root or inside a subdirectory
+            # Locate extracted binary
             found: Path | None = None
-            for candidate in tmp_path.rglob("gitleaks.exe"):
-                found = candidate
-                break
-            # Fallback: plain "gitleaks" binary (unlikely on Windows but handle it)
-            if found is None:
-                for candidate in tmp_path.rglob("gitleaks"):
+            for name in allowed:
+                candidate = tmp_path / name
+                if candidate.exists():
                     found = candidate
                     break
 
