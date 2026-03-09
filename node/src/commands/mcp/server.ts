@@ -12,6 +12,10 @@ import { GitleaksScanner } from "../../scanners/gitleaks.js";
 import { CommandInterceptor } from "../../core/command-interceptor.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { createRequire } from "module";
+
+const _require = createRequire(import.meta.url);
+const { version: CLI_VERSION } = _require("../../../package.json");
 
 interface ScanResultOutput {
   file: string;
@@ -45,7 +49,7 @@ function errorResult(message: string) {
 
 function createServer(): Server {
   const server = new Server(
-    { name: "rafter", version: "0.6.1" },
+    { name: "rafter", version: CLI_VERSION },
     { capabilities: { tools: {}, resources: {} } },
   );
 
