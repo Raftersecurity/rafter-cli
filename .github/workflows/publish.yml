@@ -22,7 +22,7 @@ jobs:
           node-version: "20"
 
       - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@9 --activate
+        run: corepack enable && corepack prepare pnpm@10 --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -43,7 +43,7 @@ jobs:
           node-version: "20"
 
       - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@9 --activate
+        run: corepack enable && corepack prepare pnpm@10 --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -93,7 +93,7 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@9 --activate
+        run: corepack enable && corepack prepare pnpm@10 --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
