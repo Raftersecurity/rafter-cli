@@ -19,7 +19,7 @@ import { createRequire } from "module";
 dotenv.config();
 
 const require = createRequire(import.meta.url);
-const { version: VERSION } = require("../../package.json");
+const { version: VERSION } = require("../package.json");
 
 const program = new Command()
   .name("rafter")
