@@ -80,6 +80,35 @@ agent_app.add_typer(config_app)
 # ── init helpers ─────────────────────────────────────────────────────
 
 
+def _resolve_rafter_path() -> str:
+    """Find the absolute path to the rafter binary for reliable hook invocation.
+
+    Claude Code hooks run in a minimal shell environment that may not include
+    the user's PATH additions (e.g. ~/.local/bin, ~/go/bin). Using the full
+    path ensures hooks work regardless of the shell environment.
+    """
+    import shutil
+
+    rafter_bin = shutil.which("rafter")
+    if rafter_bin:
+        return str(Path(rafter_bin).resolve())
+
+    # Common installation locations as fallback
+    home = Path.home()
+    candidates = [
+        home / ".local" / "bin" / "rafter",
+        home / "go" / "bin" / "rafter",
+        Path("/usr/local/bin/rafter"),
+        Path("/opt/homebrew/bin/rafter"),
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return str(candidate)
+
+    # Last resort: bare command name (may fail in restricted PATH environments)
+    return "rafter"
+
+
 def _install_claude_code_hooks() -> None:
     """Install Rafter PreToolUse hooks into ~/.claude/settings.json."""
     home = Path.home()
@@ -102,24 +131,31 @@ def _install_claude_code_hooks() -> None:
     if "PreToolUse" not in settings["hooks"]:
         settings["hooks"]["PreToolUse"] = []
 
-    pre_command = "rafter hook pretool"
-    post_command = "rafter hook posttool"
+    rafter_bin = _resolve_rafter_path()
+    pre_command = f"{rafter_bin} hook pretool"
+    post_command = f"{rafter_bin} hook posttool"
+
+    # Also match old bare "rafter" commands for dedup cleanup
+    _old_pre = "rafter hook pretool"
+    _old_post = "rafter hook posttool"
 
     if "PostToolUse" not in settings["hooks"]:
         settings["hooks"]["PostToolUse"] = []
 
-    # Remove any existing Rafter hooks to avoid duplicates
+    # Remove any existing Rafter hooks (old or new format) to avoid duplicates
     settings["hooks"]["PreToolUse"] = [
         entry for entry in settings["hooks"]["PreToolUse"]
         if not any(
-            h.get("command") == pre_command
+            h.get("command", "") in (pre_command, _old_pre)
+            or "rafter hook pretool" in h.get("command", "")
             for h in (entry.get("hooks") or [])
         )
     ]
     settings["hooks"]["PostToolUse"] = [
         entry for entry in settings["hooks"]["PostToolUse"]
         if not any(
-            h.get("command") == post_command
+            h.get("command", "") in (post_command, _old_post)
+            or "rafter hook posttool" in h.get("command", "")
             for h in (entry.get("hooks") or [])
         )
     ]
@@ -138,6 +174,8 @@ def _install_claude_code_hooks() -> None:
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
     rprint(fmt.success(f"Installed PreToolUse hooks to {settings_path}"))
     rprint(fmt.success(f"Installed PostToolUse hooks to {settings_path}"))
+    if rafter_bin != "rafter":
+        rprint(fmt.info(f"Using resolved path: {rafter_bin}"))
 
 
 # ── init ─────────────────────────────────────────────────────────────

@@ -67,7 +67,7 @@ jobs:
         run: |
           cd node
           corepack enable
-          corepack prepare pnpm@9 --activate
+          corepack prepare pnpm@10 --activate
           pnpm install --frozen-lockfile
           pnpm run build
           pnpm test
