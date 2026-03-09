@@ -177,7 +177,7 @@ Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-c
 ```yaml
 repos:
   - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.5.6
+    rev: v0.6.1
     hooks:
       - id: rafter-scan
 ```
@@ -299,7 +299,7 @@ Inputs:
 | Input | Default | Description |
 |-------|---------|-------------|
 | `scan-path` | `.` | Path to scan |
-| `args` | `--quiet` | Additional args to `rafter agent scan` |
+| `args` | `--quiet` | Additional args to `rafter scan local` |
 | `version` | `latest` | CLI version to install |
 | `install-method` | `npm` | `npm` or `pip` |
 
@@ -310,7 +310,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.5.6
+    rev: v0.6.1
     hooks:
       - id: rafter-scan           # Node.js
       # - id: rafter-scan-python  # Python alternative
