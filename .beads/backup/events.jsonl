@@ -1079,3 +1079,4 @@
 {"actor":"raftercli/crew/bob","comment":"","created_at":"2026-03-08T09:14:09Z","event_type":"closed","id":999,"issue_id":"rc-wisp-ju5zj","new_value":"burned: polecat nuked","old_value":""}
 {"actor":"raftercli/crew/bob","comment":"","created_at":"2026-03-08T09:14:15Z","event_type":"closed","id":1000,"issue_id":"rc-wisp-d5wwp","new_value":"burned: polecat nuked","old_value":""}
 {"actor":"mayor","comment":"","created_at":"2026-03-08T09:43:22Z","event_type":"closed","id":1001,"issue_id":"rc-raftercli-crew-bob","new_value":"Crew workspace removed","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-03-11T20:17:37Z","event_type":"created","id":1002,"issue_id":"rc-raftercli-crew-jack","new_value":"","old_value":""}
