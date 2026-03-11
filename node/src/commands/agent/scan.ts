@@ -8,6 +8,10 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fmt } from "../../utils/formatter.js";
+import { createRequire } from "module";
+
+const _require = createRequire(import.meta.url);
+const { version: CLI_VERSION } = _require("../../../package.json");
 
 interface ScanOpts {
   quiet?: boolean;
@@ -189,7 +193,7 @@ function outputSarif(results: ScanResult[]): void {
         tool: {
           driver: {
             name: "rafter",
-            version: "0.5.7",
+            version: CLI_VERSION,
             informationUri: "https://rafter.so",
             rules: Array.from(rules.values()),
           },

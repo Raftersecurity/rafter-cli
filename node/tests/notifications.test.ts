@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { AuditLogger, RISK_SEVERITY } from "../src/core/audit-logger.js";
+import { AuditLogger, RISK_SEVERITY, validateWebhookUrl } from "../src/core/audit-logger.js";
 import { ConfigManager } from "../src/core/config-manager.js";
+import dns from "dns/promises";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -19,6 +20,43 @@ describe("Webhook Notifications", () => {
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
+  describe("validateWebhookUrl", () => {
+    it("should reject non-HTTP(S) schemes", async () => {
+      await expect(validateWebhookUrl("file:///etc/passwd")).rejects.toThrow("must use http or https");
+      await expect(validateWebhookUrl("ftp://example.com")).rejects.toThrow("must use http or https");
+    });
+
+    it("should reject invalid URLs", async () => {
+      await expect(validateWebhookUrl("not-a-url")).rejects.toThrow("Invalid webhook URL");
+    });
+
+    it("should reject loopback IPs", async () => {
+      await expect(validateWebhookUrl("http://127.0.0.1/hook")).rejects.toThrow("private/internal");
+      await expect(validateWebhookUrl("http://[::1]/hook")).rejects.toThrow("private/internal");
+    });
+
+    it("should reject private IPs", async () => {
+      await expect(validateWebhookUrl("http://10.0.0.1/hook")).rejects.toThrow("private/internal");
+      await expect(validateWebhookUrl("http://192.168.1.1/hook")).rejects.toThrow("private/internal");
+      await expect(validateWebhookUrl("http://172.16.0.1/hook")).rejects.toThrow("private/internal");
+    });
+
+    it("should reject link-local / cloud metadata IPs", async () => {
+      await expect(validateWebhookUrl("http://169.254.169.254/latest/meta-data")).rejects.toThrow("private/internal");
+    });
+
+    it("should accept valid public HTTPS URLs", async () => {
+      // This test does actual DNS resolution; use a well-known domain
+      // If DNS resolution fails in CI, the error won't be about private IPs
+      try {
+        await validateWebhookUrl("https://hooks.slack.com/services/test");
+      } catch (e: any) {
+        // DNS failure is acceptable in test environments, but not a private-IP rejection
+        expect(e.message).not.toContain("private/internal");
+      }
+    });
+  });
+
   describe("RISK_SEVERITY", () => {
     it("should order risk levels correctly", () => {
       expect(RISK_SEVERITY["low"]).toBeLessThan(RISK_SEVERITY["medium"]);
@@ -29,6 +67,7 @@ describe("Webhook Notifications", () => {
 
   describe("sendNotification", () => {
     it("should POST to webhook when risk meets threshold", async () => {
+      vi.spyOn(dns, "resolve").mockResolvedValue(["93.184.216.34"]);
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response());
 
       const configManager = new ConfigManager(testConfigPath);
@@ -61,6 +100,26 @@ describe("Webhook Notifications", () => {
       expect(body.timestamp).toBeDefined();
       expect(body.text).toContain("[rafter]");
       expect(body.content).toContain("[rafter]");
+    });
+
+    it("should not POST to private/internal URLs (SSRF protection)", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response());
+
+      const configManager = new ConfigManager(testConfigPath);
+      const config = configManager.load();
+      config.agent!.notifications = {
+        webhook: "http://169.254.169.254/latest/meta-data",
+        minRiskLevel: "high",
+      };
+      configManager.save(config);
+
+      const logger = new AuditLogger(testLogPath);
+      (logger as any).configManager = configManager;
+
+      logger.logSecretDetected("config.js", "AWS Key", "blocked", "claude-code");
+
+      await new Promise(r => setTimeout(r, 50));
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
 
     it("should not POST when risk is below threshold", async () => {
@@ -97,6 +156,7 @@ describe("Webhook Notifications", () => {
     });
 
     it("should POST for critical events when minRiskLevel is critical", async () => {
+      vi.spyOn(dns, "resolve").mockResolvedValue(["93.184.216.34"]);
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response());
 
       const configManager = new ConfigManager(testConfigPath);
@@ -122,6 +182,7 @@ describe("Webhook Notifications", () => {
     });
 
     it("should silently ignore fetch failures", async () => {
+      vi.spyOn(dns, "resolve").mockResolvedValue(["93.184.216.34"]);
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network error"));
 
       const configManager = new ConfigManager(testConfigPath);

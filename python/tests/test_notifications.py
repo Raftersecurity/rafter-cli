@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from rafter_cli.core.audit_logger import AuditLogger, RISK_SEVERITY
+from rafter_cli.core.audit_logger import AuditLogger, RISK_SEVERITY, validate_webhook_url
 from rafter_cli.core.config_schema import (
     AgentConfig,
     AuditConfig,
@@ -21,6 +21,78 @@ class TestRiskSeverity:
         assert RISK_SEVERITY["low"] < RISK_SEVERITY["medium"]
         assert RISK_SEVERITY["medium"] < RISK_SEVERITY["high"]
         assert RISK_SEVERITY["high"] < RISK_SEVERITY["critical"]
+
+
+class TestValidateWebhookUrl:
+    def test_rejects_non_http_schemes(self):
+        with pytest.raises(ValueError, match="must use http or https"):
+            validate_webhook_url("file:///etc/passwd")
+        with pytest.raises(ValueError, match="must use http or https"):
+            validate_webhook_url("ftp://example.com")
+
+    def test_rejects_no_hostname(self):
+        with pytest.raises(ValueError, match="no hostname"):
+            validate_webhook_url("http://")
+
+    def test_rejects_loopback(self):
+        with pytest.raises(ValueError, match="private/internal"):
+            validate_webhook_url("http://127.0.0.1/hook")
+        with pytest.raises(ValueError, match="private/internal"):
+            validate_webhook_url("http://[::1]/hook")
+
+    def test_rejects_private_ranges(self):
+        with pytest.raises(ValueError, match="private/internal"):
+            validate_webhook_url("http://10.0.0.1/hook")
+        with pytest.raises(ValueError, match="private/internal"):
+            validate_webhook_url("http://192.168.1.1/hook")
+        with pytest.raises(ValueError, match="private/internal"):
+            validate_webhook_url("http://172.16.0.1/hook")
+
+    def test_rejects_link_local_metadata(self):
+        with pytest.raises(ValueError, match="private/internal"):
+            validate_webhook_url("http://169.254.169.254/latest/meta-data")
+
+    def test_accepts_public_https(self):
+        # May raise DNS error in test env, but should never raise "private/internal"
+        try:
+            validate_webhook_url("https://hooks.slack.com/services/test")
+        except ValueError as exc:
+            assert "private/internal" not in str(exc)
+
+
+class TestSsrfProtection:
+    @pytest.fixture
+    def logger(self, tmp_path: Path) -> AuditLogger:
+        return AuditLogger(log_path=tmp_path / "audit.jsonl")
+
+    def _make_config(self, webhook: str | None = None, min_risk: str = "high") -> RafterConfig:
+        return RafterConfig(
+            agent=AgentConfig(
+                audit=AuditConfig(log_all_actions=True),
+                notifications=NotificationsConfig(
+                    webhook=webhook,
+                    min_risk_level=min_risk,
+                ),
+            ),
+        )
+
+    def test_private_url_not_posted(self, logger: AuditLogger):
+        config = self._make_config(webhook="http://169.254.169.254/latest/meta-data")
+
+        with patch("rafter_cli.core.config_manager.ConfigManager.load", return_value=config), \
+             patch("threading.Thread") as mock_thread:
+            mock_instance = MagicMock()
+            mock_thread.return_value = mock_instance
+
+            logger.log_secret_detected("config.js", "AWS Key", "blocked", "claude-code")
+
+            # Thread is still created (fire-and-forget), but the target should
+            # fail validation and never call urlopen
+            if mock_thread.called:
+                target_fn = mock_thread.call_args.kwargs["target"]
+                with patch("urllib.request.urlopen") as mock_urlopen:
+                    target_fn()  # Should not raise (silently caught)
+                    mock_urlopen.assert_not_called()
 
 
 class TestNotificationsConfig:
@@ -53,8 +125,10 @@ class TestWebhookNotification:
 
     def test_sends_webhook_on_high_risk(self, logger: AuditLogger):
         config = self._make_config(webhook="https://hooks.example.com/test")
+        fake_addrinfo = [(2, 1, 6, '', ('93.184.216.34', 443))]
 
         with patch("rafter_cli.core.config_manager.ConfigManager.load", return_value=config), \
+             patch("rafter_cli.core.audit_logger.socket.getaddrinfo", return_value=fake_addrinfo), \
              patch("threading.Thread") as mock_thread:
             mock_instance = MagicMock()
             mock_thread.return_value = mock_instance
@@ -65,20 +139,22 @@ class TestWebhookNotification:
             call_kwargs = mock_thread.call_args
             assert call_kwargs.kwargs["daemon"] is True
 
-            # Execute the target function to verify payload
-            target_fn = call_kwargs.kwargs["target"]
-            with patch("urllib.request.urlopen") as mock_urlopen:
-                target_fn()
-                mock_urlopen.assert_called_once()
-                req = mock_urlopen.call_args[0][0]
-                body = json.loads(req.data.decode())
-                assert body["event"] == "command_intercepted"
-                assert body["risk"] == "high"
-                assert body["command"] == "git push --force"
-                assert body["agent"] == "claude-code"
-                assert body["timestamp"] is not None
-                assert "[rafter]" in body["text"]
-                assert "[rafter]" in body["content"]
+        # Execute the target function to verify payload (outside thread mock,
+        # but need socket mock still active for SSRF validation inside _post)
+        target_fn = call_kwargs.kwargs["target"]
+        with patch("rafter_cli.core.audit_logger.socket.getaddrinfo", return_value=fake_addrinfo), \
+             patch("urllib.request.urlopen") as mock_urlopen:
+            target_fn()
+            mock_urlopen.assert_called_once()
+            req = mock_urlopen.call_args[0][0]
+            body = json.loads(req.data.decode())
+            assert body["event"] == "command_intercepted"
+            assert body["risk"] == "high"
+            assert body["command"] == "git push --force"
+            assert body["agent"] == "claude-code"
+            assert body["timestamp"] is not None
+            assert "[rafter]" in body["text"]
+            assert "[rafter]" in body["content"]
 
     def test_no_webhook_on_low_risk(self, logger: AuditLogger):
         config = self._make_config(webhook="https://hooks.example.com/test")
@@ -130,24 +206,27 @@ class TestWebhookNotification:
 
     def test_payload_includes_slack_and_discord_fields(self, logger: AuditLogger):
         config = self._make_config(webhook="https://hooks.example.com/test")
+        fake_addrinfo = [(2, 1, 6, '', ('93.184.216.34', 443))]
 
         with patch("rafter_cli.core.config_manager.ConfigManager.load", return_value=config), \
+             patch("rafter_cli.core.audit_logger.socket.getaddrinfo", return_value=fake_addrinfo), \
              patch("threading.Thread") as mock_thread:
             mock_instance = MagicMock()
             mock_thread.return_value = mock_instance
 
             logger.log_secret_detected("config.js", "AWS Key", "blocked", "claude-code")
 
-            target_fn = mock_thread.call_args.kwargs["target"]
-            with patch("urllib.request.urlopen") as mock_urlopen:
-                target_fn()
-                req = mock_urlopen.call_args[0][0]
-                body = json.loads(req.data.decode())
-                # Slack compatibility
-                assert "text" in body
-                # Discord compatibility
-                assert "content" in body
-                assert body["text"] == body["content"]
+        target_fn = mock_thread.call_args.kwargs["target"]
+        with patch("rafter_cli.core.audit_logger.socket.getaddrinfo", return_value=fake_addrinfo), \
+             patch("urllib.request.urlopen") as mock_urlopen:
+            target_fn()
+            req = mock_urlopen.call_args[0][0]
+            body = json.loads(req.data.decode())
+            # Slack compatibility
+            assert "text" in body
+            # Discord compatibility
+            assert "content" in body
+            assert body["text"] == body["content"]
 
 
 class TestConfigDeserialization:

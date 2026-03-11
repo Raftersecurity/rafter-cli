@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { randomBytes } from "crypto";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -9,7 +10,7 @@ const __dirname = path.dirname(__filename);
 
 // Test helper to create temporary directories
 function createTempDir(prefix: string): string {
-  const tmpDir = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+  const tmpDir = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${randomBytes(6).toString("hex")}`);
   fs.mkdirSync(tmpDir, { recursive: true });
   return tmpDir;
 }

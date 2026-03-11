@@ -15,6 +15,27 @@ EXIT_SUCCESS = 0
 EXIT_GENERAL_ERROR = 1
 EXIT_SCAN_NOT_FOUND = 2
 EXIT_QUOTA_EXHAUSTED = 3
+EXIT_INSUFFICIENT_SCOPE = 4
+
+
+def handle_scope_error(resp: "requests.Response") -> bool:
+    """Detect a 403 scope-enforcement error and print a helpful message.
+
+    Returns True if it was a scope error (caller should exit), False otherwise.
+    Imports requests lazily to avoid circular imports.
+    """
+    if resp.status_code != 403:
+        return False
+    body = resp.text
+    if "scope" in body:
+        print(
+            'Error: This API key only has read access.\n'
+            'To trigger scans, create a key with "Read & Scan" scope at https://rfrr.co/account',
+            file=sys.stderr,
+        )
+    else:
+        print(f"Error: Forbidden (403) — {body or 'access denied'}", file=sys.stderr)
+    return True
 
 # Network timeouts (connect, read) in seconds
 API_TIMEOUT = (10, 300)

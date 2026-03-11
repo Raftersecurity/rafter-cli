@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import https from "https";
 import { exec, execSync } from "child_process";
 import { promisify } from "util";
@@ -195,6 +196,11 @@ export class BinaryManager {
       const stats = fs.statSync(archivePath);
       log(`  Downloaded: ${(stats.size / 1024).toFixed(1)} KB`);
 
+      // Verify SHA256 checksum against official checksums file
+      log("Verifying checksum...");
+      await this.verifyChecksum(archivePath, platform, arch, version, log);
+      log("  ✓ Checksum verified");
+
       // Extract binary
       log("Extracting binary...");
       if (platform === "windows") {
@@ -358,6 +364,77 @@ export class BinaryManager {
   }
 
   /**
+   * Verify downloaded archive checksum against official gitleaks checksums file.
+   */
+  private async verifyChecksum(
+    archivePath: string,
+    platform: string,
+    arch: string,
+    version: string,
+    onProgress: (msg: string) => void
+  ): Promise<void> {
+    const checksumsUrl = `https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_checksums.txt`;
+    const checksumsPath = path.join(this.binDir, "checksums.txt");
+
+    try {
+      await this.downloadFile(checksumsUrl, checksumsPath, () => {});
+      const checksumsContent = fs.readFileSync(checksumsPath, "utf-8");
+
+      const archiveFilename = platform === "windows"
+        ? `gitleaks_${version}_windows_${arch}.zip`
+        : `gitleaks_${version}_${platform}_${arch}.tar.gz`;
+
+      const expectedHash = this.parseChecksumFile(checksumsContent, archiveFilename);
+      if (!expectedHash) {
+        throw new Error(`Checksum not found for ${archiveFilename} in checksums file`);
+      }
+
+      const actualHash = await this.computeSHA256(archivePath);
+      if (actualHash !== expectedHash) {
+        throw new Error(
+          `Checksum mismatch for ${archiveFilename}:\n` +
+          `  Expected: ${expectedHash}\n` +
+          `  Actual:   ${actualHash}\n` +
+          `The downloaded file may be corrupted or tampered with.`
+        );
+      }
+    } finally {
+      if (fs.existsSync(checksumsPath)) {
+        fs.unlinkSync(checksumsPath);
+      }
+    }
+  }
+
+  /**
+   * Parse a checksums.txt file and return the SHA256 hash for the given filename.
+   */
+  private parseChecksumFile(content: string, filename: string): string | null {
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      // Format: "<sha256>  <filename>" (two spaces between hash and filename)
+      const parts = trimmed.split(/\s+/);
+      if (parts.length >= 2 && parts[1] === filename) {
+        return parts[0].toLowerCase();
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Compute SHA256 hash of a file.
+   */
+  private computeSHA256(filePath: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash("sha256");
+      const stream = fs.createReadStream(filePath);
+      stream.on("data", (data) => hash.update(data));
+      stream.on("end", () => resolve(hash.digest("hex")));
+      stream.on("error", reject);
+    });
+  }
+
+  /**
    * Extract zip (Windows) — uses PowerShell's Expand-Archive, then copies
    * only the gitleaks.exe binary to binDir. Cleans up the temp extract dir.
    */
@@ -365,8 +442,11 @@ export class BinaryManager {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gitleaks-"));
     try {
       // PowerShell 5+ ships on all supported Windows versions
+      // Escape single quotes to prevent shell injection ('' is the PS escape for ')
+      const safeZipPath = zipPath.replace(/'/g, "''");
+      const safeTempDir = tempDir.replace(/'/g, "''");
       await execAsync(
-        `powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath '${zipPath}' -DestinationPath '${tempDir}'"`,
+        `powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath '${safeZipPath}' -DestinationPath '${safeTempDir}'"`,
         { timeout: 30000 }
       );
 

@@ -15,6 +15,10 @@ from .config_schema import (
     get_rafter_dir,
 )
 
+_VALID_RISK_LEVELS = {"minimal", "moderate", "aggressive"}
+_VALID_COMMAND_MODES = {"allow-all", "approve-dangerous", "deny-list"}
+_VALID_LOG_LEVELS = {"debug", "info", "warn", "error"}
+
 
 class ConfigManager:
     def __init__(self, config_path: Path | None = None):
@@ -29,6 +33,10 @@ class ConfigManager:
             return get_default_config()
         try:
             raw = json.loads(self._path.read_text())
+            if not isinstance(raw, dict):
+                print("rafter: config file is not a JSON object — using defaults.", file=sys.stderr)
+                return get_default_config()
+            self._validate_raw_config(raw)
             config = self._from_dict(raw)
             return self._migrate(config)
         except (json.JSONDecodeError, KeyError) as exc:
@@ -122,6 +130,77 @@ class ConfigManager:
             policy.require_approval = fixed
             self.save(config)
         return config
+
+    @staticmethod
+    def _validate_raw_config(raw: dict) -> None:
+        """Validate a raw config dict in-place, warning and fixing invalid fields."""
+        defaults = get_default_config()
+
+        if "version" in raw and not isinstance(raw["version"], str):
+            print('rafter: config "version" must be a string — using default.', file=sys.stderr)
+            raw["version"] = defaults.version
+
+        agent = raw.get("agent")
+        if not isinstance(agent, dict):
+            return
+
+        # risk_level / riskLevel
+        rl = agent.get("riskLevel", agent.get("risk_level"))
+        if rl is not None and rl not in _VALID_RISK_LEVELS:
+            print(f'rafter: config "agent.riskLevel" must be one of: {", ".join(sorted(_VALID_RISK_LEVELS))} — using default.', file=sys.stderr)
+            agent.pop("riskLevel", None)
+            agent.pop("risk_level", None)
+
+        # commandPolicy / command_policy
+        cp = agent.get("commandPolicy") or agent.get("command_policy")
+        if isinstance(cp, dict):
+            if "mode" in cp and cp["mode"] not in _VALID_COMMAND_MODES:
+                print(f'rafter: config "commandPolicy.mode" must be one of: {", ".join(sorted(_VALID_COMMAND_MODES))} — using default.', file=sys.stderr)
+                del cp["mode"]
+            for key in ("blockedPatterns", "blocked_patterns"):
+                if key in cp and (not isinstance(cp[key], list) or not all(isinstance(v, str) for v in cp[key])):
+                    print(f'rafter: config "commandPolicy.{key}" must be an array of strings — using default.', file=sys.stderr)
+                    del cp[key]
+            for key in ("requireApproval", "require_approval"):
+                if key in cp and (not isinstance(cp[key], list) or not all(isinstance(v, str) for v in cp[key])):
+                    print(f'rafter: config "commandPolicy.{key}" must be an array of strings — using default.', file=sys.stderr)
+                    del cp[key]
+
+        # audit
+        audit = agent.get("audit")
+        if isinstance(audit, dict):
+            rd = audit.get("retentionDays", audit.get("retention_days"))
+            if rd is not None and not isinstance(rd, (int, float)):
+                print('rafter: config "audit.retentionDays" must be a number — using default.', file=sys.stderr)
+                audit.pop("retentionDays", None)
+                audit.pop("retention_days", None)
+            ll = audit.get("logLevel", audit.get("log_level"))
+            if ll is not None and ll not in _VALID_LOG_LEVELS:
+                print(f'rafter: config "audit.logLevel" must be one of: {", ".join(sorted(_VALID_LOG_LEVELS))} — using default.', file=sys.stderr)
+                audit.pop("logLevel", None)
+                audit.pop("log_level", None)
+
+        # scan.customPatterns — validate regex compilation
+        scan = agent.get("scan")
+        if isinstance(scan, dict):
+            for key in ("excludePaths", "exclude_paths"):
+                if key in scan and (not isinstance(scan[key], list) or not all(isinstance(v, str) for v in scan[key])):
+                    print(f'rafter: config "scan.{key}" must be an array of strings — using default.', file=sys.stderr)
+                    del scan[key]
+            for key in ("customPatterns", "custom_patterns"):
+                if key in scan and isinstance(scan[key], list):
+                    valid = []
+                    for p in scan[key]:
+                        if not isinstance(p, dict) or not isinstance(p.get("name"), str) or not p.get("name") or not isinstance(p.get("regex"), str) or not p.get("regex"):
+                            print(f'rafter: skipping malformed scan.customPatterns entry — must have name and regex.', file=sys.stderr)
+                            continue
+                        try:
+                            _re.compile(p["regex"])
+                        except _re.error as exc:
+                            print(f'rafter: skipping custom pattern {p["name"]!r} — invalid regex: {exc}', file=sys.stderr)
+                            continue
+                        valid.append(p)
+                    scan[key] = valid
 
     # ------------------------------------------------------------------
     # Policy-merged config

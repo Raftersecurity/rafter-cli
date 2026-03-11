@@ -1,6 +1,7 @@
 """Binary manager: download, extract, and verify the gitleaks binary."""
 from __future__ import annotations
 
+import hashlib
 import os
 import platform
 import shutil
@@ -184,6 +185,11 @@ class BinaryManager:
             size_kb = archive_path.stat().st_size / 1024
             log(f"  Downloaded: {size_kb:.1f} KB")
 
+            # Verify SHA256 checksum against official checksums file
+            log("Verifying checksum...")
+            self._verify_checksum(archive_path, plat, arch, version, log)
+            log("  \u2713 Checksum verified")
+
             log("Extracting binary...")
             if plat == "windows":
                 self._extract_zip(archive_path)
@@ -231,6 +237,73 @@ class BinaryManager:
             return f"{base}/gitleaks_{version}_windows_{arch_str}.zip"
         return f"{base}/gitleaks_{version}_{platform_str}_{arch_str}.tar.gz"
 
+    def _verify_checksum(
+        self,
+        archive_path: Path,
+        platform_str: str,
+        arch_str: str,
+        version: str,
+        on_progress: Callable[[str], None],
+    ) -> None:
+        """Verify downloaded archive checksum against official gitleaks checksums file."""
+        checksums_url = (
+            f"https://github.com/gitleaks/gitleaks/releases/download/v{version}"
+            f"/gitleaks_{version}_checksums.txt"
+        )
+        checksums_path = self.bin_dir / "checksums.txt"
+
+        try:
+            self._download_file(checksums_url, checksums_path, lambda _: None)
+            checksums_content = checksums_path.read_text()
+
+            if platform_str == "windows":
+                archive_filename = f"gitleaks_{version}_windows_{arch_str}.zip"
+            else:
+                archive_filename = f"gitleaks_{version}_{platform_str}_{arch_str}.tar.gz"
+
+            expected_hash = self._parse_checksum_file(checksums_content, archive_filename)
+            if not expected_hash:
+                raise RuntimeError(
+                    f"Checksum not found for {archive_filename} in checksums file"
+                )
+
+            actual_hash = self._compute_sha256(archive_path)
+            if actual_hash != expected_hash:
+                raise RuntimeError(
+                    f"Checksum mismatch for {archive_filename}:\n"
+                    f"  Expected: {expected_hash}\n"
+                    f"  Actual:   {actual_hash}\n"
+                    f"The downloaded file may be corrupted or tampered with."
+                )
+        finally:
+            if checksums_path.exists():
+                checksums_path.unlink()
+
+    @staticmethod
+    def _parse_checksum_file(content: str, filename: str) -> str | None:
+        """Parse a checksums.txt file and return the SHA256 hash for the given filename."""
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Format: "<sha256>  <filename>" (two spaces between hash and filename)
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == filename:
+                return parts[0].lower()
+        return None
+
+    @staticmethod
+    def _compute_sha256(file_path: Path) -> str:
+        """Compute SHA256 hash of a file."""
+        sha256 = hashlib.sha256()
+        with file_path.open("rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                sha256.update(chunk)
+        return sha256.hexdigest()
+
     def _download_file(
         self,
         url: str,
@@ -267,19 +340,26 @@ class BinaryManager:
 
     def _extract_zip(self, archive_path: Path) -> None:
         """Extract only the gitleaks binary from a Windows zip archive."""
+        allowed = {"gitleaks", "gitleaks.exe"}
         with tempfile.TemporaryDirectory(prefix="rafter-gitleaks-") as tmp:
             tmp_path = Path(tmp)
             with zipfile.ZipFile(archive_path, "r") as zf:
-                zf.extractall(tmp_path)
+                for info in zf.infolist():
+                    # Reject path-traversal entries (zip-slip)
+                    if info.filename.startswith("/") or ".." in info.filename:
+                        continue
+                    basename = os.path.basename(info.filename)
+                    if basename not in allowed:
+                        continue
+                    # Extract only the matching binary, flattened into tmp
+                    info.filename = basename
+                    zf.extract(info, tmp_path)
 
-            # Locate gitleaks.exe — may be at root or inside a subdirectory
+            # Locate extracted binary
             found: Path | None = None
-            for candidate in tmp_path.rglob("gitleaks.exe"):
-                found = candidate
-                break
-            # Fallback: plain "gitleaks" binary (unlikely on Windows but handle it)
-            if found is None:
-                for candidate in tmp_path.rglob("gitleaks"):
+            for name in allowed:
+                candidate = tmp_path / name
+                if candidate.exists():
                     found = candidate
                     break
 

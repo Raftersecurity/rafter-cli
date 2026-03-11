@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-09
+
+### Fixed
+- **Claude Code hook errors** (Python): `rafter agent init --with-claude-code` registered hooks with bare `rafter` command, which fails in Claude Code's minimal shell environment (no user PATH). Now resolves the absolute path to the rafter binary at install time.
+- **CI broken since v0.6.0**: `validate-release` and `publish` workflows used pnpm@9, but `pnpm-workspace.yaml` uses pnpm v10 features (`onlyBuiltDependencies`, workspace-level `overrides`), causing `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` on every run. Upgraded to pnpm@10.
+- **MCP server version hardcoded** (Node): `rafter mcp serve` reported version `0.5.0` to MCP clients. Now reports correct version.
+- **GitHub Action uses deprecated command**: `action.yml` referenced `rafter agent scan` (deprecated since v0.5.7). Updated to `rafter scan local`.
+- **Pre-commit hooks use deprecated command**: `.pre-commit-hooks.yaml` entries referenced `rafter agent scan`. Updated to `rafter scan local`.
+- **README pre-commit rev outdated**: pinned revision updated from `v0.5.6` to `v0.6.1`.
+
+## [0.6.0] - 2026-03-08
+
+### Security
+- **SSRF in webhook URL** (Node + Python): audit logger accepted arbitrary webhook URLs from config without validation. Now blocks non-HTTPS schemes, localhost, private IPs, and link-local addresses.
+- **Shell injection in PowerShell extraction** (Node): `Expand-Archive` command in `binary-manager.ts` interpolated file paths unsafely. Single quotes in paths are now escaped before interpolation.
+- **No integrity check on gitleaks binary** (Node + Python): downloaded gitleaks binaries were verified only by file size. Now downloads `checksums.txt` from the release and validates SHA256 before extraction.
+- **express-rate-limit CVE** (Node): updated express-rate-limit to >=8.2.2 to fix GHSA-46wh-pxpv-q5gq (IPv4-mapped IPv6 bypass).
+- **ReDoS in secret patterns** (Node + Python): complex regexes with overlapping lookaheads and unbounded quantifiers could cause catastrophic backtracking. Added upper bounds to all unbounded quantifiers and eliminated overlapping character classes.
+- **Symlink traversal in directory scanner** (Node + Python): scanner followed symlinks, allowing traversal outside the intended scan scope. Now skips symlinks via `lstat`.
+- **Audit log world-readable** (Node + Python): audit log files were created without setting permissions. Now sets 0o600 (files) and 0o700 (directories).
+- **Weak temp file naming** (Node): used `Math.random()` for temp filenames; replaced with `crypto.randomBytes`. Python: fixed mkstemp TOCTOU race by keeping fd open.
+
+### Fixed
+- **Version mismatch** (Node): `--version` reported 0.5.7 due to hardcoded constant. Now reads version from `package.json` at runtime.
+- **`--format` flag ignored for `scan local`** (Node): parent `scan` command's `--format` option shadowed the child `local` command's option in Commander.js. Fixed with `enablePositionalOptions()`.
+- **`agent audit` crash** (Node): TypeError when audit entries lack `securityCheck` property (e.g., from hook pretool/posttool). Added null guards.
+- **Rich markup leak to stdout** (Python): issues commands printed raw Rich markup tags (`[cyan]...[/cyan]`) instead of rendered ANSI. Now uses Rich Console for stderr output.
+- **Traceback leak on `gh` failure** (Python): `issues create from-text` showed full Python traceback when `gh` CLI failed. Now catches `CalledProcessError` and shows clean error message.
+- **Custom glob matcher bypassable** (Node + Python): replaced fragile custom glob implementation with `minimatch` (Node) and `fnmatch` (Python).
+- **Config/policy schema validation** (Node + Python): JSON/YAML config and custom pattern files were parsed but not validated. Added schema validation after parse.
+
+### Changed
+- **Python fallback version** updated from 0.5.0 to 0.6.0.
+
 ## [0.5.9] - 2026-03-08
 
 ### Fixed
@@ -128,7 +162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Two MCP resources: `rafter://config`, `rafter://policy`
 - `rafter hook pretool` command — PreToolUse hook handler for Claude Code
 - `rafter policy export --format claude|codex` — generate agent platform configs
-- `rafter agent init --claude-code` — auto-install PreToolUse hooks into Claude Code settings
+- `rafter agent init --with-claude-code` — auto-install PreToolUse hooks into Claude Code settings
 - `.rafter.yml` schema validation with field-level warnings and graceful degradation
 
 ### Fixed

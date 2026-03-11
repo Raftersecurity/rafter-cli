@@ -6,7 +6,9 @@ import {
   API,
   resolveKey,
   EXIT_GENERAL_ERROR,
-  EXIT_QUOTA_EXHAUSTED
+  EXIT_QUOTA_EXHAUSTED,
+  EXIT_INSUFFICIENT_SCOPE,
+  handleScopeError
 } from "../../utils/api.js";
 import { handleScanStatus } from "./scan-status.js";
 
@@ -50,7 +52,9 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
       process.exit(exitCode);
     } catch (e: any) {
       spinner.fail("Request failed");
-      if (e.response?.status === 429) {
+      if (handleScopeError(e)) {
+        process.exit(EXIT_INSUFFICIENT_SCOPE);
+      } else if (e.response?.status === 429) {
         console.error("Quota exhausted");
         process.exit(EXIT_QUOTA_EXHAUSTED);
       } else if (e.response?.data) {
@@ -73,7 +77,9 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
       const exitCode = await handleScanStatus(data.scan_id, { "x-api-key": key }, opts.format ?? "md", opts.quiet);
       process.exit(exitCode);
     } catch (e: any) {
-      if (e.response?.status === 429) {
+      if (handleScopeError(e)) {
+        process.exit(EXIT_INSUFFICIENT_SCOPE);
+      } else if (e.response?.status === 429) {
         process.exit(EXIT_QUOTA_EXHAUSTED);
       } else if (e.response?.data) {
         console.error(e.response.data);

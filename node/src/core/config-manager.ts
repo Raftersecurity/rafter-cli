@@ -4,6 +4,110 @@ import { RafterConfig } from "./config-schema.js";
 import { getDefaultConfig, getConfigPath, getRafterDir, CONFIG_VERSION } from "./config-defaults.js";
 import { loadPolicy } from "./policy-loader.js";
 
+const VALID_RISK_LEVELS = new Set(["minimal", "moderate", "aggressive"]);
+const VALID_COMMAND_MODES = new Set(["allow-all", "approve-dangerous", "deny-list"]);
+const VALID_LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
+
+/**
+ * Validate a parsed config JSON object, warning and falling back to defaults for invalid fields.
+ */
+function validateConfig(raw: any): RafterConfig {
+  if (!raw || typeof raw !== "object") {
+    console.error("Warning: config file is not a JSON object — using defaults.");
+    return getDefaultConfig();
+  }
+
+  const defaults = getDefaultConfig();
+
+  // Top-level scalars
+  if (raw.version !== undefined && typeof raw.version !== "string") {
+    console.error('Warning: config "version" must be a string — using default.');
+    raw.version = defaults.version;
+  }
+  if (raw.initialized !== undefined && typeof raw.initialized !== "string") {
+    console.error('Warning: config "initialized" must be a string — using default.');
+    raw.initialized = defaults.initialized;
+  }
+
+  const agent = raw.agent;
+  if (agent && typeof agent === "object") {
+    // riskLevel
+    if (agent.riskLevel !== undefined && !VALID_RISK_LEVELS.has(agent.riskLevel)) {
+      console.error(`Warning: config "agent.riskLevel" must be one of: minimal, moderate, aggressive — using default.`);
+      agent.riskLevel = defaults.agent!.riskLevel;
+    }
+
+    // commandPolicy
+    const cp = agent.commandPolicy;
+    if (cp && typeof cp === "object") {
+      if (cp.mode !== undefined && !VALID_COMMAND_MODES.has(cp.mode)) {
+        console.error(`Warning: config "agent.commandPolicy.mode" must be one of: allow-all, approve-dangerous, deny-list — using default.`);
+        cp.mode = defaults.agent!.commandPolicy.mode;
+      }
+      if (cp.blockedPatterns !== undefined && (!Array.isArray(cp.blockedPatterns) || !cp.blockedPatterns.every((v: any) => typeof v === "string"))) {
+        console.error('Warning: config "agent.commandPolicy.blockedPatterns" must be an array of strings — using default.');
+        cp.blockedPatterns = [...defaults.agent!.commandPolicy.blockedPatterns];
+      }
+      if (cp.requireApproval !== undefined && (!Array.isArray(cp.requireApproval) || !cp.requireApproval.every((v: any) => typeof v === "string"))) {
+        console.error('Warning: config "agent.commandPolicy.requireApproval" must be an array of strings — using default.');
+        cp.requireApproval = [...defaults.agent!.commandPolicy.requireApproval];
+      }
+    }
+
+    // audit
+    const audit = agent.audit;
+    if (audit && typeof audit === "object") {
+      if (audit.retentionDays !== undefined && (typeof audit.retentionDays !== "number" || isNaN(audit.retentionDays))) {
+        console.error('Warning: config "agent.audit.retentionDays" must be a number — using default.');
+        audit.retentionDays = defaults.agent!.audit.retentionDays;
+      }
+      if (audit.logLevel !== undefined && !VALID_LOG_LEVELS.has(audit.logLevel)) {
+        console.error(`Warning: config "agent.audit.logLevel" must be one of: debug, info, warn, error — using default.`);
+        audit.logLevel = defaults.agent!.audit.logLevel;
+      }
+    }
+
+    // outputFiltering
+    const of = agent.outputFiltering;
+    if (of && typeof of === "object") {
+      if (of.redactSecrets !== undefined && typeof of.redactSecrets !== "boolean") {
+        console.error('Warning: config "agent.outputFiltering.redactSecrets" must be a boolean — using default.');
+        of.redactSecrets = defaults.agent!.outputFiltering.redactSecrets;
+      }
+      if (of.blockPatterns !== undefined && typeof of.blockPatterns !== "boolean") {
+        console.error('Warning: config "agent.outputFiltering.blockPatterns" must be a boolean — using default.');
+        of.blockPatterns = defaults.agent!.outputFiltering.blockPatterns;
+      }
+    }
+
+    // scan.customPatterns — validate regex compilation
+    const scan = agent.scan;
+    if (scan && typeof scan === "object") {
+      if (scan.excludePaths !== undefined && (!Array.isArray(scan.excludePaths) || !scan.excludePaths.every((v: any) => typeof v === "string"))) {
+        console.error('Warning: config "agent.scan.excludePaths" must be an array of strings — using default.');
+        delete scan.excludePaths;
+      }
+      if (Array.isArray(scan.customPatterns)) {
+        scan.customPatterns = scan.customPatterns.filter((p: any) => {
+          if (!p || typeof p !== "object" || typeof p.name !== "string" || !p.name || typeof p.regex !== "string" || !p.regex) {
+            console.error(`Warning: skipping malformed scan.customPatterns entry — must have name and regex.`);
+            return false;
+          }
+          try {
+            new RegExp(p.regex);
+          } catch {
+            console.error(`Warning: skipping custom pattern "${p.name}" — invalid regex.`);
+            return false;
+          }
+          return true;
+        });
+      }
+    }
+  }
+
+  return raw as RafterConfig;
+}
+
 export class ConfigManager {
   private configPath: string;
 
@@ -21,7 +125,8 @@ export class ConfigManager {
 
     try {
       const content = fs.readFileSync(this.configPath, "utf-8");
-      const config = JSON.parse(content) as RafterConfig;
+      const parsed = JSON.parse(content);
+      const config = validateConfig(parsed);
 
       // Migrate config if needed
       return this.migrate(config);
