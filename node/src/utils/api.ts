@@ -5,6 +5,25 @@ export const EXIT_SUCCESS = 0;
 export const EXIT_GENERAL_ERROR = 1;
 export const EXIT_SCAN_NOT_FOUND = 2;
 export const EXIT_QUOTA_EXHAUSTED = 3;
+export const EXIT_INSUFFICIENT_SCOPE = 4;
+
+/**
+ * Detect a 403 scope-enforcement error from the API and print a helpful message.
+ * Returns true if the error was a scope error (caller should exit), false otherwise.
+ */
+export function handleScopeError(e: any): boolean {
+  if (!e || e.response?.status !== 403) return false;
+  const body = e.response?.data;
+  const msg = typeof body === "string" ? body : body?.error ?? "";
+  if (msg.includes("scope")) {
+    console.error(
+      'Error: This API key only has read access.\nTo trigger scans, create a key with "Read & Scan" scope at https://rfrr.co/account'
+    );
+  } else {
+    console.error(`Error: Forbidden (403) — ${msg || "access denied"}`);
+  }
+  return true;
+}
 
 export function resolveKey(cliKey?: string): string {
   if (cliKey) return cliKey;

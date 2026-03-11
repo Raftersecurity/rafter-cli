@@ -125,26 +125,22 @@ class GitleaksScanner:
         if not self._path:
             raise RuntimeError("Gitleaks not available")
 
-        fd, report_path = tempfile.mkstemp(suffix=".json", prefix="gitleaks-")
-        os.close(fd)
-
-        try:
-            subprocess.run(
-                [self._path, "detect", "--no-git", "-f", "json", "-r", report_path, "-s", target],
-                capture_output=True, timeout=60,
-            )
-            if not os.path.exists(report_path):
+        with tempfile.TemporaryDirectory(prefix="gitleaks-") as tmp_dir:
+            report_path = os.path.join(tmp_dir, "report.json")
+            try:
+                subprocess.run(
+                    [self._path, "detect", "--no-git", "-f", "json", "-r", report_path, "-s", target],
+                    capture_output=True, timeout=60,
+                )
+                if not os.path.exists(report_path):
+                    return []
+                with open(report_path) as f:
+                    content = f.read().strip()
+                if not content:
+                    return []
+                return json.loads(content)
+            except (subprocess.TimeoutExpired, json.JSONDecodeError):
                 return []
-            with open(report_path) as f:
-                content = f.read().strip()
-            if not content:
-                return []
-            return json.loads(content)
-        except (subprocess.TimeoutExpired, json.JSONDecodeError):
-            return []
-        finally:
-            if os.path.exists(report_path):
-                os.unlink(report_path)
 
     @staticmethod
     def _convert(result: dict) -> PatternMatch:

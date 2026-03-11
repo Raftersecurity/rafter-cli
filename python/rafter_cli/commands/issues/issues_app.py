@@ -15,7 +15,7 @@ import requests
 import typer
 
 from ...utils.api import API_BASE, EXIT_GENERAL_ERROR, EXIT_SUCCESS, resolve_key
-from ...utils.formatter import fmt
+from ...utils.formatter import fmt, print_stderr
 from ...utils.git import detect_repo
 from .dedup import find_duplicates
 from .github_client import create_issue, list_open_issues
@@ -57,7 +57,7 @@ def from_scan(
 ):
     """Create GitHub issues from scan results."""
     if not scan_id and not from_local:
-        print(fmt.error("Provide --scan-id or --from-local"), file=sys.stderr)
+        print_stderr(fmt.error("Provide --scan-id or --from-local"))
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     # Resolve target repo
@@ -66,11 +66,11 @@ def from_scan(
         try:
             target_repo, _ = detect_repo(repo)
         except RuntimeError as e:
-            print(fmt.error(str(e)), file=sys.stderr)
+            print_stderr(fmt.error(str(e)))
             raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     if not quiet:
-        print(fmt.info(f"Target repo: {target_repo}"), file=sys.stderr)
+        print_stderr(fmt.info(f"Target repo: {target_repo}"))
 
     # Build drafts
     if scan_id:
@@ -80,11 +80,11 @@ def from_scan(
 
     if not drafts:
         if not quiet:
-            print(fmt.success("No findings to create issues for"), file=sys.stderr)
+            print_stderr(fmt.success("No findings to create issues for"))
         return
 
     if not quiet:
-        print(fmt.info(f"Found {len(drafts)} findings"), file=sys.stderr)
+        print_stderr(fmt.info(f"Found {len(drafts)} findings"))
 
     # Dedup
     if not no_dedup:
@@ -93,22 +93,20 @@ def from_scan(
         before = len(drafts)
         drafts = [d for d in drafts if d.fingerprint not in dupes]
         if before != len(drafts) and not quiet:
-            print(
-                fmt.info(f"Skipped {before - len(drafts)} duplicate(s)"),
-                file=sys.stderr,
+            print_stderr(
+                fmt.info(f"Skipped {before - len(drafts)} duplicate(s)")
             )
 
     if not drafts:
         if not quiet:
-            print(
-                fmt.success("All findings already have open issues"),
-                file=sys.stderr,
+            print_stderr(
+                fmt.success("All findings already have open issues")
             )
         return
 
     # Dry run
     if dry_run:
-        print(fmt.info(f"Would create {len(drafts)} issue(s):"), file=sys.stderr)
+        print_stderr(fmt.info(f"Would create {len(drafts)} issue(s):"))
         for d in drafts:
             print(f"  - {d.title}", file=sys.stderr)
         sys.stdout.write(
@@ -131,17 +129,16 @@ def from_scan(
             )
             created.append(issue.html_url)
             if not quiet:
-                print(fmt.success(f"Created: {issue.html_url}"), file=sys.stderr)
+                print_stderr(fmt.success(f"Created: {issue.html_url}"))
         except Exception as e:
-            print(fmt.error(f"Failed to create issue: {e}"), file=sys.stderr)
+            print_stderr(fmt.error(f"Failed to create issue: {e}"))
 
     if created:
         sys.stdout.write("\n".join(created) + "\n")
 
     if not quiet:
-        print(
-            fmt.success(f"Created {len(created)}/{len(drafts)} issue(s)"),
-            file=sys.stderr,
+        print_stderr(
+            fmt.success(f"Created {len(created)}/{len(drafts)} issue(s)")
         )
 
 
@@ -159,9 +156,8 @@ def from_text(
     # Read input
     input_text = _read_input(text, file)
     if not input_text.strip():
-        print(
-            fmt.error("No input text provided. Use --text, --file, or pipe via stdin"),
-            file=sys.stderr,
+        print_stderr(
+            fmt.error("No input text provided. Use --text, --file, or pipe via stdin")
         )
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
@@ -171,7 +167,7 @@ def from_text(
         try:
             target_repo, _ = detect_repo(repo)
         except RuntimeError as e:
-            print(fmt.error(str(e)), file=sys.stderr)
+            print_stderr(fmt.error(str(e)))
             raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     # Parse text
@@ -185,27 +181,30 @@ def from_text(
         parsed["labels"] = list(set(parsed["labels"]))
 
     if not quiet:
-        print(fmt.info(f"Target repo: {target_repo}"), file=sys.stderr)
-        print(fmt.info(f"Title: {parsed['title']}"), file=sys.stderr)
+        print_stderr(fmt.info(f"Target repo: {target_repo}"))
+        print_stderr(fmt.info(f"Title: {parsed['title']}"))
         if parsed["labels"]:
-            print(
-                fmt.info(f"Labels: {', '.join(parsed['labels'])}"),
-                file=sys.stderr,
+            print_stderr(
+                fmt.info(f"Labels: {', '.join(parsed['labels'])}")
             )
 
     if dry_run:
         sys.stdout.write(json.dumps(parsed, indent=2))
         return
 
-    issue = create_issue(
-        repo=target_repo,
-        title=parsed["title"],
-        body=parsed["body"],
-        labels=parsed["labels"],
-    )
+    try:
+        issue = create_issue(
+            repo=target_repo,
+            title=parsed["title"],
+            body=parsed["body"],
+            labels=parsed["labels"],
+        )
+    except Exception as e:
+        print(fmt.error(f"Failed to create issue: {e}"), file=sys.stderr)
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     if not quiet:
-        print(fmt.success(f"Created: {issue.html_url}"), file=sys.stderr)
+        print_stderr(fmt.success(f"Created: {issue.html_url}"))
     sys.stdout.write(issue.html_url + "\n")
 
 

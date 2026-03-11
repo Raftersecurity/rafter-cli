@@ -1,8 +1,102 @@
+import { randomBytes } from "crypto";
+import dns from "dns/promises";
 import fs from "fs";
+import net from "net";
 import path from "path";
 import { getAuditLogPath } from "./config-defaults.js";
 import { ConfigManager } from "./config-manager.js";
 import { assessCommandRisk } from "./risk-rules.js";
+
+/**
+ * Validate a webhook URL to prevent SSRF attacks.
+ * Rejects non-HTTP(S) schemes and URLs that resolve to private/internal IPs.
+ */
+export async function validateWebhookUrl(rawUrl: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid webhook URL: ${rawUrl}`);
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`Webhook URL must use http or https, got ${parsed.protocol}`);
+  }
+
+  // URL.hostname keeps brackets for IPv6 (e.g. "[::1]") — strip them
+  let hostname = parsed.hostname;
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    hostname = hostname.slice(1, -1);
+  }
+
+  // If the hostname is already an IP, check it directly
+  if (net.isIP(hostname)) {
+    if (isPrivateIp(hostname)) {
+      throw new Error(`Webhook URL must not point to a private/internal address: ${hostname}`);
+    }
+    return;
+  }
+
+  // Resolve hostname and check all resulting IPs
+  let addresses: string[];
+  try {
+    const results = await dns.resolve(hostname);
+    addresses = results;
+  } catch {
+    throw new Error(`Could not resolve webhook hostname: ${hostname}`);
+  }
+
+  for (const addr of addresses) {
+    if (isPrivateIp(addr)) {
+      throw new Error(`Webhook URL must not point to a private/internal address: ${hostname} resolved to ${addr}`);
+    }
+  }
+}
+
+/**
+ * Check if an IP address belongs to a private, loopback, link-local, or
+ * cloud-metadata range.
+ */
+function isPrivateIp(ip: string): boolean {
+  // IPv4 checks
+  if (net.isIPv4(ip)) {
+    const parts = ip.split(".").map(Number);
+    const [a, b] = parts;
+
+    // 127.0.0.0/8 — loopback
+    if (a === 127) return true;
+    // 10.0.0.0/8 — private
+    if (a === 10) return true;
+    // 172.16.0.0/12 — private
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    // 192.168.0.0/16 — private
+    if (a === 192 && b === 168) return true;
+    // 169.254.0.0/16 — link-local / cloud metadata
+    if (a === 169 && b === 254) return true;
+    // 0.0.0.0
+    if (a === 0) return true;
+
+    return false;
+  }
+
+  // IPv6 checks
+  const lower = ip.toLowerCase();
+  // ::1 — loopback
+  if (lower === "::1") return true;
+  // :: — unspecified
+  if (lower === "::") return true;
+  // fe80::/10 — link-local
+  if (lower.startsWith("fe80:")) return true;
+  // fc00::/7 — unique local (ULA)
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
+  // ::ffff:127.0.0.1 etc — IPv4-mapped IPv6
+  if (lower.startsWith("::ffff:")) {
+    const mapped = lower.slice(7);
+    if (net.isIPv4(mapped)) return isPrivateIp(mapped);
+  }
+
+  return false;
+}
 
 export type EventType =
   | "command_intercepted"
@@ -26,12 +120,12 @@ export interface AuditLogEntry {
     tool?: string;
     riskLevel?: RiskLevel;
   };
-  securityCheck: {
+  securityCheck?: {
     passed: boolean;
     reason?: string;
     details?: any;
   };
-  resolution: {
+  resolution?: {
     actionTaken: ActionTaken;
     overrideReason?: string;
   };
@@ -57,7 +151,7 @@ export class AuditLogger {
     // Ensure log directory exists
     const dir = path.dirname(this.logPath);
     if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
   }
 
@@ -80,7 +174,7 @@ export class AuditLogger {
 
     // Append to log file
     const line = JSON.stringify(fullEntry) + "\n";
-    fs.appendFileSync(this.logPath, line, "utf-8");
+    fs.appendFileSync(this.logPath, line, { encoding: "utf-8", mode: 0o600 });
 
     // Send webhook notification if configured and risk meets threshold
     this.sendNotification(fullEntry, config);
@@ -113,14 +207,19 @@ export class AuditLogger {
     };
 
     // Fire-and-forget POST — never block audit logging
-    fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(5000),
-    }).catch(() => {
-      // Silently ignore webhook failures
-    });
+    // Validate URL to prevent SSRF before making the request
+    validateWebhookUrl(webhookUrl)
+      .then(() =>
+        fetch(webhookUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(5000),
+        })
+      )
+      .catch(() => {
+        // Silently ignore webhook failures (including validation rejections)
+      });
   }
 
   /**
@@ -280,14 +379,14 @@ export class AuditLogger {
 
     // Rewrite log file with only retained entries
     const content = filtered.map(e => JSON.stringify(e)).join("\n") + "\n";
-    fs.writeFileSync(this.logPath, content, "utf-8");
+    fs.writeFileSync(this.logPath, content, { encoding: "utf-8", mode: 0o600 });
   }
 
   /**
    * Generate a unique session ID
    */
   private generateSessionId(): string {
-    return `${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    return `${Date.now()}-${randomBytes(8).toString("hex")}`;
   }
 
   /**

@@ -13,9 +13,11 @@ from ..utils.api import (
     API_TIMEOUT,
     API_TIMEOUT_SHORT,
     EXIT_GENERAL_ERROR,
+    EXIT_INSUFFICIENT_SCOPE,
     EXIT_QUOTA_EXHAUSTED,
     EXIT_SCAN_NOT_FOUND,
     EXIT_SUCCESS,
+    handle_scope_error,
     resolve_key,
     write_payload,
 )
@@ -109,7 +111,9 @@ def _do_remote_scan(
         timeout=API_TIMEOUT,
     )
 
-    if resp.status_code == 429:
+    if handle_scope_error(resp):
+        raise typer.Exit(code=EXIT_INSUFFICIENT_SCOPE)
+    elif resp.status_code == 429:
         print("Quota exhausted", file=sys.stderr)
         raise typer.Exit(code=EXIT_QUOTA_EXHAUSTED)
     elif resp.status_code != 200:
