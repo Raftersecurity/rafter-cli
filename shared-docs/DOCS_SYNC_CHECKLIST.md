@@ -56,7 +56,7 @@ When making CLI changes, update these files in Rome-1/docs:
 1. **Deprecated commands**: When deprecating a command, update ALL docs files that reference it (not just the primary one). Use grep to find all occurrences.
 2. **Flag names**: Verify exact flag names against CLI_SPEC.md. Common mistakes: `--limit` vs `--last`, `--skip-*` vs `--with-*`, flags that don't exist.
 3. **File paths**: `audit.jsonl` not `audit.log`. Always check CLI_SPEC.md for canonical paths.
-4. **Exit codes**: Local scan has 3 exit codes (0/1/2), backend has 4 (0/1/2/3). Keep them separate.
+4. **Exit codes**: Local scan has 3 exit codes (0/1/2), backend has 5 (0/1/2/3/4). Keep them separate.
 5. **Config keys**: Only document keys listed in CLI_SPEC.md. Don't invent config paths.
 6. **Skills per agent**: Each agent gets TWO skills (`rafter/` and `rafter-agent-security/`), not one.
 
