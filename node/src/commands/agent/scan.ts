@@ -105,13 +105,13 @@ export function createScanCommand(): Command {
 
       // Handle --diff flag
       if (opts.diff) {
-        await scanDiffFiles(opts.diff, opts, scanCfg, baselineEntries);
+        await scanDiffFiles(opts.diff, opts, scanCfg, baselineEntries, path.resolve(scanPath));
         return;
       }
 
       // Handle --staged flag
       if (opts.staged) {
-        await scanStagedFiles(opts, scanCfg, baselineEntries);
+        await scanStagedFiles(opts, scanCfg, baselineEntries, path.resolve(scanPath));
         return;
       }
 
@@ -290,10 +290,13 @@ async function scanDiffFiles(
   opts: ScanOpts,
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
   baselineEntries: BaselineEntry[] = [],
+  scanPath?: string,
 ): Promise<void> {
+  const cwd = scanPath && fs.existsSync(scanPath) && fs.statSync(scanPath).isDirectory() ? scanPath : undefined;
   try {
     const diffOutput = execFileSync("git", ["diff", "--name-only", "--diff-filter=ACM", ref], {
       encoding: "utf-8",
+      cwd,
       stdio: ["pipe", "pipe", "ignore"],
     }).trim();
 
@@ -310,6 +313,7 @@ async function scanDiffFiles(
 
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
+      cwd,
       stdio: ["pipe", "pipe", "ignore"],
     }).trim();
 
@@ -343,10 +347,13 @@ async function scanStagedFiles(
   opts: ScanOpts,
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
   baselineEntries: BaselineEntry[] = [],
+  scanPath?: string,
 ): Promise<void> {
+  const cwd = scanPath && fs.existsSync(scanPath) && fs.statSync(scanPath).isDirectory() ? scanPath : undefined;
   try {
-    const stagedFilesOutput = execSync("git diff --cached --name-only --diff-filter=ACM", {
+    const stagedFilesOutput = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACM"], {
       encoding: "utf-8",
+      cwd,
       stdio: ["pipe", "pipe", "ignore"]
     }).trim();
 
@@ -363,6 +370,7 @@ async function scanStagedFiles(
 
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
+      cwd,
       stdio: ["pipe", "pipe", "ignore"],
     }).trim();
 
@@ -504,7 +512,8 @@ async function watchAndScan(
   const watcher = watch(watchPath, {
     ignoreInitial: true,
     persistent: true,
-    ignored: /(^|[/\\])\../,
+    ignored: [/(^|[/\\])\./, /node_modules/, /\.git/],
+    depth: 10,
   });
 
   watcher.on("change", async (filePath: string) => {

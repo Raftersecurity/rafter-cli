@@ -22,6 +22,7 @@ export function createScanGroupCommand(): Command {
     .option("-b, --branch <branch>", "branch (default: current else main)")
     .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
     .option("-f, --format <format>", "json | md", "md")
+    .option("-m, --mode <mode>", "scan mode: fast | plus", "fast")
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages")
     .action(async (opts) => {
@@ -38,6 +39,7 @@ export function createScanGroupCommand(): Command {
     .option("-b, --branch <branch>", "branch (default: current else main)")
     .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
     .option("-f, --format <format>", "json | md", "md")
+    .option("-m, --mode <mode>", "scan mode: fast | plus", "fast")
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages");
 

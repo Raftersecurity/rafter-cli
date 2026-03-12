@@ -243,7 +243,7 @@ async function installClaudeCodeSkills(): Promise<void> {
   // Install Backend Skill
   const backendSkillDir = path.join(claudeSkillsDir, "rafter");
   const backendSkillPath = path.join(backendSkillDir, "SKILL.md");
-  const backendTemplatePath = path.join(__dirname, "..", "..", "..", ".claude", "skills", "rafter", "SKILL.md");
+  const backendTemplatePath = path.join(__dirname, "..", "..", "..", "resources", "skills", "rafter", "SKILL.md");
 
   if (!fs.existsSync(backendSkillDir)) {
     fs.mkdirSync(backendSkillDir, { recursive: true });
@@ -259,7 +259,7 @@ async function installClaudeCodeSkills(): Promise<void> {
   // Install Agent Security Skill
   const agentSkillDir = path.join(claudeSkillsDir, "rafter-agent-security");
   const agentSkillPath = path.join(agentSkillDir, "SKILL.md");
-  const agentTemplatePath = path.join(__dirname, "..", "..", "..", ".claude", "skills", "rafter-agent-security", "SKILL.md");
+  const agentTemplatePath = path.join(__dirname, "..", "..", "..", "resources", "skills", "rafter-agent-security", "SKILL.md");
 
   if (!fs.existsSync(agentSkillDir)) {
     fs.mkdirSync(agentSkillDir, { recursive: true });
@@ -280,7 +280,7 @@ function installCodexSkills(): void {
   // Install Backend Skill
   const backendDir = path.join(agentsSkillsDir, "rafter");
   const backendSkillPath = path.join(backendDir, "SKILL.md");
-  const backendTemplatePath = path.join(__dirname, "..", "..", "..", ".claude", "skills", "rafter", "SKILL.md");
+  const backendTemplatePath = path.join(__dirname, "..", "..", "..", "resources", "skills", "rafter", "SKILL.md");
 
   if (!fs.existsSync(backendDir)) {
     fs.mkdirSync(backendDir, { recursive: true });
@@ -296,7 +296,7 @@ function installCodexSkills(): void {
   // Install Agent Security Skill
   const agentDir = path.join(agentsSkillsDir, "rafter-agent-security");
   const agentSkillPath = path.join(agentDir, "SKILL.md");
-  const agentTemplatePath = path.join(__dirname, "..", "..", "..", ".claude", "skills", "rafter-agent-security", "SKILL.md");
+  const agentTemplatePath = path.join(__dirname, "..", "..", "..", "resources", "skills", "rafter-agent-security", "SKILL.md");
 
   if (!fs.existsSync(agentDir)) {
     fs.mkdirSync(agentDir, { recursive: true });
