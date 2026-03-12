@@ -18,7 +18,8 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 | 0 | Success |
 | 1 | General error |
 | 2 | Scan not found (HTTP 404) |
-| 3 | Quota exhausted (HTTP 429) |
+| 3 | Quota exhausted (HTTP 429 or 403 scan-mode limit) |
+| 4 | Insufficient scope / forbidden (HTTP 403) |
 
 ### Local Secret Scan (`rafter scan local` / `rafter agent scan`)
 
@@ -431,7 +432,8 @@ if rafter get SCAN_ID; then
 else
     case $? in
         2) echo "Scan not found" ;;
-        3) echo "Quota exhausted" ;;
+        3) echo "Quota exhausted or scan limit reached" ;;
+        4) echo "Forbidden — check API key scope" ;;
         *) echo "Other error" ;;
     esac
 fi
