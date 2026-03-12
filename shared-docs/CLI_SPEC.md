@@ -53,6 +53,7 @@ Trigger a new security scan for a repository.
 - `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
 - `-b, --branch TEXT` — branch (default: current branch or 'main')
 - `-f, --format [json|md]` — output format (default: md)
+- `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds additional agent-driven analysis passes.
 - `--skip-interactive` — fire-and-forget mode (don't poll for completion)
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
