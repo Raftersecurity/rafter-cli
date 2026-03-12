@@ -50,9 +50,10 @@ export function createAuditCommand(): Command {
       console.log(`\nShowing ${entries.length} audit log entries:\n`);
 
       for (const entry of entries) {
-        const timestamp = new Date(entry.timestamp).toLocaleString();
-        const indicator = getEventIndicator(entry.eventType);
-        console.log(`${indicator} [${timestamp}] ${entry.eventType}`);
+        const timestamp = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "unknown";
+        const eventType = entry.eventType ?? "unknown";
+        const indicator = getEventIndicator(eventType as EventType);
+        console.log(`${indicator} [${timestamp}] ${eventType}`);
 
         if (entry.agentType) {
           console.log(`   Agent: ${entry.agentType}`);
@@ -115,8 +116,8 @@ export function generateShareExcerpt(): void {
     lines.push("  (no entries)");
   } else {
     for (const entry of entries) {
-      const ts = entry.timestamp.replace("T", " ").replace(/\.\d+Z$/, "Z");
-      const eventPad = entry.eventType.padEnd(20);
+      const ts = (entry.timestamp ?? "").replace("T", " ").replace(/\.\d+Z$/, "Z");
+      const eventPad = (entry.eventType ?? "unknown").padEnd(20);
       const riskRaw = entry.action?.riskLevel ?? "low";
       const riskPad = riskRaw.toUpperCase().padEnd(8);
       const detail = formatShareDetail(entry);
@@ -164,7 +165,7 @@ export function formatShareDetail(entry: AuditLogEntry): string {
   const action = entry.resolution?.actionTaken ?? "unknown";
   const suffix = `[${action}]`;
 
-  if (entry.eventType === "secret_detected") {
+  if ((entry.eventType ?? "unknown") === "secret_detected") {
     const reason = entry.securityCheck?.reason ?? "";
     return `${reason} ${suffix}`;
   }

@@ -6,7 +6,9 @@ import { SkillManager } from "../../utils/skill-manager.js";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { execSync } from "child_process";
 import { fileURLToPath } from "url";
+import { createRequire } from "module";
 import { fmt } from "../../utils/formatter.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -599,5 +601,23 @@ export function createInitCommand(): Command {
       console.log("  - Run: rafter scan local . (test secret scanning)");
       console.log("  - Configure: rafter agent config show");
       console.log();
+
+      // Warn if a different rafter version shadows this one on PATH
+      try {
+        const _require = createRequire(import.meta.url);
+        const { version: thisVersion } = _require("../../../package.json");
+        const pathVersion = execSync("rafter --version", {
+          encoding: "utf-8",
+          timeout: 5000,
+          stdio: ["pipe", "pipe", "ignore"],
+        }).trim();
+        if (pathVersion && pathVersion !== thisVersion && !pathVersion.includes(thisVersion)) {
+          console.log(fmt.warning(`PATH version mismatch: 'rafter --version' reports ${pathVersion}, but this install is ${thisVersion}.`));
+          console.log(fmt.info("Another rafter binary may be shadowing this one. Check: which rafter"));
+          console.log();
+        }
+      } catch {
+        // Ignore — rafter may not be on PATH yet
+      }
     });
 }
