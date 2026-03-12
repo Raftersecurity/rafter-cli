@@ -18,24 +18,40 @@ EXIT_QUOTA_EXHAUSTED = 3
 EXIT_INSUFFICIENT_SCOPE = 4
 
 
-def handle_scope_error(resp: "requests.Response") -> bool:
-    """Detect a 403 scope-enforcement error and print a helpful message.
+def handle_403(resp: "requests.Response") -> int:
+    """Detect a 403 error and print a helpful message.
 
-    Returns True if it was a scope error (caller should exit), False otherwise.
-    Imports requests lazily to avoid circular imports.
+    Returns the appropriate exit code, or -1 if not a 403.
     """
     if resp.status_code != 403:
-        return False
-    body = resp.text
-    if "scope" in body:
+        return -1
+    try:
+        body = resp.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict) and "scan_mode" in body:
+        mode = body["scan_mode"]
+        limit = body.get("limit", "?")
+        print(
+            f"Error: {mode.capitalize()} scan limit reached ({limit}/{limit} used this billing period).\n"
+            f"Upgrade your plan or wait for your quota to reset.",
+            file=sys.stderr,
+        )
+        return EXIT_QUOTA_EXHAUSTED
+    if "scope" in resp.text:
         print(
             'Error: This API key only has read access.\n'
             'To trigger scans, create a key with "Read & Scan" scope at https://rfrr.co/account',
             file=sys.stderr,
         )
     else:
-        print(f"Error: Forbidden (403) — {body or 'access denied'}", file=sys.stderr)
-    return True
+        print(f"Error: Forbidden (403) — {resp.text or 'access denied'}", file=sys.stderr)
+    return EXIT_INSUFFICIENT_SCOPE
+
+
+def handle_scope_error(resp: "requests.Response") -> bool:
+    """Deprecated: use handle_403 instead."""
+    return handle_403(resp) >= 0
 
 # Network timeouts (connect, read) in seconds
 API_TIMEOUT = (10, 300)
