@@ -12,7 +12,7 @@ import stat
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -1131,7 +1131,7 @@ def _format_share_detail(entry: dict) -> str:
 def _audit_share() -> None:
     version = __version__
     os_info = f"{platform.system().lower()}/{platform.machine()}"
-    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     manager = ConfigManager()
     cfg = manager.load_with_policy()
