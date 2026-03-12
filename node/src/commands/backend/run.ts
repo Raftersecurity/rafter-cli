@@ -17,6 +17,7 @@ export interface RunOpts {
   branch?: string;
   apiKey?: string;
   format?: string;
+  mode?: string;
   skipInteractive?: boolean;
   quiet?: boolean;
 }
@@ -43,7 +44,7 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
     try {
       const { data } = await axios.post(
         `${API}/static/scan`,
-        { repository_name: repo, branch_name: branch },
+        { repository_name: repo, branch_name: branch, scan_mode: opts.mode ?? "fast" },
         { headers: { "x-api-key": key } }
       );
       spinner.succeed(`Scan ID: ${data.scan_id}`);
@@ -70,7 +71,7 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
     try {
       const { data } = await axios.post(
         `${API}/static/scan`,
-        { repository_name: repo, branch_name: branch },
+        { repository_name: repo, branch_name: branch, scan_mode: opts.mode ?? "fast" },
         { headers: { "x-api-key": key } }
       );
       if (opts.skipInteractive) return;
@@ -99,6 +100,7 @@ function addRunOptions(cmd: Command): Command {
     .option("-b, --branch <branch>", "branch (default: current else main)")
     .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
     .option("-f, --format <format>", "json | md", "md")
+    .option("-m, --mode <mode>", "scan mode: fast | plus", "fast")
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages");
 }

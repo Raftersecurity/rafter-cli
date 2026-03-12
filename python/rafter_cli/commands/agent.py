@@ -12,7 +12,7 @@ import stat
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -806,9 +806,17 @@ def _watch_and_scan(
     elif not quiet:
         rprint(fmt.success("[Initial scan] No secrets detected"))
 
+    import re as _re
+    _IGNORE_PATTERN = _re.compile(r'(^|[/\\])(\.git|node_modules|\.hg|__pycache__|\.tox|\.venv)([/\\]|$)')
+
     class _Handler(FileSystemEventHandler):
+        def _should_ignore(self, file_path: str) -> bool:
+            return bool(_IGNORE_PATTERN.search(file_path))
+
         def _handle(self, file_path: str) -> None:
             if not os.path.isfile(file_path):
+                return
+            if self._should_ignore(file_path):
                 return
             from datetime import datetime as _dt
             ts = _dt.now().strftime("%H:%M:%S")
@@ -1131,7 +1139,7 @@ def _format_share_detail(entry: dict) -> str:
 def _audit_share() -> None:
     version = __version__
     os_info = f"{platform.system().lower()}/{platform.machine()}"
-    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     manager = ConfigManager()
     cfg = manager.load_with_policy()

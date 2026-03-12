@@ -90,6 +90,7 @@ def _do_remote_scan(
     fmt: str,
     skip_interactive: bool,
     quiet: bool,
+    mode: str = "fast",
 ) -> None:
     """Shared implementation for remote backend scan — used by both `rafter run` and `rafter scan`."""
     key = resolve_key(api_key)
@@ -107,7 +108,7 @@ def _do_remote_scan(
     resp = requests.post(
         f"{API_BASE}/static/scan",
         headers=headers,
-        json={"repository_name": repo_slug, "branch_name": branch_name},
+        json={"repository_name": repo_slug, "branch_name": branch_name, "scan_mode": mode},
         timeout=API_TIMEOUT,
     )
 
@@ -139,11 +140,12 @@ def register_backend_commands(app: typer.Typer) -> None:
         branch: str = typer.Option(None, "--branch", "-b", help="branch (default: current else main)"),
         api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
         fmt: str = typer.Option("md", "--format", "-f", help="json | md"),
+        mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus"),
         skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
         quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
     ):
         """Trigger a security scan."""
-        _do_remote_scan(repo, branch, api_key, fmt, skip_interactive, quiet)
+        _do_remote_scan(repo, branch, api_key, fmt, skip_interactive, quiet, mode)
 
     @app.command()
     def get(

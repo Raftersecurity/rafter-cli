@@ -45,13 +45,14 @@ def scan_default(
     branch: Optional[str] = typer.Option(None, "--branch", "-b", help="branch (default: current else main)"),
     api_key: Optional[str] = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
     fmt_: str = typer.Option("md", "--format", "-f", help="json | md"),
+    mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
     """Scan for security issues. Defaults to remote backend scan."""
     if ctx.invoked_subcommand is None:
         # No subcommand — run remote backend scan
-        _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet)
+        _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode)
 
 
 # ── rafter scan remote ────────────────────────────────────────────────
@@ -62,17 +63,18 @@ def scan_remote(
     branch: Optional[str] = typer.Option(None, "--branch", "-b", help="branch (default: current else main)"),
     api_key: Optional[str] = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
     fmt_: str = typer.Option("md", "--format", "-f", help="json | md"),
+    mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
     """Trigger a remote backend security scan (explicit alias for 'rafter run')."""
-    _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet)
+    _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode)
 
 
-def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet):
+def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode="fast"):
     """Shared handler: invoke remote backend scan (same logic as `rafter run`)."""
     from ..commands.backend import _do_remote_scan
-    _do_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet)
+    _do_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode)
 
 
 # ── rafter scan local ─────────────────────────────────────────────────
@@ -113,12 +115,17 @@ def scan_local(
 
     baseline_entries = _load_baseline_entries() if baseline else []
 
+    # Resolve scan path for git-aware modes (--diff, --staged)
+    resolved_scan_path = os.path.abspath(path)
+    git_cwd = resolved_scan_path if os.path.isdir(resolved_scan_path) else None
+
     # --diff
     if diff:
         try:
             diff_output = subprocess.run(
                 ["git", "diff", "--name-only", "--diff-filter=ACM", diff],
                 capture_output=True, text=True, check=True,
+                cwd=git_cwd,
             ).stdout.strip()
         except subprocess.CalledProcessError:
             print("Error: Not in a git repository or invalid ref", file=sys.stderr)
@@ -133,10 +140,16 @@ def scan_local(
         if not quiet:
             print(f"Scanning {len(changed)} file(s) changed since {diff}...", file=sys.stderr)
 
+        repo_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+            cwd=git_cwd,
+        ).stdout.strip()
+
         eng = _select_engine(engine, quiet)
         all_results = []
         for f in changed:
-            resolved = os.path.abspath(f)
+            resolved = os.path.join(repo_root, f)
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
         filtered = _apply_baseline(all_results, baseline_entries)
@@ -149,6 +162,7 @@ def scan_local(
             staged_output = subprocess.run(
                 ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
                 capture_output=True, text=True, check=True,
+                cwd=git_cwd,
             ).stdout.strip()
         except subprocess.CalledProcessError:
             print("Error: Not in a git repository", file=sys.stderr)
@@ -163,10 +177,16 @@ def scan_local(
         if not quiet:
             print(f"Scanning {len(staged_files)} staged file(s)...", file=sys.stderr)
 
+        repo_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+            cwd=git_cwd,
+        ).stdout.strip()
+
         eng = _select_engine(engine, quiet)
         all_results = []
         for f in staged_files:
-            resolved = os.path.abspath(f)
+            resolved = os.path.join(repo_root, f)
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
         filtered = _apply_baseline(all_results, baseline_entries)
