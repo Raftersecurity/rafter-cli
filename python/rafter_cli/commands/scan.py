@@ -26,7 +26,11 @@ scan_app = typer.Typer(
     no_args_is_help=False,
 )
 
-local_app = typer.Typer(name="local", help="Scan files or directories for secrets (local)")
+local_app = typer.Typer(
+    name="local",
+    help="Scan files or directories for secrets (local)",
+    context_settings={"allow_interspersed_args": True},
+)
 scan_app.add_typer(local_app)
 
 remote_app = typer.Typer(
