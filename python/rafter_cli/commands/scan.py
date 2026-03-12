@@ -115,12 +115,17 @@ def scan_local(
 
     baseline_entries = _load_baseline_entries() if baseline else []
 
+    # Resolve scan path for git-aware modes (--diff, --staged)
+    resolved_scan_path = os.path.abspath(path)
+    git_cwd = resolved_scan_path if os.path.isdir(resolved_scan_path) else None
+
     # --diff
     if diff:
         try:
             diff_output = subprocess.run(
                 ["git", "diff", "--name-only", "--diff-filter=ACM", diff],
                 capture_output=True, text=True, check=True,
+                cwd=git_cwd,
             ).stdout.strip()
         except subprocess.CalledProcessError:
             print("Error: Not in a git repository or invalid ref", file=sys.stderr)
@@ -135,10 +140,16 @@ def scan_local(
         if not quiet:
             print(f"Scanning {len(changed)} file(s) changed since {diff}...", file=sys.stderr)
 
+        repo_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+            cwd=git_cwd,
+        ).stdout.strip()
+
         eng = _select_engine(engine, quiet)
         all_results = []
         for f in changed:
-            resolved = os.path.abspath(f)
+            resolved = os.path.join(repo_root, f)
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
         filtered = _apply_baseline(all_results, baseline_entries)
@@ -151,6 +162,7 @@ def scan_local(
             staged_output = subprocess.run(
                 ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
                 capture_output=True, text=True, check=True,
+                cwd=git_cwd,
             ).stdout.strip()
         except subprocess.CalledProcessError:
             print("Error: Not in a git repository", file=sys.stderr)
@@ -165,10 +177,16 @@ def scan_local(
         if not quiet:
             print(f"Scanning {len(staged_files)} staged file(s)...", file=sys.stderr)
 
+        repo_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+            cwd=git_cwd,
+        ).stdout.strip()
+
         eng = _select_engine(engine, quiet)
         all_results = []
         for f in staged_files:
-            resolved = os.path.abspath(f)
+            resolved = os.path.join(repo_root, f)
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
         filtered = _apply_baseline(all_results, baseline_entries)
