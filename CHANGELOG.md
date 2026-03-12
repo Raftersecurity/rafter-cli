@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-03-12
+
+### Added
+- **Scan modes** (Node + Python): new `--mode` / `-m` flag for `rafter run`, `rafter scan`, and `rafter scan remote`. Accepted values: `fast` (default) and `plus`. Sends `scan_mode` in the API request body to select scan depth.
+
 ## [0.6.1] - 2026-03-09
 
 ### Fixed
