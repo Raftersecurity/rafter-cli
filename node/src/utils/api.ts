@@ -11,9 +11,21 @@ export const EXIT_INSUFFICIENT_SCOPE = 4;
  * Detect a 403 scope-enforcement error from the API and print a helpful message.
  * Returns true if the error was a scope error (caller should exit), false otherwise.
  */
-export function handleScopeError(e: any): boolean {
-  if (!e || e.response?.status !== 403) return false;
+/**
+ * Detect a 403 error from the API and print a helpful message.
+ * Returns the appropriate exit code, or -1 if not a 403.
+ */
+export function handle403(e: any): number {
+  if (!e || e.response?.status !== 403) return -1;
   const body = e.response?.data;
+  if (typeof body === "object" && body?.scan_mode) {
+    const mode = body.scan_mode;
+    const limit = body.limit ?? "?";
+    console.error(
+      `Error: ${mode.charAt(0).toUpperCase() + mode.slice(1)} scan limit reached (${limit}/${limit} used this billing period).\nUpgrade your plan or wait for your quota to reset.`
+    );
+    return EXIT_QUOTA_EXHAUSTED;
+  }
   const msg = typeof body === "string" ? body : body?.error ?? "";
   if (msg.includes("scope")) {
     console.error(
@@ -22,7 +34,12 @@ export function handleScopeError(e: any): boolean {
   } else {
     console.error(`Error: Forbidden (403) — ${msg || "access denied"}`);
   }
-  return true;
+  return EXIT_INSUFFICIENT_SCOPE;
+}
+
+/** @deprecated Use handle403 instead */
+export function handleScopeError(e: any): boolean {
+  return handle403(e) >= 0;
 }
 
 export function resolveKey(cliKey?: string): string {
