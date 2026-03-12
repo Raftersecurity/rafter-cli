@@ -32,8 +32,9 @@ def handle_403(resp: "requests.Response") -> int:
     if isinstance(body, dict) and "scan_mode" in body:
         mode = body["scan_mode"]
         limit = body.get("limit", "?")
+        used = body.get("used", limit)
         print(
-            f"Error: {mode.capitalize()} scan limit reached ({limit}/{limit} used this billing period).\n"
+            f"Error: {mode.capitalize()} scan limit reached ({used}/{limit} used this billing period).\n"
             f"Upgrade your plan or wait for your quota to reset.",
             file=sys.stderr,
         )

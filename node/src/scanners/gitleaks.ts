@@ -218,14 +218,15 @@ export class GitleaksScanner {
         lowerID.includes("database") ||
         lowerID.includes("access-token") ||
         lowerID.includes("secret-key") ||
-        lowerID.includes("-pat") ||
+        lowerID.endsWith("-pat") ||
         (tags.includes("key") && tags.includes("secret"))) {
       return "critical";
     }
 
     // High: API keys, generic tokens
     if (lowerID.includes("api-key") ||
-        lowerID.includes("token") ||
+        lowerID.includes("-token") ||
+        lowerID.startsWith("token-") ||
         tags.includes("api")) {
       return "high";
     }

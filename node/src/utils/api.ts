@@ -8,10 +8,6 @@ export const EXIT_QUOTA_EXHAUSTED = 3;
 export const EXIT_INSUFFICIENT_SCOPE = 4;
 
 /**
- * Detect a 403 scope-enforcement error from the API and print a helpful message.
- * Returns true if the error was a scope error (caller should exit), false otherwise.
- */
-/**
  * Detect a 403 error from the API and print a helpful message.
  * Returns the appropriate exit code, or -1 if not a 403.
  */
@@ -21,8 +17,9 @@ export function handle403(e: any): number {
   if (typeof body === "object" && body?.scan_mode) {
     const mode = body.scan_mode;
     const limit = body.limit ?? "?";
+    const used = body.used ?? limit;
     console.error(
-      `Error: ${mode.charAt(0).toUpperCase() + mode.slice(1)} scan limit reached (${limit}/${limit} used this billing period).\nUpgrade your plan or wait for your quota to reset.`
+      `Error: ${mode.charAt(0).toUpperCase() + mode.slice(1)} scan limit reached (${used}/${limit} used this billing period).\nUpgrade your plan or wait for your quota to reset.`
     );
     return EXIT_QUOTA_EXHAUSTED;
   }
