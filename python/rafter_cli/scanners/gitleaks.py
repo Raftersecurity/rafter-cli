@@ -163,9 +163,9 @@ class GitleaksScanner:
     @staticmethod
     def _get_severity(rule_id: str, tags: list) -> str:
         lower = rule_id.lower()
-        if any(k in lower for k in ("private-key", "password", "database")):
+        if any(k in lower for k in ("private-key", "password", "database", "access-token", "secret-key")) or lower.endswith("-pat"):
             return "critical"
-        if any(k in lower for k in ("api-key", "access-token", "secret-key")):
+        if any(k in lower for k in ("api-key", "-token", "token-")):
             return "high"
         if "generic" in lower:
             return "medium"

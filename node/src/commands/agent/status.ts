@@ -36,12 +36,12 @@ export function createStatusCommand(): Command {
       const localGitleaks = path.join(getBinDir(), "gitleaks");
       let gitleaksStatus = "not found — run: rafter agent init --with-gitleaks";
       try {
-        const ver = execSync("gitleaks version", { timeout: 5000, encoding: "utf-8" }).trim();
+        const ver = execSync("gitleaks version", { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
         gitleaksStatus = `${ver} (PATH)`;
       } catch {
         if (fs.existsSync(localGitleaks)) {
           try {
-            const ver = execSync(`"${localGitleaks}" version`, { timeout: 5000, encoding: "utf-8" }).trim();
+            const ver = execSync(`"${localGitleaks}" version`, { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
             gitleaksStatus = `${ver} (local)`;
           } catch {
             gitleaksStatus = `${localGitleaks} (binary error)`;
@@ -162,7 +162,7 @@ export function createStatusCommand(): Command {
           for (const e of [...recent].reverse()) {
             const ts = (e.timestamp ?? "").slice(0, 19).replace("T", " ");
             const action = e.resolution?.actionTaken ?? "";
-            console.log(`  ${ts}  ${e.eventType}  [${action}]`);
+            console.log(`  ${ts}  ${e.eventType ?? "unknown"}  [${action}]`);
           }
         }
       } else {

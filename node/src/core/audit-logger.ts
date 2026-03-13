@@ -340,7 +340,10 @@ export class AuditLogger {
 
     let entries = lines.map(line => {
       try {
-        return JSON.parse(line) as AuditLogEntry;
+        const parsed = JSON.parse(line);
+        // Skip malformed entries missing required fields
+        if (!parsed || typeof parsed !== "object" || !parsed.timestamp) return null;
+        return parsed as AuditLogEntry;
       } catch {
         return null;
       }
