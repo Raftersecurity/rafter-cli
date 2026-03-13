@@ -7,7 +7,7 @@ name: Rafter Security Scan
 description: Scan for hardcoded secrets with Rafter CLI (local, no API key required)
 branding:
   icon: shield
-  color: blue
+  color: black
 
 inputs:
   scan-path:

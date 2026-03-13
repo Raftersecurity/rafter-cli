@@ -212,18 +212,21 @@ export class GitleaksScanner {
   private getSeverity(ruleID: string, tags: string[]): "low" | "medium" | "high" | "critical" {
     const lowerID = ruleID.toLowerCase();
 
-    // Critical: Private keys, passwords, database credentials
+    // Critical: Private keys, passwords, database credentials, access tokens
     if (lowerID.includes("private-key") ||
         lowerID.includes("password") ||
         lowerID.includes("database") ||
-        tags.includes("key") && tags.includes("secret")) {
+        lowerID.includes("access-token") ||
+        lowerID.includes("secret-key") ||
+        lowerID.endsWith("-pat") ||
+        (tags.includes("key") && tags.includes("secret"))) {
       return "critical";
     }
 
-    // High: API keys, access tokens
+    // High: API keys, generic tokens
     if (lowerID.includes("api-key") ||
-        lowerID.includes("access-token") ||
-        lowerID.includes("secret-key") ||
+        lowerID.includes("-token") ||
+        lowerID.startsWith("token-") ||
         tags.includes("api")) {
       return "high";
     }

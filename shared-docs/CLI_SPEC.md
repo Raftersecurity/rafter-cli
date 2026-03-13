@@ -18,7 +18,8 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 | 0 | Success |
 | 1 | General error |
 | 2 | Scan not found (HTTP 404) |
-| 3 | Quota exhausted (HTTP 429) |
+| 3 | Quota exhausted (HTTP 429 or 403 scan-mode limit) |
+| 4 | Insufficient scope / forbidden (HTTP 403) |
 
 ### Local Secret Scan (`rafter scan local` / `rafter agent scan`)
 
@@ -52,6 +53,7 @@ Trigger a new security scan for a repository.
 - `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
 - `-b, --branch TEXT` — branch (default: current branch or 'main')
 - `-f, --format [json|md]` — output format (default: md)
+- `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds additional agent-driven analysis passes.
 - `--skip-interactive` — fire-and-forget mode (don't poll for completion)
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
@@ -431,7 +433,8 @@ if rafter get SCAN_ID; then
 else
     case $? in
         2) echo "Scan not found" ;;
-        3) echo "Quota exhausted" ;;
+        3) echo "Quota exhausted or scan limit reached" ;;
+        4) echo "Forbidden — check API key scope" ;;
         *) echo "Other error" ;;
     esac
 fi
