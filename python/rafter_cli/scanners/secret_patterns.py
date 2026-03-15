@@ -97,7 +97,7 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
     ),
     Pattern(
         name="Generic Secret",
-        regex=r"(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)\s*[:=]\s*['\"](?=[^\s'\"]*[0-9!@#$%^&*()])[0-9a-zA-Z\-_!@#$%^&*()]{8,256}['\"]",
+        regex=r"(?i)(?<![a-zA-Z0-9_])(secret|password|passwd|pwd)\s*[:=]\s*['\"](?=[^\s'\"]*[0-9])(?=[^\s'\"]*[a-zA-Z])[0-9a-zA-Z\-_!@#$%^&*()]{12,256}['\"]",
         severity="high",
         description="Generic secret pattern detected",
     ),
@@ -109,7 +109,7 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
     ),
     Pattern(
         name="Bearer Token",
-        regex=r"(?i)bearer\s+[a-zA-Z0-9\-_\.=]{1,512}",
+        regex=r"(?i)bearer\s+(?=[a-zA-Z0-9\-_\.=]*[0-9])(?=[a-zA-Z0-9\-_\.=]*[a-zA-Z])[a-zA-Z0-9\-_\.=]{20,512}",
         severity="high",
         description="Bearer token detected",
     ),
