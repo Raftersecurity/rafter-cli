@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Secret pattern consistency** (Python): tightened Generic Secret regex to require both digit and letter with 12+ char minimum (was 8+, digit-only). Tightened Bearer Token regex to require both digit and letter with 20+ char minimum (was 1+). Now matches Node behavior for reduced false positives.
+- **Config schema parity** (Python): added 5 missing environment configs (gemini, aider, cursor, windsurf, continue_dev) and `skills` config section (autoUpdate, installOnInit, backupBeforeUpdate) to match Node.
+- **API base URL** (Python): normalized `API_BASE` to include trailing slash, matching Node constant.
+
 ## [0.6.2] - 2026-03-12
 
 ### Added

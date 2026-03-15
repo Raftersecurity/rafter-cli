@@ -76,6 +76,15 @@ class EnvironmentConfig:
 
 
 @dataclass
+class SkillsConfig:
+    auto_update: bool = True
+    install_on_init: bool = True
+    backup_before_update: bool = True
+    installed_version: str | None = None
+    last_checked: str | None = None
+
+
+@dataclass
 class EnvironmentsConfig:
     openclaw: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(
         path=os.path.join(os.path.expanduser("~"), ".openclaw", "skills", "rafter-security.md"),
@@ -86,12 +95,28 @@ class EnvironmentsConfig:
     codex: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(
         path=os.path.join(os.path.expanduser("~"), ".agents", "skills"),
     ))
+    gemini: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(
+        path=os.path.join(os.path.expanduser("~"), ".gemini", "settings.json"),
+    ))
+    aider: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(
+        path=os.path.join(os.path.expanduser("~"), ".aider.conf.yml"),
+    ))
+    cursor: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(
+        path=os.path.join(os.path.expanduser("~"), ".cursor", "mcp.json"),
+    ))
+    windsurf: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(
+        path=os.path.join(os.path.expanduser("~"), ".codeium", "windsurf", "mcp_config.json"),
+    ))
+    continue_dev: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(
+        path=os.path.join(os.path.expanduser("~"), ".continue", "config.json"),
+    ))
 
 
 @dataclass
 class AgentConfig:
     risk_level: RiskLevel = "moderate"
     environments: EnvironmentsConfig = field(default_factory=EnvironmentsConfig)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
     command_policy: CommandPolicyConfig = field(default_factory=CommandPolicyConfig)
     output_filtering: OutputFilteringConfig = field(default_factory=OutputFilteringConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
