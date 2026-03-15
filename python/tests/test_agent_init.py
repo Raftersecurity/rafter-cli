@@ -215,3 +215,173 @@ class TestInstallAiderMcp:
         content = config_path.read_text()
         assert "model: gpt-4" in content
         assert "rafter mcp serve" in content
+
+
+# ── Flag rejection tests ─────────────────────────────────────────────
+
+
+class TestFlagRejection:
+    """--skip-openclaw and --skip-claude-code are NOT valid flags for `agent init`."""
+
+    def test_skip_openclaw_rejected(self):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--skip-openclaw"])
+        assert result.exit_code != 0, f"Expected non-zero exit code, got {result.exit_code}"
+
+    def test_skip_claude_code_rejected(self):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--skip-claude-code"])
+        assert result.exit_code != 0, f"Expected non-zero exit code, got {result.exit_code}"
+
+
+# ── Opt-in gating tests ──────────────────────────────────────────────
+
+
+class TestOptInGating:
+    """Running init without --with-* flags should NOT install any platform configs."""
+
+    def test_no_flags_skips_all_installations(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        # Create directories so environments are "detected" but no --with-* flags
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".openclaw").mkdir()
+        (tmp_path / ".codex").mkdir()
+        (tmp_path / ".gemini").mkdir()
+        (tmp_path / ".cursor").mkdir()
+        (tmp_path / ".codeium" / "windsurf").mkdir(parents=True)
+        (tmp_path / ".continue").mkdir()
+        (tmp_path / ".aider.conf.yml").write_text("")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init"])
+
+        # Claude Code hooks should NOT be installed
+        settings_path = tmp_path / ".claude" / "settings.json"
+        assert not settings_path.exists(), "Claude Code settings.json should not be created without --with-claude-code"
+
+        # OpenClaw skill should NOT be installed
+        openclaw_skill = tmp_path / ".openclaw" / "skills" / "rafter-security.md"
+        assert not openclaw_skill.exists(), "OpenClaw skill should not be installed without --with-openclaw"
+
+        # Codex skills should NOT be installed
+        codex_skill = tmp_path / ".agents" / "skills" / "rafter" / "SKILL.md"
+        assert not codex_skill.exists(), "Codex skill should not be installed without --with-codex"
+
+        # Gemini MCP should NOT be installed
+        gemini_settings = tmp_path / ".gemini" / "settings.json"
+        assert not gemini_settings.exists(), "Gemini settings.json should not be created without --with-gemini"
+
+        # Cursor MCP should NOT be installed
+        cursor_mcp = tmp_path / ".cursor" / "mcp.json"
+        assert not cursor_mcp.exists(), "Cursor mcp.json should not be created without --with-cursor"
+
+        # Windsurf MCP should NOT be installed
+        windsurf_mcp = tmp_path / ".codeium" / "windsurf" / "mcp_config.json"
+        assert not windsurf_mcp.exists(), "Windsurf mcp_config.json should not be created without --with-windsurf"
+
+        # Continue.dev MCP should NOT be installed
+        continue_config = tmp_path / ".continue" / "config.json"
+        assert not continue_config.exists(), "Continue config.json should not be created without --with-continue"
+
+        # Aider MCP should NOT be appended
+        aider_content = (tmp_path / ".aider.conf.yml").read_text()
+        assert "rafter" not in aider_content, "Aider config should not be modified without --with-aider"
+
+
+# ── Codex skill installation tests ───────────────────────────────────
+
+from rafter_cli.commands.agent import _install_codex_skills
+
+
+class TestInstallCodexSkills:
+    def test_creates_skills_from_scratch(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        ok, error = _install_codex_skills()
+        assert ok, f"Expected success, got error: {error}"
+        assert error == ""
+
+        # Backend skill
+        backend_skill = tmp_path / ".agents" / "skills" / "rafter" / "SKILL.md"
+        assert backend_skill.exists(), "Backend SKILL.md should be installed"
+        assert backend_skill.read_text().strip(), "Backend SKILL.md should not be empty"
+
+        # Agent security skill
+        agent_skill = tmp_path / ".agents" / "skills" / "rafter-agent-security" / "SKILL.md"
+        assert agent_skill.exists(), "Agent security SKILL.md should be installed"
+        assert agent_skill.read_text().strip(), "Agent security SKILL.md should not be empty"
+
+    def test_overwrites_existing_skills(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        # Pre-create with stale content
+        backend_dir = tmp_path / ".agents" / "skills" / "rafter"
+        backend_dir.mkdir(parents=True)
+        (backend_dir / "SKILL.md").write_text("old content")
+
+        ok, error = _install_codex_skills()
+        assert ok
+
+        content = (backend_dir / "SKILL.md").read_text()
+        assert content != "old content", "Skill should be updated on reinstall"
+
+
+# ── OpenClaw skill installation tests ────────────────────────────────
+
+from rafter_cli.commands.agent import _install_openclaw_skill
+
+
+class TestInstallOpenClawSkill:
+    def test_installs_skill_when_openclaw_dir_exists(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".openclaw").mkdir()
+
+        ok, source, dest, error = _install_openclaw_skill()
+        assert ok, f"Expected success, got error: {error}"
+        assert error == ""
+
+        dest_path = tmp_path / ".openclaw" / "skills" / "rafter-security.md"
+        assert dest_path.exists(), "Skill file should be installed"
+        assert dest_path.read_text().strip(), "Skill file should not be empty"
+        assert str(dest_path) == dest
+
+    def test_fails_when_openclaw_dir_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        # Do NOT create .openclaw directory
+
+        ok, source, dest, error = _install_openclaw_skill()
+        assert not ok, "Should fail when .openclaw directory is missing"
+        assert "not found" in error.lower()
+
+    def test_overwrites_existing_skill(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        openclaw_dir = tmp_path / ".openclaw"
+        openclaw_dir.mkdir()
+        skills_dir = openclaw_dir / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "rafter-security.md").write_text("old content")
+
+        ok, source, dest, error = _install_openclaw_skill()
+        assert ok
+
+        content = (skills_dir / "rafter-security.md").read_text()
+        assert content != "old content", "Skill should be updated on reinstall"
+
+    def test_creates_skills_subdirectory(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".openclaw").mkdir()
+        # skills/ subdirectory does NOT exist yet
+
+        ok, source, dest, error = _install_openclaw_skill()
+        assert ok
+
+        assert (tmp_path / ".openclaw" / "skills").is_dir(), "Should create skills subdirectory"
