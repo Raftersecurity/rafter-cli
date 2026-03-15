@@ -54,6 +54,7 @@ Trigger a new security scan for a repository.
 - `-b, --branch TEXT` — branch (default: current branch or 'main')
 - `-f, --format [json|md]` — output format (default: md)
 - `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds additional agent-driven analysis passes.
+- `-g, --github-token TEXT` — GitHub token or `RAFTER_GITHUB_TOKEN` env var. Passed to the backend for private repo access.
 - `--skip-interactive` — fire-and-forget mode (don't poll for completion)
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`

@@ -50,13 +50,14 @@ def scan_default(
     api_key: Optional[str] = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
     fmt_: str = typer.Option("md", "--format", "-f", help="json | md"),
     mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus"),
+    github_token: Optional[str] = typer.Option(None, "--github-token", "-g", envvar="RAFTER_GITHUB_TOKEN", help="GitHub token"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
     """Scan for security issues. Defaults to remote backend scan."""
     if ctx.invoked_subcommand is None:
         # No subcommand — run remote backend scan
-        _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode)
+        _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token)
 
 
 # ── rafter scan remote ────────────────────────────────────────────────
@@ -68,17 +69,18 @@ def scan_remote(
     api_key: Optional[str] = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
     fmt_: str = typer.Option("md", "--format", "-f", help="json | md"),
     mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus"),
+    github_token: Optional[str] = typer.Option(None, "--github-token", "-g", envvar="RAFTER_GITHUB_TOKEN", help="GitHub token"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
     """Trigger a remote backend security scan (explicit alias for 'rafter run')."""
-    _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode)
+    _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token)
 
 
-def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode="fast"):
+def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode="fast", github_token=None):
     """Shared handler: invoke remote backend scan (same logic as `rafter run`)."""
     from ..commands.backend import _do_remote_scan
-    _do_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode)
+    _do_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token)
 
 
 # ── rafter scan local ─────────────────────────────────────────────────
