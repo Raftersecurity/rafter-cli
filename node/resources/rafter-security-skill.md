@@ -25,6 +25,25 @@ Rafter provides real-time security checks for agent operations:
 
 ---
 
+## Setup
+
+To initialize Rafter, use **opt-in** `--with-*` flags to select integrations. There are NO `--skip-*` flags.
+
+```bash
+# Install specific integrations (opt-in)
+rafter agent init --with-openclaw
+rafter agent init --with-claude-code --with-gitleaks
+
+# Install everything detected
+rafter agent init --all
+
+# WRONG — these flags do not exist:
+# rafter agent init --skip-openclaw    # DOES NOT EXIST
+# rafter agent init --skip-claude-code # DOES NOT EXIST
+```
+
+---
+
 ## Commands
 
 ### /rafter-scan

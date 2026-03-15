@@ -89,7 +89,7 @@ All agent commands work locally. No API key required.
 
 ### rafter agent init [OPTIONS]
 
-Initialize agent security system. Creates config and detects available agent environments. Integrations are opt-in — use `--with-*` flags or `--all` to install.
+Initialize agent security system. Creates config and detects available agent environments. Integrations are **opt-in** — use `--with-*` flags or `--all` to install. There are NO `--skip-*` flags.
 
 - `--risk-level <level>` — `minimal`, `moderate` (default), or `aggressive`
 - `--with-openclaw` — install OpenClaw integration
