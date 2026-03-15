@@ -317,7 +317,7 @@ Manage agent configuration (dot-notation paths).
 - `rafter agent config get <key>` — read value
 - `rafter agent config set <key> <value>` — write value
 
-Config keys: `agent.riskLevel`, `agent.commandPolicy.mode`, `agent.commandPolicy.blockedPatterns`, `agent.commandPolicy.requireApproval`, `agent.outputFiltering.redactSecrets`, `agent.audit.logAllActions`, `agent.audit.retentionDays`, `agent.audit.logLevel`, `agent.notifications.webhook`, `agent.notifications.minRiskLevel`.
+Config keys: `agent.riskLevel`, `agent.skills.autoUpdate`, `agent.skills.installOnInit`, `agent.skills.backupBeforeUpdate`, `agent.commandPolicy.mode`, `agent.commandPolicy.blockedPatterns`, `agent.commandPolicy.requireApproval`, `agent.outputFiltering.redactSecrets`, `agent.audit.logAllActions`, `agent.audit.retentionDays`, `agent.audit.logLevel`, `agent.notifications.webhook`, `agent.notifications.minRiskLevel`.
 
 ### rafter ci init [OPTIONS]
 

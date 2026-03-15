@@ -8,7 +8,7 @@ import sys
 import typer
 from dotenv import load_dotenv
 
-API_BASE = "https://rafter.so/api"
+API_BASE = "https://rafter.so/api/"
 
 # Exit codes
 EXIT_SUCCESS = 0
