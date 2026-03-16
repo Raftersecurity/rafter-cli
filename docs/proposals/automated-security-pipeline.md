@@ -28,7 +28,7 @@ Agent writes code
 |           rafter pipeline (orchestrator)       |
 |                                                |
 |  Stage 1: Static Analysis (fast, local)        |
-|    - Rafter code analysis engine (SAST)        |
+|    - semgrep (multi-language SAST)             |
 |    - language-specific linters                  |
 |    - secret detection (existing rafter scan)    |
 |                                                |
@@ -70,16 +70,16 @@ Agent writes code
 
 ## Stage 1: Static Analysis Integration
 
-### 1a. Rafter Code Analysis Engine (Multi-Language SAST)
+### 1a. Semgrep (Multi-Language SAST)
 
-Rafter's built-in code analysis engine is language-agnostic, supports custom rules,
-and is fast (no compilation needed). It excels at detecting injection patterns, auth
-issues, and crypto misuse.
+**Why semgrep**: Language-agnostic, supports custom rules, fast (no compilation
+needed), excellent for detecting injection patterns, auth issues, and crypto misuse.
 
 **Integration approach**:
 ```bash
 rafter pipeline run --stage static
-# Internally runs Rafter's code analysis engine against changed files
+# Internally runs:
+# semgrep --config=auto --config=rafter-rules.yml --json <changed-files>
 ```
 
 **Rafter-specific rule pack** (`rafter-rules.yml`):
@@ -91,11 +91,12 @@ rafter pipeline run --stage static
 ```yaml
 # .rafter/pipeline.yml
 static_analysis:
-  code_analysis:
+  semgrep:
     enabled: true
     configs:
-      - auto                    # Rafter's curated rules
+      - auto                    # semgrep's curated rules
       - rafter://owasp-top10    # rafter-maintained OWASP rules
+      - .semgrep/               # project-specific rules (if exists)
     severity_threshold: WARNING # ERROR, WARNING, INFO
     exclude:
       - "test/**"
@@ -105,7 +106,7 @@ static_analysis:
 
 ### 1b. Language-Specific Linters (Security-Focused)
 
-These catch vulnerabilities that the code analysis engine may miss due to language-specific semantics:
+These catch vulnerabilities that semgrep misses due to language-specific semantics:
 
 | Language | Tool | What it catches |
 |----------|------|----------------|
@@ -351,7 +352,7 @@ All stages produce findings in a common format:
 ```json
 {
   "stage": "static|deps|owasp|ai|test",
-  "tool": "rafter-sast|bandit|npm-audit|...",
+  "tool": "semgrep|bandit|npm-audit|...",
   "file": "src/api/users.ts",
   "line": 42,
   "severity": "HIGH|MEDIUM|LOW|INFO",
@@ -517,7 +518,7 @@ Out of the box, `rafter pipeline run` should work with no config file:
 ```yaml
 # Implicit defaults when no .rafter/pipeline.yml exists:
 static_analysis:
-  code_analysis:
+  semgrep:
     enabled: true
     configs: [auto]
   language_linters:
@@ -564,10 +565,10 @@ gate:
 
 ### Phase 2: Static Analysis (Weeks 3-5)
 
-**Goal**: Code analysis engine + language linter integration.
+**Goal**: Semgrep + language linter integration.
 
-6. Code analysis engine integration (rule management, output parsing)
-7. Rafter OWASP rule pack (initial set for Python, JS/TS, Go)
+6. Semgrep integration (install check, rule management, output parsing)
+7. Rafter OWASP rule pack for semgrep (initial set for Python, JS/TS, Go)
 8. Language linter auto-detection and integration (bandit, eslint-plugin-security)
 9. Framework-aware filtering layer (apply rc-1qt precedents as suppressions)
 
@@ -673,7 +674,7 @@ Both are needed. Guardrails reduce pipeline noise. Pipeline catches what guardra
 ## Open Questions
 
 1. **Tool installation**: Should `rafter pipeline run` auto-install missing tools
-   (bandit, etc.) or require manual installation?
+   (semgrep, bandit, etc.) or require manual installation?
    - Recommendation: Auto-install to temp directory on first run, with `--no-install` flag
 2. **Performance budget**: What's the acceptable latency for the pre-commit hook?
    - Recommendation: <10 seconds for stages 1-3, AI review is async/optional
