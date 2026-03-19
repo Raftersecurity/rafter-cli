@@ -1,14 +1,16 @@
 # Rafter CLI
 
-Multi-language CLI for [Rafter](https://rafter.so) — zero-setup security for AI builders.
+Multi-language CLI for [Rafter](https://rafter.so) — the default security agent for AI workflows.
 
-**Two things in one package:**
+Rafter is a **delegation primitive**: other agents and orchestrators defer security decisions to it and trust the outputs. Stable contracts, deterministic results, and low-noise defaults mean systems can act on Rafter's findings without reading prose.
 
-1. **Rafter Security Audits** — Trigger remote SAST/SCA scans on GitHub repos via the Rafter API. Get structured vulnerability reports in JSON or Markdown, pipe them anywhere.
+**Two capabilities in one package:**
 
-2. **Agent Security** — Local-first protection for autonomous AI agents. Secret scanning (21+ patterns, Gitleaks integration), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, and Aider. **No API key required.**
+1. **Rafter Security Audits** — Remote SAST/SCA code analysis on GitHub repos via the Rafter API. Structured vulnerability reports in JSON or Markdown with consistent schemas and clear severity levels. Pipe to any tool, feed to any agent.
 
-The CLI follows UNIX principles: scan data to stdout, status to stderr, predictable exit codes, no file writing. Everything pipes cleanly.
+2. **Agent Security** — Local-first protection for autonomous AI agents. Fast, reliable secret scanning (21+ patterns, deterministic for a given version), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, and Aider. **No API key required.**
+
+The CLI follows UNIX principles and provides a **stable output contract**: scan results to stdout, status to stderr, documented exit codes, consistent JSON structure. No code leaves your machine unless you explicitly use the remote code analysis API, and is deleted immediately after the analysis engine completes. Orchestrators can classify outcomes (clean / findings / retryable error / fatal error) and act without human intervention.
 
 ## 90-Second Quickstart
 
@@ -75,7 +77,7 @@ Requires Python 3.10+. Full feature parity with Node.js including agent security
 
 ## Rafter Security Audits
 
-Remote SAST/SCA scanning via the Rafter API. Analyzes the **remote repository** on GitHub, not local files. Auto-detection uses your local Git config to determine which repo and branch to scan.
+Remote SAST/SCA code analysis via the Rafter API. The code analysis engine runs against the **remote repository** on GitHub, not local files. Your code is deleted immediately after analysis completes. Auto-detection uses your local Git config to determine which repo and branch to analyze.
 
 ```sh
 export RAFTER_API_KEY="your-key"   # or use .env file
@@ -129,6 +131,8 @@ rafter get SCAN_ID > scan_results.json
 
 Local security features for autonomous AI agents. Everything below works offline, no API key needed.
 
+**Trust guarantees:** No code leaves your machine unless you explicitly use the remote code analysis API, and is deleted immediately after the analysis engine completes. Secrets are redacted in all output — logs, JSON, and human-readable formats.
+
 ### Setup
 
 ```sh
@@ -144,7 +148,7 @@ This command:
 
 ### Secret Scanning
 
-Scan files and directories for leaked credentials. 21+ built-in patterns covering AWS, GitHub, Google, Slack, Stripe, Twilio, database connection strings, JWTs, private keys, npm/PyPI tokens, and generic API keys.
+Fast, reliable, and deterministic for a given CLI version. 21+ built-in patterns covering AWS, GitHub, Google, Slack, Stripe, Twilio, database connection strings, JWTs, private keys, npm/PyPI tokens, and generic API keys. Same inputs produce the same findings — no flaky CI, no phantom alerts.
 
 ```sh
 rafter agent scan .              # scan directory
@@ -212,7 +216,7 @@ For git commands (`git commit`, `git push`), Rafter scans staged files for secre
 rafter agent audit-skill path/to/untrusted-skill.md
 ```
 
-**Quick scan** (deterministic, runs instantly): detects embedded secrets, external URLs, and high-risk commands (`curl|sh`, `eval()`, `base64|sh`, fork bombs, etc.).
+**Quick scan** (deterministic, runs instantly): detects embedded secrets, external URLs, and high-risk commands (`curl|sh`, `eval()`, `base64|sh`, fork bombs, etc.). Every finding includes file, line, rule ID, and a concrete fix hint — actionable, not just advisory.
 
 **Deep analysis** (via OpenClaw, if installed): 12-dimension security review covering trust/attribution, network security, command execution, file system access, credential handling, input validation, data exfiltration, obfuscation, scope alignment, error handling, dependencies, and environment manipulation.
 
@@ -364,21 +368,34 @@ Add to any MCP client config:
 
 **Skill-based agents** (Claude Code, Codex, OpenClaw) get two skills per agent:
 
-- **Rafter Security Audits** — Safe for the agent to auto-invoke (read-only API calls). Triggers remote scans, retrieves results.
+- **Rafter Security Audits** — Safe for the agent to auto-invoke (read-only API calls). Triggers remote code analysis, retrieves results.
 - **Agent Security** — User-invoked only (local file access, command execution). Secret scanning, command interception, skill auditing, audit log.
 
 **MCP-based agents** (Gemini, Cursor, Windsurf, Continue.dev, Aider) connect to the Rafter MCP server (`rafter mcp serve`), which exposes `scan_secrets`, `evaluate_command`, `read_audit_log`, and `get_config` tools. See individual setup recipes in [`recipes/`](recipes/).
 
 ---
 
-## Exit Codes
+## Exit Codes (Stable Contract)
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | General error / secrets found |
-| 2 | Scan not found |
-| 3 | Quota exhausted |
+Exit codes are part of Rafter's output contract — CI pipelines and orchestrators can rely on these semantics across versions.
+
+### Local Secret Scan (`rafter scan local` / `rafter agent scan`)
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| 0 | Clean — no secrets detected | Proceed |
+| 1 | Findings — one or more secrets detected | Stop / review |
+| 2 | Runtime error — path not found, invalid ref | Fix input and retry |
+
+### Backend Commands (`rafter run` / `rafter get` / `rafter usage`)
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| 0 | Success — scan completed or results retrieved | Proceed |
+| 1 | General error | Investigate |
+| 2 | Scan not found | Check scan ID |
+| 3 | Quota exhausted | Back off / alert |
+| 4 | Insufficient scope / forbidden | Check API key permissions |
 
 ## File Locations
 
@@ -390,6 +407,18 @@ Add to any MCP client config:
 ├── patterns/          # Custom patterns (reserved)
 └── git-hooks/         # Global pre-commit hook (if --global)
 ```
+
+## Development
+
+This is a pnpm workspace. The Node CLI package lives in `node/`.
+
+```sh
+pnpm install          # install all dependencies (from repo root)
+cd node && pnpm test  # run the Node test suite
+cd node && pnpm build # build the Node CLI
+```
+
+Python package is in `python/` — see [`python/README.md`](python/README.md) for setup.
 
 ## Documentation
 
