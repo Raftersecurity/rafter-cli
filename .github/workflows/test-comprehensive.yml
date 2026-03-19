@@ -1,0 +1,241 @@
+name: Comprehensive Test Suite
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+      - prod
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Unit & integration tests (both languages) ─────────────────────
+  test-node:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Run all tests
+        run: pnpm test
+        env:
+          RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
+
+  test-python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          pip install pytest pytest-mock
+
+      - name: Run all tests
+        run: python -m pytest tests/ -v
+        env:
+          RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
+
+  # ── E2E CLI tests ─────────────────────────────────────────────────
+  e2e-node:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: Install dependencies and build
+        run: pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Run e2e tests
+        run: pnpm exec vitest run tests/e2e-cli.test.ts
+        env:
+          RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
+
+  # ── Secret detection accuracy ──────────────────────────────────────
+  secret-detection-accuracy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: Install dependencies and build
+        run: pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Run pattern coverage tests
+        run: pnpm exec vitest run tests/secret-patterns.test.ts
+
+  # ── SARIF output validation ────────────────────────────────────────
+  sarif-validation:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: Install and build
+        run: pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Generate SARIF from fixture
+        run: |
+          echo "AKIAIOSFODNN7EXAMPLE" > /tmp/test-secret.txt
+          node dist/index.js scan local /tmp/test-secret.txt --engine patterns --format sarif > /tmp/output.sarif || true
+
+      - name: Validate SARIF structure
+        run: |
+          node -e "
+            const sarif = require('/tmp/output.sarif');
+            if (sarif.version !== '2.1.0') throw new Error('Bad SARIF version');
+            if (!sarif.runs || sarif.runs.length === 0) throw new Error('No runs');
+            if (!sarif.runs[0].tool.driver.name) throw new Error('Missing tool name');
+            if (sarif.runs[0].results.length === 0) throw new Error('No results');
+            console.log('SARIF validation passed:', sarif.runs[0].results.length, 'findings');
+          "
+
+  # ── Backend API integration (only when key available) ──────────────
+  backend-api:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.RAFTER_API_KEY != '' }}
+    defaults:
+      run:
+        working-directory: ./node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: Install dependencies and build
+        run: pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Run backend API tests
+        run: pnpm exec vitest run tests/backend-api.test.ts
+        env:
+          RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
+
+  # ── Package build verification ─────────────────────────────────────
+  package-integrity:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: Install and build
+        run: pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Pack and verify contents
+        run: |
+          npm pack
+          TARBALL=$(ls rafter-security-cli-*.tgz | head -1)
+
+          # Verify essential files are in the tarball
+          echo "Checking tarball contents..."
+          tar -tzf "$TARBALL" | grep "resources/pre-commit-hook.sh" || (echo "FAIL: pre-commit-hook.sh missing" && exit 1)
+          tar -tzf "$TARBALL" | grep "dist/index.js" || (echo "FAIL: dist/index.js missing" && exit 1)
+
+          # Verify it installs and runs
+          npm install -g "./$TARBALL"
+          rafter --version
+          rafter --help > /dev/null
+
+          echo "Package integrity verified"
+
+      - name: Test install-hook e2e
+        run: |
+          TMPDIR=$(mktemp -d)
+          git init "$TMPDIR"
+          git -C "$TMPDIR" config user.email "ci@test.local"
+          git -C "$TMPDIR" config user.name "CI Test"
+          (cd "$TMPDIR" && rafter agent install-hook)
+          test -f "$TMPDIR/.git/hooks/pre-commit" || (echo "FAIL: hook not installed" && exit 1)
+          echo "Hook installation verified"
+
+  # ── Cross-platform smoke test ──────────────────────────────────────
+  cross-platform:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ["18", "20", "22"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ./node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: Install, build, test
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+          pnpm test
