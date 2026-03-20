@@ -1,7 +1,7 @@
 ---
 name: rafter
 description: "Trigger Rafter backend security scans on GitHub repositories. Use when the user asks about SAST, code security analysis, vulnerability scanning, or wants to scan a repo for security issues before merging or deploying. Also use when starting new features or reviewing pull requests."
-version: 0.6.4
+version: 0.6.5
 allowed-tools: [Bash]
 ---
 
