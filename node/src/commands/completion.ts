@@ -8,7 +8,7 @@ _rafter_completions() {
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
   # Top-level commands
-  commands="run scan get usage agent ci hook mcp policy completion help"
+  commands="run scan get usage agent brief ci hook mcp policy completion help"
 
   case "\${prev}" in
     rafter)
@@ -17,6 +17,10 @@ _rafter_completions() {
       ;;
     agent)
       COMPREPLY=( $(compgen -W "scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline --help" -- "\${cur}") )
+      return 0
+      ;;
+    brief)
+      COMPREPLY=( $(compgen -W "security scanning commands setup setup/claude-code setup/codex setup/gemini setup/cursor setup/windsurf setup/aider setup/openclaw setup/continue setup/generic all --help" -- "\${cur}") )
       return 0
       ;;
     config)
@@ -84,6 +88,7 @@ _rafter() {
     'get:Retrieve scan results'
     'usage:Check API usage quota'
     'agent:Agent security commands'
+    'brief:Print rafter knowledge for any agent'
     'ci:CI/CD pipeline setup'
     'hook:Git hook handlers'
     'mcp:MCP server'
@@ -127,6 +132,26 @@ _rafter() {
       ;;
     args)
       case "\$words[1]" in
+        brief)
+          local -a brief_topics
+          brief_topics=(
+            'security:Local agent security briefing'
+            'scanning:Remote code analysis briefing'
+            'commands:Full command reference'
+            'setup:Setup guide for all platforms'
+            'setup/claude-code:Claude Code setup'
+            'setup/codex:Codex CLI setup'
+            'setup/gemini:Gemini CLI setup'
+            'setup/cursor:Cursor setup'
+            'setup/windsurf:Windsurf setup'
+            'setup/aider:Aider setup'
+            'setup/openclaw:OpenClaw setup'
+            'setup/continue:Continue.dev setup'
+            'setup/generic:Generic agent setup'
+            'all:Everything'
+          )
+          _describe 'topic' brief_topics
+          ;;
         agent)
           _arguments -C \\
             '1:subcommand:->subcmd' \\
@@ -263,6 +288,7 @@ complete -c rafter -n '__fish_use_subcommand' -a run -d 'Submit a security scan'
 complete -c rafter -n '__fish_use_subcommand' -a scan -d 'Alias for run'
 complete -c rafter -n '__fish_use_subcommand' -a get -d 'Retrieve scan results'
 complete -c rafter -n '__fish_use_subcommand' -a usage -d 'Check API usage quota'
+complete -c rafter -n '__fish_use_subcommand' -a brief -d 'Print rafter knowledge for any agent'
 complete -c rafter -n '__fish_use_subcommand' -a agent -d 'Agent security commands'
 complete -c rafter -n '__fish_use_subcommand' -a ci -d 'CI/CD pipeline setup'
 complete -c rafter -n '__fish_use_subcommand' -a hook -d 'Git hook handlers'
@@ -286,6 +312,9 @@ complete -c rafter -n '__fish_seen_subcommand_from get' -l quiet -d 'Suppress st
 
 # usage options
 complete -c rafter -n '__fish_seen_subcommand_from usage' -s k -l api-key -d 'API key' -r
+
+# brief topics
+complete -c rafter -n '__fish_seen_subcommand_from brief' -a 'security scanning commands setup setup/claude-code setup/codex setup/gemini setup/cursor setup/windsurf setup/aider setup/openclaw setup/continue setup/generic all' -d 'Topic'
 
 # agent subcommands
 complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline' -a scan -d 'Scan files for secrets'

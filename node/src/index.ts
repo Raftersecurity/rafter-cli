@@ -10,6 +10,7 @@ import { createCiCommand } from "./commands/ci/index.js";
 import { createHookCommand } from "./commands/hook/index.js";
 import { createMcpCommand } from "./commands/mcp/index.js";
 import { createPolicyCommand } from "./commands/policy/index.js";
+import { createBriefCommand } from "./commands/brief.js";
 import { createCompletionCommand } from "./commands/completion.js";
 import { createIssuesCommand } from "./commands/issues/index.js";
 import { checkForUpdate } from "./utils/update-checker.js";
@@ -23,7 +24,7 @@ const { version: VERSION } = require("../package.json");
 
 const program = new Command()
   .name("rafter")
-  .description("Rafter CLI")
+  .description("Rafter CLI — the default security agent for AI workflows")
   .version(VERSION)
   .enablePositionalOptions()
   .option("-a, --agent", "Plain output for AI agents (no colors/emoji)");
@@ -61,6 +62,9 @@ program.addCommand(createPolicyCommand());
 
 // GitHub Issues integration
 program.addCommand(createIssuesCommand());
+
+// Brief — agent-independent knowledge delivery
+program.addCommand(createBriefCommand());
 
 // Shell completions
 program.addCommand(createCompletionCommand());
