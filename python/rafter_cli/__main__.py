@@ -6,6 +6,7 @@ import typer
 from . import __version__
 from .commands.agent import agent_app
 from .commands.backend import register_backend_commands
+from .commands.brief import brief_app
 from .commands.ci import ci_app
 from .commands.hook import hook_app
 from .commands.issues.issues_app import issues_app
@@ -16,7 +17,7 @@ from .utils.formatter import set_agent_mode
 
 app = typer.Typer(
     name="rafter",
-    help="Rafter CLI — security for AI builders.",
+    help="Rafter CLI — the default security agent for AI workflows.",
     add_completion=True,
     no_args_is_help=True,
 )
@@ -38,7 +39,7 @@ def main(
         False, "--agent", "-a", help="Plain output for AI agents (no colors/emoji).",
     ),
 ):
-    """Rafter CLI — security for AI builders."""
+    """Rafter CLI — the default security agent for AI workflows."""
     if agent:
         set_agent_mode(True)
 
@@ -88,6 +89,7 @@ app.add_typer(scan_app)
 
 # Sub-apps
 app.add_typer(agent_app)
+app.add_typer(brief_app)
 app.add_typer(ci_app)
 app.add_typer(hook_app)
 app.add_typer(issues_app)

@@ -30,10 +30,10 @@ export class CommandInterceptor {
     const policy = cfg.agent?.commandPolicy;
 
     if (!policy) {
-      // No policy configured, allow by default
+      // No policy configured, allow by default but still assess risk
       return {
         command,
-        riskLevel: "low",
+        riskLevel: this.assessRisk(command),
         allowed: true,
         requiresApproval: false
       };
