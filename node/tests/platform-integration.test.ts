@@ -108,6 +108,83 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
+  // ── 2b. Gemini idempotency and preservation ──────────────────────
+
+  describe("Gemini MCP idempotency", () => {
+    it("should not duplicate rafter entry on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+
+      // Run twice
+      runCli("agent init --with-gemini", testHomeDir);
+      runCli("agent init --with-gemini", testHomeDir);
+
+      const settingsPath = path.join(testHomeDir, ".gemini", "settings.json");
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+
+      // Should have exactly one rafter entry
+      expect(settings.mcpServers.rafter).toBeDefined();
+      expect(Object.keys(settings.mcpServers)).toEqual(["rafter"]);
+    });
+
+    it("should preserve existing Gemini settings", () => {
+      const geminiDir = path.join(testHomeDir, ".gemini");
+      fs.mkdirSync(geminiDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(geminiDir, "settings.json"),
+        JSON.stringify({ model: "gemini-2.0-flash", theme: "dark" }, null, 2)
+      );
+
+      const result = runCli("agent init --with-gemini", testHomeDir);
+      expect(result.exitCode).toBe(0);
+
+      const settings = JSON.parse(
+        fs.readFileSync(path.join(geminiDir, "settings.json"), "utf-8")
+      );
+      // Existing settings preserved
+      expect(settings.model).toBe("gemini-2.0-flash");
+      expect(settings.theme).toBe("dark");
+      // Rafter MCP added
+      expect(settings.mcpServers.rafter.command).toBe("rafter");
+    });
+
+    it("should preserve existing non-rafter MCP servers", () => {
+      const geminiDir = path.join(testHomeDir, ".gemini");
+      fs.mkdirSync(geminiDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(geminiDir, "settings.json"),
+        JSON.stringify({
+          mcpServers: {
+            "other-tool": { command: "other", args: ["serve"] },
+          },
+        }, null, 2)
+      );
+
+      runCli("agent init --with-gemini", testHomeDir);
+
+      const settings = JSON.parse(
+        fs.readFileSync(path.join(geminiDir, "settings.json"), "utf-8")
+      );
+      expect(settings.mcpServers["other-tool"]).toBeDefined();
+      expect(settings.mcpServers.rafter).toBeDefined();
+    });
+  });
+
+  // ── 2c. Gemini environment detection ────────────────────────────
+
+  describe("Gemini environment detection", () => {
+    it("should warn when --with-gemini used without ~/.gemini", () => {
+      // Do NOT create .gemini dir
+      const result = runCli("agent init --with-gemini", testHomeDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Gemini CLI requested but not detected");
+
+      // Should NOT create settings.json
+      expect(
+        fs.existsSync(path.join(testHomeDir, ".gemini", "settings.json"))
+      ).toBe(false);
+    });
+  });
+
   // ── 3. Cursor MCP install ──────────────────────────────────────────
 
   describe("Cursor MCP install (--with-cursor)", () => {
