@@ -28,3 +28,4 @@ node/package */
 .logs/
 .beads/
 package-lock.json
+state.json

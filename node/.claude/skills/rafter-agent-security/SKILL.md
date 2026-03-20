@@ -1,7 +1,7 @@
 ---
 name: rafter-agent-security
 description: "Local security tools for agents: scan files for secrets before commits, audit Claude Code skills before installation, view security audit logs. Use for: pre-commit secret scanning, skill security analysis, audit log review. Note: command blocking is handled automatically by the PreToolUse hook—you do not need to invoke /rafter-bash for normal commands."
-version: 0.6.4
+version: 0.6.5
 disable-model-invocation: true
 allowed-tools: [Bash, Read, Glob, Grep]
 ---
@@ -16,6 +16,26 @@ Rafter provides two layers of protection:
 
 - **Automatic (hook-based)**: When `rafter agent init` is run, a `PreToolUse` hook intercepts all Bash tool calls and blocks dangerous commands transparently. You do not need to invoke any skill command for this to work.
 - **Explicit (this skill)**: The commands below are for on-demand use—scanning files before commits, auditing skills before installation, and reviewing security logs.
+
+---
+
+## Setup
+
+To initialize Rafter, use **opt-in** `--with-*` flags to select integrations. There are NO `--skip-*` flags.
+
+```bash
+# Install specific integrations (opt-in)
+rafter agent init --with-claude-code
+rafter agent init --with-codex --with-gitleaks
+rafter agent init --with-gemini --with-cursor
+
+# Install everything detected
+rafter agent init --all
+
+# WRONG — these flags do not exist:
+# rafter agent init --skip-openclaw    # DOES NOT EXIST
+# rafter agent init --skip-claude-code # DOES NOT EXIST
+```
 
 ---
 

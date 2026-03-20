@@ -116,6 +116,84 @@ function checkCodex(): CheckResult {
   return { name, passed: true, detail: `Skills installed (${path.join(homeDir, ".agents", "skills")})` };
 }
 
+function checkGemini(): CheckResult {
+  const name = "Gemini CLI";
+  const homeDir = os.homedir();
+  const geminiDir = path.join(homeDir, ".gemini");
+
+  if (!fs.existsSync(geminiDir)) {
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-gemini' to enable` };
+  }
+
+  const settingsPath = path.join(geminiDir, "settings.json");
+  if (!fs.existsSync(settingsPath)) {
+    return { name, passed: false, optional: true, detail: `Settings file not found: ${settingsPath} — run 'rafter agent init --with-gemini'` };
+  }
+
+  try {
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    const hasRafterMcp = settings?.mcpServers?.rafter != null;
+    if (!hasRafterMcp) {
+      return { name, passed: false, optional: true, detail: "Rafter MCP server not configured — run 'rafter agent init --with-gemini'" };
+    }
+    return { name, passed: true, detail: "MCP server configured" };
+  } catch (e) {
+    return { name, passed: false, optional: true, detail: `Cannot read settings: ${e}` };
+  }
+}
+
+function checkCursor(): CheckResult {
+  const name = "Cursor";
+  const homeDir = os.homedir();
+  const cursorDir = path.join(homeDir, ".cursor");
+
+  if (!fs.existsSync(cursorDir)) {
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-cursor' to enable` };
+  }
+
+  const mcpPath = path.join(cursorDir, "mcp.json");
+  if (!fs.existsSync(mcpPath)) {
+    return { name, passed: false, optional: true, detail: `MCP config not found: ${mcpPath} — run 'rafter agent init --with-cursor'` };
+  }
+
+  try {
+    const config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
+    const hasRafterMcp = config?.mcpServers?.rafter != null;
+    if (!hasRafterMcp) {
+      return { name, passed: false, optional: true, detail: "Rafter MCP server not configured — run 'rafter agent init --with-cursor'" };
+    }
+    return { name, passed: true, detail: "MCP server configured" };
+  } catch (e) {
+    return { name, passed: false, optional: true, detail: `Cannot read config: ${e}` };
+  }
+}
+
+function checkWindsurf(): CheckResult {
+  const name = "Windsurf";
+  const homeDir = os.homedir();
+  const windsurfDir = path.join(homeDir, ".codeium", "windsurf");
+
+  if (!fs.existsSync(windsurfDir)) {
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-windsurf' to enable` };
+  }
+
+  const mcpPath = path.join(windsurfDir, "mcp_config.json");
+  if (!fs.existsSync(mcpPath)) {
+    return { name, passed: false, optional: true, detail: `MCP config not found: ${mcpPath} — run 'rafter agent init --with-windsurf'` };
+  }
+
+  try {
+    const config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
+    const hasRafterMcp = config?.mcpServers?.rafter != null;
+    if (!hasRafterMcp) {
+      return { name, passed: false, optional: true, detail: "Rafter MCP server not configured — run 'rafter agent init --with-windsurf'" };
+    }
+    return { name, passed: true, detail: "MCP server configured" };
+  } catch (e) {
+    return { name, passed: false, optional: true, detail: `Cannot read config: ${e}` };
+  }
+}
+
 export function createVerifyCommand(): Command {
   return new Command("verify")
     .description("Check agent security integration status")
@@ -130,6 +208,9 @@ export function createVerifyCommand(): Command {
         checkClaudeCode(),
         checkOpenClaw(),
         checkCodex(),
+        checkGemini(),
+        checkCursor(),
+        checkWindsurf(),
       ];
 
       for (const r of results) {

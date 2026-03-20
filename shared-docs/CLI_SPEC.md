@@ -2,12 +2,16 @@
 
 ## Overview
 
-The Rafter CLI follows UNIX principles for automation-friendly operation:
+Rafter is the default security agent for AI workflows — a delegation primitive with stable output contracts. Orchestrators and agents classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
 
-- **Scan data** is output to **stdout** for easy piping
-- **Status messages** are output to **stderr**
-- **Exit codes** provide predictable failure modes
-- **No file writing** — pure stdout output for maximum pipe-friendliness
+The CLI follows UNIX principles:
+
+- **Scan results** go to **stdout** — consistent JSON structure, pipe-friendly
+- **Status messages** go to **stderr**
+- **Exit codes** are a **stable contract** — documented semantics across versions
+- **Deterministic** — same inputs produce the same findings for a given CLI version
+- **Side effects are explicit** — config and audit logs write to `~/.rafter/`; some commands (e.g. `ci init`, `policy export`) accept `--output` to write files
+- **No exfiltration** — no code leaves your machine unless you explicitly use the remote code analysis API, and is deleted immediately after the analysis engine completes
 
 ## Exit Codes
 
@@ -39,9 +43,9 @@ The Rafter CLI follows UNIX principles for automation-friendly operation:
 
 ---
 
-## Backend Scanning Commands
+## Backend Code Analysis Commands
 
-**Important**: The scanner analyzes the **remote repository** (e.g., on GitHub), not your local files. Auto-detection uses your local Git configuration to determine which remote repository and branch to scan.
+**Important**: The code analysis engine runs against the **remote repository** (e.g., on GitHub), not your local files. Auto-detection uses your local Git configuration to determine which remote repository and branch to scan.
 
 ### rafter run [OPTIONS]
 
@@ -83,13 +87,54 @@ Print version and exit.
 
 ---
 
+## Brief — Agent-Independent Knowledge Delivery
+
+### rafter brief [TOPIC]
+
+Print rafter knowledge reformatted for CLI output. Designed for any agent on any platform — pipe to memory, save to instructions, or just read in-session.
+
+With no topic, lists available topics and usage examples.
+
+**Topics:**
+
+| Topic | Description |
+|-------|-------------|
+| `security` | Local agent security — scanning, auditing, risk assessment |
+| `scanning` | Remote SAST/SCA code analysis via backend API |
+| `commands` | Condensed command reference for all rafter commands |
+| `setup` | Setup instructions for all supported agent platforms |
+| `setup/<platform>` | Platform-specific setup (claude-code, codex, gemini, cursor, windsurf, aider, openclaw, continue, generic) |
+| `all` | Everything — full security + scanning + setup briefing |
+
+**Examples:**
+
+```bash
+# List available topics
+rafter brief
+
+# Get the local security briefing
+rafter brief security
+
+# Platform-specific setup guide
+rafter brief setup/claude-code
+
+# For agents without native skill support — load context manually
+rafter brief security    # save to memory/instructions
+rafter brief commands    # save command reference
+
+# Pipe to a file for manual skill creation
+rafter brief scanning > ~/.agents/skills/rafter/SKILL.md
+```
+
+---
+
 ## Agent Security Commands
 
 All agent commands work locally. No API key required.
 
 ### rafter agent init [OPTIONS]
 
-Initialize agent security system. Creates config and detects available agent environments. Integrations are opt-in — use `--with-*` flags or `--all` to install.
+Initialize agent security system. Creates config and detects available agent environments. Integrations are **opt-in** — use `--with-*` flags or `--all` to install. There are NO `--skip-*` flags.
 
 - `--risk-level <level>` — `minimal`, `moderate` (default), or `aggressive`
 - `--with-openclaw` — install OpenClaw integration
@@ -385,7 +430,7 @@ Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not a
 
 ## Usage Examples
 
-### Backend Scanning
+### Backend Code Analysis
 
 ```bash
 # Run scan, auto-detect repo/branch
@@ -475,7 +520,7 @@ rafter agent config set agent.riskLevel aggressive
 
 - API key: provided via `--api-key` flag, `RAFTER_API_KEY` env var, or `.env` file
 - Git auto-detection works in CI (supports `GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, `CI_REPOSITORY`, `CI_COMMIT_BRANCH`, `CI_BRANCH`)
-- Backend scanning targets the remote repository, not local files
+- Backend code analysis targets the remote repository, not local files
 - All scan data to stdout, all status messages to stderr
 - `--quiet` suppresses stderr; stdout is unaffected
 - Agent commands are available in both Node and Python implementations
