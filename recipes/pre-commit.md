@@ -1,8 +1,28 @@
 # Pre-Commit Hook
 
-Block secrets from entering version control. Rafter scans staged files before every commit and rejects any that contain hardcoded credentials.
+Block secrets from entering version control. Rafter scans staged files before every commit and rejects any that contain hardcoded credentials. 21+ credential patterns via Gitleaks, deterministic results, exit code 1 on findings.
 
-## One-command install
+## Pre-commit framework
+
+If you use the [pre-commit](https://pre-commit.com) framework, add this to `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/raftersecurity/rafter-cli
+    rev: v0.6.5
+    hooks:
+      - id: rafter-scan-node   # auto-installs via npm, no global install needed
+```
+
+Three hook variants are available:
+
+| Hook ID | Language | Requires global install? |
+|---------|----------|--------------------------|
+| `rafter-scan` | `system` | Yes — `rafter` must be on PATH |
+| `rafter-scan-node` | `node` | No — installs `@rafter-security/cli` automatically |
+| `rafter-scan-python` | `python` | No — installs `rafter-cli` automatically |
+
+## One-command install (native)
 
 ```sh
 # Current repo only
