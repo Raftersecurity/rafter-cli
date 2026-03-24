@@ -9,6 +9,7 @@ import os from "os";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
+import { createInterface } from "readline";
 import { fmt } from "../../utils/formatter.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -312,6 +313,19 @@ function installCodexSkills(): void {
   }
 }
 
+async function askYesNo(question: string, defaultYes = true): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  const suffix = defaultYes ? "[Y/n]" : "[y/N]";
+  return new Promise((resolve) => {
+    rl.question(`  ${question} ${suffix} `, (answer) => {
+      rl.close();
+      const trimmed = answer.trim().toLowerCase();
+      if (trimmed === "") resolve(defaultYes);
+      else resolve(trimmed === "y" || trimmed === "yes");
+    });
+  });
+}
+
 export function createInitCommand(): Command {
   return new Command("init")
     .description("Initialize agent security system")
@@ -326,6 +340,7 @@ export function createInitCommand(): Command {
     .option("--with-continue", "Install Continue.dev integration")
     .option("--with-gitleaks", "Download and install Gitleaks binary")
     .option("--all", "Install all detected integrations and download Gitleaks")
+    .option("-i, --interactive", "Guided setup — prompts for each detected integration")
     .option("--update", "Re-download gitleaks and reinstall integrations without resetting config")
     .action(async (opts) => {
       console.log(fmt.header("Rafter Agent Security Setup"));
@@ -344,16 +359,33 @@ export function createInitCommand(): Command {
       const hasContinueDev = fs.existsSync(path.join(os.homedir(), ".continue"));
       const hasAider = fs.existsSync(path.join(os.homedir(), ".aider.conf.yml"));
 
-      // Resolve opt-in flags (--all enables all detected)
-      const wantOpenClaw = opts.withOpenclaw || opts.all;
-      const wantClaudeCode = opts.withClaudeCode || opts.all;
-      const wantCodex = opts.withCodex || opts.all;
-      const wantGemini = opts.withGemini || opts.all;
-      const wantCursor = opts.withCursor || opts.all;
-      const wantWindsurf = opts.withWindsurf || opts.all;
-      const wantContinue = opts.withContinue || opts.all;
-      const wantAider = opts.withAider || opts.all;
-      const wantGitleaks = opts.withGitleaks || opts.all;
+      // Resolve opt-in flags (--all enables all detected, --interactive prompts)
+      let wantOpenClaw = opts.withOpenclaw || opts.all;
+      let wantClaudeCode = opts.withClaudeCode || opts.all;
+      let wantCodex = opts.withCodex || opts.all;
+      let wantGemini = opts.withGemini || opts.all;
+      let wantCursor = opts.withCursor || opts.all;
+      let wantWindsurf = opts.withWindsurf || opts.all;
+      let wantContinue = opts.withContinue || opts.all;
+      let wantAider = opts.withAider || opts.all;
+      let wantGitleaks = opts.withGitleaks || opts.all;
+
+      // Interactive mode: prompt for each detected integration
+      if (opts.interactive && !opts.all) {
+        console.log();
+        console.log(fmt.info("Select integrations to install:"));
+        console.log();
+        if (hasClaudeCode && !wantClaudeCode) wantClaudeCode = await askYesNo("Install Claude Code hooks + skills?");
+        if (hasCodex && !wantCodex) wantCodex = await askYesNo("Install Codex CLI skills?");
+        if (hasOpenClaw && !wantOpenClaw) wantOpenClaw = await askYesNo("Install OpenClaw skill?");
+        if (hasGemini && !wantGemini) wantGemini = await askYesNo("Install Gemini CLI MCP server?");
+        if (hasCursor && !wantCursor) wantCursor = await askYesNo("Install Cursor MCP server?");
+        if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP server?");
+        if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP server?");
+        if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
+        if (!wantGitleaks) wantGitleaks = await askYesNo("Download Gitleaks binary (enhanced scanning)?");
+        console.log();
+      }
 
       // Show detected environments with opt-in hints
       const detected: string[] = [];
