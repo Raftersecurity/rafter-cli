@@ -24,7 +24,7 @@ const { version: VERSION } = require("../package.json");
 
 const program = new Command()
   .name("rafter")
-  .description("Rafter CLI — the default security agent for AI workflows")
+  .description("Rafter CLI — the default security agent for AI workflows. Free for individuals and open source. No account required.")
   .version(VERSION)
   .enablePositionalOptions()
   .option("-a, --agent", "Plain output for AI agents (no colors/emoji)");
