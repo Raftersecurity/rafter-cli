@@ -12,6 +12,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepublishOnly": "pnpm run build",
+    "postinstall": "echo '\n  Run: rafter agent init --all\n  Sets up secret scanning for Claude Code, Codex CLI, and git hooks.\n'",
     "test": "vitest"
   },
   "engines": {
