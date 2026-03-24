@@ -2,7 +2,33 @@
 
 Block secrets from entering version control. Rafter scans staged files before every commit and rejects any that contain hardcoded credentials.
 
-## One-command install
+## Pre-commit framework (recommended)
+
+If your project already uses the [pre-commit](https://pre-commit.com) framework, add rafter to `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/Raftersecurity/rafter-cli
+    rev: v0.6.5
+    hooks:
+      - id: rafter-scan
+```
+
+Then install the hooks:
+
+```sh
+pre-commit install
+```
+
+This requires `rafter` to be installed on your system (`npm i -g @rafter-security/cli` or `pip install rafter-cli`). The hook uses `language: system` so pre-commit delegates to your existing rafter binary.
+
+To verify the hook is discoverable before committing:
+
+```sh
+pre-commit try-repo . rafter-scan --verbose
+```
+
+## One-command install (standalone)
 
 ```sh
 # Current repo only
