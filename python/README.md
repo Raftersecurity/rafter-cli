@@ -1,12 +1,10 @@
 # rafter-cli (Python)
 
-Python CLI for [Rafter](https://rafter.so) — zero-setup security for AI builders. Full feature parity with the Node.js package.
+Python CLI for [Rafter](https://rafter.so) — the default security agent for AI workflows. Full feature parity with the Node.js package.
 
-> **Free forever for individuals and open source. No account required. No telemetry.**
+**Backend code analysis** — Remote SAST/SCA via the Rafter code analysis engine. Structured vulnerability reports with consistent JSON format and documented exit codes. Your code is deleted immediately after analysis completes. Pipe to any tool, feed to any orchestrator.
 
-**Backend scanning** — Remote SAST/SCA via Rafter API. Trigger scans, retrieve structured vulnerability reports, pipe to any tool.
-
-**Agent security** (free, no account) — Local-first protection for autonomous AI agents. Secret scanning (21+ patterns, Gitleaks), command interception with risk-tiered approval, pre-commit hooks, pretool hooks, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. No API key required. No data leaves your machine.
+**Agent security** — Local-first protection for autonomous AI agents. Fast, reliable, deterministic secret scanning (21+ patterns, Gitleaks), command interception with risk-tiered approval, pre-commit hooks, pretool hooks, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. No API key required. No code leaves your machine unless you use the remote code analysis API, and is deleted immediately after the analysis engine completes.
 
 **MCP server** — Expose Rafter security tools to any MCP-compatible client (Cursor, Windsurf, Claude Desktop, Cline) over stdio.
 
@@ -20,7 +18,7 @@ Requires Python 3.10+.
 
 ## Quick Start
 
-### Backend Scanning
+### Backend Code Analysis
 
 ```bash
 export RAFTER_API_KEY="your-key"   # or add to .env file
@@ -32,7 +30,7 @@ rafter get SCAN_ID --interactive              # poll until complete
 rafter usage                                  # check quota
 ```
 
-**Important**: The scanner analyzes the **remote repository** on GitHub, not your local files.
+**Important**: The code analysis engine runs against the **remote repository** on GitHub, not your local files. Your code is deleted immediately after analysis completes.
 
 ### Agent Security
 
