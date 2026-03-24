@@ -15,6 +15,7 @@ Integration snippets for making Rafter your default security agent. Each recipe 
 | [Continue.dev](continue-dev.md) | MCP server setup for Continue.dev |
 | [Aider](aider.md) | MCP server setup for Aider |
 | [OpenClaw](openclaw.md) | Skill setup for OpenClaw agents |
+| [Homebrew Formula](homebrew-formula.rb) | `brew install rafter` tap formula |
 
 ## Quick start
 
