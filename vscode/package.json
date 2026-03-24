@@ -1,0 +1,138 @@
+{
+  "name": "rafter-security",
+  "displayName": "Rafter Security",
+  "description": "Security scanning, command risk assessment, and audit logging for AI-assisted development workflows",
+  "version": "0.1.0",
+  "publisher": "rafter-security",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rafter-security/raftercli"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "security",
+    "secrets",
+    "scanning",
+    "audit",
+    "ai-safety"
+  ],
+  "icon": "resources/icon.png",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "rafter.scanFile",
+        "title": "Rafter: Scan Current File for Secrets"
+      },
+      {
+        "command": "rafter.scanWorkspace",
+        "title": "Rafter: Scan Workspace for Secrets"
+      },
+      {
+        "command": "rafter.assessCommand",
+        "title": "Rafter: Assess Command Risk"
+      },
+      {
+        "command": "rafter.showAuditLog",
+        "title": "Rafter: Show Audit Log"
+      },
+      {
+        "command": "rafter.refreshAuditLog",
+        "title": "Rafter: Refresh Audit Log",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "rafter.clearDiagnostics",
+        "title": "Rafter: Clear Secret Diagnostics"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rafter",
+          "title": "Rafter Security",
+          "icon": "$(shield)"
+        }
+      ]
+    },
+    "views": {
+      "rafter": [
+        {
+          "id": "rafter.auditLog",
+          "name": "Audit Log"
+        },
+        {
+          "id": "rafter.riskOverview",
+          "name": "Risk Overview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "rafter.refreshAuditLog",
+          "when": "view == rafter.auditLog",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Rafter Security",
+      "properties": {
+        "rafter.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically scan files for secrets on save"
+        },
+        "rafter.scanOnOpen": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically scan files for secrets when opened"
+        },
+        "rafter.riskHighlighting": {
+          "type": "boolean",
+          "default": true,
+          "description": "Highlight risky commands in shell scripts and terminal"
+        },
+        "rafter.auditLogPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to rafter audit log (default: ~/.rafter/audit.log)"
+        },
+        "rafter.excludePatterns": {
+          "type": "array",
+          "default": [
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/dist/**",
+            "**/build/**"
+          ],
+          "description": "Glob patterns for files to exclude from scanning"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --watch",
+    "package": "vsce package",
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.0"
+  }
+}
