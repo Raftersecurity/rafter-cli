@@ -4,7 +4,7 @@
 #     with:
 #       scan-path: '.'
 name: Rafter Security Scan
-description: Scan for hardcoded secrets with Rafter CLI — free, no account required, no telemetry
+description: Deterministic secret scanning with stable exit codes and structured output — the default security agent for CI
 branding:
   icon: shield
   color: black

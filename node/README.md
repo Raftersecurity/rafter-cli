@@ -1,12 +1,10 @@
 # @rafter-security/cli
 
-Node.js CLI for [Rafter](https://rafter.so) — zero-setup security for AI builders. This is the **full-featured package** with both backend scanning and agent security.
+Node.js CLI for [Rafter](https://rafter.so) — the default security agent for AI workflows. This is the **full-featured package** with both backend code analysis and agent security.
 
-> **Free forever for individuals and open source. No account required. No telemetry.**
+**Backend code analysis** — Remote SAST/SCA via the Rafter code analysis engine. Structured vulnerability reports with consistent JSON format and documented exit codes. Your code is deleted immediately after analysis completes. Pipe to any tool, feed to any orchestrator.
 
-**Backend scanning** — Remote SAST/SCA via Rafter API. Trigger scans, retrieve structured vulnerability reports, pipe to any tool.
-
-**Agent security** (free, no account) — Local-first protection for autonomous AI agents. Secret scanning (21+ patterns, Gitleaks), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. No API key required. No data leaves your machine.
+**Agent security** — Local-first protection for autonomous AI agents. Fast, reliable, deterministic secret scanning (21+ patterns, Gitleaks), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. No API key required. No code leaves your machine unless you use the remote code analysis API, and is deleted immediately after the analysis engine completes.
 
 ## Installation
 
@@ -25,7 +23,7 @@ yarn global add @rafter-security/cli
 
 ### Getting an API Key
 
-To use backend scanning features, you'll need a Rafter API key:
+To use backend code analysis features, you'll need a Rafter API key:
 
 1. **Sign up**: Create an account at [rafter.so](https://rafter.so)
 2. **Get API key**: Navigate to Dashboard → Settings → API Keys
@@ -38,9 +36,9 @@ To use backend scanning features, you'll need a Rafter API key:
    echo "RAFTER_API_KEY=your-api-key-here" >> .env
    ```
 
-**Note**: Agent security features (secret scanning, command execution) work **without an API key**. Only backend scanning requires authentication.
+**Note**: Agent security features (secret scanning, command execution) work **without an API key**. Only backend code analysis requires authentication.
 
-### Backend Scanning
+### Backend Code Analysis
 
 ```bash
 # Set your API key (from above)
@@ -94,7 +92,7 @@ Trigger a new security scan for your repository.
 - `-r, --repo <repo>` - Repository in format `org/repo` (default: auto-detected)
 - `-b, --branch <branch>` - Branch name (default: auto-detected)
 - `-k, --api-key <key>` - API key (or set `RAFTER_API_KEY` env var)
-- `-f, --format <format>` - Output format: `json` or `md` (default: `json`)
+- `-f, --format <format>` - Output format: `json` or `md` (default: `md`)
 - `--skip-interactive` - Don't wait for scan completion
 - `--quiet` - Suppress status messages
 
@@ -118,7 +116,7 @@ Retrieve results from a completed scan.
 
 **Options:**
 - `-k, --api-key <key>` - API key (or set `RAFTER_API_KEY` env var)
-- `-f, --format <format>` - Output format: `json` or `md` (default: `json`)
+- `-f, --format <format>` - Output format: `json` or `md` (default: `md`)
 - `--interactive` - Poll until scan completes
 - `--quiet` - Suppress status messages
 
@@ -147,7 +145,7 @@ rafter usage
 
 ## Agent Security Commands
 
-Rafter provides local security features for autonomous agents (OpenClaw, Claude Code) to prevent secrets leakage and dangerous operations.
+Rafter is a **delegation primitive** for autonomous agents — other systems defer security decisions to it and act on the outputs. Stable exit codes, deterministic findings, and low-noise defaults mean agents can integrate Rafter without reading prose.
 
 ### `rafter agent init [options]`
 
@@ -626,7 +624,7 @@ When OpenClaw is detected, `rafter agent init` automatically installs a skill to
 
 Rafter provides TWO skills for Claude Code:
 
-### 1. Backend Scanning Skill (Core Feature)
+### 1. Backend Code Analysis Skill (Core Feature)
 
 **Automatic Integration** - Claude can proactively suggest security scans
 
@@ -682,10 +680,10 @@ Explicitly invoke commands:
 
 ### Why Two Skills?
 
-- **Backend skill** - Safe for Claude to auto-invoke (read-only API calls)
+- **Backend code analysis skill** - Safe for Claude to auto-invoke (read-only API calls)
 - **Agent security skill** - Requires user permission (local file access, command execution)
 
-This separation emphasizes Rafter's core backend scanning capabilities while keeping local security features safely behind user control.
+This separation emphasizes Rafter's core backend code analysis capabilities while keeping local security features safely behind user control.
 
 ## Documentation
 
