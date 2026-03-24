@@ -2,13 +2,18 @@
 
 Multi-language CLI for [Rafter](https://rafter.so) — the default security agent for AI workflows.
 
+> **Free forever for individuals and open source. No account required. No telemetry.**
+>
+> Agent security features work locally with zero setup — no API key, no sign-up, no usage limits.
+> Enterprise teams that need dashboards, policy management, and compliance reporting can upgrade later.
+
 Rafter is a **delegation primitive**: other agents and orchestrators defer security decisions to it and trust the outputs. Stable contracts, deterministic results, and low-noise defaults mean systems can act on Rafter's findings without reading prose.
 
 **Two capabilities in one package:**
 
 1. **Rafter Security Audits** — Remote SAST/SCA code analysis on GitHub repos via the Rafter API. Structured vulnerability reports in JSON or Markdown with consistent schemas and clear severity levels. Pipe to any tool, feed to any agent.
 
-2. **Agent Security** — Local-first protection for autonomous AI agents. Fast, reliable secret scanning (21+ patterns, deterministic for a given version), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, and Aider. **No API key required.**
+2. **Agent Security** (free, no account) — Local-first protection for autonomous AI agents. Fast, reliable secret scanning (21+ patterns, deterministic for a given version), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, and Aider. **No API key required. No telemetry. No data leaves your machine.**
 
 The CLI follows UNIX principles and provides a **stable output contract**: scan results to stdout, status to stderr, documented exit codes, consistent JSON structure. No code leaves your machine unless you explicitly use the remote code analysis API, and is deleted immediately after the analysis engine completes. Orchestrators can classify outcomes (clean / findings / retryable error / fatal error) and act without human intervention.
 
@@ -52,6 +57,23 @@ rafter agent audit --last 3
 ```
 
 That's the core loop: scan → protect → audit. Everything works offline, no API key needed.
+
+### What's Free?
+
+| Feature | Free (individuals & OSS) | Enterprise |
+|---------|:------------------------:|:----------:|
+| Secret scanning (21+ patterns) | **Yes** | Yes |
+| Pre-commit hooks | **Yes** | Yes |
+| Command interception | **Yes** | Yes |
+| Skill/extension auditing | **Yes** | Yes |
+| Audit logging | **Yes** | Yes |
+| MCP server | **Yes** | Yes |
+| CI/CD integration | **Yes** | Yes |
+| Remote SAST/SCA (API) | Free tier | Higher limits |
+| Dashboards & policy management | — | Yes |
+| Compliance reporting | — | Yes |
+
+No account. No telemetry. No data collection. The CLI is MIT-licensed and all local features work without network access.
 
 ---
 
@@ -127,11 +149,11 @@ rafter get SCAN_ID > scan_results.json
 |------|-------------|
 | `-a, --agent` | Plain output for AI agents (no colors, no emoji). Useful when piping to LLMs or automated systems. |
 
-## Agent Security
+## Agent Security — Free, No Account Required
 
-Local security features for autonomous AI agents. Everything below works offline, no API key needed.
+Local security features for autonomous AI agents. Everything below works offline — **no API key, no sign-up, no telemetry, no usage limits.** Free forever for individuals and open source.
 
-**Trust guarantees:** No code leaves your machine unless you explicitly use the remote code analysis API, and is deleted immediately after the analysis engine completes. Secrets are redacted in all output — logs, JSON, and human-readable formats.
+**Trust guarantees:** No code leaves your machine unless you explicitly use the remote code analysis API, and is deleted immediately after the analysis engine completes. Secrets are redacted in all output — logs, JSON, and human-readable formats. No data is collected or phoned home.
 
 ### Setup
 

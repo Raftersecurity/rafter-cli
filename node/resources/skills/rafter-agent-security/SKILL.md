@@ -10,6 +10,8 @@ allowed-tools: [Bash, Read, Glob, Grep]
 
 Local security agent with deterministic scanning, actionable findings, and stable output contracts. Every finding includes file, line, rule ID, and severity — structured for agents to act on, not just read.
 
+**Free forever for individuals and open source. No account required. No telemetry. No data leaves your machine.**
+
 ## Overview
 
 Rafter provides two layers of protection:

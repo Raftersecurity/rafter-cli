@@ -4,7 +4,7 @@
 #     with:
 #       scan-path: '.'
 name: Rafter Security Scan
-description: Scan for hardcoded secrets with Rafter CLI (local, no API key required)
+description: Scan for hardcoded secrets with Rafter CLI — free, no account required, no telemetry
 branding:
   icon: shield
   color: black
