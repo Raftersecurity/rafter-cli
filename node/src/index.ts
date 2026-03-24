@@ -11,6 +11,7 @@ import { createHookCommand } from "./commands/hook/index.js";
 import { createMcpCommand } from "./commands/mcp/index.js";
 import { createPolicyCommand } from "./commands/policy/index.js";
 import { createBriefCommand } from "./commands/brief.js";
+import { createNotifyCommand } from "./commands/notify.js";
 import { createCompletionCommand } from "./commands/completion.js";
 import { createIssuesCommand } from "./commands/issues/index.js";
 import { checkForUpdate } from "./utils/update-checker.js";
@@ -65,6 +66,9 @@ program.addCommand(createIssuesCommand());
 
 // Brief — agent-independent knowledge delivery
 program.addCommand(createBriefCommand());
+
+// Notify — post scan results to Slack/Discord
+program.addCommand(createNotifyCommand());
 
 // Shell completions
 program.addCommand(createCompletionCommand());
