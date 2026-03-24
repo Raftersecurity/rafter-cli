@@ -379,6 +379,7 @@ TOPIC_DESCRIPTIONS: dict[str, str] = {
     "setup/openclaw": "Setup instructions for OpenClaw",
     "setup/continue": "Setup instructions for Continue.dev",
     "setup/generic": "Setup instructions for unsupported / generic agents",
+    "pricing": "What's free, what's paid, and the philosophy behind it",
     "all": "Everything — full security + scanning + setup briefing",
 }
 
@@ -415,6 +416,41 @@ def _render_topic(topic: str) -> str | None:
     if topic.startswith("setup/"):
         platform = topic.split("/", 1)[1]
         return _render_platform_setup(platform)
+    if topic == "pricing":
+        return "\n".join([
+            "# Rafter Pricing",
+            "",
+            "**Free forever for individuals and open source. No account required. No telemetry.**",
+            "",
+            "## What's Free",
+            "",
+            "All local agent security features are free with no limits:",
+            "",
+            "- Secret scanning (21+ patterns, Gitleaks integration)",
+            "- Pre-commit hooks (local and global)",
+            "- Command interception with risk-tiered approval",
+            "- Skill/extension auditing",
+            "- Audit logging",
+            "- MCP server for tool integration",
+            "- CI/CD pipeline generation",
+            "- All supported agent integrations (Claude Code, Codex, Gemini, Cursor, Windsurf, Aider, OpenClaw, Continue.dev)",
+            "",
+            "No API key. No sign-up. No telemetry. No data collection. No network access required.",
+            "Everything runs locally on your machine. MIT licensed.",
+            "",
+            "## Remote Code Analysis (API)",
+            "",
+            "Remote SAST/SCA scanning via the Rafter API has a free tier.",
+            "Sign up at rafter.so for an API key. Enterprise plans offer higher",
+            "limits, dashboards, policy management, and compliance reporting.",
+            "",
+            "## Philosophy",
+            "",
+            "Security tooling should be free for the people writing code.",
+            "Generous free tiers drive bottom-up adoption. Enterprise value",
+            "comes from dashboards, policy, and compliance — not from gating",
+            "the tools developers use every day.",
+        ])
     if topic == "all":
         parts = [
             _render_topic("scanning"),
