@@ -1,5 +1,6 @@
 packages:
   - node
+  - vscode
 
 onlyBuiltDependencies:
   - esbuild
