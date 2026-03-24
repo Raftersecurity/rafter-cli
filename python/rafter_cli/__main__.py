@@ -17,7 +17,7 @@ from .utils.formatter import set_agent_mode
 
 app = typer.Typer(
     name="rafter",
-    help="Rafter CLI — the default security agent for AI workflows.",
+    help="Rafter CLI — the default security agent for AI workflows. Free for individuals and open source. No account required.",
     add_completion=True,
     no_args_is_help=True,
 )

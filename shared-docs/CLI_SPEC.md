@@ -4,6 +4,8 @@
 
 Rafter is the default security agent for AI workflows — a delegation primitive with stable output contracts. Orchestrators and agents classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
 
+**Free forever for individuals and open source.** No account required. No telemetry. All local agent security features (secret scanning, command interception, pre-commit hooks, audit logging, MCP server) work without an API key, without network access, and without usage limits.
+
 The CLI follows UNIX principles:
 
 - **Scan results** go to **stdout** — consistent JSON structure, pipe-friendly

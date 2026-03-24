@@ -2,9 +2,11 @@
 
 Python CLI for [Rafter](https://rafter.so) — zero-setup security for AI builders. Full feature parity with the Node.js package.
 
+> **Free forever for individuals and open source. No account required. No telemetry.**
+
 **Backend scanning** — Remote SAST/SCA via Rafter API. Trigger scans, retrieve structured vulnerability reports, pipe to any tool.
 
-**Agent security** — Local-first protection for autonomous AI agents. Secret scanning (21+ patterns, Gitleaks), command interception with risk-tiered approval, pre-commit hooks, pretool hooks, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. No API key required.
+**Agent security** (free, no account) — Local-first protection for autonomous AI agents. Secret scanning (21+ patterns, Gitleaks), command interception with risk-tiered approval, pre-commit hooks, pretool hooks, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. No API key required. No data leaves your machine.
 
 **MCP server** — Expose Rafter security tools to any MCP-compatible client (Cursor, Windsurf, Claude Desktop, Cline) over stdio.
 
