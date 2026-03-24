@@ -3,25 +3,6 @@
   description: Scan staged files for secrets (21+ patterns, Gitleaks integration)
   entry: rafter scan local --staged --quiet
   language: system
-  stages: [pre-commit]
-  pass_filenames: false
-
-- id: rafter-scan-node
-  name: Rafter Secret Scan (Node)
-  description: Scan staged files for hardcoded secrets
-  entry: rafter scan local --staged --quiet
-  language: node
-  additional_dependencies: ['@rafter-security/cli']
   always_run: true
-  pass_filenames: false
   stages: [pre-commit]
-
-- id: rafter-scan-python
-  name: Rafter Secret Scan (Python)
-  description: Scan staged files for hardcoded secrets
-  entry: rafter scan local --staged --quiet
-  language: python
-  additional_dependencies: ['rafter-cli']
-  always_run: true
   pass_filenames: false
-  stages: [pre-commit]
