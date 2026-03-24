@@ -895,6 +895,7 @@ def _output_sarif(results: list[ScanResult]) -> None:
             "tool": {
                 "driver": {
                     "name": "rafter",
+                    "version": __version__,
                     "informationUri": "https://rafter.so",
                     "rules": list(rules.values()),
                 }

@@ -75,8 +75,12 @@ describe("scan --format sarif", () => {
     expect(finding.locations[0].physicalLocation).toHaveProperty("region");
     expect(finding.locations[0].physicalLocation.region.startLine).toBeGreaterThanOrEqual(1);
 
-    // Rules should be populated
-    expect(sarif.runs[0].tool.driver.rules.length).toBeGreaterThan(0);
+    // Rules should be populated with SARIF-compliant structure
+    const rules = sarif.runs[0].tool.driver.rules;
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules[0]).toHaveProperty("id");
+    expect(rules[0]).toHaveProperty("name");
+    expect(rules[0].shortDescription).toHaveProperty("text");
 
     expect(result.exitCode).toBe(1);
   });

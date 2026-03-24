@@ -156,7 +156,7 @@ export function createScanCommand(): Command {
  * Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration
  */
 function outputSarif(results: ScanResult[]): void {
-  const rules = new Map<string, { id: string; name: string; shortDescription: string }>();
+  const rules = new Map<string, { id: string; name: string; shortDescription: { text: string } }>();
   const sarifResults: object[] = [];
 
   for (const r of results) {
@@ -166,7 +166,7 @@ function outputSarif(results: ScanResult[]): void {
         rules.set(ruleId, {
           id: ruleId,
           name: m.pattern.name,
-          shortDescription: m.pattern.description || m.pattern.name,
+          shortDescription: { text: m.pattern.description || m.pattern.name },
         });
       }
       sarifResults.push({
