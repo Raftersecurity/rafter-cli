@@ -2,6 +2,7 @@
 #
 # Drop this file into .github/workflows/rafter-security.yml
 # Scans every push and PR for hardcoded secrets.
+# Results appear in the GitHub Security tab and inline on PRs.
 #
 # Options:
 #   - Uncomment the security-audit job for full SAST/SCA via the Rafter API
@@ -19,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   secret-scan:
@@ -30,7 +32,13 @@ jobs:
         run: npm install -g @rafter-security/cli
 
       - name: Scan for secrets
-        run: rafter agent scan . --quiet
+        run: rafter scan local . --format sarif --quiet > results.sarif
+        continue-on-error: true
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
 
   # --- Uncomment below for full backend security audit ---
   # security-audit:

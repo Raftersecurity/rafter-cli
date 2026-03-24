@@ -156,10 +156,12 @@ Scan files or directories for secrets (21+ patterns).
 
 - `[PATH]` — file or directory (default: `.`)
 - `-q, --quiet` — only output if secrets found
-- `--json` — output as JSON
+- `--json` — output as JSON (shorthand for `--format json`)
+- `--format <format>` — output format: `text` (default), `json`, or `sarif`
 - `--staged` — scan git staged files only
 - `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
 - `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
+- `--baseline` — filter out findings present in the saved baseline (`~/.rafter/baseline.json`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
@@ -204,6 +206,65 @@ When `--json` is passed, output is a JSON array to stdout. Both Node and Python 
 | `matches[].redacted` | string | Redacted secret value (first/last 4 chars visible for values >8 chars, fully masked otherwise) |
 
 The raw secret value is never included in JSON output.
+
+#### SARIF Output (`--format sarif`)
+
+When `--format sarif` is passed, output is [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) JSON to stdout. This format is designed for direct upload to GitHub Code Scanning via the [`code-scanning/sarifs`](https://docs.github.com/en/rest/code-scanning/code-scanning#upload-an-analysis-as-sarif-data) API. Results appear natively in the GitHub Security tab and inline on pull requests.
+
+```json
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "rafter",
+          "version": "0.6.5",
+          "informationUri": "https://rafter.so",
+          "rules": [
+            {
+              "id": "aws-access-key",
+              "name": "AWS Access Key",
+              "shortDescription": { "text": "Detects AWS access key IDs" }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "aws-access-key",
+          "level": "error",
+          "message": { "text": "AWS Access Key detected" },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "src/config.ts", "uriBaseId": "%SRCROOT%" },
+                "region": { "startLine": 42, "startColumn": 7 }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Severity mapping:** `critical`/`high` → `"error"`, `medium`/`low` → `"warning"`.
+
+**GitHub Actions integration:**
+
+```yaml
+- name: Scan for secrets
+  run: rafter scan local . --format sarif > results.sarif
+  continue-on-error: true
+
+- name: Upload SARIF
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: results.sarif
+```
 
 ### rafter agent exec COMMAND [OPTIONS]
 
