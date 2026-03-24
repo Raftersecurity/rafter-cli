@@ -1,17 +1,28 @@
 # Rafter Security — GitHub Action
+#
+# Deterministic secret scanning for CI. 21+ credential patterns via Gitleaks,
+# stable exit codes (0 = clean, 1 = findings, 2 = error), structured JSON output.
+# No API key required. No code leaves the runner.
+#
 # Usage:
-#   - uses: Raftersecurity/rafter-cli@v0
+#   - uses: raftersecurity/rafter-cli@v0
 #     with:
 #       scan-path: '.'
+#
+# Exit codes:
+#   0 — No secrets found
+#   1 — Secrets detected (blocks the workflow)
+#   2 — Scanner error (missing binary, bad config)
+
 name: Rafter Security Scan
-description: Deterministic secret scanning with stable exit codes and structured output — the default security agent for CI
+description: Deterministic secret scanning with stable exit codes and structured output — no API key required
 branding:
   icon: shield
   color: black
 
 inputs:
   scan-path:
-    description: Path to scan for secrets
+    description: Path to scan for secrets (default: repository root)
     required: false
     default: '.'
   args:
@@ -19,13 +30,28 @@ inputs:
     required: false
     default: '--quiet'
   version:
-    description: Rafter CLI version to install (e.g. "0.5.6", "latest")
+    description: Rafter CLI version to install (e.g. "0.6.5", "latest")
     required: false
     default: 'latest'
   install-method:
     description: Installation method — "npm" or "pip"
     required: false
     default: 'npm'
+  format:
+    description: Output format — "json" or "text"
+    required: false
+    default: 'json'
+
+outputs:
+  finding-count:
+    description: Number of secrets found (0 if clean)
+    value: ${{ steps.scan.outputs.finding-count }}
+  report:
+    description: Full scan report (JSON when format=json)
+    value: ${{ steps.scan.outputs.report }}
+  exit-code:
+    description: Scanner exit code (0=clean, 1=findings, 2=error)
+    value: ${{ steps.scan.outputs.exit-code }}
 
 runs:
   using: composite
@@ -51,5 +77,26 @@ runs:
         fi
 
     - name: Scan for secrets
+      id: scan
       shell: bash
-      run: rafter scan local ${{ inputs.scan-path }} ${{ inputs.args }}
+      run: |
+        set +e
+        OUTPUT=$(rafter scan local ${{ inputs.scan-path }} ${{ inputs.args }} --format ${{ inputs.format }} 2>&1)
+        EXIT_CODE=$?
+        set -e
+
+        echo "exit-code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+        echo "report<<RAFTER_EOF" >> "$GITHUB_OUTPUT"
+        echo "${OUTPUT}" >> "$GITHUB_OUTPUT"
+        echo "RAFTER_EOF" >> "$GITHUB_OUTPUT"
+
+        # Count findings from JSON output
+        if [ "${{ inputs.format }}" = "json" ]; then
+          COUNT=$(echo "${OUTPUT}" | grep -c '"RuleID"' 2>/dev/null || echo "0")
+        else
+          COUNT=$(echo "${OUTPUT}" | grep -c 'Secret:' 2>/dev/null || echo "0")
+        fi
+        echo "finding-count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+        echo "${OUTPUT}"
+        exit ${EXIT_CODE}

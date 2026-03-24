@@ -1,10 +1,5 @@
 # Rafter CLI
 
-[![npm version](https://img.shields.io/npm/v/@rafter-security/cli)](https://www.npmjs.com/package/@rafter-security/cli)
-[![PyPI version](https://img.shields.io/pypi/v/rafter-cli)](https://pypi.org/project/rafter-cli/)
-[![CI](https://github.com/Raftersecurity/rafter-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Raftersecurity/rafter-cli/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 Multi-language CLI for [Rafter](https://rafter.so) — the default security agent for AI workflows.
 
 > **Free forever for individuals and open source. No account required. No telemetry.**
@@ -207,10 +202,10 @@ Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-c
 
 ```yaml
 repos:
-  - repo: https://github.com/Raftersecurity/rafter-cli
+  - repo: https://github.com/raftersecurity/rafter-cli
     rev: v0.6.5
     hooks:
-      - id: rafter-scan
+      - id: rafter-scan-node
 ```
 
 Requires `rafter` in PATH (install via `npm i -g @rafter-security/cli` or `pip install rafter-cli`).
@@ -318,12 +313,14 @@ rafter ci init --with-backend           # include backend security audit job
 Use as a reusable action in any GitHub Actions workflow:
 
 ```yaml
-- uses: Raftersecurity/rafter-cli@v0
+- uses: raftersecurity/rafter-cli@v0
   with:
     scan-path: '.'       # default
     args: '--quiet'      # default; override for verbose output
     # install-method: 'pip'  # use pip instead of npm
 ```
+
+Exit codes: `0` = clean, `1` = secrets found, `2` = scanner error.
 
 Inputs:
 
@@ -333,6 +330,15 @@ Inputs:
 | `args` | `--quiet` | Additional args to `rafter scan local` |
 | `version` | `latest` | CLI version to install |
 | `install-method` | `npm` | `npm` or `pip` |
+| `format` | `json` | Output format: `json` or `text` |
+
+Outputs:
+
+| Output | Description |
+|--------|-------------|
+| `finding-count` | Number of secrets found (0 if clean) |
+| `report` | Full scan report |
+| `exit-code` | Scanner exit code |
 
 #### Pre-Commit Framework
 
@@ -340,14 +346,15 @@ Add to `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
-  - repo: https://github.com/Raftersecurity/rafter-cli
+  - repo: https://github.com/raftersecurity/rafter-cli
     rev: v0.6.5
     hooks:
-      - id: rafter-scan           # Node.js
-      # - id: rafter-scan-python  # Python alternative
+      - id: rafter-scan-node      # auto-installs via npm
+      # - id: rafter-scan-python  # auto-installs via pip
+      # - id: rafter-scan         # uses system rafter binary
 ```
 
-This integrates with the [pre-commit](https://pre-commit.com/) framework to scan staged files on every commit.
+This integrates with the [pre-commit](https://pre-commit.com/) framework to scan staged files on every commit. The `rafter-scan-node` and `rafter-scan-python` hooks install the CLI automatically — no global install needed.
 
 ### MCP Server
 
