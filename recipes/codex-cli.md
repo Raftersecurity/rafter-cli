@@ -5,10 +5,12 @@ Rafter integrates with OpenAI Codex CLI through **skills** for scanning and audi
 ## Automatic setup
 
 ```sh
-rafter agent init
+npx @rafter-security/cli agent init --with-codex
 ```
 
-This auto-detects `~/.codex` and installs skills. Done.
+This auto-detects `~/.codex` and installs skills. No global install needed. Done.
+
+If you've installed Rafter globally (`npm i -g @rafter-security/cli`), you can use `rafter agent init` directly.
 
 ## Manual setup
 

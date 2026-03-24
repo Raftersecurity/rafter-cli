@@ -5,10 +5,12 @@ Rafter integrates with OpenClaw as a **security skill** for secret scanning, com
 ## Automatic setup
 
 ```sh
-rafter agent init
+npx @rafter-security/cli agent init --with-openclaw
 ```
 
-This auto-detects `~/.openclaw` and installs the security skill. Done.
+This auto-detects `~/.openclaw` and installs the security skill. No global install needed. Done.
+
+If you've installed Rafter globally (`npm i -g @rafter-security/cli`), you can use `rafter agent init` directly.
 
 ## Manual setup
 
