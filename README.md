@@ -14,7 +14,7 @@ The CLI follows UNIX principles and provides a **stable output contract**: scan 
 
 ## 90-Second Quickstart
 
-See what Rafter does before reading another word.
+See what Rafter does before reading another word. No install needed — just `npx`.
 
 **1. Scan a directory for leaked credentials**
 
@@ -22,7 +22,7 @@ See what Rafter does before reading another word.
 # Drop a .env file with credentials in a test repo
 echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' > .env
 
-rafter scan local .
+npx @rafter-security/cli scan local .
 # → CRITICAL  .env:1  aws-access-key-id  AKIA***AMPLE
 # → exit 1
 ```
@@ -30,7 +30,7 @@ rafter scan local .
 **2. Install the pre-commit hook**
 
 ```sh
-rafter agent init --all
+npx @rafter-security/cli agent init --all
 # → Installs all detected integrations
 # → Downloads Gitleaks (or falls back to built-in scanner)
 ```
@@ -57,7 +57,15 @@ That's the core loop: scan → protect → audit. Everything works offline, no A
 
 ## Installation
 
-### Node.js (full features: backend + agent security)
+### Quick Start (no install)
+
+```sh
+npx @rafter-security/cli agent init --all
+```
+
+Run any Rafter command instantly via `npx` — no global install required. npm downloads and caches the package automatically.
+
+### Node.js (global install)
 
 ```sh
 npm install -g @rafter-security/cli
@@ -65,7 +73,7 @@ npm install -g @rafter-security/cli
 pnpm add -g @rafter-security/cli
 ```
 
-### Python (full features)
+### Python (global install)
 
 ```sh
 pip install rafter-cli
@@ -136,9 +144,11 @@ Local security features for autonomous AI agents. Everything below works offline
 ### Setup
 
 ```sh
-rafter agent init --all           # install all detected integrations
-rafter agent init --with-claude-code  # or install specific ones
+npx @rafter-security/cli agent init --all           # install all detected integrations
+npx @rafter-security/cli agent init --with-claude-code  # or install specific ones
 ```
+
+If you've installed Rafter globally, you can use `rafter` directly instead of `npx @rafter-security/cli`.
 
 This command:
 - Creates `~/.rafter/` config and audit log

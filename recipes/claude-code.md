@@ -5,10 +5,12 @@ Rafter integrates with Claude Code two ways: a **PreToolUse hook** that intercep
 ## Automatic setup
 
 ```sh
-rafter agent init
+npx @rafter-security/cli agent init --with-claude-code
 ```
 
-This auto-detects `~/.claude` and installs both the hook and skills. Done.
+This auto-detects `~/.claude` and installs both the hook and skills. No global install needed. Done.
+
+If you've installed Rafter globally (`npm i -g @rafter-security/cli`), you can use `rafter agent init` directly.
 
 ## Manual setup
 

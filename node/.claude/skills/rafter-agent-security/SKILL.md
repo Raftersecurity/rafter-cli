@@ -21,16 +21,19 @@ Rafter provides two layers of protection:
 
 ## Setup
 
-To initialize Rafter, use **opt-in** `--with-*` flags to select integrations. There are NO `--skip-*` flags.
+To initialize Rafter, use `npx` for zero-install setup. Use **opt-in** `--with-*` flags to select integrations. There are NO `--skip-*` flags.
 
 ```bash
-# Install specific integrations (opt-in)
-rafter agent init --with-claude-code
-rafter agent init --with-codex --with-gitleaks
-rafter agent init --with-gemini --with-cursor
+# Zero-install — no global install needed
+npx @rafter-security/cli agent init --all
 
-# Install everything detected
-rafter agent init --all
+# Install specific integrations (opt-in)
+npx @rafter-security/cli agent init --with-claude-code
+npx @rafter-security/cli agent init --with-codex --with-gitleaks
+npx @rafter-security/cli agent init --with-gemini --with-cursor
+
+# If installed globally, use `rafter` directly:
+# rafter agent init --all
 
 # WRONG — these flags do not exist:
 # rafter agent init --skip-openclaw    # DOES NOT EXIST
