@@ -10,6 +10,7 @@ import { createCiCommand } from "./commands/ci/index.js";
 import { createHookCommand } from "./commands/hook/index.js";
 import { createMcpCommand } from "./commands/mcp/index.js";
 import { createPolicyCommand } from "./commands/policy/index.js";
+import { createBadgeCommand } from "./commands/badge.js";
 import { createBriefCommand } from "./commands/brief.js";
 import { createCompletionCommand } from "./commands/completion.js";
 import { createIssuesCommand } from "./commands/issues/index.js";
@@ -62,6 +63,9 @@ program.addCommand(createPolicyCommand());
 
 // GitHub Issues integration
 program.addCommand(createIssuesCommand());
+
+// Badge — shields.io security score badge
+program.addCommand(createBadgeCommand());
 
 // Brief — agent-independent knowledge delivery
 program.addCommand(createBriefCommand());
