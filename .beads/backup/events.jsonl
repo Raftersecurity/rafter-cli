@@ -654,6 +654,7 @@
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T08:09:53Z","event_type":"closed","id":479,"issue_id":"rc-wisp-oa2yw","new_value":"done","old_value":""}
 {"actor":"raftercli/crew/lucy","comment":null,"created_at":"2026-03-25T18:42:58Z","event_type":"claimed","id":480,"issue_id":"rc-4va","new_value":"{\"assignee\":\"raftercli/crew/lucy\",\"status\":\"in_progress\"}","old_value":"{\"id\":\"rc-4va\",\"title\":\"MCP server test coverage: tool registration, resources, lifecycle, version\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-03-25T18:42:52Z\",\"updated_at\":\"2026-03-25T18:42:52Z\"}"}
 {"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-06T08:10:32Z","event_type":"closed","id":480,"issue_id":"rc-wisp-ln366","new_value":"Closed","old_value":""}
+{"actor":"raftercli/crew/lucy","comment":null,"created_at":"2026-03-25T18:48:31Z","event_type":"closed","id":481,"issue_id":"rc-4va","new_value":"52 new MCP server tests (26 Node + 26 Python) covering tool registration, resources, lifecycle, version. Pushed to main.","old_value":""}
 {"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-06T08:10:40Z","event_type":"claimed","id":481,"issue_id":"rc-wisp-ajs8y","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-06T08:10:50Z","event_type":"closed","id":482,"issue_id":"rc-wisp-ajs8y","new_value":"Closed","old_value":""}
 {"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-06T08:10:56Z","event_type":"claimed","id":483,"issue_id":"rc-wisp-08baw","new_value":"","old_value":""}
@@ -813,3 +814,7 @@
 {"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:55:42Z","event_type":"closed","id":1240,"issue_id":"rc-wisp-hean","new_value":"all steps complete","old_value":""}
 {"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:56:01Z","event_type":"created","id":1241,"issue_id":"rc-wisp-z6su","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:56:06Z","event_type":"closed","id":1242,"issue_id":"rc-wisp-hean","new_value":"done","old_value":""}
+{"actor":"raftercli/crew/lucy","comment":"","created_at":"2026-03-25T18:58:25Z","event_type":"closed","id":1243,"issue_id":"rc-wisp-qs85","new_value":"Merged to main","old_value":""}
+{"actor":"raftercli/crew/lucy","comment":"","created_at":"2026-03-25T18:58:25Z","event_type":"closed","id":1244,"issue_id":"rc-wisp-fbog","new_value":"Merged to main","old_value":""}
+{"actor":"raftercli/crew/lucy","comment":"","created_at":"2026-03-25T18:58:25Z","event_type":"closed","id":1245,"issue_id":"rc-wisp-clrm","new_value":"Merged to main","old_value":""}
+{"actor":"raftercli/crew/lucy","comment":"","created_at":"2026-03-25T18:58:25Z","event_type":"closed","id":1246,"issue_id":"rc-wisp-z6su","new_value":"Merged to main","old_value":""}
