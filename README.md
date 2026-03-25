@@ -1,6 +1,6 @@
 # Rafter CLI
 
-Multi-language CLI for [Rafter](https://rafter.so) — the default security agent for AI workflows.
+Multi-language CLI for [Rafter](https://rafter.so) — the security toolkit built for AI workflows.
 
 > **Free forever for individuals and open source. No account required. No telemetry.**
 >
