@@ -60,32 +60,27 @@ Rafter ships as both `@rafter-security/cli` (npm) and `rafter-cli` (PyPI) with f
 This is the most common contribution. Here's the full walkthrough:
 
 **1. Add the regex to both implementations:**
-- Node: `node/src/scanners/regex-scanner.ts` — add to `PATTERNS` array
-- Python: `python/rafter_cli/scanners/regex_scanner.py` — add a `SecretPattern`
+- Node: `node/src/scanners/secret-patterns.ts` — add to `DEFAULT_SECRET_PATTERNS` array
+- Python: `python/rafter_cli/scanners/secret_patterns.py` — add a pattern entry
 - Format: `{ name, severity, regex, description }`
 
 **2. Add tests in both** `node/tests/` and `python/tests/` — use realistic-looking but obviously fake values
 
 **3. Run tests in both:** `cd node && pnpm test` and `cd python && pytest`
 
-See existing patterns in `regex-scanner.ts` / `regex_scanner.py` for the exact format.
+See existing patterns in `secret-patterns.ts` / `secret_patterns.py` for the exact format.
 
 ## Example: Adding a Platform Adapter
 
-Adapters teach Rafter how to integrate with a specific AI coding platform. See existing adapters in `node/src/adapters/` and `python/rafter_cli/adapters/` for the pattern.
+Platform install logic lives inline in the `agent init` command, not in separate adapter files.
 
-**1. Create the adapter** (both implementations):
-
-The adapter needs three methods:
-- `detect()` — Is this platform installed?
-- `install()` — Write config files to enable Rafter hooks
-- `uninstall()` — Remove Rafter config
+**1. Add install function** — In `node/src/commands/agent/init.ts`, add an `install<Platform>Mcp()` function following existing ones (e.g., `installCursorMcp()`). Do the same in `python/rafter_cli/commands/agent.py`.
 
 **2. Register the `--with-<platform>` flag** in `agent init` (both implementations)
 
 **3. Add a recipe** in `recipes/<platform>.md` with copy-paste setup instructions
 
-**4. Add tests** — see `node/tests/adapters.test.ts` and `python/tests/test_adapters.py`
+**4. Add tests** for the new platform detection and installation
 
 ## Running Tests
 
@@ -151,7 +146,7 @@ If you find a security vulnerability in Rafter itself, please email security@raf
 
 ## Code of Conduct
 
-This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). Be respectful, be constructive, evaluate contributions on merit.
+Be respectful, be constructive, evaluate contributions on merit.
 
 ## Questions?
 

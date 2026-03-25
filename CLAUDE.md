@@ -9,7 +9,7 @@ Rafter is a dual-implementation (Node.js + Python) security CLI for AI coding ag
 cd node && pnpm install && pnpm test
 
 # Python
-cd python && pip install -e ".[dev]" && pytest
+cd python && poetry install && pytest
 ```
 
 ## Architecture
@@ -31,25 +31,16 @@ cd python && pip install -e ".[dev]" && pytest
 │   │   │   ├── command-interceptor.ts  # Risk classification + policy enforcement
 │   │   │   ├── audit-logger.ts         # JSONL audit trail
 │   │   │   └── config-manager.ts       # .rafter.yml + global config
-│   │   ├── scanners/
-│   │   │   ├── gitleaks.ts             # Gitleaks binary integration
-│   │   │   └── regex-scanner.ts        # 21+ built-in secret patterns
-│   │   └── adapters/        # Platform-specific integration
-│   │       ├── claude-code.ts
-│   │       ├── codex.ts
-│   │       ├── cursor.ts
-│   │       ├── windsurf.ts
-│   │       ├── continue.ts
-│   │       ├── aider.ts
-│   │       ├── gemini.ts
-│   │       └── openclaw.ts
+│   │   └── scanners/
+│   │       ├── gitleaks.ts             # Gitleaks binary integration
+│   │       ├── secret-patterns.ts      # DEFAULT_SECRET_PATTERNS array (21+ patterns)
+│   │       └── regex-scanner.ts        # RegexScanner class (imports secret-patterns)
 │   └── tests/               # Vitest test files
 ├── python/                  # Python implementation (rafter-cli on PyPI)
 │   ├── rafter_cli/
 │   │   ├── commands/        # CLI commands (typer)
 │   │   ├── core/            # Mirrors node/src/core/
-│   │   ├── scanners/        # Mirrors node/src/scanners/
-│   │   └── adapters/        # Mirrors node/src/adapters/
+│   │   └── scanners/        # secret_patterns.py + regex_scanner.py + gitleaks.py
 │   └── tests/               # pytest test files
 ├── shared-docs/             # Canonical specs (both implementations follow these)
 │   └── CLI_SPEC.md          # Output contracts, exit codes, JSON schemas
@@ -63,7 +54,7 @@ cd python && pip install -e ".[dev]" && pytest
 
 **Dual implementation**: Every feature exists in both Node and Python. Versions must match (`node/package.json` ↔ `python/pyproject.toml`). CLI_SPEC.md is the source of truth for behavior.
 
-**8-platform adapter system**: Each adapter in `src/adapters/` knows how to install hooks and configure a specific AI coding platform. `rafter agent init --with-<platform>` calls the adapter's `install()` method.
+**8-platform support**: Platform-specific installation logic lives in `node/src/commands/agent/init.ts` (functions like `installCursorMcp()`, `installGeminiMcp()`, etc.). `rafter agent init --with-<platform>` calls the corresponding install function.
 
 **Risk classification**: Commands are classified into 4 tiers (critical/high/medium/low) by pattern matching in `command-interceptor.ts`. Policy files (`.rafter.yml`) can override defaults.
 
@@ -84,15 +75,15 @@ cd python && pip install -e ".[dev]" && pytest
 
 ### Adding a new secret pattern
 
-1. Add the regex to `node/src/scanners/regex-scanner.ts` in the `PATTERNS` array
-2. Add the same regex to `python/rafter_cli/scanners/regex_scanner.py`
+1. Add the regex to `node/src/scanners/secret-patterns.ts` in the `DEFAULT_SECRET_PATTERNS` array
+2. Add the same regex to `python/rafter_cli/scanners/secret_patterns.py`
 3. Add test cases with real-looking (but fake) secrets in both test suites
 4. Pattern format: `{ name, severity, regex, description }`
 
 ### Adding a platform adapter
 
-1. Create `node/src/adapters/<platform>.ts` implementing `AgentAdapter`
-2. Create `python/rafter_cli/adapters/<platform>.py`
+1. Add an install function in `node/src/commands/agent/init.ts` (follow existing `installCursorMcp()` pattern)
+2. Add corresponding logic in `python/rafter_cli/commands/agent.py`
 3. Add `--with-<platform>` flag to `agent init` in both implementations
 4. Add a recipe in `recipes/<platform>.md`
 5. Update README.md platform list
