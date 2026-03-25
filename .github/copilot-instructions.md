@@ -14,7 +14,7 @@ Rafter is a security CLI for AI coding agents. It ships as two feature-identical
 - `node/src/commands/` — CLI commands (commander.js)
 - `node/src/core/` — Command interceptor, audit logger, config manager
 - `node/src/scanners/` — Gitleaks integration + regex-based secret scanner
-- `node/src/adapters/` — Per-platform integration (8 platforms)
+- `node/src/commands/agent/init.ts` — Per-platform installation logic (8 platforms)
 - `python/rafter_cli/` — Mirrors the Node structure with typer
 - `shared-docs/CLI_SPEC.md` — Canonical output contracts and exit codes
 - `recipes/` — Copy-paste setup guides per platform
@@ -29,7 +29,7 @@ Rafter is a security CLI for AI coding agents. It ships as two feature-identical
 ## Key Patterns
 
 - Commands export a `createXCommand()` factory (Node) or use `@app.command()` decorators (Python)
-- Scanners use dual-engine: Gitleaks binary first, regex fallback
+- Scanners use dual-engine: Gitleaks binary first, regex fallback. Patterns defined in `secret-patterns.ts` / `secret_patterns.py`
 - Risk classification: critical > high > medium > low
 - Audit log: JSONL format, append-only, documented schema in CLI_SPEC.md
 - MCP server: 4 tools + 2 resources over stdio transport
