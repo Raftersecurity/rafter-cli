@@ -1,5 +1,10 @@
 # Rafter CLI
 
+[![npm version](https://img.shields.io/npm/v/@rafter-security/cli)](https://www.npmjs.com/package/@rafter-security/cli)
+[![PyPI version](https://img.shields.io/pypi/v/rafter-cli)](https://pypi.org/project/rafter-cli/)
+[![CI](https://github.com/Raftersecurity/rafter-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Raftersecurity/rafter-cli/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Multi-language CLI for [Rafter](https://rafter.so) — the default security agent for AI workflows.
 
 > **Free forever for individuals and open source. No account required. No telemetry.**
@@ -203,7 +208,7 @@ Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-c
 ```yaml
 repos:
   - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.6.1
+    rev: v0.6.5
     hooks:
       - id: rafter-scan
 ```
@@ -336,7 +341,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.6.1
+    rev: v0.6.5
     hooks:
       - id: rafter-scan           # Node.js
       # - id: rafter-scan-python  # Python alternative
