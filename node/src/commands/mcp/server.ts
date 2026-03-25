@@ -47,7 +47,7 @@ function errorResult(message: string) {
   return { content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }], isError: true as const };
 }
 
-function createServer(): Server {
+export function createServer(): Server {
   const server = new Server(
     { name: "rafter", version: CLI_VERSION },
     { capabilities: { tools: {}, resources: {} } },
