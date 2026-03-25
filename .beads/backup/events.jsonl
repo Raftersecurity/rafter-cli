@@ -645,7 +645,10 @@
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T08:09:28Z","event_type":"closed","id":474,"issue_id":"rc-wisp-936eq","new_value":"Closed","old_value":""}
 {"actor":"raftercli/polecats/topaz","comment":null,"created_at":"2026-03-24T23:48:05Z","event_type":"closed","id":475,"issue_id":"rc-s26","new_value":"Closed","old_value":""}
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T08:09:35Z","event_type":"claimed","id":475,"issue_id":"rc-wisp-zpxy9","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/quartz","comment":null,"created_at":"2026-03-24T23:50:08Z","event_type":"closed","id":476,"issue_id":"rc-dm4","new_value":"Closed","old_value":""}
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T08:09:38Z","event_type":"closed","id":476,"issue_id":"rc-wisp-zpxy9","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":null,"created_at":"2026-03-24T23:52:28Z","event_type":"closed","id":477,"issue_id":"rc-e0h","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":null,"created_at":"2026-03-24T23:56:06Z","event_type":"closed","id":478,"issue_id":"rc-htq","new_value":"Closed","old_value":""}
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T08:09:52Z","event_type":"created","id":478,"issue_id":"rc-wisp-xjh81","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T08:09:53Z","event_type":"closed","id":479,"issue_id":"rc-wisp-oa2yw","new_value":"done","old_value":""}
 {"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-06T08:10:32Z","event_type":"closed","id":480,"issue_id":"rc-wisp-ln366","new_value":"Closed","old_value":""}
@@ -781,3 +784,30 @@
 {"actor":"raftercli/polecats/topaz","comment":"","created_at":"2026-03-24T23:47:59Z","event_type":"created","id":1213,"issue_id":"rc-wisp-fbog","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/topaz","comment":"","created_at":"2026-03-24T23:48:04Z","event_type":"closed","id":1214,"issue_id":"rc-wisp-2k23","new_value":"done","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-24T23:49:09Z","event_type":"closed","id":1215,"issue_id":"rc-wisp-80ym","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:49:26Z","event_type":"closed","id":1216,"issue_id":"rc-wisp-q0fh","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-24T23:49:28Z","event_type":"closed","id":1217,"issue_id":"rc-wisp-zpj3","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:49:44Z","event_type":"claimed","id":1218,"issue_id":"rc-wisp-f264","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:49:57Z","event_type":"closed","id":1219,"issue_id":"rc-wisp-f264","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-24T23:50:01Z","event_type":"created","id":1220,"issue_id":"rc-wisp-qs85","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-24T23:50:07Z","event_type":"closed","id":1221,"issue_id":"rc-wisp-7gg6","new_value":"done","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:50:12Z","event_type":"claimed","id":1222,"issue_id":"rc-wisp-to1t","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:50:59Z","event_type":"closed","id":1223,"issue_id":"rc-wisp-to1t","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:51:16Z","event_type":"claimed","id":1224,"issue_id":"rc-wisp-ckn4","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:51:25Z","event_type":"closed","id":1225,"issue_id":"rc-wisp-ckn4","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:51:37Z","event_type":"closed","id":1226,"issue_id":"rc-wisp-h4dq","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:51:40Z","event_type":"claimed","id":1227,"issue_id":"rc-wisp-ubeh","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:51:51Z","event_type":"claimed","id":1228,"issue_id":"rc-wisp-fghm","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:51:58Z","event_type":"closed","id":1229,"issue_id":"rc-wisp-ubeh","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:52:01Z","event_type":"closed","id":1230,"issue_id":"rc-wisp-hqeg","new_value":"all steps complete","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:52:08Z","event_type":"closed","id":1231,"issue_id":"rc-wisp-fghm","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:52:20Z","event_type":"created","id":1232,"issue_id":"rc-wisp-clrm","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/ruby","comment":"","created_at":"2026-03-24T23:52:27Z","event_type":"closed","id":1233,"issue_id":"rc-wisp-hqeg","new_value":"done","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:52:30Z","event_type":"claimed","id":1234,"issue_id":"rc-wisp-lxdz","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:53:15Z","event_type":"closed","id":1235,"issue_id":"rc-wisp-lxdz","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:53:39Z","event_type":"claimed","id":1236,"issue_id":"rc-wisp-kfj8","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:53:47Z","event_type":"closed","id":1237,"issue_id":"rc-wisp-kfj8","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:54:07Z","event_type":"claimed","id":1238,"issue_id":"rc-wisp-juk6","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:55:39Z","event_type":"closed","id":1239,"issue_id":"rc-wisp-juk6","new_value":"Closed","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:55:42Z","event_type":"closed","id":1240,"issue_id":"rc-wisp-hean","new_value":"all steps complete","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:56:01Z","event_type":"created","id":1241,"issue_id":"rc-wisp-z6su","new_value":"","old_value":""}
+{"actor":"raftercli/polecats/amber","comment":"","created_at":"2026-03-24T23:56:06Z","event_type":"closed","id":1242,"issue_id":"rc-wisp-hean","new_value":"done","old_value":""}
