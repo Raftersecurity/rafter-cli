@@ -191,7 +191,6 @@ runs:
         MEDIUM_COUNT: ${{ steps.results.outputs.medium_count }}
         LOW_COUNT: ${{ steps.results.outputs.low_count }}
       run: |
-        MARKDOWN=$(cat "${{ runner.temp }}/rafter-results.md" | jq -Rs '.' | jq -r '.')
         MD_REPORT=$(jq -r '.markdown // empty' "${{ runner.temp }}/rafter-results.md" 2>/dev/null || cat "${{ runner.temp }}/rafter-results.md")
 
         if [ "$FINDINGS_COUNT" -eq 0 ]; then
@@ -205,29 +204,33 @@ runs:
           HEADLINE="${FINDINGS_COUNT} security findings detected"
         fi
 
-        COMMENT_BODY=$(cat <<COMMENT_EOF
-## :${ICON}: Rafter Security Scan
+        # Build comment in a file to avoid shell expansion of scan result content
+        COMMENT_FILE="${{ runner.temp }}/rafter-pr-comment.md"
+        cat > "$COMMENT_FILE" <<'HEADER_EOF'
+## :ICON_PLACEHOLDER: Rafter Security Scan
 
-**${HEADLINE}**
+**HEADLINE_PLACEHOLDER**
 
 | Severity | Count |
 |----------|-------|
-| Critical | ${CRITICAL_COUNT} |
-| High | ${HIGH_COUNT} |
-| Medium | ${MEDIUM_COUNT} |
-| Low | ${LOW_COUNT} |
-
-<details>
-<summary>Full Report</summary>
-
-${MD_REPORT}
-
-</details>
-
----
-<sub>Scan ID: ${SCAN_ID} | Powered by [Rafter](https://rafter.so)</sub>
-COMMENT_EOF
-        )
+HEADER_EOF
+        # Inject dynamic values safely via sed
+        sed -i "s/ICON_PLACEHOLDER/${ICON}/" "$COMMENT_FILE"
+        sed -i "s/HEADLINE_PLACEHOLDER/${HEADLINE}/" "$COMMENT_FILE"
+        echo "| Critical | ${CRITICAL_COUNT} |" >> "$COMMENT_FILE"
+        echo "| High | ${HIGH_COUNT} |" >> "$COMMENT_FILE"
+        echo "| Medium | ${MEDIUM_COUNT} |" >> "$COMMENT_FILE"
+        echo "| Low | ${LOW_COUNT} |" >> "$COMMENT_FILE"
+        echo "" >> "$COMMENT_FILE"
+        echo "<details>" >> "$COMMENT_FILE"
+        echo "<summary>Full Report</summary>" >> "$COMMENT_FILE"
+        echo "" >> "$COMMENT_FILE"
+        cat >> "$COMMENT_FILE" <<< "$MD_REPORT"
+        echo "" >> "$COMMENT_FILE"
+        echo "</details>" >> "$COMMENT_FILE"
+        echo "" >> "$COMMENT_FILE"
+        echo "---" >> "$COMMENT_FILE"
+        echo "<sub>Scan ID: ${SCAN_ID} | Powered by [Rafter](https://rafter.so)</sub>" >> "$COMMENT_FILE"
 
         # Delete previous Rafter comments to avoid spam
         EXISTING=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
@@ -236,7 +239,7 @@ COMMENT_EOF
           gh api -X DELETE "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" 2>/dev/null || true
         done
 
-        gh pr comment "${{ github.event.pull_request.number }}" --body "$COMMENT_BODY"
+        gh pr comment "${{ github.event.pull_request.number }}" --body-file "$COMMENT_FILE"
 
     - name: Upload artifacts
       if: always() && steps.poll.outputs.status == 'completed'
