@@ -1,10 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { randomBytes } from "crypto";
 import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
+
+// These tests spawn real CLI processes via npx tsx — slow under parallel load
+vi.setConfig({ testTimeout: 30_000 });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -111,7 +114,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
   // ── 2b. Gemini idempotency and preservation ──────────────────────
 
   describe("Gemini MCP idempotency", () => {
-    it("should not duplicate rafter entry on repeated installs", () => {
+    it("should not duplicate rafter entry on repeated installs", { timeout: 60_000 }, () => {
       fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
 
       // Run twice
@@ -126,7 +129,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(Object.keys(settings.mcpServers)).toEqual(["rafter"]);
     });
 
-    it("should preserve existing Gemini settings", () => {
+    it("should preserve existing Gemini settings", { timeout: 30_000 }, () => {
       const geminiDir = path.join(testHomeDir, ".gemini");
       fs.mkdirSync(geminiDir, { recursive: true });
       fs.writeFileSync(
@@ -147,7 +150,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(settings.mcpServers.rafter.command).toBe("rafter");
     });
 
-    it("should preserve existing non-rafter MCP servers", () => {
+    it("should preserve existing non-rafter MCP servers", { timeout: 30_000 }, () => {
       const geminiDir = path.join(testHomeDir, ".gemini");
       fs.mkdirSync(geminiDir, { recursive: true });
       fs.writeFileSync(
@@ -172,7 +175,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
   // ── 2c. Gemini environment detection ────────────────────────────
 
   describe("Gemini environment detection", () => {
-    it("should warn when --with-gemini used without ~/.gemini", () => {
+    it("should warn when --with-gemini used without ~/.gemini", { timeout: 30_000 }, () => {
       // Do NOT create .gemini dir
       const result = runCli("agent init --with-gemini", testHomeDir);
       expect(result.exitCode).toBe(0);
