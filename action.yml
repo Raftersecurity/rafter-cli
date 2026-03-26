@@ -5,7 +5,7 @@
 # No API key required. No code leaves the runner.
 #
 # Usage:
-#   - uses: raftersecurity/rafter-cli@v0
+#   - uses: raftersecurity/rafter-cli@v1
 #     with:
 #       scan-path: '.'
 #
