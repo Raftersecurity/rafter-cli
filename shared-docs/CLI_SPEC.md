@@ -381,7 +381,7 @@ Auto-detection: checks for `.github/`, `.gitlab-ci.yml`, `.circleci/` in cwd.
 Composite action at repo root. Usage:
 
 ```yaml
-- uses: Raftersecurity/rafter-cli@v0
+- uses: Raftersecurity/rafter-cli@v1
   with:
     scan-path: '.'        # default
     args: '--quiet'       # default

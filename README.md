@@ -313,7 +313,7 @@ rafter ci init --with-backend           # include backend security audit job
 Use as a reusable action in any GitHub Actions workflow:
 
 ```yaml
-- uses: raftersecurity/rafter-cli@v0
+- uses: raftersecurity/rafter-cli@v1
   with:
     scan-path: '.'       # default
     args: '--quiet'      # default; override for verbose output
