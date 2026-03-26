@@ -81,8 +81,12 @@ runs:
       shell: bash
       run: |
         set +e
-        OUTPUT=$(rafter scan local ${{ inputs.scan-path }} ${{ inputs.args }} --format ${{ inputs.format }} 2>&1)
+        # Capture stdout (scan results) and stderr (status messages) separately
+        STDERR_FILE=$(mktemp)
+        OUTPUT=$(rafter scan local ${{ inputs.scan-path }} ${{ inputs.args }} --format ${{ inputs.format }} 2>"$STDERR_FILE")
         EXIT_CODE=$?
+        STDERR_OUTPUT=$(cat "$STDERR_FILE")
+        rm -f "$STDERR_FILE"
         set -e
 
         echo "exit-code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
@@ -90,13 +94,15 @@ runs:
         echo "${OUTPUT}" >> "$GITHUB_OUTPUT"
         echo "RAFTER_EOF" >> "$GITHUB_OUTPUT"
 
-        # Count findings from JSON output
+        # Count findings from output
         if [ "${{ inputs.format }}" = "json" ]; then
-          COUNT=$(echo "${OUTPUT}" | grep -c '"RuleID"' 2>/dev/null || echo "0")
+          COUNT=$(echo "${OUTPUT}" | jq '[.[].matches[]] | length' 2>/dev/null || echo "0")
         else
           COUNT=$(echo "${OUTPUT}" | grep -c 'Secret:' 2>/dev/null || echo "0")
         fi
         echo "finding-count=${COUNT}" >> "$GITHUB_OUTPUT"
 
+        # Show both stdout and stderr to the runner log
+        [ -n "$STDERR_OUTPUT" ] && echo "$STDERR_OUTPUT" >&2
         echo "${OUTPUT}"
         exit ${EXIT_CODE}
