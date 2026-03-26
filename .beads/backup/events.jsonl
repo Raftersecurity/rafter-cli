@@ -658,6 +658,7 @@
 {"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-06T08:10:40Z","event_type":"claimed","id":481,"issue_id":"rc-wisp-ajs8y","new_value":"","old_value":""}
 {"actor":"raftercli/crew/jack","comment":null,"created_at":"2026-03-26T16:31:42Z","event_type":"created","id":482,"issue_id":"rc-hme","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-06T08:10:50Z","event_type":"closed","id":482,"issue_id":"rc-wisp-ajs8y","new_value":"Closed","old_value":""}
+{"actor":"raftercli/crew/jack","comment":null,"created_at":"2026-03-26T16:40:50Z","event_type":"closed","id":483,"issue_id":"rc-hme","new_value":"Fixed in Rome-1/docs commit 1741114: corrected stale flags, added init-project and --interactive docs","old_value":""}
 {"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-06T08:10:56Z","event_type":"claimed","id":483,"issue_id":"rc-wisp-08baw","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-06T08:11:07Z","event_type":"closed","id":484,"issue_id":"rc-wisp-08baw","new_value":"Closed","old_value":""}
 {"actor":"raftercli/polecats/jasper","comment":"","created_at":"2026-03-06T08:11:17Z","event_type":"claimed","id":485,"issue_id":"rc-wisp-z9xsj","new_value":"","old_value":""}
