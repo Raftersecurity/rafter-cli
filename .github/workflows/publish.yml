@@ -178,7 +178,7 @@ jobs:
 
             **Python:**
             ```bash
-            pip install rafter-cli==${{ needs.publish-node.outputs.version }}
+            pip install rafter-cli==${{ needs.publish-python.outputs.version }}
             ```
 
             See [CHANGELOG.md](https://github.com/raftersecurity/rafter-cli/blob/main/CHANGELOG.md) for details.
