@@ -112,5 +112,13 @@ function readStdin(): Promise<string> {
 }
 
 function writeOutput(output: PostToolOutput): void {
-  process.stdout.write(JSON.stringify(output) + "\n");
+  const hookOutput: Record<string, any> = {
+    hookSpecificOutput: {
+      hookEventName: "PostToolUse",
+    },
+  };
+  if (output.action === "modify" && output.tool_response) {
+    hookOutput.hookSpecificOutput.modifiedToolResult = output.tool_response;
+  }
+  process.stdout.write(JSON.stringify(hookOutput) + "\n");
 }

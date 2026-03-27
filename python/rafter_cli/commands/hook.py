@@ -65,8 +65,29 @@ def _read_stdin() -> str:
     return result[0]
 
 
-def _write_decision(decision: dict) -> None:
-    sys.stdout.write(json.dumps(decision) + "\n")
+def _write_pretool_decision(decision: dict) -> None:
+    """Write a PreToolUse hook decision in Claude Code's expected envelope format."""
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny" if decision.get("decision") == "deny" else "allow",
+            "permissionDecisionReason": decision.get("reason", ""),
+        },
+    }
+    sys.stdout.write(json.dumps(output) + "\n")
+    sys.stdout.flush()
+
+
+def _write_posttool_output(output: dict) -> None:
+    """Write a PostToolUse hook output in Claude Code's expected envelope format."""
+    hook_output: dict = {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+        },
+    }
+    if output.get("action") == "modify" and "tool_response" in output:
+        hook_output["hookSpecificOutput"]["modifiedToolResult"] = output["tool_response"]
+    sys.stdout.write(json.dumps(hook_output) + "\n")
     sys.stdout.flush()
 
 
@@ -148,12 +169,12 @@ def pretool():
         try:
             payload = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
-            _write_decision({"decision": "allow"})
+            _write_pretool_decision({"decision": "allow"})
             return
 
         # Validate payload is a dict with expected shape
         if not isinstance(payload, dict):
-            _write_decision({"decision": "allow"})
+            _write_pretool_decision({"decision": "allow"})
             return
 
         tool_name = payload.get("tool_name", "")
@@ -169,10 +190,10 @@ def pretool():
         else:
             decision = {"decision": "allow"}
 
-        _write_decision(decision)
+        _write_pretool_decision(decision)
     except Exception:
         # Any unexpected error -> fail open
-        _write_decision({"decision": "allow"})
+        _write_pretool_decision({"decision": "allow"})
 
 
 @hook_app.command("posttool")
@@ -184,12 +205,12 @@ def posttool():
         try:
             payload = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
-            _write_decision({"action": "continue"})
+            _write_posttool_output({"action": "continue"})
             return
 
         # Validate payload is a dict
         if not isinstance(payload, dict):
-            _write_decision({"action": "continue"})
+            _write_posttool_output({"action": "continue"})
             return
 
         tool_response = payload.get("tool_response")
@@ -197,7 +218,7 @@ def posttool():
 
         # No response body — pass through
         if not tool_response or not isinstance(tool_response, dict):
-            _write_decision({"action": "continue"})
+            _write_posttool_output({"action": "continue"})
             return
 
         scanner = RegexScanner()
@@ -224,10 +245,10 @@ def posttool():
             if content_text and isinstance(content_text, str):
                 match_count += len(scanner.scan_text(content_text))
             audit.log_content_sanitized(f"{tool_name} tool response", match_count)
-            _write_decision({"action": "modify", "tool_response": redacted})
+            _write_posttool_output({"action": "modify", "tool_response": redacted})
             return
 
-        _write_decision({"action": "continue"})
+        _write_posttool_output({"action": "continue"})
     except Exception:
         # Any unexpected error -> fail open
-        _write_decision({"action": "continue"})
+        _write_posttool_output({"action": "continue"})
