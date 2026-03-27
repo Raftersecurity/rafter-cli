@@ -144,6 +144,62 @@ class TestPretoolEnvelope:
         assert data["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
+class TestCursorFormat:
+    """Tests for Cursor hook output format (--format cursor)."""
+
+    def test_cursor_allow(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        # Cursor sends { command, hook_event_name: "beforeShellExecution" }
+        payload = {"hook_event_name": "beforeShellExecution", "command": "ls -la", "cwd": "/tmp"}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool", "--format", "cursor"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert data["permission"] == "allow"
+
+    def test_cursor_deny(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {"hook_event_name": "beforeShellExecution", "command": "rm -rf /", "cwd": "/tmp"}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool", "--format", "cursor"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert data["permission"] == "deny"
+        assert "agentMessage" in data
+
+
+class TestGeminiFormat:
+    """Tests for Gemini CLI hook output format (--format gemini)."""
+
+    def test_gemini_allow(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        # Gemini sends { tool_name, tool_input } — same as Claude
+        payload = {"tool_name": "shell", "tool_input": {"command": "ls -la"}}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool", "--format", "gemini"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert data == {}
+
+    def test_gemini_deny(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool", "--format", "gemini"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert data["decision"] == "deny"
+        assert "reason" in data
+
+
 class TestPosttool:
     """Tests for the posttool hook command."""
 

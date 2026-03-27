@@ -65,30 +65,119 @@ def _read_stdin() -> str:
     return result[0]
 
 
-def _write_pretool_decision(decision: dict) -> None:
-    """Write a PreToolUse hook decision in Claude Code's expected envelope format."""
-    output = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny" if decision.get("decision") == "deny" else "allow",
-            "permissionDecisionReason": decision.get("reason", ""),
-        },
-    }
-    sys.stdout.write(json.dumps(output) + "\n")
-    sys.stdout.flush()
+def _write_pretool_decision(decision: dict, fmt: str = "claude") -> None:
+    """Write a PreToolUse hook decision in the platform's expected format."""
+    is_deny = decision.get("decision") == "deny"
+    reason = decision.get("reason", "")
+
+    if fmt == "cursor":
+        out: dict = {"permission": "deny" if is_deny else "allow"}
+        if is_deny and reason:
+            out["agentMessage"] = reason
+            out["userMessage"] = reason
+        sys.stdout.write(json.dumps(out) + "\n")
+        sys.stdout.flush()
+    elif fmt == "gemini":
+        if is_deny:
+            sys.stdout.write(json.dumps({"decision": "deny", "reason": reason}) + "\n")
+        else:
+            sys.stdout.write("{}\n")
+        sys.stdout.flush()
+    elif fmt == "windsurf":
+        if is_deny:
+            sys.stderr.write(reason + "\n")
+            sys.stderr.flush()
+            sys.exit(2)
+        # Allow: exit 0 (no output needed)
+    else:
+        # Claude Code / Codex / Continue.dev
+        output = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny" if is_deny else "allow",
+                "permissionDecisionReason": reason,
+            },
+        }
+        sys.stdout.write(json.dumps(output) + "\n")
+        sys.stdout.flush()
 
 
-def _write_posttool_output(output: dict) -> None:
-    """Write a PostToolUse hook output in Claude Code's expected envelope format."""
-    hook_output: dict = {
-        "hookSpecificOutput": {
-            "hookEventName": "PostToolUse",
-        },
-    }
-    if output.get("action") == "modify" and "tool_response" in output:
-        hook_output["hookSpecificOutput"]["modifiedToolResult"] = output["tool_response"]
-    sys.stdout.write(json.dumps(hook_output) + "\n")
-    sys.stdout.flush()
+def _write_posttool_output(output: dict, fmt: str = "claude") -> None:
+    """Write a PostToolUse hook output in the platform's expected format."""
+    is_modify = output.get("action") == "modify" and "tool_response" in output
+
+    if fmt == "cursor":
+        if is_modify:
+            sys.stdout.write(json.dumps({"agentMessage": "Rafter redacted secrets from tool output"}) + "\n")
+            sys.stdout.flush()
+    elif fmt == "gemini":
+        if is_modify:
+            sys.stdout.write(json.dumps({"systemMessage": "Rafter redacted secrets from tool output"}) + "\n")
+        else:
+            sys.stdout.write("{}\n")
+        sys.stdout.flush()
+    elif fmt == "windsurf":
+        if is_modify:
+            sys.stderr.write("Rafter: secrets redacted from tool output\n")
+            sys.stderr.flush()
+    else:
+        # Claude Code / Codex / Continue.dev
+        hook_output: dict = {
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+            },
+        }
+        if is_modify:
+            hook_output["hookSpecificOutput"]["modifiedToolResult"] = output["tool_response"]
+        sys.stdout.write(json.dumps(hook_output) + "\n")
+        sys.stdout.flush()
+
+
+def _normalize_pretool_input(raw: dict, fmt: str) -> tuple[str, dict]:
+    """Normalize platform-specific stdin into (tool_name, tool_input)."""
+    if fmt == "cursor":
+        event = raw.get("hook_event_name", "")
+        if event == "beforeShellExecution":
+            return "Bash", {"command": raw.get("command", "")}
+        elif event == "beforeReadFile":
+            return "Read", raw.get("tool_input", {})
+        elif event == "afterFileEdit":
+            return "Write", raw.get("tool_input", {})
+        return raw.get("tool_name", "unknown"), raw.get("tool_input", {})
+
+    if fmt == "windsurf":
+        action = raw.get("agent_action_name", "")
+        tool_info = raw.get("tool_info", {})
+        if "run_command" in action:
+            return "Bash", {"command": tool_info.get("command_line", "")}
+        elif "write_code" in action:
+            return "Write", tool_info
+        elif "read_code" in action:
+            return "Read", tool_info
+        return tool_info.get("mcp_tool_name", "unknown"), tool_info
+
+    # Claude, Codex, Continue, Gemini
+    return raw.get("tool_name", ""), raw.get("tool_input") or {}
+
+
+def _normalize_posttool_input(raw: dict, fmt: str) -> tuple[str, dict | None]:
+    """Normalize platform-specific PostToolUse stdin into (tool_name, tool_response)."""
+    if fmt == "windsurf":
+        tool_info = raw.get("tool_info", {})
+        action = raw.get("agent_action_name", "")
+        name = "Bash" if "run_command" in action else (tool_info.get("mcp_tool_name", "unknown"))
+        return name, {"output": tool_info.get("stdout", ""), "error": tool_info.get("stderr", "")}
+
+    if fmt == "cursor":
+        event = raw.get("hook_event_name", "")
+        name = "Bash" if event == "afterShellExecution" else raw.get("tool_name", "unknown")
+        resp = raw.get("tool_response") or {}
+        return name, {"output": raw.get("output", resp.get("output", "")),
+                       "content": raw.get("content", resp.get("content", "")),
+                       "error": raw.get("error", resp.get("error", ""))}
+
+    # Claude, Codex, Continue, Gemini
+    return raw.get("tool_name", "unknown"), raw.get("tool_response")
 
 
 def _scan_staged_files() -> dict:
@@ -161,7 +250,9 @@ def _evaluate_write(tool_input: dict) -> dict:
 
 
 @hook_app.command("pretool")
-def pretool():
+def pretool(
+    format: str = typer.Option("claude", "--format", help="Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf"),
+):
     """PreToolUse hook handler. Reads tool input JSON from stdin, writes decision to stdout."""
     try:
         raw = _read_stdin()
@@ -169,16 +260,15 @@ def pretool():
         try:
             payload = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
-            _write_pretool_decision({"decision": "allow"})
+            _write_pretool_decision({"decision": "allow"}, format)
             return
 
         # Validate payload is a dict with expected shape
         if not isinstance(payload, dict):
-            _write_pretool_decision({"decision": "allow"})
+            _write_pretool_decision({"decision": "allow"}, format)
             return
 
-        tool_name = payload.get("tool_name", "")
-        tool_input = payload.get("tool_input") or {}
+        tool_name, tool_input = _normalize_pretool_input(payload, format)
 
         if not isinstance(tool_input, dict):
             tool_input = {}
@@ -190,14 +280,16 @@ def pretool():
         else:
             decision = {"decision": "allow"}
 
-        _write_pretool_decision(decision)
+        _write_pretool_decision(decision, format)
     except Exception:
         # Any unexpected error -> fail open
-        _write_pretool_decision({"decision": "allow"})
+        _write_pretool_decision({"decision": "allow"}, format)
 
 
 @hook_app.command("posttool")
-def posttool():
+def posttool(
+    format: str = typer.Option("claude", "--format", help="Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf"),
+):
     """PostToolUse hook handler. Reads tool response JSON from stdin, redacts secrets in output, writes action to stdout."""
     try:
         raw = _read_stdin()
@@ -205,20 +297,19 @@ def posttool():
         try:
             payload = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
-            _write_posttool_output({"action": "continue"})
+            _write_posttool_output({"action": "continue"}, format)
             return
 
         # Validate payload is a dict
         if not isinstance(payload, dict):
-            _write_posttool_output({"action": "continue"})
+            _write_posttool_output({"action": "continue"}, format)
             return
 
-        tool_response = payload.get("tool_response")
-        tool_name = payload.get("tool_name", "unknown")
+        tool_name, tool_response = _normalize_posttool_input(payload, format)
 
         # No response body — pass through
         if not tool_response or not isinstance(tool_response, dict):
-            _write_posttool_output({"action": "continue"})
+            _write_posttool_output({"action": "continue"}, format)
             return
 
         scanner = RegexScanner()
@@ -245,10 +336,10 @@ def posttool():
             if content_text and isinstance(content_text, str):
                 match_count += len(scanner.scan_text(content_text))
             audit.log_content_sanitized(f"{tool_name} tool response", match_count)
-            _write_posttool_output({"action": "modify", "tool_response": redacted})
+            _write_posttool_output({"action": "modify", "tool_response": redacted}, format)
             return
 
-        _write_posttool_output({"action": "continue"})
+        _write_posttool_output({"action": "continue"}, format)
     except Exception:
         # Any unexpected error -> fail open
-        _write_posttool_output({"action": "continue"})
+        _write_posttool_output({"action": "continue"}, format)
