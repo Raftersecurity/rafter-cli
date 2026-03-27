@@ -674,7 +674,9 @@
 {"actor":"mayor","comment":"","created_at":"2026-03-06T08:31:16Z","event_type":"closed","id":489,"issue_id":"rc-wisp-oa2yw","new_value":"burned: polecat nuked","old_value":""}
 {"actor":"raftercli/crew/lucy","comment":null,"created_at":"2026-03-27T15:48:05Z","event_type":"created","id":490,"issue_id":"rc-kmv","new_value":"","old_value":""}
 {"actor":"mayor","comment":"","created_at":"2026-03-06T08:31:22Z","event_type":"closed","id":490,"issue_id":"rc-wisp-y3p2c","new_value":"burned: polecat nuked","old_value":""}
+{"actor":"raftercli/crew/lucy","comment":null,"created_at":"2026-03-27T15:52:51Z","event_type":"closed","id":491,"issue_id":"rc-wyk","new_value":"Duplicate of rc-kmv","old_value":""}
 {"actor":"mayor","comment":"","created_at":"2026-03-06T08:31:29Z","event_type":"closed","id":491,"issue_id":"rc-wisp-m25lj","new_value":"burned: polecat nuked","old_value":""}
+{"actor":"raftercli/crew/lucy","comment":null,"created_at":"2026-03-27T15:54:09Z","event_type":"created","id":492,"issue_id":"rc-k2l","new_value":"","old_value":""}
 {"actor":"raftercli/witness","comment":"","created_at":"2026-03-06T08:32:59Z","event_type":"closed","id":494,"issue_id":"rc-wisp-f9rdz","new_value":"patrol cycle complete: Patrol cycle: obsidian polecat active on rc-gr0 (scan restructure), just dispatched and priming. Refinery and deacon alive. No unread mail. No issues.","old_value":""}
 {"actor":"raftercli/refinery","comment":"","created_at":"2026-03-06T08:33:40Z","event_type":"closed","id":495,"issue_id":"rc-wisp-iqmic","new_value":"merged","old_value":""}
 {"actor":"raftercli/refinery","comment":"","created_at":"2026-03-06T08:33:41Z","event_type":"closed","id":496,"issue_id":"rc-wisp-xjh81","new_value":"merged","old_value":""}
