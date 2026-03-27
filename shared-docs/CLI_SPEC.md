@@ -2,9 +2,9 @@
 
 ## Overview
 
-Rafter is the security toolkit built for AI workflows — a delegation primitive with stable output contracts. Orchestrators and agents classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
+Rafter is the security toolkit for developers — human and autonomous. Stable output contracts mean any tool can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
 
-**Free forever for individuals and open source.** No account required. No telemetry. All local agent security features (secret scanning, command interception, pre-commit hooks, audit logging, MCP server) work without an API key, without network access, and without usage limits.
+**Free forever for individuals and open source.** No account required. No telemetry. All local security features (secret scanning, policy enforcement, pre-commit hooks, audit logging, MCP server) work without an API key, without network access, and without usage limits.
 
 The CLI follows UNIX principles:
 
@@ -13,7 +13,7 @@ The CLI follows UNIX principles:
 - **Exit codes** are a **stable contract** — documented semantics across versions
 - **Deterministic** — same inputs produce the same findings for a given CLI version
 - **Side effects are explicit** — config and audit logs write to `~/.rafter/`; some commands (e.g. `ci init`, `policy export`) accept `--output` to write files
-- **No exfiltration** — no code leaves your machine unless you explicitly use the remote code analysis API, and is deleted immediately after the analysis engine completes
+- **No exfiltration** — no code leaves your machine unless you explicitly use the remote API, and is deleted immediately after analysis completes
 
 ## Exit Codes
 
@@ -45,7 +45,7 @@ The CLI follows UNIX principles:
 
 ---
 
-## Backend Code Analysis Commands
+## Remote Code Analysis Commands
 
 **Important**: The code analysis engine runs against the **remote repository** (e.g., on GitHub), not your local files. Auto-detection uses your local Git configuration to determine which remote repository and branch to scan.
 
@@ -130,13 +130,13 @@ rafter brief scanning > ~/.agents/skills/rafter/SKILL.md
 
 ---
 
-## Agent Security Commands
+## Local Security Commands
 
-All agent commands work locally. No API key required.
+All local security commands work offline. No API key required.
 
 ### rafter agent init [OPTIONS]
 
-Initialize agent security system. Creates config and detects available agent environments. Integrations are **opt-in** — use `--with-*` flags or `--all` to install. There are NO `--skip-*` flags.
+Initialize local security system. Creates config and detects available development environments. Integrations are **opt-in** — use `--with-*` flags or `--all` to install. There are NO `--skip-*` flags.
 
 - `--risk-level <level>` — `minimal`, `moderate` (default), or `aggressive`
 - `--with-openclaw` — install OpenClaw integration
@@ -487,7 +487,7 @@ else
 fi
 ```
 
-### Agent Security
+### Local Security
 
 ```bash
 # Full setup
