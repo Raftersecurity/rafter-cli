@@ -1,6 +1,6 @@
 # Contributing to Rafter
 
-Thank you for your interest in making AI agent security better. Rafter is MIT-licensed and we welcome contributions from everyone — humans and AI agents alike.
+Thank you for your interest in making developer security better. Rafter is MIT-licensed and we welcome contributions from everyone — humans and AI agents alike.
 
 ## Finding Work
 

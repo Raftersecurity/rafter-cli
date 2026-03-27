@@ -27,7 +27,7 @@ When making CLI changes, update these files in Rome-1/docs:
 - [ ] `guides/agent-security/secret-scanning.mdx` — Scan flags, output formats, engines
 - [ ] `guides/ci-cd.mdx` — CI workflows using scan commands
 
-### After adding/changing agent security features
+### After adding/changing local security features
 
 - [ ] `guides/agent-security/command-execution.mdx` — Risk levels, policy modes
 - [ ] `guides/agent-security/audit-log.mdx` — Event types, schema, webhook config
