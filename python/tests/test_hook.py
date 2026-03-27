@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from rafter_cli.commands.hook import _evaluate_bash, _evaluate_write, posttool
+from rafter_cli.commands.hook import _evaluate_bash, _evaluate_write, posttool, _write_pretool_decision
 from rafter_cli.core.config_schema import get_default_config
 
 
@@ -100,6 +100,50 @@ class TestEvaluateWrite:
         assert result["decision"] == "allow"
 
 
+class TestPretoolEnvelope:
+    """Tests that pretool outputs Claude Code's hookSpecificOutput envelope."""
+
+    def test_allow_envelope_format(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert "hookSpecificOutput" in data
+        hso = data["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PreToolUse"
+        assert hso["permissionDecision"] == "allow"
+        assert "permissionDecisionReason" in hso
+
+    def test_deny_envelope_format(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert "hookSpecificOutput" in data
+        hso = data["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PreToolUse"
+        assert hso["permissionDecision"] == "deny"
+        assert hso["permissionDecisionReason"] != ""
+
+    def test_invalid_json_returns_allow_envelope(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool"], input="not json{{{")
+        data = json.loads(result.output.strip())
+        assert data["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
 class TestPosttool:
     """Tests for the posttool hook command."""
 
@@ -144,7 +188,8 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
-        assert data["action"] == "continue"
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        assert "modifiedToolResult" not in data["hookSpecificOutput"]
 
     def test_clean_output_passes_through(self):
         import json
@@ -159,7 +204,8 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
-        assert data["action"] == "continue"
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        assert "modifiedToolResult" not in data["hookSpecificOutput"]
 
     def test_secret_in_output_is_redacted(self):
         import json
@@ -177,10 +223,10 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
-        assert data["action"] == "modify"
-        assert "tool_response" in data
-        assert "AKIAIOSFODNN7EXAMPLE" not in data["tool_response"]["output"]
-        assert "****" in data["tool_response"]["output"]
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        modified = data["hookSpecificOutput"]["modifiedToolResult"]
+        assert "AKIAIOSFODNN7EXAMPLE" not in modified["output"]
+        assert "****" in modified["output"]
 
     def test_secret_in_content_is_redacted(self):
         import json
@@ -197,8 +243,9 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
-        assert data["action"] == "modify"
-        assert "AKIAIOSFODNN7EXAMPLE" not in data["tool_response"]["content"]
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        modified = data["hookSpecificOutput"]["modifiedToolResult"]
+        assert "AKIAIOSFODNN7EXAMPLE" not in modified["content"]
 
     def test_error_field_preserved_when_output_redacted(self):
         import json
@@ -216,8 +263,9 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
-        assert data["action"] == "modify"
-        assert data["tool_response"]["error"] == "some stderr message"
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        modified = data["hookSpecificOutput"]["modifiedToolResult"]
+        assert modified["error"] == "some stderr message"
 
     def test_invalid_json_passes_through(self):
         import json
@@ -227,4 +275,5 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input="not valid json{{")
         data = json.loads(result.output.strip())
-        assert data["action"] == "continue"
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        assert "modifiedToolResult" not in data["hookSpecificOutput"]
