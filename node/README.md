@@ -584,7 +584,7 @@ Security settings are stored in `~/.rafter/config.json`. Key settings:
 
 ## OpenClaw Integration
 
-Rafter integrates seamlessly with [OpenClaw](https://openclaw.com) autonomous agents.
+Rafter integrates seamlessly with [OpenClaw](https://openclaw.com).
 
 ### Setup
 
