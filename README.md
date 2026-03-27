@@ -79,7 +79,7 @@ No account. No telemetry. No data collection. The CLI is MIT-licensed and all lo
 
 ## Installation
 
-### Node.js (full features: backend + agent security)
+### Node.js (full features: local security + remote analysis)
 
 ```sh
 npm install -g @rafter-security/cli
@@ -93,7 +93,7 @@ pnpm add -g @rafter-security/cli
 pip install rafter-cli
 ```
 
-Requires Python 3.10+. Full feature parity with Node.js including agent security and MCP server.
+Requires Python 3.10+. Full feature parity with Node.js including local security toolkit and MCP server.
 
 ---
 

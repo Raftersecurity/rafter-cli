@@ -1,10 +1,10 @@
 # @rafter-security/cli
 
-Node.js CLI for [Rafter](https://rafter.so) — the default security agent for AI workflows. This is the **full-featured package** with both backend code analysis and agent security.
+Node.js CLI for [Rafter](https://rafter.so) — the security toolkit for developers, human and autonomous. This is the **full-featured package** with both local security and remote code analysis.
 
-**Backend code analysis** — Remote SAST/SCA via the Rafter code analysis engine. Structured vulnerability reports with consistent JSON format and documented exit codes. Your code is deleted immediately after analysis completes. Pipe to any tool, feed to any orchestrator.
+**Local security toolkit** — Fast, deterministic secret scanning (21+ patterns, Gitleaks), policy enforcement with risk-tiered rules, pre-commit hooks, extension auditing, custom rule authoring, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, and 5 more platforms. No API key required. No data leaves your machine.
 
-**Agent security** — Local-first protection for autonomous AI agents. Fast, reliable, deterministic secret scanning (21+ patterns, Gitleaks), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. No API key required. No code leaves your machine unless you use the remote code analysis API, and is deleted immediately after the analysis engine completes.
+**Remote code analysis** — SAST/SCA via the Rafter API. Structured vulnerability reports with consistent JSON format and documented exit codes. Your code is deleted immediately after analysis completes. Pipe to any tool, feed to any workflow.
 
 ## Installation
 
@@ -54,10 +54,10 @@ rafter get <scan-id>
 rafter usage
 ```
 
-### Agent Security
+### Local Security
 
 ```bash
-# Initialize agent security
+# Initialize local security
 rafter agent init
 
 # Scan files for secrets
@@ -143,13 +143,13 @@ rafter usage
 
 ---
 
-## Agent Security Commands
+## Local Security Commands
 
-Rafter is a **delegation primitive** for autonomous agents — other systems defer security decisions to it and act on the outputs. Stable exit codes, deterministic findings, and low-noise defaults mean agents can integrate Rafter without reading prose.
+Rafter is a **security primitive** that any developer or tool can call and trust. Stable exit codes, deterministic findings, and structured output mean any workflow can integrate Rafter without reading prose.
 
 ### `rafter agent init [options]`
 
-Initialize agent security system.
+Initialize local security system.
 
 **Options:**
 - `--risk-level <level>` - Set risk level: `minimal`, `moderate`, or `aggressive` (default: `moderate`)
@@ -562,9 +562,9 @@ The CLI automatically detects your repository and branch from the current Git re
 
 **Note**: The CLI only scans remote repositories, not your current local branch.
 
-### Agent Security Configuration
+### Local Security Configuration
 
-Agent security settings are stored in `~/.rafter/config.json`. Key settings:
+Security settings are stored in `~/.rafter/config.json`. Key settings:
 
 **Risk Levels:**
 - `minimal` - Basic guidance only, most commands allowed
@@ -650,7 +650,7 @@ Claude will automatically suggest Rafter scans when you mention security, vulner
 Can you run a Rafter security scan on this repo?
 ```
 
-### 2. Agent Security Skill
+### 2. Local Security Skill
 
 **User-Invoked** - Requires explicit commands for safety
 

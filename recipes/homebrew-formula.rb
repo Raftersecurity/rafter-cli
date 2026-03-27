@@ -11,7 +11,7 @@
 #   brew install raftersecurity/rafter/rafter
 
 class Rafter < Formula
-  desc "Security agent for AI workflows — secret scanning, command interception, audit logging"
+  desc "Security toolkit for developers — secret scanning, policy enforcement, audit logging"
   homepage "https://rafter.so"
   url "https://registry.npmjs.org/@rafter-security/cli/-/cli-0.6.5.tgz"
   sha256 :no_check # Replace with actual SHA256 from npm registry

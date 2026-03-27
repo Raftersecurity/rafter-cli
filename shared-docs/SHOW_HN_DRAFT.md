@@ -8,41 +8,44 @@
 
 ## Title options (pick one)
 
-1. **Show HN: Rafter – Zero-setup security for AI coding agents (8 platforms)**
-2. **Show HN: Rafter – Secret scanning and guardrails for Claude Code, Cursor, Codex, and 5 more**
-3. **Show HN: Rafter – One CLI that adds security to any AI coding agent**
+1. **Show HN: Rafter – Security toolkit for developers, human and autonomous**
+2. **Show HN: Rafter – Secret scanning, policy enforcement, and custom rules in one CLI**
+3. **Show HN: Rafter – One security CLI for 8 dev platforms (Claude Code, Cursor, Codex, etc.)**
 
 ## Post body
 
-Hi HN, I'm [NAME] and I built Rafter, an open-source security CLI for AI coding agents.
+Hi HN, I'm [NAME] and I built Rafter, an open-source security toolkit for developers — whether you're typing commands yourself or an AI agent is doing it on your behalf.
 
-**The problem:** AI agents write and execute code autonomously. They commit secrets, run destructive commands, and install unvetted extensions — and most developers don't have guardrails in place because each agent has a different config format.
+**The problem:** Developers now work across multiple tools — terminal, IDE, AI agents — and each has a different security story. Secrets leak in commits, destructive commands run without checks, and third-party extensions go unvetted. You shouldn't need a different security setup for each tool.
 
 **What Rafter does:**
 
-- **Secret scanning** — 21+ patterns (AWS, GitHub, Stripe, etc.), pre-commit hooks, CI integration. Dual engine: tries Gitleaks first, falls back to built-in regex with zero dependencies.
-- **Command interception** — 4-tier risk classification (critical/high/medium/low). Blocks `rm -rf /`, requires approval for `sudo rm`, allows `npm install`.
-- **Skill auditing** — Scans third-party agent extensions for embedded secrets, suspicious URLs, and obfuscated commands.
-- **8-platform coverage** — Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, Aider. One `rafter agent init --all` configures all of them.
+- **Secret scanning** — 21+ built-in patterns (AWS, GitHub, Stripe, etc.), pre-commit hooks, CI integration. Dual engine: tries Gitleaks first, falls back to built-in regex. Deterministic — same inputs, same findings. JSON output you can pipe to `jq` or feed to any tool.
+- **Custom rules** — Define your own patterns in `.rafter.yml`. They work exactly like built-in rules — same JSON output, same audit log, same pre-commit enforcement.
+- **Policy enforcement** — 4-tier risk classification (critical/high/medium/low). Blocks `rm -rf /`, requires approval for `sudo rm`, allows `npm install`. Same rules whether the command comes from you or an agent.
+- **Extension auditing** — Scans third-party extensions for embedded secrets, suspicious URLs, and obfuscated commands before you install them.
+- **8 platforms** — Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, Aider. One `rafter agent init --all` configures all of them.
 - **MCP server** — `rafter mcp serve` exposes tools to any MCP-compatible client.
 
 **What's different:**
 
-No other tool covers all 8 platforms. Knostic Kirin does 4, GitGuardian MCP does 2, GitHub MCP does 1. Rafter also combines secrets + command interception + skill audit + MCP + CI in one package.
+Rafter treats agents as first-class developers, not things to babysit. The same security primitives (scan, enforce, audit) work the same way regardless of who's running the command. Structured JSON output, documented exit codes, and a stable contract mean any tool can act on Rafter's findings without parsing prose.
 
-**Free and local:** No API key, no account, no telemetry for agent security features. MIT licensed. Everything runs on your machine.
+No other tool covers all 8 platforms. Rafter also combines scanning + policy enforcement + custom rules + extension audit + MCP + CI in one package.
+
+**Free and local:** No API key, no account, no telemetry. MIT licensed. Everything runs on your machine.
 
 **Technical decisions:**
 - Dual implementation (TypeScript + Python) for maximum reach
 - Deterministic scanning — same inputs, same outputs across versions
 - UNIX philosophy — JSON to stdout, status to stderr, documented exit codes
-- Stable output contract — orchestrators can rely on the schema
+- Stable output contract — any tool can rely on the schema
 
 Install: `npm i -g @rafter-security/cli` or `pip install rafter-cli`
 
 GitHub: https://github.com/Raftersecurity/rafter-cli
 
-Would love feedback on the pattern library, risk classification tiers, and which platforms to prioritize next.
+Would love feedback on the pattern library, custom rule authoring, and which platforms to prioritize next.
 
 ---
 
@@ -51,13 +54,13 @@ Would love feedback on the pattern library, risk classification tiers, and which
 Founder should be in comments within 5 minutes of posting. Prepared answers for likely questions:
 
 **Q: "Why not just use Gitleaks directly?"**
-A: Rafter uses Gitleaks when available but adds command interception, skill auditing, multi-agent config, and MCP. It's the integration layer, not a replacement.
+A: Rafter uses Gitleaks when available but adds policy enforcement, custom rules, extension auditing, multi-platform config, and MCP. It's the integration layer, not a replacement.
 
 **Q: "How is this different from pre-commit hooks?"**
-A: Pre-commit catches secrets at commit time. Rafter also intercepts live commands, audits agent extensions, and works at runtime — not just commit time.
+A: Pre-commit catches secrets at commit time. Rafter also enforces policy on live commands, audits extensions, and works at runtime — not just commit time.
 
 **Q: "8 platforms sounds like spread too thin"**
-A: Each adapter is ~50-100 lines. The core logic (scanning, interception, audit) is shared. Platform adapters just know where to write config files.
+A: Each adapter is ~50-100 lines. The core logic (scanning, policy enforcement, audit) is shared. Platform adapters just know where to write config files.
 
 **Q: "What's the business model?"**
 A: CLI is free and MIT. Enterprise adds dashboards, policy management, and compliance reporting.

@@ -1,6 +1,6 @@
 # Rafter Recipes
 
-Integration snippets for making Rafter your default security agent. Each recipe is self-contained — stable exit codes, deterministic output, and structured JSON work the same across all surfaces.
+Integration snippets for adding Rafter security to your development workflow. Each recipe is self-contained — stable exit codes, deterministic output, and structured JSON work the same across all surfaces.
 
 | Recipe | What it does |
 |--------|-------------|
@@ -28,4 +28,4 @@ pip install rafter-cli
 rafter agent init
 ```
 
-All agent security features work offline with no API key. Backend code analysis (`rafter run`) requires a key from [rafter.so](https://rafter.so).
+All local security features work offline with no API key. Remote code analysis (`rafter run`) requires a key from [rafter.so](https://rafter.so).

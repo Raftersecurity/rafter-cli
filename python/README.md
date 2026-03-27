@@ -1,10 +1,10 @@
 # rafter-cli (Python)
 
-Python CLI for [Rafter](https://rafter.so) — the default security agent for AI workflows. Full feature parity with the Node.js package.
+Python CLI for [Rafter](https://rafter.so) — the security toolkit for developers, human and autonomous. Full feature parity with the Node.js package.
 
-**Backend code analysis** — Remote SAST/SCA via the Rafter code analysis engine. Structured vulnerability reports with consistent JSON format and documented exit codes. Your code is deleted immediately after analysis completes. Pipe to any tool, feed to any orchestrator.
+**Local security toolkit** — Fast, deterministic secret scanning (21+ patterns, Gitleaks), policy enforcement with risk-tiered rules, pre-commit hooks, pretool hooks, extension auditing, custom rule authoring, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, and 5 more platforms. No API key required. No data leaves your machine.
 
-**Agent security** — Local-first protection for autonomous AI agents. Fast, reliable, deterministic secret scanning (21+ patterns, Gitleaks), command interception with risk-tiered approval, pre-commit hooks, pretool hooks, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. No API key required. No code leaves your machine unless you use the remote code analysis API, and is deleted immediately after the analysis engine completes.
+**Remote code analysis** — SAST/SCA via the Rafter API. Structured vulnerability reports with consistent JSON format and documented exit codes. Your code is deleted immediately after analysis completes. Pipe to any tool, feed to any workflow.
 
 **MCP server** — Expose Rafter security tools to any MCP-compatible client (Cursor, Windsurf, Claude Desktop, Cline) over stdio.
 
@@ -32,7 +32,7 @@ rafter usage                                  # check quota
 
 **Important**: The code analysis engine runs against the **remote repository** on GitHub, not your local files. Your code is deleted immediately after analysis completes.
 
-### Agent Security
+### Local Security
 
 ```bash
 rafter agent init                # initialize config + detect environments

@@ -101,10 +101,10 @@ With no topic, lists available topics and usage examples.
 
 | Topic | Description |
 |-------|-------------|
-| `security` | Local agent security — scanning, auditing, risk assessment |
-| `scanning` | Remote SAST/SCA code analysis via backend API |
+| `security` | Local security toolkit — scanning, auditing, policy enforcement |
+| `scanning` | Remote SAST/SCA code analysis via Rafter API |
 | `commands` | Condensed command reference for all rafter commands |
-| `setup` | Setup instructions for all supported agent platforms |
+| `setup` | Setup instructions for all supported platforms |
 | `setup/<platform>` | Platform-specific setup (claude-code, codex, gemini, cursor, windsurf, aider, openclaw, continue, generic) |
 | `all` | Everything — full security + scanning + setup briefing |
 
