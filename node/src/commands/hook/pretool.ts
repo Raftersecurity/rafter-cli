@@ -194,5 +194,12 @@ function readStdin(): Promise<string> {
 }
 
 function writeDecision(decision: HookDecision): void {
-  process.stdout.write(JSON.stringify(decision) + "\n");
+  const output = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: decision.decision === "deny" ? "deny" : "allow",
+      permissionDecisionReason: decision.reason ?? "",
+    },
+  };
+  process.stdout.write(JSON.stringify(output) + "\n");
 }

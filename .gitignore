@@ -29,3 +29,6 @@ node/package */
 .beads/
 package-lock.json
 state.json
+
+# Gas Town (added by gt)
+.claude/
