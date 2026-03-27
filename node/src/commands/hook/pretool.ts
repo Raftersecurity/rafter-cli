@@ -4,6 +4,8 @@ import { RegexScanner } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { execSync } from "child_process";
 
+type HookFormat = "claude" | "cursor" | "gemini" | "windsurf";
+
 interface HookInput {
   session_id?: string;
   tool_name: string;
@@ -45,32 +47,84 @@ function formatApprovalMessage(command: string, evaluation: CommandEvaluation): 
 export function createHookPretoolCommand(): Command {
   return new Command("pretool")
     .description("PreToolUse hook handler (reads stdin, writes JSON decision to stdout)")
-    .action(async () => {
+    .option("--format <format>", "Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf", "claude")
+    .action(async (opts) => {
+      const format = (opts.format || "claude") as HookFormat;
       try {
         const input = await readStdin();
-        let payload: HookInput;
+        let raw: Record<string, any>;
 
         try {
-          payload = JSON.parse(input);
+          raw = JSON.parse(input);
         } catch {
           // Can't parse → fail open
-          writeDecision({ decision: "allow" });
+          writeDecision({ decision: "allow" }, format);
           return;
         }
 
         // Validate payload is an object with expected shape
-        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-          writeDecision({ decision: "allow" });
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          writeDecision({ decision: "allow" }, format);
           return;
         }
 
+        const payload = normalizeInput(raw, format);
         const decision = evaluateToolCall(payload);
-        writeDecision(decision);
+        writeDecision(decision, format);
       } catch {
         // Any unexpected error → fail open
-        writeDecision({ decision: "allow" });
+        writeDecision({ decision: "allow" }, format);
       }
     });
+}
+
+/**
+ * Normalize platform-specific stdin JSON into a common HookInput shape.
+ *
+ * Claude/Codex/Continue: { tool_name, tool_input: { command } }
+ * Cursor:                { hook_event_name, command, cwd }
+ * Gemini:                { tool_name, tool_input: { command } }  (same as Claude)
+ * Windsurf:              { agent_action_name, tool_info: { command_line, cwd } }
+ */
+function normalizeInput(raw: Record<string, any>, format: HookFormat): HookInput {
+  if (format === "cursor") {
+    // Cursor sends { command, cwd, hook_event_name, ... }
+    const command = raw.command || "";
+    const eventName = raw.hook_event_name || "";
+    // beforeShellExecution → Bash, beforeMCPExecution → tool name from payload
+    const toolName = eventName === "beforeShellExecution" ? "Bash"
+      : eventName === "beforeReadFile" ? "Read"
+      : eventName === "afterFileEdit" ? "Write"
+      : raw.tool_name || "unknown";
+    return {
+      session_id: raw.conversation_id,
+      tool_name: toolName,
+      tool_input: eventName === "beforeShellExecution" ? { command } : (raw.tool_input || {}),
+    };
+  }
+
+  if (format === "windsurf") {
+    // Windsurf sends { agent_action_name, tool_info: { command_line, cwd } }
+    const toolInfo = raw.tool_info || {};
+    const actionName = raw.agent_action_name || "";
+    const toolName = actionName.includes("run_command") ? "Bash"
+      : actionName.includes("write_code") ? "Write"
+      : actionName.includes("read_code") ? "Read"
+      : actionName.includes("mcp_tool_use") ? (toolInfo.mcp_tool_name || "unknown")
+      : "unknown";
+    return {
+      session_id: raw.trajectory_id,
+      tool_name: toolName,
+      tool_input: toolName === "Bash" ? { command: toolInfo.command_line || "" } : toolInfo,
+    };
+  }
+
+  // Claude, Codex, Continue, Gemini — all use { tool_name, tool_input }
+  return {
+    session_id: raw.session_id,
+    tool_name: raw.tool_name || "",
+    tool_input: raw.tool_input || {},
+  };
 }
 
 function evaluateToolCall(payload: HookInput): HookDecision {
@@ -193,13 +247,55 @@ function readStdin(): Promise<string> {
   });
 }
 
-function writeDecision(decision: HookDecision): void {
-  const output = {
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: decision.decision === "deny" ? "deny" : "allow",
-      permissionDecisionReason: decision.reason ?? "",
-    },
-  };
-  process.stdout.write(JSON.stringify(output) + "\n");
+function writeDecision(decision: HookDecision, format: HookFormat): void {
+  const isDeny = decision.decision === "deny";
+  const reason = decision.reason ?? "";
+
+  switch (format) {
+    case "cursor": {
+      // Cursor: { permission: "allow"|"deny"|"ask", agentMessage?, userMessage? }
+      const output: Record<string, any> = {
+        permission: isDeny ? "deny" : "allow",
+      };
+      if (isDeny && reason) {
+        output.agentMessage = reason;
+        output.userMessage = reason;
+      }
+      process.stdout.write(JSON.stringify(output) + "\n");
+      break;
+    }
+
+    case "gemini": {
+      // Gemini: {} for allow, { decision: "deny", reason: "..." } for deny
+      if (isDeny) {
+        process.stdout.write(JSON.stringify({ decision: "deny", reason }) + "\n");
+      } else {
+        process.stdout.write("{}\n");
+      }
+      break;
+    }
+
+    case "windsurf": {
+      // Windsurf: exit 0 for allow, exit 2 + stderr for deny
+      if (isDeny) {
+        process.stderr.write(reason + "\n");
+        process.exit(2);
+      }
+      // Allow: exit 0 (no output needed)
+      break;
+    }
+
+    default: {
+      // Claude Code / Codex / Continue.dev: hookSpecificOutput envelope
+      const output = {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: isDeny ? "deny" : "allow",
+          permissionDecisionReason: reason,
+        },
+      };
+      process.stdout.write(JSON.stringify(output) + "\n");
+      break;
+    }
+  }
 }

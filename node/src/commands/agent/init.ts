@@ -110,6 +110,224 @@ function installClaudeCodeHooks(): void {
   console.log(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
 }
 
+function installCodexHooks(): void {
+  const homeDir = os.homedir();
+  const codexDir = path.join(homeDir, ".codex");
+
+  if (!fs.existsSync(codexDir)) {
+    fs.mkdirSync(codexDir, { recursive: true });
+  }
+
+  const hooksPath = path.join(codexDir, "hooks.json");
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(hooksPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing Codex hooks.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!config.hooks) config.hooks = {};
+  if (!config.hooks.PreToolUse) config.hooks.PreToolUse = [];
+  if (!config.hooks.PostToolUse) config.hooks.PostToolUse = [];
+
+  // Codex uses the same hookSpecificOutput protocol as Claude Code (format=claude)
+  const preHook = { type: "command", command: "rafter hook pretool" };
+  const postHook = { type: "command", command: "rafter hook posttool" };
+
+  // Remove existing rafter hooks
+  config.hooks.PreToolUse = config.hooks.PreToolUse.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
+  );
+  config.hooks.PostToolUse = config.hooks.PostToolUse.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
+  );
+
+  config.hooks.PreToolUse.push(
+    { matcher: "Bash", hooks: [preHook] },
+  );
+  config.hooks.PostToolUse.push(
+    { matcher: ".*", hooks: [postHook] },
+  );
+
+  fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+}
+
+function installCursorHooks(): void {
+  const homeDir = os.homedir();
+  const cursorDir = path.join(homeDir, ".cursor");
+
+  if (!fs.existsSync(cursorDir)) {
+    fs.mkdirSync(cursorDir, { recursive: true });
+  }
+
+  const hooksPath = path.join(cursorDir, "hooks.json");
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(hooksPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing Cursor hooks.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!config.version) config.version = 1;
+  if (!config.hooks) config.hooks = {};
+  if (!config.hooks.beforeShellExecution) config.hooks.beforeShellExecution = [];
+
+  // Remove existing rafter hooks
+  config.hooks.beforeShellExecution = config.hooks.beforeShellExecution.filter(
+    (entry: any) => !entry.command?.includes("rafter hook pretool")
+  );
+
+  config.hooks.beforeShellExecution.push({
+    command: "rafter hook pretool --format cursor",
+    type: "command",
+    timeout: 5000,
+  });
+
+  fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+}
+
+function installGeminiHooks(): void {
+  const homeDir = os.homedir();
+  const geminiDir = path.join(homeDir, ".gemini");
+
+  if (!fs.existsSync(geminiDir)) {
+    fs.mkdirSync(geminiDir, { recursive: true });
+  }
+
+  const settingsPath = path.join(geminiDir, "settings.json");
+
+  let settings: Record<string, any> = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing Gemini settings.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!settings.hooks) settings.hooks = {};
+  if (!settings.hooks.BeforeTool) settings.hooks.BeforeTool = [];
+  if (!settings.hooks.AfterTool) settings.hooks.AfterTool = [];
+
+  // Remove existing rafter hooks
+  settings.hooks.BeforeTool = settings.hooks.BeforeTool.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.includes("rafter hook pretool"))
+  );
+  settings.hooks.AfterTool = settings.hooks.AfterTool.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.includes("rafter hook posttool"))
+  );
+
+  settings.hooks.BeforeTool.push({
+    matcher: "shell|write_file",
+    hooks: [{ type: "command", command: "rafter hook pretool --format gemini", timeout: 5000 }],
+  });
+  settings.hooks.AfterTool.push({
+    matcher: ".*",
+    hooks: [{ type: "command", command: "rafter hook posttool --format gemini", timeout: 5000 }],
+  });
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+  console.log(fmt.success(`Installed hooks to ${settingsPath}`));
+}
+
+function installWindsurfHooks(): void {
+  const homeDir = os.homedir();
+  const windsurfDir = path.join(homeDir, ".windsurf");
+
+  if (!fs.existsSync(windsurfDir)) {
+    fs.mkdirSync(windsurfDir, { recursive: true });
+  }
+
+  const hooksPath = path.join(windsurfDir, "hooks.json");
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(hooksPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing Windsurf hooks.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!config.hooks) config.hooks = {};
+  if (!config.hooks.pre_run_command) config.hooks.pre_run_command = [];
+  if (!config.hooks.pre_write_code) config.hooks.pre_write_code = [];
+
+  // Remove existing rafter hooks
+  config.hooks.pre_run_command = config.hooks.pre_run_command.filter(
+    (entry: any) => !entry.command?.includes("rafter hook pretool")
+  );
+  config.hooks.pre_write_code = config.hooks.pre_write_code.filter(
+    (entry: any) => !entry.command?.includes("rafter hook pretool")
+  );
+
+  config.hooks.pre_run_command.push({
+    command: "rafter hook pretool --format windsurf",
+    show_output: true,
+  });
+  config.hooks.pre_write_code.push({
+    command: "rafter hook pretool --format windsurf",
+    show_output: true,
+  });
+
+  fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+}
+
+function installContinueDevHooks(): void {
+  const homeDir = os.homedir();
+  const continueDir = path.join(homeDir, ".continue");
+
+  if (!fs.existsSync(continueDir)) {
+    fs.mkdirSync(continueDir, { recursive: true });
+  }
+
+  const settingsPath = path.join(continueDir, "settings.json");
+
+  let settings: Record<string, any> = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing Continue.dev settings.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!settings.hooks) settings.hooks = {};
+  if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+  if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
+
+  // Continue.dev uses the same protocol as Claude Code
+  const preHook = { type: "command", command: "rafter hook pretool" };
+  const postHook = { type: "command", command: "rafter hook posttool" };
+
+  settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
+  );
+  settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
+  );
+
+  settings.hooks.PreToolUse.push(
+    { matcher: "Bash", hooks: [preHook] },
+    { matcher: "Write|Edit", hooks: [preHook] },
+  );
+  settings.hooks.PostToolUse.push(
+    { matcher: ".*", hooks: [postHook] },
+  );
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+  console.log(fmt.success(`Installed hooks to ${settingsPath}`));
+}
+
 /** MCP server entry for rafter — shared across MCP-native clients */
 const RAFTER_MCP_ENTRY = {
   command: "rafter",
@@ -415,12 +633,12 @@ export function createInitCommand(): Command {
         console.log(fmt.info("Select integrations to install:"));
         console.log();
         if (hasClaudeCode && !wantClaudeCode) wantClaudeCode = await askYesNo("Install Claude Code hooks + skills?");
-        if (hasCodex && !wantCodex) wantCodex = await askYesNo("Install Codex CLI skills?");
+        if (hasCodex && !wantCodex) wantCodex = await askYesNo("Install Codex CLI skills + hooks?");
         if (hasOpenClaw && !wantOpenClaw) wantOpenClaw = await askYesNo("Install OpenClaw skill?");
-        if (hasGemini && !wantGemini) wantGemini = await askYesNo("Install Gemini CLI MCP server?");
-        if (hasCursor && !wantCursor) wantCursor = await askYesNo("Install Cursor MCP server?");
-        if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP server?");
-        if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP server?");
+        if (hasGemini && !wantGemini) wantGemini = await askYesNo("Install Gemini CLI MCP + hooks?");
+        if (hasCursor && !wantCursor) wantCursor = await askYesNo("Install Cursor MCP + hooks?");
+        if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP + hooks?");
+        if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP + hooks?");
         if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
         if (!wantGitleaks) wantGitleaks = await askYesNo("Download Gitleaks binary (enhanced scanning)?");
         console.log();
@@ -571,11 +789,12 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install Codex CLI skills if opted in
+      // Install Codex CLI skills + hooks if opted in
       let codexOk = false;
       if (hasCodex && wantCodex) {
         try {
           installCodexSkills();
+          installCodexHooks();
           manager.set("agent.environments.codex.enabled", true);
           codexOk = true;
         } catch (e) {
@@ -583,44 +802,48 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install Gemini CLI MCP if opted in
+      // Install Gemini CLI MCP + hooks if opted in
       let geminiOk = false;
       if (hasGemini && wantGemini) {
         try {
           geminiOk = installGeminiMcp();
+          installGeminiHooks();
           if (geminiOk) manager.set("agent.environments.gemini.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Gemini CLI integration: ${e}`));
         }
       }
 
-      // Install Cursor MCP if opted in
+      // Install Cursor MCP + hooks if opted in
       let cursorOk = false;
       if (hasCursor && wantCursor) {
         try {
           cursorOk = installCursorMcp();
+          installCursorHooks();
           if (cursorOk) manager.set("agent.environments.cursor.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Cursor integration: ${e}`));
         }
       }
 
-      // Install Windsurf MCP if opted in
+      // Install Windsurf MCP + hooks if opted in
       let windsurfOk = false;
       if (hasWindsurf && wantWindsurf) {
         try {
           windsurfOk = installWindsurfMcp();
+          installWindsurfHooks();
           if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Windsurf integration: ${e}`));
         }
       }
 
-      // Install Continue.dev MCP if opted in
+      // Install Continue.dev MCP + hooks if opted in
       let continueOk = false;
       if (hasContinueDev && wantContinue) {
         try {
           continueOk = installContinueDevMcp();
+          installContinueDevHooks();
           if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Continue.dev integration: ${e}`));
