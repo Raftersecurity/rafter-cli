@@ -1,13 +1,13 @@
 # Rafter CLI
 
-Multi-language CLI for [Rafter](https://rafter.so) — the security toolkit for developers, human and autonomous.
+Multi-language CLI for [Rafter](https://rafter.so) — the security toolkit for developers.
 
 > **Free forever for individuals and open source. No account required. No telemetry.**
 >
 > All local security features work with zero setup — no API key, no sign-up, no usage limits.
 > Enterprise teams that need dashboards, policy management, and compliance reporting can upgrade later.
 
-Rafter is a **security primitive** that any developer — or any tool acting on a developer's behalf — can call and trust. Stable contracts, deterministic results, and structured output mean you can pipe findings to `jq`, feed them to an orchestrator, or read them yourself.
+Rafter is a **security primitive** that any developer can call and trust. Stable contracts, deterministic results, and structured output mean you can pipe findings to `jq`, feed them to an orchestrator, or read them yourself.
 
 **Two capabilities in one package:**
 
@@ -15,7 +15,7 @@ Rafter is a **security primitive** that any developer — or any tool acting on 
 
 2. **Remote Code Analysis** — SAST/SCA security audits on GitHub repos via the Rafter API. Structured vulnerability reports in JSON or Markdown with consistent schemas and clear severity levels. Pipe to any tool, feed to any workflow.
 
-The CLI follows UNIX principles and provides a **stable output contract**: scan results to stdout as JSON, status to stderr, documented exit codes. No code leaves your machine unless you explicitly use the remote API, and is deleted immediately after analysis completes. Any tool — human-driven or autonomous — can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
+The CLI follows UNIX principles and provides a **stable output contract**: scan results to stdout as JSON, status to stderr, documented exit codes. No code leaves your machine unless you explicitly use the remote API, and is deleted immediately after analysis completes. Any developer can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
 
 ## 90-Second Quickstart
 
@@ -147,13 +147,13 @@ rafter get SCAN_ID > scan_results.json
 
 | Flag | Description |
 |------|-------------|
-| `-a, --agent` | Plain output for AI agents (no colors, no emoji). Useful when piping to LLMs or automated systems. |
+| `-a, --agent` | Plain output (no colors, no emoji). Useful when piping to other tools or automated systems. |
 
 ## Local Security Toolkit — Free, No Account Required
 
 Security features that run on your machine. Everything below works offline — **no API key, no sign-up, no telemetry, no usage limits.** Free forever for individuals and open source.
 
-Whether you're running commands yourself, or an AI agent is running them on your behalf, Rafter enforces the same policies and produces the same deterministic output.
+Every developer gets the same policies and the same deterministic output.
 
 **Trust guarantees:** No code leaves your machine unless you explicitly use the remote API. Secrets are redacted in all output — logs, JSON, and human-readable formats. No data is collected or phoned home.
 

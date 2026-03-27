@@ -12,7 +12,7 @@ last_updated: 2026-03-04
 
 # Rafter Security
 
-Security layer for autonomous agents. Scans code, intercepts dangerous commands, audits skills, and prevents vulnerabilities.
+Local security toolkit for developers. Scans code, enforces policies on commands, audits extensions, and prevents vulnerabilities.
 
 ## Overview
 

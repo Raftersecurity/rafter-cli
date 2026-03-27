@@ -7,7 +7,7 @@ allowed-tools: [Bash, Read, Glob, Grep]
 
 # Rafter Local Security Tools
 
-Deterministic scanning, actionable findings, and stable output contracts. Every finding includes file, line, rule ID, and severity — structured for agents to act on, not just read.
+Deterministic scanning, actionable findings, and stable output contracts. Every finding includes file, line, rule ID, and severity — structured for any developer to act on, not just read.
 
 > **Full CLI reference**: Run `rafter brief commands` for a condensed command reference.
 > **Platform setup**: Run `rafter brief setup/<platform>` for integration guides.

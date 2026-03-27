@@ -1,6 +1,6 @@
 # @rafter-security/cli
 
-Node.js CLI for [Rafter](https://rafter.so) — the security toolkit for developers, human and autonomous. This is the **full-featured package** with both local security and remote code analysis.
+Node.js CLI for [Rafter](https://rafter.so) — the security toolkit for developers. This is the **full-featured package** with both local security and remote code analysis.
 
 **Local security toolkit** — Fast, deterministic secret scanning (21+ patterns, Gitleaks), policy enforcement with risk-tiered rules, pre-commit hooks, extension auditing, custom rule authoring, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, and 5 more platforms. No API key required. No data leaves your machine.
 
@@ -77,7 +77,7 @@ rafter agent config show
 
 | Flag | Description |
 |------|-------------|
-| `-a, --agent` | Plain output for AI agents (no colors, no emoji) |
+| `-a, --agent` | Plain output (no colors, no emoji) |
 | `-V, --version` | Print version |
 | `-h, --help` | Show help |
 
@@ -167,7 +167,7 @@ Initialize local security system.
 **What it does:**
 - Creates `~/.rafter/config.json` configuration
 - Initializes directory structure
-- Detects available agent environments
+- Detects installed platforms
 - Installs opted-in integrations (skills, hooks, MCP servers)
 - Sets up audit logging
 

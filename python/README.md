@@ -1,6 +1,6 @@
 # rafter-cli (Python)
 
-Python CLI for [Rafter](https://rafter.so) — the security toolkit for developers, human and autonomous. Full feature parity with the Node.js package.
+Python CLI for [Rafter](https://rafter.so) — the security toolkit for developers. Full feature parity with the Node.js package.
 
 **Local security toolkit** — Fast, deterministic secret scanning (21+ patterns, Gitleaks), policy enforcement with risk-tiered rules, pre-commit hooks, pretool hooks, extension auditing, custom rule authoring, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, and 5 more platforms. No API key required. No data leaves your machine.
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Rafter is the security toolkit for developers — human and autonomous. Stable output contracts mean any tool can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
+Rafter is the security toolkit for developers. Stable output contracts mean any developer can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
 
 **Free forever for individuals and open source.** No account required. No telemetry. All local security features (secret scanning, policy enforcement, pre-commit hooks, audit logging, MCP server) work without an API key, without network access, and without usage limits.
 
@@ -39,7 +39,7 @@ The CLI follows UNIX principles:
 
 ## Global Options
 
-- `-a, --agent` — Plain output for AI agents (no colors, no emoji)
+- `-a, --agent` — Plain output (no colors, no emoji)
 - `-V, --version` — Print version
 - `-h, --help` — Show help
 

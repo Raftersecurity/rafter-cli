@@ -8,28 +8,28 @@
 
 ## Title options (pick one)
 
-1. **Show HN: Rafter – Security toolkit for developers, human and autonomous**
+1. **Show HN: Rafter – Security toolkit for developers (agents are devs too)**
 2. **Show HN: Rafter – Secret scanning, policy enforcement, and custom rules in one CLI**
 3. **Show HN: Rafter – One security CLI for 8 dev platforms (Claude Code, Cursor, Codex, etc.)**
 
 ## Post body
 
-Hi HN, I'm [NAME] and I built Rafter, an open-source security toolkit for developers — whether you're typing commands yourself or an AI agent is doing it on your behalf.
+Hi HN, I'm [NAME] and I built Rafter, an open-source security toolkit for developers. Agents are developers too — they read code, write code, run commands, and commit. They deserve the same security tooling.
 
-**The problem:** Developers now work across multiple tools — terminal, IDE, AI agents — and each has a different security story. Secrets leak in commits, destructive commands run without checks, and third-party extensions go unvetted. You shouldn't need a different security setup for each tool.
+**The problem:** Developers now work across 8+ tools — terminal, IDE, Claude Code, Cursor, Codex — and each has a different security story. Secrets leak in commits, destructive commands run without checks, and third-party extensions go unvetted. You shouldn't need a different security setup for each tool.
 
 **What Rafter does:**
 
 - **Secret scanning** — 21+ built-in patterns (AWS, GitHub, Stripe, etc.), pre-commit hooks, CI integration. Dual engine: tries Gitleaks first, falls back to built-in regex. Deterministic — same inputs, same findings. JSON output you can pipe to `jq` or feed to any tool.
 - **Custom rules** — Define your own patterns in `.rafter.yml`. They work exactly like built-in rules — same JSON output, same audit log, same pre-commit enforcement.
-- **Policy enforcement** — 4-tier risk classification (critical/high/medium/low). Blocks `rm -rf /`, requires approval for `sudo rm`, allows `npm install`. Same rules whether the command comes from you or an agent.
+- **Policy enforcement** — 4-tier risk classification (critical/high/medium/low). Blocks `rm -rf /`, requires approval for `sudo rm`, allows `npm install`. Same rules for every developer.
 - **Extension auditing** — Scans third-party extensions for embedded secrets, suspicious URLs, and obfuscated commands before you install them.
 - **8 platforms** — Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, Aider. One `rafter agent init --all` configures all of them.
 - **MCP server** — `rafter mcp serve` exposes tools to any MCP-compatible client.
 
 **What's different:**
 
-Rafter treats agents as first-class developers, not things to babysit. The same security primitives (scan, enforce, audit) work the same way regardless of who's running the command. Structured JSON output, documented exit codes, and a stable contract mean any tool can act on Rafter's findings without parsing prose.
+Agents are developers. They scan, commit, push, and deploy — so they need the same security primitives any developer does. Rafter provides one set of tools (scan, enforce, audit) that work identically across all 8 platforms. Structured JSON output, documented exit codes, and a stable contract mean any developer can act on findings without parsing prose.
 
 No other tool covers all 8 platforms. Rafter also combines scanning + policy enforcement + custom rules + extension audit + MCP + CI in one package.
 
@@ -39,7 +39,7 @@ No other tool covers all 8 platforms. Rafter also combines scanning + policy enf
 - Dual implementation (TypeScript + Python) for maximum reach
 - Deterministic scanning — same inputs, same outputs across versions
 - UNIX philosophy — JSON to stdout, status to stderr, documented exit codes
-- Stable output contract — any tool can rely on the schema
+- Stable output contract — any developer can rely on the schema
 
 Install: `npm i -g @rafter-security/cli` or `pip install rafter-cli`
 
