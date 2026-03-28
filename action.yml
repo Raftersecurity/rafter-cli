@@ -22,7 +22,7 @@ branding:
 
 inputs:
   scan-path:
-    description: Path to scan for secrets (default: repository root)
+    description: "Path to scan for secrets (default: repository root)"
     required: false
     default: '.'
   args:
@@ -30,15 +30,15 @@ inputs:
     required: false
     default: '--quiet'
   version:
-    description: Rafter CLI version to install (e.g. "0.6.5", "latest")
+    description: "Rafter CLI version to install (e.g. 0.6.5, latest)"
     required: false
     default: 'latest'
   install-method:
-    description: Installation method — "npm" or "pip"
+    description: "Installation method: npm or pip"
     required: false
     default: 'npm'
   format:
-    description: Output format — "json" or "text"
+    description: "Output format: json or text"
     required: false
     default: 'json'
 
