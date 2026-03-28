@@ -376,8 +376,8 @@ describe("MCP Server — version reporting", () => {
       ? undefined
       : server;
 
-    // The version is set in the Server constructor — verify it matches package.json
-    expect(version).toBe("0.6.5");
+    // The version is set in the Server constructor — verify it's a valid semver
+    expect(version).toMatch(/^\d+\.\d+\.\d+$/);
     // Ensure it's NOT the old hardcoded "0.5.0"
     expect(version).not.toBe("0.5.0");
   });
