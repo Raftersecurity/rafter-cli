@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { createAuditCommand } from "./audit.js";
 import { createScanCommand } from "./scan.js";
 import { createInitCommand } from "./init.js";
+import { createInitProjectCommand } from "./init-project.js";
 import { createConfigCommand } from "./config.js";
 import { createExecCommand } from "./exec.js";
 import { createAuditSkillCommand } from "./audit-skill.js";
@@ -17,6 +18,7 @@ export function createAgentCommand(): Command {
 
   // Add subcommands
   agent.addCommand(createInitCommand());
+  agent.addCommand(createInitProjectCommand());
   agent.addCommand(createScanCommand());
   agent.addCommand(createExecCommand());
   agent.addCommand(createConfigCommand());

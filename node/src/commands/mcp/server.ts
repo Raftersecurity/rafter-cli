@@ -47,7 +47,7 @@ function errorResult(message: string) {
   return { content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }], isError: true as const };
 }
 
-function createServer(): Server {
+export function createServer(): Server {
   const server = new Server(
     { name: "rafter", version: CLI_VERSION },
     { capabilities: { tools: {}, resources: {} } },
@@ -59,7 +59,7 @@ function createServer(): Server {
     tools: [
       {
         name: "scan_secrets",
-        description: "Scan files or directories for hardcoded secrets and credentials",
+        description: "Scan files or directories for leaked secrets, API keys, tokens, passwords, and credentials. Use before pushing code, when handling config files, or when asked 'is this safe to commit?' or 'check for leaked keys'.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -75,7 +75,7 @@ function createServer(): Server {
       },
       {
         name: "evaluate_command",
-        description: "Evaluate whether a shell command is allowed by Rafter security policy",
+        description: "Check if a shell command is safe to run per security policy. Use when asked 'is this command safe?' or before running destructive or privileged operations.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -86,7 +86,7 @@ function createServer(): Server {
       },
       {
         name: "read_audit_log",
-        description: "Read Rafter audit log entries with optional filtering",
+        description: "Read security event history — blocked commands, detected secrets, policy overrides. Use when asked 'what happened?' or 'show security events'.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -101,7 +101,7 @@ function createServer(): Server {
       },
       {
         name: "get_config",
-        description: "Read Rafter configuration (full config or a specific key)",
+        description: "Read Rafter security policy and configuration. Use to understand what protections are active and what risk level is configured.",
         inputSchema: {
           type: "object" as const,
           properties: {

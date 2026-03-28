@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from rafter_cli.commands.hook import _evaluate_bash, _evaluate_write, posttool
+from rafter_cli.commands.hook import _evaluate_bash, _evaluate_write, posttool, _write_pretool_decision
 from rafter_cli.core.config_schema import get_default_config
 
 
@@ -100,6 +100,106 @@ class TestEvaluateWrite:
         assert result["decision"] == "allow"
 
 
+class TestPretoolEnvelope:
+    """Tests that pretool outputs Claude Code's hookSpecificOutput envelope."""
+
+    def test_allow_envelope_format(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert "hookSpecificOutput" in data
+        hso = data["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PreToolUse"
+        assert hso["permissionDecision"] == "allow"
+        assert "permissionDecisionReason" in hso
+
+    def test_deny_envelope_format(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert "hookSpecificOutput" in data
+        hso = data["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PreToolUse"
+        assert hso["permissionDecision"] == "deny"
+        assert hso["permissionDecisionReason"] != ""
+
+    def test_invalid_json_returns_allow_envelope(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool"], input="not json{{{")
+        data = json.loads(result.output.strip())
+        assert data["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
+class TestCursorFormat:
+    """Tests for Cursor hook output format (--format cursor)."""
+
+    def test_cursor_allow(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        # Cursor sends { command, hook_event_name: "beforeShellExecution" }
+        payload = {"hook_event_name": "beforeShellExecution", "command": "ls -la", "cwd": "/tmp"}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool", "--format", "cursor"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert data["permission"] == "allow"
+
+    def test_cursor_deny(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {"hook_event_name": "beforeShellExecution", "command": "rm -rf /", "cwd": "/tmp"}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool", "--format", "cursor"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert data["permission"] == "deny"
+        assert "agentMessage" in data
+
+
+class TestGeminiFormat:
+    """Tests for Gemini CLI hook output format (--format gemini)."""
+
+    def test_gemini_allow(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        # Gemini sends { tool_name, tool_input } — same as Claude
+        payload = {"tool_name": "shell", "tool_input": {"command": "ls -la"}}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool", "--format", "gemini"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert data == {}
+
+    def test_gemini_deny(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool", "--format", "gemini"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        assert data["decision"] == "deny"
+        assert "reason" in data
+
+
 class TestPosttool:
     """Tests for the posttool hook command."""
 
@@ -144,7 +244,8 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
-        assert data["action"] == "continue"
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        assert "modifiedToolResult" not in data["hookSpecificOutput"]
 
     def test_clean_output_passes_through(self):
         import json
@@ -159,7 +260,8 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
-        assert data["action"] == "continue"
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        assert "modifiedToolResult" not in data["hookSpecificOutput"]
 
     def test_secret_in_output_is_redacted(self):
         import json
@@ -177,10 +279,10 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
-        assert data["action"] == "modify"
-        assert "tool_response" in data
-        assert "AKIAIOSFODNN7EXAMPLE" not in data["tool_response"]["output"]
-        assert "****" in data["tool_response"]["output"]
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        modified = data["hookSpecificOutput"]["modifiedToolResult"]
+        assert "AKIAIOSFODNN7EXAMPLE" not in modified["output"]
+        assert "****" in modified["output"]
 
     def test_secret_in_content_is_redacted(self):
         import json
@@ -197,8 +299,9 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
-        assert data["action"] == "modify"
-        assert "AKIAIOSFODNN7EXAMPLE" not in data["tool_response"]["content"]
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        modified = data["hookSpecificOutput"]["modifiedToolResult"]
+        assert "AKIAIOSFODNN7EXAMPLE" not in modified["content"]
 
     def test_error_field_preserved_when_output_redacted(self):
         import json
@@ -216,8 +319,9 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
-        assert data["action"] == "modify"
-        assert data["tool_response"]["error"] == "some stderr message"
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        modified = data["hookSpecificOutput"]["modifiedToolResult"]
+        assert modified["error"] == "some stderr message"
 
     def test_invalid_json_passes_through(self):
         import json
@@ -227,4 +331,222 @@ class TestPosttool:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["posttool"], input="not valid json{{")
         data = json.loads(result.output.strip())
-        assert data["action"] == "continue"
+        assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        assert "modifiedToolResult" not in data["hookSpecificOutput"]
+
+
+class TestNormalizePretoolInput:
+    """Tests for _normalize_pretool_input across all platform formats."""
+
+    def test_cursor_before_shell_execution(self):
+        from rafter_cli.commands.hook import _normalize_pretool_input
+        raw = {"hook_event_name": "beforeShellExecution", "command": "ls -la", "cwd": "/tmp"}
+        name, inp = _normalize_pretool_input(raw, "cursor")
+        assert name == "Bash"
+        assert inp == {"command": "ls -la"}
+
+    def test_cursor_before_read_file(self):
+        from rafter_cli.commands.hook import _normalize_pretool_input
+        raw = {"hook_event_name": "beforeReadFile", "tool_input": {"file_path": "/etc/hosts"}}
+        name, inp = _normalize_pretool_input(raw, "cursor")
+        assert name == "Read"
+        assert inp == {"file_path": "/etc/hosts"}
+
+    def test_cursor_after_file_edit(self):
+        from rafter_cli.commands.hook import _normalize_pretool_input
+        raw = {"hook_event_name": "afterFileEdit", "tool_input": {"file_path": "app.py", "content": "x=1"}}
+        name, inp = _normalize_pretool_input(raw, "cursor")
+        assert name == "Write"
+        assert inp == {"file_path": "app.py", "content": "x=1"}
+
+    def test_windsurf_pre_run_command(self):
+        from rafter_cli.commands.hook import _normalize_pretool_input
+        raw = {"agent_action_name": "pre_run_command", "tool_info": {"command_line": "ls"}}
+        name, inp = _normalize_pretool_input(raw, "windsurf")
+        assert name == "Bash"
+        assert inp == {"command": "ls"}
+
+    def test_windsurf_pre_write_code(self):
+        from rafter_cli.commands.hook import _normalize_pretool_input
+        raw = {"agent_action_name": "pre_write_code", "tool_info": {"file_path": "x.py"}}
+        name, inp = _normalize_pretool_input(raw, "windsurf")
+        assert name == "Write"
+        assert inp == {"file_path": "x.py"}
+
+    def test_windsurf_pre_mcp_tool_use(self):
+        from rafter_cli.commands.hook import _normalize_pretool_input
+        raw = {"agent_action_name": "pre_mcp_tool_use", "tool_info": {"mcp_tool_name": "scan_secrets"}}
+        name, inp = _normalize_pretool_input(raw, "windsurf")
+        assert name == "scan_secrets"
+        assert inp == {"mcp_tool_name": "scan_secrets"}
+
+    def test_claude_passthrough(self):
+        from rafter_cli.commands.hook import _normalize_pretool_input
+        raw = {"tool_name": "Bash", "tool_input": {"command": "echo hi"}}
+        name, inp = _normalize_pretool_input(raw, "claude")
+        assert name == "Bash"
+        assert inp == {"command": "echo hi"}
+
+    def test_gemini_passthrough(self):
+        from rafter_cli.commands.hook import _normalize_pretool_input
+        raw = {"tool_name": "shell", "tool_input": {"command": "pwd"}}
+        name, inp = _normalize_pretool_input(raw, "gemini")
+        assert name == "shell"
+        assert inp == {"command": "pwd"}
+
+
+class TestNormalizePosttoolInput:
+    """Tests for _normalize_posttool_input across all platform formats."""
+
+    def test_windsurf_post_run_command(self):
+        from rafter_cli.commands.hook import _normalize_posttool_input
+        raw = {
+            "agent_action_name": "post_run_command",
+            "tool_info": {"stdout": "hello", "stderr": "warn"},
+        }
+        name, resp = _normalize_posttool_input(raw, "windsurf")
+        assert name == "Bash"
+        assert resp == {"output": "hello", "error": "warn"}
+
+    def test_windsurf_non_bash(self):
+        from rafter_cli.commands.hook import _normalize_posttool_input
+        raw = {
+            "agent_action_name": "post_mcp_tool_use",
+            "tool_info": {"mcp_tool_name": "scan_secrets", "stdout": "", "stderr": ""},
+        }
+        name, resp = _normalize_posttool_input(raw, "windsurf")
+        assert name == "scan_secrets"
+
+    def test_cursor_after_shell_execution(self):
+        from rafter_cli.commands.hook import _normalize_posttool_input
+        raw = {
+            "hook_event_name": "afterShellExecution",
+            "output": "file1.txt",
+            "error": "",
+        }
+        name, resp = _normalize_posttool_input(raw, "cursor")
+        assert name == "Bash"
+        assert resp["output"] == "file1.txt"
+
+    def test_cursor_non_bash_uses_tool_name(self):
+        from rafter_cli.commands.hook import _normalize_posttool_input
+        raw = {
+            "hook_event_name": "afterReadFile",
+            "tool_name": "Read",
+            "tool_response": {"content": "data"},
+        }
+        name, resp = _normalize_posttool_input(raw, "cursor")
+        assert name == "Read"
+
+    def test_claude_passthrough(self):
+        from rafter_cli.commands.hook import _normalize_posttool_input
+        raw = {
+            "tool_name": "Bash",
+            "tool_response": {"output": "ok", "error": ""},
+        }
+        name, resp = _normalize_posttool_input(raw, "claude")
+        assert name == "Bash"
+        assert resp == {"output": "ok", "error": ""}
+
+
+class TestWindsurfFormat:
+    """Tests for Windsurf hook output format (--format windsurf)."""
+
+    def test_windsurf_pretool_allow(self):
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {
+            "agent_action_name": "pre_run_command",
+            "tool_info": {"command_line": "ls -la"},
+        }
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool", "--format", "windsurf"], input=json.dumps(payload))
+        assert result.exit_code == 0
+        # Windsurf allow = exit 0, no stdout output
+        assert result.output.strip() == ""
+
+    def test_windsurf_pretool_deny(self):
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {
+            "agent_action_name": "pre_run_command",
+            "tool_info": {"command_line": "rm -rf /"},
+        }
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["pretool", "--format", "windsurf"], input=json.dumps(payload))
+        # Windsurf deny exits with code 2 (captured as SystemExit by typer runner)
+        assert result.exit_code == 2
+        assert "Rafter blocked" in result.stderr or "Rafter" in result.stderr
+
+
+class TestCursorPosttool:
+    """Tests for Cursor posttool format (--format cursor)."""
+
+    def test_cursor_posttool_continue(self):
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {
+            "hook_event_name": "afterShellExecution",
+            "output": "file1.txt\nfile2.txt",
+            "error": "",
+        }
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["posttool", "--format", "cursor"], input=json.dumps(payload))
+        assert result.exit_code == 0
+        # Cursor continue = no stdout
+        assert result.output.strip() == ""
+
+    def test_cursor_posttool_modify(self):
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {
+            "hook_event_name": "afterShellExecution",
+            "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nother stuff",
+            "error": "",
+        }
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["posttool", "--format", "cursor"], input=json.dumps(payload))
+        assert result.exit_code == 0
+        data = json.loads(result.output.strip())
+        assert "agentMessage" in data
+        assert "redacted" in data["agentMessage"].lower()
+
+
+class TestGeminiPosttool:
+    """Tests for Gemini posttool format (--format gemini)."""
+
+    def test_gemini_posttool_continue(self):
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {
+            "tool_name": "Bash",
+            "tool_response": {"output": "clean output", "error": ""},
+        }
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["posttool", "--format", "gemini"], input=json.dumps(payload))
+        assert result.exit_code == 0
+        data = json.loads(result.output.strip())
+        assert data == {}
+
+    def test_gemini_posttool_modify(self):
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        payload = {
+            "tool_name": "Bash",
+            "tool_response": {
+                "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nother stuff",
+                "error": "",
+            },
+        }
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["posttool", "--format", "gemini"], input=json.dumps(payload))
+        assert result.exit_code == 0
+        data = json.loads(result.output.strip())
+        assert "systemMessage" in data
+        assert "redacted" in data["systemMessage"].lower()

@@ -1,16 +1,23 @@
 # Rafter CLI
 
-Multi-language CLI for [Rafter](https://rafter.so) — the default security agent for AI workflows.
+[![npm version](https://img.shields.io/npm/v/@rafter-security/cli)](https://www.npmjs.com/package/@rafter-security/cli) [![PyPI version](https://img.shields.io/pypi/v/rafter-cli)](https://pypi.org/project/rafter-cli/) [![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Rafter is a **delegation primitive**: other agents and orchestrators defer security decisions to it and trust the outputs. Stable contracts, deterministic results, and low-noise defaults mean systems can act on Rafter's findings without reading prose.
+Multi-language CLI for [Rafter](https://rafter.so) — the security toolkit built for AI coding agents and the developers who use them.
+
+> **Free forever for individuals and open source. No account required. No telemetry.**
+>
+> All local security features work with zero setup — no API key, no sign-up, no usage limits.
+> Enterprise teams that need advanced analysis and policy management can upgrade later.
+
+Rafter is a **security primitive** that any developer or agent can call and trust. Stable contracts, deterministic results, and structured output mean you can pipe findings to `jq`, feed them to an orchestrator, or read them yourself. **AI agents are first-class users** — every command is designed for programmatic consumption, and the entire codebase welcomes agent-assisted contributions.
 
 **Two capabilities in one package:**
 
-1. **Rafter Security Audits** — Remote SAST/SCA code analysis on GitHub repos via the Rafter API. Structured vulnerability reports in JSON or Markdown with consistent schemas and clear severity levels. Pipe to any tool, feed to any agent.
+1. **Local Security Toolkit** (free, no account) — Fast secret scanning (21+ built-in patterns, deterministic for a given version), policy enforcement with risk-tiered rules, pre-commit hooks, extension auditing, custom rule authoring, and full audit logging. Works offline. **No API key. No telemetry. No data leaves your machine.** Supports Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, and Aider.
 
-2. **Agent Security** — Local-first protection for autonomous AI agents. Fast, reliable secret scanning (21+ patterns, deterministic for a given version), command interception with risk-tiered approval, pre-commit hooks, skill/extension auditing, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, and Aider. **No API key required.**
+2. **Remote Code Analysis** — Deep security audits that combine agentic analysis with a full SAST/SCA toolchain. Rafter's engine examines your codebase the way a professional penetration tester would — tracing data flows, reasoning about business logic, and surfacing vulnerabilities that static rules alone miss — then cross-references findings with industry-standard SAST, SCA, and secret-detection tools. Structured reports in JSON or Markdown. Pipe to any tool, feed to any workflow.
 
-The CLI follows UNIX principles and provides a **stable output contract**: scan results to stdout, status to stderr, documented exit codes, consistent JSON structure. No code leaves your machine unless you explicitly use the remote code analysis API, and is deleted immediately after the analysis engine completes. Orchestrators can classify outcomes (clean / findings / retryable error / fatal error) and act without human intervention.
+The CLI follows UNIX principles and provides a **stable output contract**: scan results to stdout as JSON, status to stderr, documented exit codes. No code leaves your machine unless you explicitly use the remote API, and is deleted immediately after analysis completes. Any developer can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
 
 ## 90-Second Quickstart
 
@@ -53,11 +60,27 @@ rafter agent audit --last 3
 
 That's the core loop: scan → protect → audit. Everything works offline, no API key needed.
 
+### What's Free?
+
+| Feature | Free (individuals & OSS) | Enterprise |
+|---------|:------------------------:|:----------:|
+| Secret scanning (21+ patterns) | **Yes** | Yes |
+| Pre-commit hooks | **Yes** | Yes |
+| Command interception | **Yes** | Yes |
+| Skill/extension auditing | **Yes** | Yes |
+| Audit logging | **Yes** | Yes |
+| MCP server | **Yes** | Yes |
+| CI/CD integration | **Yes** | Yes |
+| Remote SAST/SCA/Agentic analysis (API) | Free tier | Higher limits |
+| Dashboards ([rafter.so](https://rafter.so)) | **Yes** | Yes |
+
+No account. No telemetry. No data collection. The CLI is MIT-licensed and all local features work without network access.
+
 ---
 
 ## Installation
 
-### Node.js (full features: backend + agent security)
+### Node.js (full features: local security + remote analysis)
 
 ```sh
 npm install -g @rafter-security/cli
@@ -71,13 +94,13 @@ pnpm add -g @rafter-security/cli
 pip install rafter-cli
 ```
 
-Requires Python 3.10+. Full feature parity with Node.js including agent security and MCP server.
+Requires Python 3.10+. Full feature parity with Node.js including local security toolkit and MCP server.
 
 ---
 
-## Rafter Security Audits
+## Remote Code Analysis
 
-Remote SAST/SCA code analysis via the Rafter API. The code analysis engine runs against the **remote repository** on GitHub, not local files. Your code is deleted immediately after analysis completes. Auto-detection uses your local Git config to determine which repo and branch to analyze.
+Agentic security audits backed by a full SAST/SCA toolchain, via the Rafter API. The analysis engine examines your codebase the way a professional cybersecurity auditor would — following data flows across files, reasoning about authentication and authorization logic, and identifying vulnerabilities that pattern-matching alone cannot catch — then validates and enriches findings with industry-standard static analysis, dependency scanning, and secret detection. Runs against the **remote repository** on GitHub, not local files. Your code is deleted immediately after analysis completes. Auto-detection uses your local Git config to determine which repo and branch to analyze.
 
 ```sh
 export RAFTER_API_KEY="your-key"   # or use .env file
@@ -125,13 +148,15 @@ rafter get SCAN_ID > scan_results.json
 
 | Flag | Description |
 |------|-------------|
-| `-a, --agent` | Plain output for AI agents (no colors, no emoji). Useful when piping to LLMs or automated systems. |
+| `-a, --agent` | Plain output (no colors, no emoji). Useful when piping to other tools or automated systems. |
 
-## Agent Security
+## Local Security Toolkit — Free, No Account Required
 
-Local security features for autonomous AI agents. Everything below works offline, no API key needed.
+Security features that run on your machine. Everything below works offline — **no API key, no sign-up, no telemetry, no usage limits.** Free forever for individuals and open source.
 
-**Trust guarantees:** No code leaves your machine unless you explicitly use the remote code analysis API, and is deleted immediately after the analysis engine completes. Secrets are redacted in all output — logs, JSON, and human-readable formats.
+Every developer gets the same policies and the same deterministic output.
+
+**Trust guarantees:** No code leaves your machine unless you explicitly use the remote API. Secrets are redacted in all output — logs, JSON, and human-readable formats. No data is collected or phoned home.
 
 ### Setup
 
@@ -161,6 +186,25 @@ rafter agent scan --quiet        # silent unless secrets found (CI-friendly)
 
 Exit code 1 if secrets found, 0 if clean.
 
+**Structured output (`--json`):**
+
+```json
+[
+  {
+    "file": "/path/to/config.js",
+    "matches": [
+      {
+        "pattern": { "name": "AWS Access Key", "severity": "critical" },
+        "line": 42,
+        "redacted": "AKIA************MPLE"
+      }
+    ]
+  }
+]
+```
+
+Raw secret values are never included in output. Pipe to `jq`, feed to CI gates, or hand to any tool that reads JSON.
+
 **Engine selection:** Uses Gitleaks when available (more patterns), falls back to built-in regex. Override with `--engine gitleaks|patterns|auto`.
 
 ### Pre-Commit Hook
@@ -180,17 +224,17 @@ Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-c
 
 ```yaml
 repos:
-  - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.6.1
+  - repo: https://github.com/raftersecurity/rafter-cli
+    rev: v0.6.5
     hooks:
-      - id: rafter-scan
+      - id: rafter-scan-node
 ```
 
 Requires `rafter` in PATH (install via `npm i -g @rafter-security/cli` or `pip install rafter-cli`).
 
-### Command Interception
+### Policy Enforcement
 
-Execute shell commands through a risk-assessment layer. AI agents route commands through `rafter agent exec` to get guardrails on destructive operations.
+Execute shell commands through a risk-assessment layer. Route commands through `rafter agent exec` to enforce policy on destructive operations — whether the command comes from a script, a CI job, or an AI agent.
 
 ```sh
 rafter agent exec "npm install"                    # low risk → runs immediately
@@ -250,6 +294,25 @@ rafter agent config set agent.commandPolicy.mode deny-list  # dot-notation paths
 
 Config lives at `~/.rafter/config.json`. Project-level overrides via `.rafter.yml` (see below).
 
+### Custom Rules
+
+Define your own secret patterns alongside the 21+ built-in ones. Add them to `.rafter.yml` in your project root:
+
+```yaml
+# .rafter.yml
+scan:
+  custom_patterns:
+    - name: "Internal API Key"
+      regex: "INTERNAL_[A-Z0-9]{32}"
+      severity: critical
+      description: "Detects internal service API keys"
+    - name: "Acme Corp Token"
+      regex: "acme_live_[a-zA-Z0-9]{40}"
+      severity: high
+```
+
+Custom patterns are merged with built-in patterns at scan time. They appear in JSON output, audit logs, and pre-commit hooks — no difference from built-in rules.
+
 ### Policy File (`.rafter.yml`)
 
 Drop a `.rafter.yml` in your project root to define per-repo security policies. The CLI walks from cwd to git root looking for it.
@@ -291,12 +354,14 @@ rafter ci init --with-backend           # include backend security audit job
 Use as a reusable action in any GitHub Actions workflow:
 
 ```yaml
-- uses: Raftersecurity/rafter-cli@v0
+- uses: raftersecurity/rafter-cli@v1
   with:
     scan-path: '.'       # default
     args: '--quiet'      # default; override for verbose output
     # install-method: 'pip'  # use pip instead of npm
 ```
+
+Exit codes: `0` = clean, `1` = secrets found, `2` = scanner error.
 
 Inputs:
 
@@ -306,6 +371,15 @@ Inputs:
 | `args` | `--quiet` | Additional args to `rafter scan local` |
 | `version` | `latest` | CLI version to install |
 | `install-method` | `npm` | `npm` or `pip` |
+| `format` | `json` | Output format: `json` or `text` |
+
+Outputs:
+
+| Output | Description |
+|--------|-------------|
+| `finding-count` | Number of secrets found (0 if clean) |
+| `report` | Full scan report |
+| `exit-code` | Scanner exit code |
 
 #### Pre-Commit Framework
 
@@ -313,14 +387,15 @@ Add to `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
-  - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.6.1
+  - repo: https://github.com/raftersecurity/rafter-cli
+    rev: v0.6.5
     hooks:
-      - id: rafter-scan           # Node.js
-      # - id: rafter-scan-python  # Python alternative
+      - id: rafter-scan-node      # auto-installs via npm
+      # - id: rafter-scan-python  # auto-installs via pip
+      # - id: rafter-scan         # uses system rafter binary
 ```
 
-This integrates with the [pre-commit](https://pre-commit.com/) framework to scan staged files on every commit.
+This integrates with the [pre-commit](https://pre-commit.com/) framework to scan staged files on every commit. The `rafter-scan-node` and `rafter-scan-python` hooks install the CLI automatically — no global install needed.
 
 ### MCP Server
 
@@ -351,9 +426,9 @@ Add to any MCP client config:
 - `rafter://config` — current configuration
 - `rafter://policy` — active security policy (merged `.rafter.yml` + config)
 
-### Supported Agents
+### Supported Platforms
 
-| Agent | Integration | Detection | Config installed to |
+| Platform | Integration | Detection | Config installed to |
 |-------|-------------|-----------|-------------------|
 | Claude Code | Hooks + Skills | `~/.claude` | `~/.claude/skills/rafter/` and `rafter-agent-security/` |
 | Codex CLI | Skills | `~/.codex` | `~/.agents/skills/rafter/` and `rafter-agent-security/` |
@@ -364,14 +439,14 @@ Add to any MCP client config:
 | Continue.dev | MCP server | `~/.continue` | `~/.continue/config.json` |
 | Aider | MCP server | `~/.aider.conf.yml` | `~/.aider.conf.yml` |
 
-`rafter agent init` auto-detects which agents are installed. Use `--with-*` flags or `--all` to install integrations.
+`rafter agent init` auto-detects which platforms are installed. Use `--with-*` flags or `--all` to install integrations.
 
-**Skill-based agents** (Claude Code, Codex, OpenClaw) get two skills per agent:
+**Skill-based platforms** (Claude Code, Codex, OpenClaw) get two skills:
 
-- **Rafter Security Audits** — Safe for the agent to auto-invoke (read-only API calls). Triggers remote code analysis, retrieves results.
-- **Agent Security** — User-invoked only (local file access, command execution). Secret scanning, command interception, skill auditing, audit log.
+- **Remote Code Analysis** — Auto-invokable (read-only API calls). Triggers remote security audits, retrieves results.
+- **Local Security Toolkit** — User-invoked. Secret scanning, policy enforcement, extension auditing, audit log.
 
-**MCP-based agents** (Gemini, Cursor, Windsurf, Continue.dev, Aider) connect to the Rafter MCP server (`rafter mcp serve`), which exposes `scan_secrets`, `evaluate_command`, `read_audit_log`, and `get_config` tools. See individual setup recipes in [`recipes/`](recipes/).
+**MCP-based platforms** (Gemini, Cursor, Windsurf, Continue.dev, Aider) connect to the Rafter MCP server (`rafter mcp serve`), which exposes `scan_secrets`, `evaluate_command`, `read_audit_log`, and `get_config` tools. See individual setup recipes in [`recipes/`](recipes/).
 
 ---
 
@@ -426,6 +501,24 @@ Python package is in `python/` — see [`python/README.md`](python/README.md) fo
 - **Node.js CLI**: See [`node/README.md`](node/README.md) for complete command reference
 - **Python CLI**: See [`python/README.md`](python/README.md)
 - **CLI Spec**: See [`shared-docs/CLI_SPEC.md`](shared-docs/CLI_SPEC.md) for flags and output formats
+
+## Badges
+
+Show that your project is protected by Rafter. Add one of these badges to your README:
+
+[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter) [![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/raftercli/rafter)
+
+**Markdown (copy-paste):**
+
+```markdown
+[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter)
+```
+
+```markdown
+[![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/raftercli/rafter)
+```
+
+More badge variants (HTML, reStructuredText) available in [`badges/`](badges/).
 
 ## License
 

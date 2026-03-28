@@ -1,6 +1,6 @@
 # OpenClaw Setup
 
-Rafter integrates with OpenClaw as a **security skill** for secret scanning, command interception, and skill auditing. OpenClaw also powers Rafter's deep skill analysis (12-dimension security review).
+Rafter integrates with OpenClaw as a **security skill** for secret scanning, policy enforcement, and extension auditing. OpenClaw also powers Rafter's deep skill analysis (12-dimension security review).
 
 ## Automatic setup
 

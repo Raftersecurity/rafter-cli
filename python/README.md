@@ -1,10 +1,10 @@
 # rafter-cli (Python)
 
-Python CLI for [Rafter](https://rafter.so) — zero-setup security for AI builders. Full feature parity with the Node.js package.
+Python CLI for [Rafter](https://rafter.so) — the security toolkit for developers. Full feature parity with the Node.js package.
 
-**Backend scanning** — Remote SAST/SCA via Rafter API. Trigger scans, retrieve structured vulnerability reports, pipe to any tool.
+**Local security toolkit** — Fast, deterministic secret scanning (21+ patterns, Gitleaks), policy enforcement with risk-tiered rules, pre-commit hooks, pretool hooks, extension auditing, custom rule authoring, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, and 5 more platforms. No API key required. No data leaves your machine.
 
-**Agent security** — Local-first protection for autonomous AI agents. Secret scanning (21+ patterns, Gitleaks), command interception with risk-tiered approval, pre-commit hooks, pretool hooks, and full audit logging. Works with Claude Code, Codex CLI, and OpenClaw. No API key required.
+**Remote code analysis** — Deep security audits that combine agentic analysis with a full SAST/SCA toolchain. The engine examines your codebase the way a professional cybersecurity auditor would — tracing data flows, reasoning about business logic, and surfacing vulnerabilities that static rules alone miss — then cross-references findings with industry-standard static analysis and dependency scanning. Structured JSON reports with documented exit codes. Your code is deleted immediately after analysis completes.
 
 **MCP server** — Expose Rafter security tools to any MCP-compatible client (Cursor, Windsurf, Claude Desktop, Cline) over stdio.
 
@@ -18,7 +18,7 @@ Requires Python 3.10+.
 
 ## Quick Start
 
-### Backend Scanning
+### Backend Code Analysis
 
 ```bash
 export RAFTER_API_KEY="your-key"   # or add to .env file
@@ -30,9 +30,9 @@ rafter get SCAN_ID --interactive              # poll until complete
 rafter usage                                  # check quota
 ```
 
-**Important**: The scanner analyzes the **remote repository** on GitHub, not your local files.
+**Important**: The code analysis engine runs against the **remote repository** on GitHub, not your local files. Your code is deleted immediately after analysis completes.
 
-### Agent Security
+### Local Security
 
 ```bash
 rafter agent init                # initialize config + detect environments

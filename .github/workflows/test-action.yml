@@ -1,0 +1,107 @@
+name: Test Composite Action
+
+on:
+  push:
+    paths:
+      - 'action.yml'
+      - '.github/workflows/test-action.yml'
+      - '.github/fixtures/**'
+  pull_request:
+    paths:
+      - 'action.yml'
+      - '.github/workflows/test-action.yml'
+      - '.github/fixtures/**'
+  workflow_dispatch:
+
+jobs:
+  test-action-detects-secrets:
+    name: "Action: detect secrets in fixture"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Rafter action on fixture with known secret
+        id: scan
+        uses: ./              # test the local action.yml
+        with:
+          scan-path: '.github/fixtures'
+          format: json
+        continue-on-error: true
+
+      - name: Verify findings detected
+        shell: bash
+        run: |
+          echo "Exit code: ${{ steps.scan.outputs.exit-code }}"
+          echo "Findings:  ${{ steps.scan.outputs.finding-count }}"
+
+          if [ "${{ steps.scan.outputs.exit-code }}" != "1" ]; then
+            echo "FAIL: expected exit code 1 (findings), got ${{ steps.scan.outputs.exit-code }}"
+            exit 1
+          fi
+
+          COUNT="${{ steps.scan.outputs.finding-count }}"
+          if [ "$COUNT" = "0" ] || [ -z "$COUNT" ]; then
+            echo "FAIL: expected findings > 0, got ${COUNT}"
+            exit 1
+          fi
+
+          echo "PASS: action correctly detected ${COUNT} secret(s)"
+
+  test-action-clean-scan:
+    name: "Action: clean scan on safe directory"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create a clean directory
+        run: |
+          mkdir -p /tmp/clean-test
+          echo "just some safe code" > /tmp/clean-test/safe.txt
+
+      - name: Run Rafter action on clean directory
+        id: scan
+        uses: ./
+        with:
+          scan-path: '/tmp/clean-test'
+          format: json
+
+      - name: Verify no findings
+        shell: bash
+        run: |
+          echo "Exit code: ${{ steps.scan.outputs.exit-code }}"
+          echo "Findings:  ${{ steps.scan.outputs.finding-count }}"
+
+          if [ "${{ steps.scan.outputs.exit-code }}" != "0" ]; then
+            echo "FAIL: expected exit code 0 (clean), got ${{ steps.scan.outputs.exit-code }}"
+            exit 1
+          fi
+
+          echo "PASS: action correctly reported clean scan"
+
+  test-action-pip-install:
+    name: "Action: pip install method"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Rafter action via pip
+        id: scan
+        uses: ./
+        with:
+          scan-path: '.github/fixtures'
+          install-method: pip
+          format: json
+        continue-on-error: true
+
+      - name: Verify pip install works
+        shell: bash
+        run: |
+          if [ "${{ steps.scan.outputs.exit-code }}" != "1" ]; then
+            echo "FAIL: expected exit code 1, got ${{ steps.scan.outputs.exit-code }}"
+            exit 1
+          fi
+          echo "PASS: pip install method works, detected secrets"
