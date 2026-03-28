@@ -2,14 +2,14 @@
 
 [![npm version](https://img.shields.io/npm/v/@rafter-security/cli)](https://www.npmjs.com/package/@rafter-security/cli) [![PyPI version](https://img.shields.io/pypi/v/rafter-cli)](https://pypi.org/project/rafter-cli/) [![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Multi-language CLI for [Rafter](https://rafter.so) — the security toolkit for developers.
+Multi-language CLI for [Rafter](https://rafter.so) — the security toolkit built for AI coding agents and the developers who use them.
 
 > **Free forever for individuals and open source. No account required. No telemetry.**
 >
 > All local security features work with zero setup — no API key, no sign-up, no usage limits.
-> Enterprise teams that need dashboards, policy management, and compliance reporting can upgrade later.
+> Enterprise teams that need advanced analysis and policy management can upgrade later.
 
-Rafter is a **security primitive** that any developer can call and trust. Stable contracts, deterministic results, and structured output mean you can pipe findings to `jq`, feed them to an orchestrator, or read them yourself.
+Rafter is a **security primitive** that any developer or agent can call and trust. Stable contracts, deterministic results, and structured output mean you can pipe findings to `jq`, feed them to an orchestrator, or read them yourself. **AI agents are first-class users** — every command is designed for programmatic consumption, and the entire codebase welcomes agent-assisted contributions.
 
 **Two capabilities in one package:**
 
@@ -71,9 +71,8 @@ That's the core loop: scan → protect → audit. Everything works offline, no A
 | Audit logging | **Yes** | Yes |
 | MCP server | **Yes** | Yes |
 | CI/CD integration | **Yes** | Yes |
-| Remote analysis — agentic audits + SAST/SCA (API) | Free tier | Higher limits |
-| Dashboards & policy management | — | Yes |
-| Compliance reporting | — | Yes |
+| Remote SAST/SCA/Agentic analysis (API) | Free tier | Higher limits |
+| Dashboards ([rafter.so](https://rafter.so)) | **Yes** | Yes |
 
 No account. No telemetry. No data collection. The CLI is MIT-licensed and all local features work without network access.
 
