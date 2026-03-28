@@ -1,5 +1,7 @@
 # Rafter CLI
 
+[![npm version](https://img.shields.io/npm/v/@rafter-security/cli)](https://www.npmjs.com/package/@rafter-security/cli) [![PyPI version](https://img.shields.io/pypi/v/rafter-cli)](https://pypi.org/project/rafter-cli/) [![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 Multi-language CLI for [Rafter](https://rafter.so) — the security toolkit for developers.
 
 > **Free forever for individuals and open source. No account required. No telemetry.**
@@ -500,6 +502,24 @@ Python package is in `python/` — see [`python/README.md`](python/README.md) fo
 - **Node.js CLI**: See [`node/README.md`](node/README.md) for complete command reference
 - **Python CLI**: See [`python/README.md`](python/README.md)
 - **CLI Spec**: See [`shared-docs/CLI_SPEC.md`](shared-docs/CLI_SPEC.md) for flags and output formats
+
+## Badges
+
+Show that your project is protected by Rafter. Add one of these badges to your README:
+
+[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter) [![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/raftercli/rafter)
+
+**Markdown (copy-paste):**
+
+```markdown
+[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter)
+```
+
+```markdown
+[![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/raftercli/rafter)
+```
+
+More badge variants (HTML, reStructuredText) available in [`badges/`](badges/).
 
 ## License
 
