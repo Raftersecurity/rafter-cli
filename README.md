@@ -15,7 +15,7 @@ Rafter is a **security primitive** that any developer can call and trust. Stable
 
 1. **Local Security Toolkit** (free, no account) — Fast secret scanning (21+ built-in patterns, deterministic for a given version), policy enforcement with risk-tiered rules, pre-commit hooks, extension auditing, custom rule authoring, and full audit logging. Works offline. **No API key. No telemetry. No data leaves your machine.** Supports Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, and Aider.
 
-2. **Remote Code Analysis** — SAST/SCA security audits on GitHub repos via the Rafter API. Structured vulnerability reports in JSON or Markdown with consistent schemas and clear severity levels. Pipe to any tool, feed to any workflow.
+2. **Remote Code Analysis** — Deep security audits that combine agentic analysis with a full SAST/SCA toolchain. Rafter's engine examines your codebase the way a professional penetration tester would — tracing data flows, reasoning about business logic, and surfacing vulnerabilities that static rules alone miss — then cross-references findings with industry-standard SAST, SCA, and secret-detection tools. Structured reports in JSON or Markdown. Pipe to any tool, feed to any workflow.
 
 The CLI follows UNIX principles and provides a **stable output contract**: scan results to stdout as JSON, status to stderr, documented exit codes. No code leaves your machine unless you explicitly use the remote API, and is deleted immediately after analysis completes. Any developer can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
 
@@ -71,7 +71,7 @@ That's the core loop: scan → protect → audit. Everything works offline, no A
 | Audit logging | **Yes** | Yes |
 | MCP server | **Yes** | Yes |
 | CI/CD integration | **Yes** | Yes |
-| Remote SAST/SCA (API) | Free tier | Higher limits |
+| Remote analysis — agentic audits + SAST/SCA (API) | Free tier | Higher limits |
 | Dashboards & policy management | — | Yes |
 | Compliance reporting | — | Yes |
 
@@ -101,7 +101,7 @@ Requires Python 3.10+. Full feature parity with Node.js including local security
 
 ## Remote Code Analysis
 
-Remote SAST/SCA security audits via the Rafter API. The code analysis engine runs against the **remote repository** on GitHub, not local files. Your code is deleted immediately after analysis completes. Auto-detection uses your local Git config to determine which repo and branch to analyze.
+Agentic security audits backed by a full SAST/SCA toolchain, via the Rafter API. The analysis engine examines your codebase the way a professional cybersecurity auditor would — following data flows across files, reasoning about authentication and authorization logic, and identifying vulnerabilities that pattern-matching alone cannot catch — then validates and enriches findings with industry-standard static analysis, dependency scanning, and secret detection. Runs against the **remote repository** on GitHub, not local files. Your code is deleted immediately after analysis completes. Auto-detection uses your local Git config to determine which repo and branch to analyze.
 
 ```sh
 export RAFTER_API_KEY="your-key"   # or use .env file

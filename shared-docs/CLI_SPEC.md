@@ -59,7 +59,7 @@ Trigger a new security scan for a repository.
 - `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
 - `-b, --branch TEXT` — branch (default: current branch or 'main')
 - `-f, --format [json|md]` — output format (default: md)
-- `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds additional agent-driven analysis passes.
+- `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds agentic deep-dive analysis that examines your codebase the way a professional cybersecurity auditor would — tracing data flows and reasoning about business logic on top of the full SAST/SCA toolchain.
 - `--skip-interactive` — fire-and-forget mode (don't poll for completion)
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
