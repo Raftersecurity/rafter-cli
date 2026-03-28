@@ -4,7 +4,7 @@ Node.js CLI for [Rafter](https://rafter.so) — the security toolkit for develop
 
 **Local security toolkit** — Fast, deterministic secret scanning (21+ patterns, Gitleaks), policy enforcement with risk-tiered rules, pre-commit hooks, extension auditing, custom rule authoring, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, and 5 more platforms. No API key required. No data leaves your machine.
 
-**Remote code analysis** — SAST/SCA via the Rafter API. Structured vulnerability reports with consistent JSON format and documented exit codes. Your code is deleted immediately after analysis completes. Pipe to any tool, feed to any workflow.
+**Remote code analysis** — Deep security audits that combine agentic analysis with a full SAST/SCA toolchain. The engine examines your codebase the way a professional cybersecurity auditor would — tracing data flows, reasoning about business logic, and surfacing vulnerabilities that static rules alone miss — then cross-references findings with industry-standard static analysis and dependency scanning. Structured JSON reports with documented exit codes. Your code is deleted immediately after analysis completes.
 
 ## Installation
 
