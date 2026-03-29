@@ -105,3 +105,29 @@ jobs:
             exit 1
           fi
           echo "PASS: pip install method works, detected secrets"
+
+  test-action-published-v1:
+    name: "Action: published @v1 tag"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run published Rafter action @v1
+        id: scan
+        uses: raftersecurity/rafter-cli@v1
+        with:
+          scan-path: '.github/fixtures'
+          format: json
+        continue-on-error: true
+
+      - name: Verify @v1 works
+        shell: bash
+        run: |
+          echo "Exit code: ${{ steps.scan.outputs.exit-code }}"
+          echo "Findings:  ${{ steps.scan.outputs.finding-count }}"
+
+          if [ "${{ steps.scan.outputs.exit-code }}" != "1" ]; then
+            echo "FAIL: expected exit code 1, got ${{ steps.scan.outputs.exit-code }}"
+            exit 1
+          fi
+          echo "PASS: published raftersecurity/rafter-cli@v1 works"
