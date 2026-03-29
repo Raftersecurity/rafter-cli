@@ -741,8 +741,11 @@
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T08:49:42Z","event_type":"created","id":525,"issue_id":"rc-wisp-vsm4h","new_value":"","old_value":""}
 {"actor":"Rome-1","comment":null,"created_at":"2026-03-29T07:15:14Z","event_type":"created","id":526,"issue_id":"rc-753","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T08:49:43Z","event_type":"closed","id":526,"issue_id":"rc-wisp-mel7t","new_value":"done","old_value":""}
+{"actor":"Rome-1","comment":null,"created_at":"2026-03-29T07:17:05Z","event_type":"created","id":527,"issue_id":"rf-h0e","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:49:58Z","event_type":"closed","id":527,"issue_id":"rc-wisp-0cbar","new_value":"Closed","old_value":""}
+{"actor":"Rome-1","comment":null,"created_at":"2026-03-29T07:17:16Z","event_type":"closed","id":528,"issue_id":"rf-h0e","new_value":"Test bead — prefix works","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:50:20Z","event_type":"closed","id":528,"issue_id":"rc-wisp-j0kyb","new_value":"Closed","old_value":""}
+{"actor":"Rome-1","comment":null,"created_at":"2026-03-29T07:19:09Z","event_type":"created","id":529,"issue_id":"rf-cz8","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:50:21Z","event_type":"closed","id":529,"issue_id":"rc-wisp-sug0v","new_value":"all steps complete","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:50:27Z","event_type":"created","id":530,"issue_id":"rc-wisp-4valn","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:50:27Z","event_type":"closed","id":531,"issue_id":"rc-wisp-sug0v","new_value":"done","old_value":""}
