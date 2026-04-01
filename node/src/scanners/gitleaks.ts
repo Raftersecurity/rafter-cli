@@ -179,8 +179,14 @@ export class GitleaksScanner {
       if (!content.trim()) {
         return [];
       }
-      return JSON.parse(content);
-    } catch {
+      const parsed = JSON.parse(content);
+      if (!Array.isArray(parsed)) {
+        console.error("[rafter] Warning: Gitleaks output is not an array — possible version mismatch");
+        return [];
+      }
+      return parsed;
+    } catch (e) {
+      console.error(`[rafter] Warning: Failed to parse Gitleaks report: ${e instanceof Error ? e.message : e}`);
       return [];
     }
   }

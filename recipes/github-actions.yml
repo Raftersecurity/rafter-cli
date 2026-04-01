@@ -1,11 +1,14 @@
 # Rafter Security — GitHub Actions
 #
 # Drop this file into .github/workflows/rafter-security.yml
-# Scans every push and PR for hardcoded secrets.
+# Scans every push and PR for hardcoded secrets using the Rafter Action.
+#
+# Exit codes: 0 = clean, 1 = secrets found (blocks merge), 2 = scanner error
+# No API key required. No code leaves the runner.
 #
 # Options:
 #   - Uncomment the security-audit job for full SAST/SCA via the Rafter API
-#   - Set RAFTER_API_KEY in repo Settings > Secrets if using backend scanning
+#   - Set RAFTER_API_KEY in repo Settings > Secrets if using backend code analysis
 #
 # Docs: https://docs.rafter.so/cli/ci
 
@@ -26,11 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rafter CLI
-        run: npm install -g @rafter-security/cli
-
       - name: Scan for secrets
-        run: rafter agent scan . --quiet
+        uses: raftersecurity/rafter-cli@v0
+        with:
+          scan-path: '.'
 
   # --- Uncomment below for full backend security audit ---
   # security-audit:

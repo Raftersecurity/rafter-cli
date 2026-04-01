@@ -11,13 +11,14 @@ from .commands.ci import ci_app
 from .commands.hook import hook_app
 from .commands.issues.issues_app import issues_app
 from .commands.mcp_server import mcp_app
+from .commands.notify import notify_app
 from .commands.policy import policy_app
 from .commands.scan import scan_app
 from .utils.formatter import set_agent_mode
 
 app = typer.Typer(
     name="rafter",
-    help="Rafter CLI — the default security agent for AI workflows.",
+    help="Rafter CLI — the default security agent for AI workflows. Free for individuals and open source. No account required.",
     add_completion=True,
     no_args_is_help=True,
 )
@@ -94,6 +95,7 @@ app.add_typer(ci_app)
 app.add_typer(hook_app)
 app.add_typer(issues_app)
 app.add_typer(mcp_app)
+app.add_typer(notify_app)
 app.add_typer(policy_app)
 
 if __name__ == "__main__":

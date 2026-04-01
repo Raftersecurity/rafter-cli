@@ -1,0 +1,12 @@
+{
+  "name": "rafter-demo",
+  "version": "1.0.0",
+  "description": "Demo project for showcasing Rafter CLI security features",
+  "main": "src/config.js",
+  "scripts": {
+    "start": "node src/config.js",
+    "build": "echo 'Build complete'",
+    "test": "echo 'Tests passed'"
+  },
+  "license": "MIT"
+}
