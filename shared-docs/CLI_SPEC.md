@@ -2,7 +2,9 @@
 
 ## Overview
 
-Rafter is the default security agent for AI workflows — a delegation primitive with stable output contracts. Orchestrators and agents classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
+Rafter is the security toolkit for developers. Stable output contracts mean any developer can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
+
+**Free forever for individuals and open source.** No account required. No telemetry. All local security features (secret scanning, policy enforcement, pre-commit hooks, audit logging, MCP server) work without an API key, without network access, and without usage limits.
 
 The CLI follows UNIX principles:
 
@@ -11,7 +13,7 @@ The CLI follows UNIX principles:
 - **Exit codes** are a **stable contract** — documented semantics across versions
 - **Deterministic** — same inputs produce the same findings for a given CLI version
 - **Side effects are explicit** — config and audit logs write to `~/.rafter/`; some commands (e.g. `ci init`, `policy export`) accept `--output` to write files
-- **No exfiltration** — no code leaves your machine unless you explicitly use the remote code analysis API, and is deleted immediately after the analysis engine completes
+- **No exfiltration** — no code leaves your machine unless you explicitly use the remote API, and is deleted immediately after analysis completes
 
 ## Exit Codes
 
@@ -37,13 +39,13 @@ The CLI follows UNIX principles:
 
 ## Global Options
 
-- `-a, --agent` — Plain output for AI agents (no colors, no emoji)
+- `-a, --agent` — Plain output (no colors, no emoji)
 - `-V, --version` — Print version
 - `-h, --help` — Show help
 
 ---
 
-## Backend Code Analysis Commands
+## Remote Code Analysis Commands
 
 **Important**: The code analysis engine runs against the **remote repository** (e.g., on GitHub), not your local files. Auto-detection uses your local Git configuration to determine which remote repository and branch to scan.
 
@@ -57,7 +59,7 @@ Trigger a new security scan for a repository.
 - `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
 - `-b, --branch TEXT` — branch (default: current branch or 'main')
 - `-f, --format [json|md]` — output format (default: md)
-- `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds additional agent-driven analysis passes.
+- `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds agentic deep-dive analysis that examines your codebase the way a professional cybersecurity auditor would — tracing data flows and reasoning about business logic on top of the full SAST/SCA toolchain.
 - `--skip-interactive` — fire-and-forget mode (don't poll for completion)
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
@@ -99,10 +101,10 @@ With no topic, lists available topics and usage examples.
 
 | Topic | Description |
 |-------|-------------|
-| `security` | Local agent security — scanning, auditing, risk assessment |
-| `scanning` | Remote SAST/SCA code analysis via backend API |
+| `security` | Local security toolkit — scanning, auditing, policy enforcement |
+| `scanning` | Remote SAST/SCA code analysis via Rafter API |
 | `commands` | Condensed command reference for all rafter commands |
-| `setup` | Setup instructions for all supported agent platforms |
+| `setup` | Setup instructions for all supported platforms |
 | `setup/<platform>` | Platform-specific setup (claude-code, codex, gemini, cursor, windsurf, aider, openclaw, continue, generic) |
 | `all` | Everything — full security + scanning + setup briefing |
 
@@ -128,13 +130,13 @@ rafter brief scanning > ~/.agents/skills/rafter/SKILL.md
 
 ---
 
-## Agent Security Commands
+## Local Security Commands
 
-All agent commands work locally. No API key required.
+All local security commands work offline. No API key required.
 
 ### rafter agent init [OPTIONS]
 
-Initialize agent security system. Creates config and detects available agent environments. Integrations are **opt-in** — use `--with-*` flags or `--all` to install. There are NO `--skip-*` flags.
+Initialize local security system. Creates config and detects available development environments. Integrations are **opt-in** — use `--with-*` flags or `--all` to install. There are NO `--skip-*` flags.
 
 - `--risk-level <level>` — `minimal`, `moderate` (default), or `aggressive`
 - `--with-openclaw` — install OpenClaw integration
@@ -379,7 +381,7 @@ Auto-detection: checks for `.github/`, `.gitlab-ci.yml`, `.circleci/` in cwd.
 Composite action at repo root. Usage:
 
 ```yaml
-- uses: Raftersecurity/rafter-cli@v0
+- uses: Raftersecurity/rafter-cli@v1
   with:
     scan-path: '.'        # default
     args: '--quiet'       # default
@@ -485,7 +487,7 @@ else
 fi
 ```
 
-### Agent Security
+### Local Security
 
 ```bash
 # Full setup

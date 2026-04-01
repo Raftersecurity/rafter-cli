@@ -27,7 +27,7 @@ jobs:
       - name: Extract Python version
         id: python-version
         run: |
-          VERSION=$(grep -oP 'version = "\K[^"]+' python/pyproject.toml)
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' python/pyproject.toml)
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Python version: $VERSION"
 

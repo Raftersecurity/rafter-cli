@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "rafter-cli"
-version = "0.6.5"
-description = "Rafter CLI — the default security agent for AI workflows"
+version = "0.6.6"
+description = "Rafter CLI — the default security agent for AI workflows. Free for individuals and open source."
 authors = ["Rafter Team <hello@rafter.so>"]
 license = "MIT"
 readme = "README.md"

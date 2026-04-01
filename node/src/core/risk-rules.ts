@@ -6,7 +6,8 @@
 export type CommandRiskLevel = "low" | "medium" | "high" | "critical";
 
 export const CRITICAL_PATTERNS: RegExp[] = [
-  /rm\s+-rf\s+\//,
+  /rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*\s+\//,  // rm -rf / (any flag order: -rf, -fr, -r -f, -f -r)
+  /rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*\s+\//,  // rm -fr / (reversed)
   /:\(\)\{\s*:\|:&\s*\};:/,  // fork bomb
   /dd\s+if=.*of=\/dev\/sd/,
   />\s*\/dev\/sd/,
@@ -16,7 +17,8 @@ export const CRITICAL_PATTERNS: RegExp[] = [
 ];
 
 export const HIGH_PATTERNS: RegExp[] = [
-  /rm\s+-rf/,
+  /rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*/,  // rm -rf, -fr, -r -f, -f -r (any path)
+  /rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*/,  // rm -fr, reversed
   /sudo\s+rm/,
   /chmod\s+777/,
   /curl.*\|\s*(bash|sh|zsh|dash)\b/,

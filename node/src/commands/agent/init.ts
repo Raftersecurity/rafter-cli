@@ -9,10 +9,50 @@ import os from "os";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
+import { createInterface } from "readline";
 import { fmt } from "../../utils/formatter.js";
+import { injectInstructionFile } from "./instruction-block.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/**
+ * Install global instruction files for platforms that support them.
+ *
+ * Only Claude Code (~/.claude/CLAUDE.md) and Cursor (~/.cursor/rules/*.mdc)
+ * have confirmed global instruction file paths. Other platforms (Codex, Gemini,
+ * Windsurf, Continue.dev, Aider) only support project-level instruction files
+ * (AGENTS.md, GEMINI.md, .windsurfrules, .continuerules, .aider/conventions.md)
+ * which are handled by `rafter agent init-project` (not yet implemented).
+ */
+function installGlobalInstructions(platforms: {
+  claudeCode?: boolean;
+  cursor?: boolean;
+}): void {
+  const homeDir = os.homedir();
+
+  // Claude Code — ~/.claude/CLAUDE.md (confirmed global instruction file)
+  if (platforms.claudeCode) {
+    try {
+      const filePath = path.join(homeDir, ".claude", "CLAUDE.md");
+      injectInstructionFile(filePath);
+      console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
+    } catch (e) {
+      console.log(fmt.warning(`Failed to write Claude Code instructions: ${e}`));
+    }
+  }
+
+  // Cursor — ~/.cursor/rules/rafter-security.mdc (global rules directory, markdown format)
+  if (platforms.cursor) {
+    try {
+      const filePath = path.join(homeDir, ".cursor", "rules", "rafter-security.mdc");
+      injectInstructionFile(filePath);
+      console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
+    } catch (e) {
+      console.log(fmt.warning(`Failed to write Cursor instructions: ${e}`));
+    }
+  }
+}
 
 function installClaudeCodeHooks(): void {
   const homeDir = os.homedir();
@@ -68,6 +108,224 @@ function installClaudeCodeHooks(): void {
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
   console.log(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
   console.log(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
+}
+
+function installCodexHooks(): void {
+  const homeDir = os.homedir();
+  const codexDir = path.join(homeDir, ".codex");
+
+  if (!fs.existsSync(codexDir)) {
+    fs.mkdirSync(codexDir, { recursive: true });
+  }
+
+  const hooksPath = path.join(codexDir, "hooks.json");
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(hooksPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing Codex hooks.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!config.hooks) config.hooks = {};
+  if (!config.hooks.PreToolUse) config.hooks.PreToolUse = [];
+  if (!config.hooks.PostToolUse) config.hooks.PostToolUse = [];
+
+  // Codex uses the same hookSpecificOutput protocol as Claude Code (format=claude)
+  const preHook = { type: "command", command: "rafter hook pretool" };
+  const postHook = { type: "command", command: "rafter hook posttool" };
+
+  // Remove existing rafter hooks
+  config.hooks.PreToolUse = config.hooks.PreToolUse.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
+  );
+  config.hooks.PostToolUse = config.hooks.PostToolUse.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
+  );
+
+  config.hooks.PreToolUse.push(
+    { matcher: "Bash", hooks: [preHook] },
+  );
+  config.hooks.PostToolUse.push(
+    { matcher: ".*", hooks: [postHook] },
+  );
+
+  fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+}
+
+function installCursorHooks(): void {
+  const homeDir = os.homedir();
+  const cursorDir = path.join(homeDir, ".cursor");
+
+  if (!fs.existsSync(cursorDir)) {
+    fs.mkdirSync(cursorDir, { recursive: true });
+  }
+
+  const hooksPath = path.join(cursorDir, "hooks.json");
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(hooksPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing Cursor hooks.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!config.version) config.version = 1;
+  if (!config.hooks) config.hooks = {};
+  if (!config.hooks.beforeShellExecution) config.hooks.beforeShellExecution = [];
+
+  // Remove existing rafter hooks
+  config.hooks.beforeShellExecution = config.hooks.beforeShellExecution.filter(
+    (entry: any) => !entry.command?.includes("rafter hook pretool")
+  );
+
+  config.hooks.beforeShellExecution.push({
+    command: "rafter hook pretool --format cursor",
+    type: "command",
+    timeout: 5000,
+  });
+
+  fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+}
+
+function installGeminiHooks(): void {
+  const homeDir = os.homedir();
+  const geminiDir = path.join(homeDir, ".gemini");
+
+  if (!fs.existsSync(geminiDir)) {
+    fs.mkdirSync(geminiDir, { recursive: true });
+  }
+
+  const settingsPath = path.join(geminiDir, "settings.json");
+
+  let settings: Record<string, any> = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing Gemini settings.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!settings.hooks) settings.hooks = {};
+  if (!settings.hooks.BeforeTool) settings.hooks.BeforeTool = [];
+  if (!settings.hooks.AfterTool) settings.hooks.AfterTool = [];
+
+  // Remove existing rafter hooks
+  settings.hooks.BeforeTool = settings.hooks.BeforeTool.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.includes("rafter hook pretool"))
+  );
+  settings.hooks.AfterTool = settings.hooks.AfterTool.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.includes("rafter hook posttool"))
+  );
+
+  settings.hooks.BeforeTool.push({
+    matcher: "shell|write_file",
+    hooks: [{ type: "command", command: "rafter hook pretool --format gemini", timeout: 5000 }],
+  });
+  settings.hooks.AfterTool.push({
+    matcher: ".*",
+    hooks: [{ type: "command", command: "rafter hook posttool --format gemini", timeout: 5000 }],
+  });
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+  console.log(fmt.success(`Installed hooks to ${settingsPath}`));
+}
+
+function installWindsurfHooks(): void {
+  const homeDir = os.homedir();
+  const windsurfDir = path.join(homeDir, ".windsurf");
+
+  if (!fs.existsSync(windsurfDir)) {
+    fs.mkdirSync(windsurfDir, { recursive: true });
+  }
+
+  const hooksPath = path.join(windsurfDir, "hooks.json");
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(hooksPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing Windsurf hooks.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!config.hooks) config.hooks = {};
+  if (!config.hooks.pre_run_command) config.hooks.pre_run_command = [];
+  if (!config.hooks.pre_write_code) config.hooks.pre_write_code = [];
+
+  // Remove existing rafter hooks
+  config.hooks.pre_run_command = config.hooks.pre_run_command.filter(
+    (entry: any) => !entry.command?.includes("rafter hook pretool")
+  );
+  config.hooks.pre_write_code = config.hooks.pre_write_code.filter(
+    (entry: any) => !entry.command?.includes("rafter hook pretool")
+  );
+
+  config.hooks.pre_run_command.push({
+    command: "rafter hook pretool --format windsurf",
+    show_output: true,
+  });
+  config.hooks.pre_write_code.push({
+    command: "rafter hook pretool --format windsurf",
+    show_output: true,
+  });
+
+  fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+}
+
+function installContinueDevHooks(): void {
+  const homeDir = os.homedir();
+  const continueDir = path.join(homeDir, ".continue");
+
+  if (!fs.existsSync(continueDir)) {
+    fs.mkdirSync(continueDir, { recursive: true });
+  }
+
+  const settingsPath = path.join(continueDir, "settings.json");
+
+  let settings: Record<string, any> = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing Continue.dev settings.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!settings.hooks) settings.hooks = {};
+  if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+  if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
+
+  // Continue.dev uses the same protocol as Claude Code
+  const preHook = { type: "command", command: "rafter hook pretool" };
+  const postHook = { type: "command", command: "rafter hook posttool" };
+
+  settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
+  );
+  settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
+  );
+
+  settings.hooks.PreToolUse.push(
+    { matcher: "Bash", hooks: [preHook] },
+    { matcher: "Write|Edit", hooks: [preHook] },
+  );
+  settings.hooks.PostToolUse.push(
+    { matcher: ".*", hooks: [postHook] },
+  );
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+  console.log(fmt.success(`Installed hooks to ${settingsPath}`));
 }
 
 /** MCP server entry for rafter — shared across MCP-native clients */
@@ -312,6 +570,19 @@ function installCodexSkills(): void {
   }
 }
 
+async function askYesNo(question: string, defaultYes = true): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  const suffix = defaultYes ? "[Y/n]" : "[y/N]";
+  return new Promise((resolve) => {
+    rl.question(`  ${question} ${suffix} `, (answer) => {
+      rl.close();
+      const trimmed = answer.trim().toLowerCase();
+      if (trimmed === "") resolve(defaultYes);
+      else resolve(trimmed === "y" || trimmed === "yes");
+    });
+  });
+}
+
 export function createInitCommand(): Command {
   return new Command("init")
     .description("Initialize agent security system")
@@ -326,6 +597,7 @@ export function createInitCommand(): Command {
     .option("--with-continue", "Install Continue.dev integration")
     .option("--with-gitleaks", "Download and install Gitleaks binary")
     .option("--all", "Install all detected integrations and download Gitleaks")
+    .option("-i, --interactive", "Guided setup — prompts for each detected integration")
     .option("--update", "Re-download gitleaks and reinstall integrations without resetting config")
     .action(async (opts) => {
       console.log(fmt.header("Rafter Agent Security Setup"));
@@ -344,16 +616,33 @@ export function createInitCommand(): Command {
       const hasContinueDev = fs.existsSync(path.join(os.homedir(), ".continue"));
       const hasAider = fs.existsSync(path.join(os.homedir(), ".aider.conf.yml"));
 
-      // Resolve opt-in flags (--all enables all detected)
-      const wantOpenClaw = opts.withOpenclaw || opts.all;
-      const wantClaudeCode = opts.withClaudeCode || opts.all;
-      const wantCodex = opts.withCodex || opts.all;
-      const wantGemini = opts.withGemini || opts.all;
-      const wantCursor = opts.withCursor || opts.all;
-      const wantWindsurf = opts.withWindsurf || opts.all;
-      const wantContinue = opts.withContinue || opts.all;
-      const wantAider = opts.withAider || opts.all;
-      const wantGitleaks = opts.withGitleaks || opts.all;
+      // Resolve opt-in flags (--all enables all detected, --interactive prompts)
+      let wantOpenClaw = opts.withOpenclaw || opts.all;
+      let wantClaudeCode = opts.withClaudeCode || opts.all;
+      let wantCodex = opts.withCodex || opts.all;
+      let wantGemini = opts.withGemini || opts.all;
+      let wantCursor = opts.withCursor || opts.all;
+      let wantWindsurf = opts.withWindsurf || opts.all;
+      let wantContinue = opts.withContinue || opts.all;
+      let wantAider = opts.withAider || opts.all;
+      let wantGitleaks = opts.withGitleaks || opts.all;
+
+      // Interactive mode: prompt for each detected integration
+      if (opts.interactive && !opts.all) {
+        console.log();
+        console.log(fmt.info("Select integrations to install:"));
+        console.log();
+        if (hasClaudeCode && !wantClaudeCode) wantClaudeCode = await askYesNo("Install Claude Code hooks + skills?");
+        if (hasCodex && !wantCodex) wantCodex = await askYesNo("Install Codex CLI skills + hooks?");
+        if (hasOpenClaw && !wantOpenClaw) wantOpenClaw = await askYesNo("Install OpenClaw skill?");
+        if (hasGemini && !wantGemini) wantGemini = await askYesNo("Install Gemini CLI MCP + hooks?");
+        if (hasCursor && !wantCursor) wantCursor = await askYesNo("Install Cursor MCP + hooks?");
+        if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP + hooks?");
+        if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP + hooks?");
+        if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
+        if (!wantGitleaks) wantGitleaks = await askYesNo("Download Gitleaks binary (enhanced scanning)?");
+        console.log();
+      }
 
       // Show detected environments with opt-in hints
       const detected: string[] = [];
@@ -500,11 +789,12 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install Codex CLI skills if opted in
+      // Install Codex CLI skills + hooks if opted in
       let codexOk = false;
       if (hasCodex && wantCodex) {
         try {
           installCodexSkills();
+          installCodexHooks();
           manager.set("agent.environments.codex.enabled", true);
           codexOk = true;
         } catch (e) {
@@ -512,44 +802,48 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install Gemini CLI MCP if opted in
+      // Install Gemini CLI MCP + hooks if opted in
       let geminiOk = false;
       if (hasGemini && wantGemini) {
         try {
           geminiOk = installGeminiMcp();
+          installGeminiHooks();
           if (geminiOk) manager.set("agent.environments.gemini.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Gemini CLI integration: ${e}`));
         }
       }
 
-      // Install Cursor MCP if opted in
+      // Install Cursor MCP + hooks if opted in
       let cursorOk = false;
       if (hasCursor && wantCursor) {
         try {
           cursorOk = installCursorMcp();
+          installCursorHooks();
           if (cursorOk) manager.set("agent.environments.cursor.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Cursor integration: ${e}`));
         }
       }
 
-      // Install Windsurf MCP if opted in
+      // Install Windsurf MCP + hooks if opted in
       let windsurfOk = false;
       if (hasWindsurf && wantWindsurf) {
         try {
           windsurfOk = installWindsurfMcp();
+          installWindsurfHooks();
           if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Windsurf integration: ${e}`));
         }
       }
 
-      // Install Continue.dev MCP if opted in
+      // Install Continue.dev MCP + hooks if opted in
       let continueOk = false;
       if (hasContinueDev && wantContinue) {
         try {
           continueOk = installContinueDevMcp();
+          installContinueDevHooks();
           if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Continue.dev integration: ${e}`));
@@ -566,6 +860,12 @@ export function createInitCommand(): Command {
           console.error(fmt.error(`Failed to install Aider integration: ${e}`));
         }
       }
+
+      // Install global instruction files for platforms that support them
+      installGlobalInstructions({
+        claudeCode: claudeCodeOk,
+        cursor: cursorOk,
+      });
 
       console.log();
       console.log(fmt.success("Agent security initialized!"));

@@ -1,14 +1,16 @@
 ---
 name: rafter-agent-security
-description: "Local security agent for deterministic secret scanning, skill auditing, and audit log review. Fast, reliable, and deterministic for a given version — same inputs always produce the same findings. Use for: pre-commit secret scanning, skill security analysis, audit log review. No code leaves your machine. Note: command blocking is handled automatically by the PreToolUse hook—you do not need to invoke /rafter-bash for normal commands."
+description: "Local security toolkit for deterministic secret scanning, extension auditing, and audit log review. Fast, reliable, and deterministic for a given version — same inputs always produce the same findings. Use for: pre-commit secret scanning, extension security analysis, audit log review. No code leaves your machine. Note: command blocking is handled automatically by the PreToolUse hook—you do not need to invoke /rafter-bash for normal commands."
 version: 0.6.5
 disable-model-invocation: true
 allowed-tools: [Bash, Read, Glob, Grep]
 ---
 
-# Rafter Agent Security
+# Rafter Local Security
 
-Local security agent with deterministic scanning, actionable findings, and stable output contracts. Every finding includes file, line, rule ID, and severity — structured for agents to act on, not just read.
+Local security toolkit with deterministic scanning, actionable findings, and stable output contracts. Every finding includes file, line, rule ID, and severity — structured for any developer to act on, not just read.
+
+**Free forever for individuals and open source. No account required. No telemetry. No data leaves your machine.**
 
 ## Overview
 

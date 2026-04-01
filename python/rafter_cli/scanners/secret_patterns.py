@@ -13,7 +13,7 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
     ),
     Pattern(
         name="AWS Secret Access Key",
-        regex=r"(?i)aws(.{0,20})?['\"][0-9a-zA-Z/+]{40}['\"]",
+        regex=r"(?i)aws(.{0,20})?['\"]?[0-9a-zA-Z/+]{40}['\"]?",
         severity="critical",
         description="AWS Secret Access Key detected",
     ),

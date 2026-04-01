@@ -1,6 +1,6 @@
 # Rafter Recipes
 
-Copy-paste integration snippets for common setups. Each recipe is self-contained and ready to drop into your project.
+Integration snippets for adding Rafter security to your development workflow. Each recipe is self-contained — stable exit codes, deterministic output, and structured JSON work the same across all surfaces.
 
 | Recipe | What it does |
 |--------|-------------|
@@ -15,6 +15,7 @@ Copy-paste integration snippets for common setups. Each recipe is self-contained
 | [Continue.dev](continue-dev.md) | MCP server setup for Continue.dev |
 | [Aider](aider.md) | MCP server setup for Aider |
 | [OpenClaw](openclaw.md) | Skill setup for OpenClaw agents |
+| [Homebrew Formula](homebrew-formula.rb) | `brew install rafter` tap formula |
 
 ## Quick start
 
@@ -27,4 +28,4 @@ pip install rafter-cli
 rafter agent init
 ```
 
-All agent security features work offline with no API key. Backend scanning (`rafter run`) requires a key from [rafter.so](https://rafter.so).
+All local security features work offline with no API key. Remote code analysis (`rafter run`) requires a key from [rafter.so](https://rafter.so).

@@ -14,7 +14,7 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   },
   {
     name: "AWS Secret Access Key",
-    regex: "(?i)aws(.{0,20})?['\"][0-9a-zA-Z\\/+]{40}['\"]",
+    regex: "(?i)aws(.{0,20})?['\"]?[0-9a-zA-Z/+]{40}['\"]?",
     severity: "critical",
     description: "AWS Secret Access Key detected"
   },

@@ -1,0 +1,294 @@
+name: 'Rafter Security Scan'
+description: 'Run Rafter security scans on your code. Finds vulnerabilities, secrets, and misconfigurations.'
+author: 'Rafter Security'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  api-key:
+    description: 'Your Rafter API key (from rafter.so/dashboard/settings)'
+    required: true
+  scan-mode:
+    description: 'Scan mode: "fast" for quick scans, "plus" for comprehensive analysis'
+    required: false
+    default: 'fast'
+  severity-threshold:
+    description: 'Fail the check if findings at this severity or above are found. Options: critical, high, medium, low, none'
+    required: false
+    default: 'high'
+  comment-on-pr:
+    description: 'Post scan results as a PR comment'
+    required: false
+    default: 'true'
+  upload-sarif:
+    description: 'Upload SARIF results to GitHub Code Scanning'
+    required: false
+    default: 'true'
+  timeout-minutes:
+    description: 'Maximum time to wait for scan completion (minutes)'
+    required: false
+    default: '10'
+  rafter-url:
+    description: 'Rafter API base URL (override for self-hosted instances)'
+    required: false
+    default: 'https://rafter.so'
+
+outputs:
+  scan-id:
+    description: 'The Rafter scan ID'
+    value: ${{ steps.scan.outputs.scan_id }}
+  findings-count:
+    description: 'Total number of findings'
+    value: ${{ steps.results.outputs.findings_count }}
+  critical-count:
+    description: 'Number of critical/error findings'
+    value: ${{ steps.results.outputs.critical_count }}
+  high-count:
+    description: 'Number of high/error findings'
+    value: ${{ steps.results.outputs.high_count }}
+  medium-count:
+    description: 'Number of medium/warning findings'
+    value: ${{ steps.results.outputs.medium_count }}
+  low-count:
+    description: 'Number of low/note findings'
+    value: ${{ steps.results.outputs.low_count }}
+  status:
+    description: 'Scan status (completed, failed, timeout)'
+    value: ${{ steps.results.outputs.status }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Trigger Rafter scan
+      id: scan
+      shell: bash
+      env:
+        RAFTER_API_KEY: ${{ inputs.api-key }}
+        RAFTER_URL: ${{ inputs.rafter-url }}
+        SCAN_MODE: ${{ inputs.scan-mode }}
+      run: |
+        RESPONSE=$(curl -fsS -X POST \
+          -H "Content-Type: application/json" \
+          -H "x-api-key: ${RAFTER_API_KEY}" \
+          -d "{
+            \"repository_name\": \"${{ github.repository }}\",
+            \"branch_name\": \"${{ github.head_ref || github.ref_name }}\",
+            \"scan_mode\": \"${SCAN_MODE}\"
+          }" \
+          "${RAFTER_URL}/api/static/scan" 2>&1)
+
+        SCAN_ID=$(echo "$RESPONSE" | jq -r '.scan_id // empty')
+        if [ -z "$SCAN_ID" ]; then
+          ERROR=$(echo "$RESPONSE" | jq -r '.error // "Unknown error triggering scan"')
+          echo "::error::Failed to trigger scan: ${ERROR}"
+          exit 1
+        fi
+
+        echo "scan_id=${SCAN_ID}" >> "$GITHUB_OUTPUT"
+        echo "Rafter scan triggered: ${SCAN_ID}"
+
+    - name: Wait for scan completion
+      id: poll
+      shell: bash
+      env:
+        RAFTER_API_KEY: ${{ inputs.api-key }}
+        RAFTER_URL: ${{ inputs.rafter-url }}
+        SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+        TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+      run: |
+        MAX_POLLS=$(( TIMEOUT_MINUTES * 6 ))  # Poll every 10s
+        POLL_COUNT=0
+        STATUS="pending"
+
+        while [ $POLL_COUNT -lt $MAX_POLLS ]; do
+          RESPONSE=$(curl -fsS \
+            -H "x-api-key: ${RAFTER_API_KEY}" \
+            "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}" 2>&1)
+
+          STATUS=$(echo "$RESPONSE" | jq -r '.status // "unknown"')
+
+          if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
+            break
+          fi
+
+          echo "Scan status: ${STATUS} (poll $((POLL_COUNT+1))/${MAX_POLLS})"
+          sleep 10
+          POLL_COUNT=$((POLL_COUNT+1))
+        done
+
+        if [ "$STATUS" = "failed" ]; then
+          echo "::error::Rafter scan failed"
+          echo "status=failed" >> "$GITHUB_OUTPUT"
+          exit 1
+        elif [ "$STATUS" != "completed" ]; then
+          echo "::error::Scan did not complete within ${TIMEOUT_MINUTES} minutes"
+          echo "status=timeout" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+
+        echo "status=completed" >> "$GITHUB_OUTPUT"
+        echo "Scan completed successfully"
+
+    - name: Fetch results
+      id: results
+      shell: bash
+      env:
+        RAFTER_API_KEY: ${{ inputs.api-key }}
+        RAFTER_URL: ${{ inputs.rafter-url }}
+        SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+      run: |
+        # Fetch JSON results
+        curl -fsS -H "x-api-key: ${RAFTER_API_KEY}" \
+          "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}" \
+          > "${{ runner.temp }}/rafter-results.json"
+
+        # Fetch Markdown results
+        curl -fsS -H "x-api-key: ${RAFTER_API_KEY}" \
+          "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}&format=md" \
+          > "${{ runner.temp }}/rafter-results.md"
+
+        # Fetch SARIF results
+        curl -fsS -H "x-api-key: ${RAFTER_API_KEY}" \
+          "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}&format=sarif" \
+          > "${{ runner.temp }}/rafter-results.sarif"
+
+        # Extract counts
+        RESULTS="${{ runner.temp }}/rafter-results.json"
+        FINDINGS_COUNT=$(jq '.vulnerabilities | length' "$RESULTS" 2>/dev/null || echo "0")
+        CRITICAL_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "critical")] | length' "$RESULTS" 2>/dev/null || echo "0")
+        HIGH_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "error" or .severity == "high")] | length' "$RESULTS" 2>/dev/null || echo "0")
+        MEDIUM_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "warning" or .severity == "medium")] | length' "$RESULTS" 2>/dev/null || echo "0")
+        LOW_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "note" or .severity == "low")] | length' "$RESULTS" 2>/dev/null || echo "0")
+
+        echo "findings_count=${FINDINGS_COUNT}" >> "$GITHUB_OUTPUT"
+        echo "critical_count=${CRITICAL_COUNT}" >> "$GITHUB_OUTPUT"
+        echo "high_count=${HIGH_COUNT}" >> "$GITHUB_OUTPUT"
+        echo "medium_count=${MEDIUM_COUNT}" >> "$GITHUB_OUTPUT"
+        echo "low_count=${LOW_COUNT}" >> "$GITHUB_OUTPUT"
+        echo "status=completed" >> "$GITHUB_OUTPUT"
+
+        echo "Found ${FINDINGS_COUNT} findings (critical: ${CRITICAL_COUNT}, high: ${HIGH_COUNT}, medium: ${MEDIUM_COUNT}, low: ${LOW_COUNT})"
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: inputs.upload-sarif == 'true' && steps.poll.outputs.status == 'completed'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ runner.temp }}/rafter-results.sarif
+        category: rafter-security-scan
+      continue-on-error: true
+
+    - name: Comment on PR
+      if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request' && steps.poll.outputs.status == 'completed'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        SCAN_ID: ${{ steps.scan.outputs.scan_id }}
+        FINDINGS_COUNT: ${{ steps.results.outputs.findings_count }}
+        CRITICAL_COUNT: ${{ steps.results.outputs.critical_count }}
+        HIGH_COUNT: ${{ steps.results.outputs.high_count }}
+        MEDIUM_COUNT: ${{ steps.results.outputs.medium_count }}
+        LOW_COUNT: ${{ steps.results.outputs.low_count }}
+      run: |
+        MD_REPORT=$(jq -r '.markdown // empty' "${{ runner.temp }}/rafter-results.md" 2>/dev/null || cat "${{ runner.temp }}/rafter-results.md")
+
+        if [ "$FINDINGS_COUNT" -eq 0 ]; then
+          ICON="white_check_mark"
+          HEADLINE="No security findings detected"
+        elif [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ]; then
+          ICON="rotating_light"
+          HEADLINE="${FINDINGS_COUNT} security findings detected"
+        else
+          ICON="warning"
+          HEADLINE="${FINDINGS_COUNT} security findings detected"
+        fi
+
+        # Build comment in a file to avoid shell expansion of scan result content
+        COMMENT_FILE="${{ runner.temp }}/rafter-pr-comment.md"
+        cat > "$COMMENT_FILE" <<'HEADER_EOF'
+## :ICON_PLACEHOLDER: Rafter Security Scan
+
+**HEADLINE_PLACEHOLDER**
+
+| Severity | Count |
+|----------|-------|
+HEADER_EOF
+        # Inject dynamic values safely via sed
+        sed -i "s/ICON_PLACEHOLDER/${ICON}/" "$COMMENT_FILE"
+        sed -i "s/HEADLINE_PLACEHOLDER/${HEADLINE}/" "$COMMENT_FILE"
+        echo "| Critical | ${CRITICAL_COUNT} |" >> "$COMMENT_FILE"
+        echo "| High | ${HIGH_COUNT} |" >> "$COMMENT_FILE"
+        echo "| Medium | ${MEDIUM_COUNT} |" >> "$COMMENT_FILE"
+        echo "| Low | ${LOW_COUNT} |" >> "$COMMENT_FILE"
+        echo "" >> "$COMMENT_FILE"
+        echo "<details>" >> "$COMMENT_FILE"
+        echo "<summary>Full Report</summary>" >> "$COMMENT_FILE"
+        echo "" >> "$COMMENT_FILE"
+        cat >> "$COMMENT_FILE" <<< "$MD_REPORT"
+        echo "" >> "$COMMENT_FILE"
+        echo "</details>" >> "$COMMENT_FILE"
+        echo "" >> "$COMMENT_FILE"
+        echo "---" >> "$COMMENT_FILE"
+        echo "<sub>Scan ID: ${SCAN_ID} | Powered by [Rafter](https://rafter.so)</sub>" >> "$COMMENT_FILE"
+
+        # Delete previous Rafter comments to avoid spam
+        EXISTING=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+          --jq '.[] | select(.body | contains("Rafter Security Scan")) | .id' 2>/dev/null || true)
+        for COMMENT_ID in $EXISTING; do
+          gh api -X DELETE "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" 2>/dev/null || true
+        done
+
+        gh pr comment "${{ github.event.pull_request.number }}" --body-file "$COMMENT_FILE"
+
+    - name: Upload artifacts
+      if: always() && steps.poll.outputs.status == 'completed'
+      uses: actions/upload-artifact@v4
+      with:
+        name: rafter-security-results
+        path: |
+          ${{ runner.temp }}/rafter-results.json
+          ${{ runner.temp }}/rafter-results.md
+          ${{ runner.temp }}/rafter-results.sarif
+        retention-days: 30
+
+    - name: Evaluate severity threshold
+      if: steps.poll.outputs.status == 'completed'
+      shell: bash
+      env:
+        SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+        CRITICAL_COUNT: ${{ steps.results.outputs.critical_count }}
+        HIGH_COUNT: ${{ steps.results.outputs.high_count }}
+        MEDIUM_COUNT: ${{ steps.results.outputs.medium_count }}
+        LOW_COUNT: ${{ steps.results.outputs.low_count }}
+      run: |
+        FAIL=0
+
+        case "$SEVERITY_THRESHOLD" in
+          critical)
+            [ "$CRITICAL_COUNT" -gt 0 ] && FAIL=1
+            ;;
+          high)
+            [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ] && FAIL=1
+            ;;
+          medium)
+            [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ] || [ "$MEDIUM_COUNT" -gt 0 ] && FAIL=1
+            ;;
+          low)
+            [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ] || [ "$MEDIUM_COUNT" -gt 0 ] || [ "$LOW_COUNT" -gt 0 ] && FAIL=1
+            ;;
+          none)
+            FAIL=0
+            ;;
+          *)
+            echo "::warning::Unknown severity threshold '${SEVERITY_THRESHOLD}', defaulting to 'high'"
+            [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ] && FAIL=1
+            ;;
+        esac
+
+        if [ "$FAIL" -eq 1 ]; then
+          echo "::error::Security findings exceed severity threshold '${SEVERITY_THRESHOLD}'"
+          exit 1
+        fi
+
+        echo "All findings are below severity threshold '${SEVERITY_THRESHOLD}'"
