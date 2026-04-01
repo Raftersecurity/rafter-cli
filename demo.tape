@@ -33,7 +33,11 @@ Type "export GIT_AUTHOR_NAME='Demo' GIT_AUTHOR_EMAIL='demo@example.com'"
 Enter
 Type "export GIT_COMMITTER_NAME='Demo' GIT_COMMITTER_EMAIL='demo@example.com'"
 Enter
-Type "DEMO=$(mktemp -d) && cd $DEMO && git init -q . && clear"
+Type "DEMO=$(mktemp -d) && cd $DEMO && git init -q ."
+Enter
+Type "K1=AKIAIOSF K2=ODNN7EXAMPLE"
+Enter
+Type "> ~/.rafter/audit.jsonl && clear"
 Enter
 Sleep 2s
 Show
@@ -47,21 +51,18 @@ Sleep 1.5s
 
 Type '# 1. A developer drops an AWS key into a config file'
 Enter
-Sleep 500ms
 
-Type "printf 'AWS_ACCESS_KEY_ID=\"%s%s\"\\n' 'AKIAIOSF' 'ODNN7EXAMPLE' > config.env"
+Type `echo "AWS_ACCESS_KEY_ID=${K1}${K2}" > config.env`
 Enter
-Sleep 500ms
 
 Type "cat config.env"
 Enter
-Sleep 2s
+Sleep 1s
 
 # ── 2. Install Rafter ────────────────────────────────────────────
 
 Type "# 2. Install Rafter"
 Enter
-Sleep 500ms
 
 Type "npm install -g @rafter-security/cli 2>&1 | tail -1"
 Enter
@@ -71,9 +72,8 @@ Sleep 15s
 
 Type "# 3. Scan for secrets"
 Enter
-Sleep 500ms
 
-Type 'rafter agent scan . ; echo "^ exit code: $?"'
+Type 'rafter scan local . ; echo "^ exit code: $?"'
 Enter
 Sleep 5s
 
@@ -97,19 +97,9 @@ Type "git add config.env && git commit -m 'add config'"
 Enter
 Sleep 5s
 
-# ── 6. Audit log ─────────────────────────────────────────────────
+# ── 6. Closing ────────────────────────────────────────────────────
 
-Type "# 6. Check the audit trail"
-Enter
-Sleep 500ms
-
-Type "rafter agent audit --event secret_detected --last 1"
-Enter
-Sleep 4s
-
-# ── 7. Closing ────────────────────────────────────────────────────
-
-Type "# Secrets caught. Commit blocked. Audit logged. That's Rafter."
+Type "# Secrets caught. Commit blocked. That's Rafter."
 Enter
 
 Sleep 5s
