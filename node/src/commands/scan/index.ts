@@ -23,6 +23,7 @@ export function createScanGroupCommand(): Command {
     .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
     .option("-f, --format <format>", "json | md", "md")
     .option("-m, --mode <mode>", "scan mode: fast | plus", "fast")
+    .option("--github-token <token>", "GitHub PAT for private repos (or RAFTER_GITHUB_TOKEN env var)")
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages")
     .action(async (opts) => {
@@ -40,6 +41,7 @@ export function createScanGroupCommand(): Command {
     .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
     .option("-f, --format <format>", "json | md", "md")
     .option("-m, --mode <mode>", "scan mode: fast | plus", "fast")
+    .option("--github-token <token>", "GitHub PAT for private repos (or RAFTER_GITHUB_TOKEN env var)")
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages");
 
