@@ -1,0 +1,14 @@
+{
+  "file": "database-urls.env",
+  "matches": [
+    {
+      "pattern": {
+        "name": "Database Connection String",
+        "severity": "critical"
+      },
+      "line": 3,
+      "column": 11,
+      "redacted": "mong******************************************************tion"
+    }
+  ]
+}
