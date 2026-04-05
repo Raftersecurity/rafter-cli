@@ -1,0 +1,14 @@
+{
+  "file": "aws-keys.txt",
+  "matches": [
+    {
+      "pattern": {
+        "name": "AWS Access Key ID",
+        "severity": "critical"
+      },
+      "line": 4,
+      "column": 21,
+      "redacted": "AKIA************MPLE"
+    }
+  ]
+}
