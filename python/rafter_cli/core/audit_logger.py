@@ -91,7 +91,7 @@ class AuditLogger:
 
         full = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "session_id": self._session_id,
+            "sessionId": self._session_id,
             **entry,
         }
         fd = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
@@ -110,13 +110,13 @@ class AuditLogger:
             return
 
         action = entry.get("action") or {}
-        event_risk = action.get("risk_level", "low")
+        event_risk = action.get("riskLevel", "low")
         min_risk = getattr(config.agent.notifications, "min_risk_level", "high")
 
         if RISK_SEVERITY.get(event_risk, 0) < RISK_SEVERITY.get(min_risk, 2):
             return
 
-        event_type = entry.get("event_type", "unknown")
+        event_type = entry.get("eventType", "unknown")
         command = action.get("command")
         summary = f"[rafter] {event_risk}-risk event: {event_type}"
         if command:
@@ -127,7 +127,7 @@ class AuditLogger:
             "risk": event_risk,
             "command": command,
             "timestamp": entry.get("timestamp"),
-            "agent": entry.get("agent_type"),
+            "agent": entry.get("agentType"),
             "text": summary,
             "content": summary,
         }
@@ -161,11 +161,11 @@ class AuditLogger:
         agent_type: str | None = None,
     ) -> None:
         self.log({
-            "event_type": "command_intercepted",
-            "agent_type": agent_type,
-            "action": {"command": command, "risk_level": self._assess_command_risk(command)},
-            "security_check": {"passed": passed, "reason": reason},
-            "resolution": {"action_taken": action_taken},
+            "eventType": "command_intercepted",
+            "agentType": agent_type,
+            "action": {"command": command, "riskLevel": self._assess_command_risk(command)},
+            "securityCheck": {"passed": passed, "reason": reason},
+            "resolution": {"actionTaken": action_taken},
         })
 
     def log_secret_detected(
@@ -176,11 +176,11 @@ class AuditLogger:
         agent_type: str | None = None,
     ) -> None:
         self.log({
-            "event_type": "secret_detected",
-            "agent_type": agent_type,
-            "action": {"risk_level": "critical"},
-            "security_check": {"passed": False, "reason": f"{secret_type} detected in {location}"},
-            "resolution": {"action_taken": action_taken},
+            "eventType": "secret_detected",
+            "agentType": agent_type,
+            "action": {"riskLevel": "critical"},
+            "securityCheck": {"passed": False, "reason": f"{secret_type} detected in {location}"},
+            "resolution": {"actionTaken": action_taken},
         })
 
 
@@ -191,14 +191,14 @@ class AuditLogger:
         agent_type: str | None = None,
     ) -> None:
         self.log({
-            "event_type": "content_sanitized",
-            "agent_type": agent_type,
-            "security_check": {
+            "eventType": "content_sanitized",
+            "agentType": agent_type,
+            "securityCheck": {
                 "passed": False,
                 "reason": f"{patterns_matched} sensitive patterns detected",
-                "details": {"content_type": content_type, "patterns_matched": patterns_matched},
+                "details": {"contentType": content_type, "patternsMatched": patterns_matched},
             },
-            "resolution": {"action_taken": "redacted"},
+            "resolution": {"actionTaken": "redacted"},
         })
 
     # ------------------------------------------------------------------
@@ -225,9 +225,9 @@ class AuditLogger:
                 continue
 
         if event_type:
-            entries = [e for e in entries if e.get("event_type") == event_type]
+            entries = [e for e in entries if e.get("eventType") == event_type]
         if agent_type:
-            entries = [e for e in entries if e.get("agent_type") == agent_type]
+            entries = [e for e in entries if e.get("agentType") == agent_type]
         if since:
             iso = since.isoformat()
             entries = [e for e in entries if e.get("timestamp", "") >= iso]
