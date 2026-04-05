@@ -1,0 +1,32 @@
+{
+  "file": "multi-pattern.py",
+  "matches": [
+    {
+      "pattern": {
+        "name": "GitHub Personal Access Token",
+        "severity": "critical"
+      },
+      "line": 4,
+      "column": 17,
+      "redacted": "ghp_********************************ghij"
+    },
+    {
+      "pattern": {
+        "name": "Slack Token",
+        "severity": "critical"
+      },
+      "line": 5,
+      "column": 16,
+      "redacted": "xoxb*********9012"
+    },
+    {
+      "pattern": {
+        "name": "Stripe API Key",
+        "severity": "critical"
+      },
+      "line": 6,
+      "column": 15,
+      "redacted": "sk_l************************uvwx"
+    }
+  ]
+}
