@@ -483,12 +483,12 @@ class TestFalsePositiveRegressions:
         result = _eval_risk_only("git stash")
         assert result.risk_level == "low"
 
-    def test_echo_rm_rf_is_false_positive(self):
-        """Pattern matching doesn't understand quoting — known limitation."""
+    def test_echo_rm_rf_is_low_safe_prefix(self):
+        """echo is a safe prefix — arguments don't trigger risk patterns."""
         result = _eval_risk_only('echo "rm -rf /"')
-        assert result.risk_level in ("critical", "high")
+        assert result.risk_level == "low"
 
-    def test_grep_sudo_rm_is_false_positive(self):
-        """'sudo rm' substring matches — known limitation."""
+    def test_grep_sudo_rm_is_low_safe_prefix(self):
+        """grep is a safe prefix — arguments don't trigger risk patterns."""
         result = _eval_risk_only("grep 'sudo rm' /var/log/auth.log")
-        assert result.risk_level == "high"
+        assert result.risk_level == "low"
