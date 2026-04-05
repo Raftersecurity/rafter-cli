@@ -41,7 +41,7 @@ function getAuditLogPath(): string {
   const config = vscode.workspace.getConfiguration("rafter");
   const custom = config.get<string>("auditLogPath");
   if (custom) return custom;
-  return path.join(os.homedir(), ".rafter", "audit.log");
+  return path.join(os.homedir(), ".rafter", "audit.jsonl");
 }
 
 function readAuditLog(limit: number = 100): AuditLogEntry[] {

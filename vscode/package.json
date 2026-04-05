@@ -107,7 +107,7 @@
         "rafter.auditLogPath": {
           "type": "string",
           "default": "",
-          "description": "Custom path to rafter audit log (default: ~/.rafter/audit.log)"
+          "description": "Custom path to rafter audit log (default: ~/.rafter/audit.jsonl)"
         },
         "rafter.excludePatterns": {
           "type": "array",
