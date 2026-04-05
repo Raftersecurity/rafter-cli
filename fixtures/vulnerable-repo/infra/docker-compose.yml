@@ -1,0 +1,17 @@
+# Infrastructure — INTENTIONAL FAKE SECRETS for fixture testing
+version: "3.8"
+services:
+  api:
+    image: myapp:latest
+    environment:
+      - MONGO_URI=mongodb://admin:m0ng0_p4ss@mongo.fixture.internal:27017/appdb
+      - NODE_ENV=production
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+  mysql:
+    image: mysql:8
+    environment:
+      - MYSQL_URL=mysql://root:r00t_f1xtur3@mysql.fixture.internal:3306/webapp
+      - FIXTURE_DB_PASS=hunter2_not_real_pw
