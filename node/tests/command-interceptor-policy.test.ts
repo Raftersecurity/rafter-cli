@@ -514,18 +514,14 @@ describe("CommandInterceptor — Exhaustive risk classification", () => {
       expect(result.riskLevel).toBe("low");
     });
 
-    it("echo with rm -rf quoted should be low risk", () => {
-      // Not perfect — pattern matches the substring. Known limitation.
-      // This test documents current behavior.
+    it("echo with rm -rf quoted should be low risk (safe prefix)", () => {
       const result = interceptor.evaluate('echo "rm -rf /"');
-      // This IS matched as critical because pattern doesn't understand quoting
-      expect(["critical", "high"]).toContain(result.riskLevel);
+      expect(result.riskLevel).toBe("low");
     });
 
-    it("grep for dangerous pattern should be high risk (known limitation)", () => {
+    it("grep for dangerous pattern should be low risk (safe prefix)", () => {
       const result = interceptor.evaluate("grep 'sudo rm' /var/log/auth.log");
-      // "sudo rm" substring matches HIGH_PATTERNS — known false positive
-      expect(result.riskLevel).toBe("high");
+      expect(result.riskLevel).toBe("low");
     });
   });
 });
