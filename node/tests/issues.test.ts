@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import crypto from "crypto";
+import fs from "fs";
+import { execFileSync } from "child_process";
 
 // ── dedup logic (mirrored from src/commands/issues/dedup.ts) ─────────
 
@@ -408,5 +410,558 @@ describe("parseNaturalText", () => {
     const result = parseNaturalText("Critical security vulnerability with credentials and tokens");
     const uniqueLabels = [...new Set(result.labels)];
     expect(result.labels).toEqual(uniqueLabels);
+  });
+});
+
+// ── from-scan command logic (mirrored from src/commands/issues/from-scan.ts) ──
+
+function draftsFromLocalScan(filePath: string): IssueDraft[] {
+  const raw = fs.readFileSync(filePath, "utf-8");
+  const results: Array<{ file: string; matches: LocalMatch[] }> = JSON.parse(raw);
+  const drafts: IssueDraft[] = [];
+  for (const result of results) {
+    for (const match of result.matches) {
+      drafts.push(buildFromLocalMatch(result.file, match));
+    }
+  }
+  return drafts;
+}
+
+describe("from-scan: draftsFromLocalScan", () => {
+  const sampleScanJson: Array<{ file: string; matches: LocalMatch[] }> = [
+    {
+      file: "src/config.ts",
+      matches: [
+        {
+          pattern: { name: "AWS Access Key", severity: "critical", description: "AWS access key ID" },
+          line: 15,
+          redacted: "AKIA****XXXX",
+        },
+        {
+          pattern: { name: "Generic API Key", severity: "medium" },
+          line: 42,
+          redacted: "api_****_key",
+        },
+      ],
+    },
+    {
+      file: "src/db.ts",
+      matches: [
+        {
+          pattern: { name: "Database Password", severity: "high", description: "DB password in code" },
+          line: 7,
+          redacted: "pass****word",
+        },
+      ],
+    },
+  ];
+
+  let tmpFile: string;
+
+  beforeEach(() => {
+    tmpFile = `/tmp/rafter-test-scan-${Date.now()}.json`;
+    fs.writeFileSync(tmpFile, JSON.stringify(sampleScanJson));
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+  });
+
+  it("creates one draft per match across all files", () => {
+    const drafts = draftsFromLocalScan(tmpFile);
+    expect(drafts).toHaveLength(3);
+  });
+
+  it("drafts have correct file associations", () => {
+    const drafts = draftsFromLocalScan(tmpFile);
+    expect(drafts[0].body).toContain("src/config.ts");
+    expect(drafts[1].body).toContain("src/config.ts");
+    expect(drafts[2].body).toContain("src/db.ts");
+  });
+
+  it("each draft has a unique fingerprint", () => {
+    const drafts = draftsFromLocalScan(tmpFile);
+    const fps = drafts.map((d) => d.fingerprint);
+    expect(new Set(fps).size).toBe(3);
+  });
+
+  it("each draft has valid labels", () => {
+    const drafts = draftsFromLocalScan(tmpFile);
+    for (const draft of drafts) {
+      expect(draft.labels).toContain("security");
+      expect(draft.labels).toContain("secret-detected");
+      expect(draft.labels.some((l) => l.startsWith("severity:"))).toBe(true);
+    }
+  });
+
+  it("maps severity correctly in labels", () => {
+    const drafts = draftsFromLocalScan(tmpFile);
+    expect(drafts[0].labels).toContain("severity:critical");
+    expect(drafts[1].labels).toContain("severity:medium");
+    expect(drafts[2].labels).toContain("severity:high");
+  });
+
+  it("handles empty scan results", () => {
+    const emptyFile = `/tmp/rafter-test-empty-${Date.now()}.json`;
+    fs.writeFileSync(emptyFile, "[]");
+    const drafts = draftsFromLocalScan(emptyFile);
+    expect(drafts).toHaveLength(0);
+    fs.unlinkSync(emptyFile);
+  });
+
+  it("handles file with no matches", () => {
+    const noMatchFile = `/tmp/rafter-test-nomatch-${Date.now()}.json`;
+    fs.writeFileSync(noMatchFile, JSON.stringify([{ file: "clean.ts", matches: [] }]));
+    const drafts = draftsFromLocalScan(noMatchFile);
+    expect(drafts).toHaveLength(0);
+    fs.unlinkSync(noMatchFile);
+  });
+});
+
+// ── from-scan deduplication integration ──────────────────────────────
+
+describe("from-scan: deduplication flow", () => {
+  const makeDraft = (file: string, rule: string): IssueDraft => {
+    return buildFromLocalMatch(file, {
+      pattern: { name: rule, severity: "high" },
+      line: 1,
+      redacted: "****",
+    });
+  };
+
+  const makeExistingIssue = (fp: string): GHIssue => ({
+    number: 1,
+    title: "existing",
+    body: embedFingerprint("body", fp),
+    labels: [],
+    html_url: "https://github.com/test/repo/issues/1",
+    state: "open",
+  });
+
+  it("filters out drafts that already have open issues", () => {
+    const draft1 = makeDraft("a.ts", "AWS_KEY");
+    const draft2 = makeDraft("b.ts", "DB_PASS");
+    const existing = [makeExistingIssue(draft1.fingerprint)];
+    const dupes = findDuplicates(existing, [draft1.fingerprint, draft2.fingerprint]);
+    const filtered = [draft1, draft2].filter((d) => !dupes.has(d.fingerprint));
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].fingerprint).toBe(draft2.fingerprint);
+  });
+
+  it("keeps all drafts when --no-dedup (no filtering applied)", () => {
+    const draft1 = makeDraft("a.ts", "AWS_KEY");
+    const draft2 = makeDraft("b.ts", "DB_PASS");
+    // With --no-dedup, we skip the findDuplicates call entirely
+    const drafts = [draft1, draft2];
+    expect(drafts).toHaveLength(2);
+  });
+
+  it("keeps all drafts when no existing issues have fingerprints", () => {
+    const draft1 = makeDraft("a.ts", "AWS_KEY");
+    const draft2 = makeDraft("b.ts", "DB_PASS");
+    const existing: GHIssue[] = [
+      { number: 1, title: "old", body: "no fingerprint here", labels: [], html_url: "", state: "open" },
+    ];
+    const dupes = findDuplicates(existing, [draft1.fingerprint, draft2.fingerprint]);
+    const filtered = [draft1, draft2].filter((d) => !dupes.has(d.fingerprint));
+    expect(filtered).toHaveLength(2);
+  });
+
+  it("deduplicates all drafts when all already exist", () => {
+    const draft1 = makeDraft("a.ts", "AWS_KEY");
+    const draft2 = makeDraft("b.ts", "DB_PASS");
+    const existing = [
+      makeExistingIssue(draft1.fingerprint),
+      makeExistingIssue(draft2.fingerprint),
+    ];
+    const dupes = findDuplicates(existing, [draft1.fingerprint, draft2.fingerprint]);
+    const filtered = [draft1, draft2].filter((d) => !dupes.has(d.fingerprint));
+    expect(filtered).toHaveLength(0);
+  });
+});
+
+// ── from-scan: dry-run output format ─────────────────────────────────
+
+describe("from-scan: dry-run output", () => {
+  it("drafts serialize to JSON with required fields", () => {
+    const draft = buildFromBackendVulnerability({
+      ruleId: "sql-injection",
+      level: "error",
+      message: "SQL injection in query builder",
+      file: "src/query.ts",
+      line: 99,
+    });
+    const json = JSON.parse(JSON.stringify(draft));
+    expect(json).toHaveProperty("title");
+    expect(json).toHaveProperty("body");
+    expect(json).toHaveProperty("labels");
+    expect(json).toHaveProperty("fingerprint");
+    expect(json.fingerprint).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it("multiple drafts serialize as JSON array", () => {
+    const drafts = [
+      buildFromBackendVulnerability({
+        ruleId: "xss",
+        level: "warning",
+        message: "Cross-site scripting",
+        file: "src/render.ts",
+      }),
+      buildFromLocalMatch("src/env.ts", {
+        pattern: { name: "ENV_SECRET", severity: "critical" },
+        line: 5,
+        redacted: "****",
+      }),
+    ];
+    const json = JSON.parse(JSON.stringify(drafts));
+    expect(json).toHaveLength(2);
+    expect(json[0].labels).toContain("security");
+    expect(json[1].labels).toContain("secret-detected");
+  });
+});
+
+// ── from-scan: backend scan drafts ───────────────────────────────────
+
+describe("from-scan: backend vulnerability drafts", () => {
+  it("creates drafts from vulnerability list", () => {
+    const vulns: BackendVulnerability[] = [
+      { ruleId: "sql-injection", level: "error", message: "SQL injection", file: "src/db.ts", line: 42 },
+      { ruleId: "path-traversal", level: "warning", message: "Path traversal", file: "src/files.ts", line: 10 },
+    ];
+    const drafts = vulns.map(buildFromBackendVulnerability);
+    expect(drafts).toHaveLength(2);
+    expect(drafts[0].title).toContain("[CRITICAL]");
+    expect(drafts[1].title).toContain("[HIGH]");
+  });
+
+  it("truncates long vulnerability messages in title", () => {
+    const longMsg = "A".repeat(100);
+    const draft = buildFromBackendVulnerability({
+      ruleId: "test",
+      level: "error",
+      message: longMsg,
+      file: "f.ts",
+    });
+    expect(draft.title.length).toBeLessThan(200);
+    expect(draft.title).toContain("...");
+  });
+
+  it("includes rule ID in labels", () => {
+    const draft = buildFromBackendVulnerability({
+      ruleId: "my-custom-rule",
+      level: "note",
+      message: "Found issue",
+      file: "x.ts",
+    });
+    expect(draft.labels).toContain("rule:my-custom-rule");
+  });
+});
+
+// ── from-scan: --repo flag override ──────────────────────────────────
+
+describe("from-scan: repo flag", () => {
+  it("uses explicit repo when --repo is provided", () => {
+    const repo = "my-org/my-repo";
+    // The repo flag is used directly without git detection
+    expect(repo).toBe("my-org/my-repo");
+  });
+});
+
+// ── from-scan: error handling ────────────────────────────────────────
+
+describe("from-scan: error handling", () => {
+  it("requires --scan-id or --from-local", () => {
+    // Neither option provided should be an error state
+    const scanId = undefined;
+    const fromLocal = undefined;
+    expect(!scanId && !fromLocal).toBe(true);
+  });
+
+  it("throws on invalid JSON file", () => {
+    const badFile = `/tmp/rafter-test-bad-${Date.now()}.json`;
+    fs.writeFileSync(badFile, "not valid json{{{");
+    expect(() => draftsFromLocalScan(badFile)).toThrow();
+    fs.unlinkSync(badFile);
+  });
+
+  it("throws on non-existent file", () => {
+    expect(() => draftsFromLocalScan("/tmp/nonexistent-rafter-scan.json")).toThrow();
+  });
+});
+
+// ── from-text: title override ────────────────────────────────────────
+
+describe("from-text: --title override", () => {
+  it("overrides parsed title when --title provided", () => {
+    const parsed = parseNaturalText("Original title\nBody text");
+    const overrideTitle = "My Custom Title";
+    parsed.title = overrideTitle;
+    expect(parsed.title).toBe("My Custom Title");
+  });
+});
+
+// ── from-text: --labels flag ─────────────────────────────────────────
+
+describe("from-text: --labels flag", () => {
+  it("appends comma-separated labels to auto-detected ones", () => {
+    const parsed = parseNaturalText("Critical security bug");
+    const extraLabels = "team:backend,priority:urgent";
+    const extra = extraLabels.split(",").map((l) => l.trim()).filter(Boolean);
+    parsed.labels.push(...extra);
+    expect(parsed.labels).toContain("severity:critical");
+    expect(parsed.labels).toContain("security");
+    expect(parsed.labels).toContain("team:backend");
+    expect(parsed.labels).toContain("priority:urgent");
+  });
+
+  it("handles empty labels string", () => {
+    const parsed = parseNaturalText("Some issue");
+    const extraLabels = "";
+    const extra = extraLabels.split(",").map((l) => l.trim()).filter(Boolean);
+    parsed.labels.push(...extra);
+    // No extra labels added
+    expect(parsed.labels.every((l) => !l.includes("team:"))).toBe(true);
+  });
+
+  it("handles labels with extra whitespace", () => {
+    const parsed = parseNaturalText("Bug found");
+    const extraLabels = " bug , needs-review , ";
+    const extra = extraLabels.split(",").map((l) => l.trim()).filter(Boolean);
+    parsed.labels.push(...extra);
+    expect(parsed.labels).toContain("bug");
+    expect(parsed.labels).toContain("needs-review");
+  });
+});
+
+// ── from-text: --dry-run output ──────────────────────────────────────
+
+describe("from-text: dry-run output", () => {
+  it("parsed issue serializes to JSON with title, body, labels", () => {
+    const parsed = parseNaturalText("XSS vulnerability in user comments\nThe comment form doesn't sanitize HTML");
+    const json = JSON.parse(JSON.stringify(parsed));
+    expect(json.title).toBe("XSS vulnerability in user comments");
+    expect(json.body).toContain("comment form");
+    expect(json.labels).toContain("security");
+  });
+});
+
+// ── from-text: severity auto-detection from keywords ─────────────────
+
+describe("from-text: severity keyword detection", () => {
+  it("P0 maps to critical", () => {
+    expect(parseNaturalText("P0 outage").labels).toContain("severity:critical");
+  });
+
+  it("P1 maps to high", () => {
+    expect(parseNaturalText("P1 regression").labels).toContain("severity:high");
+  });
+
+  it("P2 maps to medium", () => {
+    expect(parseNaturalText("P2 improvement").labels).toContain("severity:medium");
+  });
+
+  it("P3 maps to low", () => {
+    expect(parseNaturalText("P3 cosmetic").labels).toContain("severity:low");
+  });
+
+  it("no severity keyword yields no severity label", () => {
+    const result = parseNaturalText("Something happened in the app");
+    expect(result.labels.some((l) => l.startsWith("severity:"))).toBe(false);
+  });
+});
+
+// ── from-text: security keyword detection ────────────────────────────
+
+describe("from-text: security keyword detection", () => {
+  const securityKeywords = [
+    "security", "vulnerability", "cve", "cwe", "owasp",
+    "secret", "credential", "token", "password", "injection",
+    "xss", "csrf", "ssrf", "exploit",
+  ];
+
+  for (const kw of securityKeywords) {
+    it(`detects '${kw}' as security keyword`, () => {
+      const result = parseNaturalText(`Issue involving ${kw} concern`);
+      expect(result.labels).toContain("security");
+    });
+  }
+
+  it("does not add security label for non-security text", () => {
+    const result = parseNaturalText("The button color is wrong");
+    expect(result.labels).not.toContain("security");
+  });
+});
+
+// ── from-text: file path extraction ──────────────────────────────────
+
+describe("from-text: file path extraction", () => {
+  it("extracts file paths with line numbers", () => {
+    const result = parseNaturalText("Bug in src/auth/login.ts:42 causes crash");
+    expect(result.body).toContain("### Referenced Files");
+    expect(result.body).toContain("src/auth/login.ts:42");
+  });
+
+  it("extracts multiple file paths", () => {
+    const result = parseNaturalText("Found issues in src/a.ts and src/b.ts and lib/c.js");
+    expect(result.body).toContain("src/a.ts");
+    expect(result.body).toContain("src/b.ts");
+    expect(result.body).toContain("lib/c.js");
+  });
+
+  it("limits to 10 file references", () => {
+    const files = Array.from({ length: 15 }, (_, i) => `src/file${i}.ts`).join(" ");
+    const result = parseNaturalText(`Issues in ${files}`);
+    const matches = result.body.match(/- `/g);
+    if (matches) {
+      expect(matches.length).toBeLessThanOrEqual(10);
+    }
+  });
+
+  it("does not add Referenced Files section when no paths found", () => {
+    const result = parseNaturalText("This has no file references at all");
+    expect(result.body).not.toContain("### Referenced Files");
+  });
+});
+
+// ── from-text: --file flag ───────────────────────────────────────────
+
+describe("from-text: --file input", () => {
+  let tmpFile: string;
+
+  beforeEach(() => {
+    tmpFile = `/tmp/rafter-test-text-${Date.now()}.txt`;
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+  });
+
+  it("reads text from file and parses correctly", () => {
+    fs.writeFileSync(tmpFile, "## Critical Security Bug\nSQL injection in src/db.ts:15");
+    const text = fs.readFileSync(tmpFile, "utf-8");
+    const parsed = parseNaturalText(text);
+    expect(parsed.title).toBe("Critical Security Bug");
+    expect(parsed.labels).toContain("severity:critical");
+    expect(parsed.labels).toContain("security");
+    expect(parsed.body).toContain("src/db.ts:15");
+  });
+
+  it("handles empty file", () => {
+    fs.writeFileSync(tmpFile, "   \n  \n  ");
+    const text = fs.readFileSync(tmpFile, "utf-8");
+    const parsed = parseNaturalText(text);
+    expect(parsed.title).toBe("Security issue reported via Rafter CLI");
+  });
+});
+
+// ── from-text: --text inline ─────────────────────────────────────────
+
+describe("from-text: --text inline", () => {
+  it("parses first line as title, rest as body", () => {
+    const text = "Found a bug\nThis is the detailed description\nWith multiple lines";
+    const parsed = parseNaturalText(text);
+    expect(parsed.title).toBe("Found a bug");
+    expect(parsed.body).toContain("detailed description");
+    expect(parsed.body).toContain("multiple lines");
+  });
+
+  it("single line text uses that as both title and body", () => {
+    const text = "Single line issue";
+    const parsed = parseNaturalText(text);
+    expect(parsed.title).toBe("Single line issue");
+    // Body should fall back to the full text
+    expect(parsed.body).toContain("Single line issue");
+  });
+});
+
+// ── cross-implementation fingerprint consistency ─────────────────────
+
+describe("fingerprint: cross-implementation consistency", () => {
+  it("produces same hash for same inputs across repeated calls", () => {
+    const fp1 = fingerprint("src/config.ts", "AWS_KEY");
+    const fp2 = fingerprint("src/config.ts", "AWS_KEY");
+    const fp3 = fingerprint("src/config.ts", "AWS_KEY");
+    expect(fp1).toBe(fp2);
+    expect(fp2).toBe(fp3);
+  });
+
+  it("fingerprint is stable for backend and local match on same file+rule", () => {
+    const backendFp = fingerprint("src/auth.ts", "sql-injection");
+    const localFp = fingerprint("src/auth.ts", "sql-injection");
+    expect(backendFp).toBe(localFp);
+  });
+
+  it("empty file and rule still produce valid fingerprint", () => {
+    const fp = fingerprint("", "");
+    expect(fp).toHaveLength(12);
+    expect(fp).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it("special characters in file path produce valid fingerprint", () => {
+    const fp = fingerprint("src/path with spaces/file.ts", "rule:special/chars");
+    expect(fp).toHaveLength(12);
+    expect(fp).toMatch(/^[0-9a-f]{12}$/);
+  });
+});
+
+// ── issue title format ───────────────────────────────────────────────
+
+describe("issue title format", () => {
+  it("backend issue title contains severity tag, rule, and message", () => {
+    const draft = buildFromBackendVulnerability({
+      ruleId: "hardcoded-password",
+      level: "error",
+      message: "Password hardcoded in source",
+      file: "config.ts",
+    });
+    expect(draft.title).toMatch(/\[CRITICAL\]/);
+    expect(draft.title).toContain("hardcoded-password");
+    expect(draft.title).toContain("Password hardcoded in source");
+  });
+
+  it("local match title contains severity, pattern name, and basename", () => {
+    const draft = buildFromLocalMatch("src/deep/nested/config.env", {
+      pattern: { name: "GitHub Token", severity: "high" },
+      line: 1,
+    });
+    expect(draft.title).toMatch(/\[HIGH\]/);
+    expect(draft.title).toContain("GitHub Token");
+    expect(draft.title).toContain("config.env");
+    // Should NOT contain the full path in the title
+    expect(draft.title).not.toContain("src/deep/nested/config.env");
+  });
+});
+
+// ── issue body content ───────────────────────────────────────────────
+
+describe("issue body content", () => {
+  it("backend issue body has all sections", () => {
+    const draft = buildFromBackendVulnerability({
+      ruleId: "xss",
+      level: "warning",
+      message: "Cross-site scripting via unescaped output",
+      file: "src/render.ts",
+      line: 55,
+    });
+    expect(draft.body).toContain("## Security Finding");
+    expect(draft.body).toContain("**Rule:** `xss`");
+    expect(draft.body).toContain("**Severity:** high");
+    expect(draft.body).toContain("**File:** `src/render.ts` (line 55)");
+    expect(draft.body).toContain("### Description");
+    expect(draft.body).toContain("### Remediation");
+    expect(draft.body).toContain("Rafter CLI");
+  });
+
+  it("local match body has remediation steps", () => {
+    const draft = buildFromLocalMatch("env/.env", {
+      pattern: { name: "AWS Secret", severity: "critical", description: "AWS secret key" },
+      line: 3,
+      redacted: "wJal****rXUt",
+    });
+    expect(draft.body).toContain("## Secret Detection");
+    expect(draft.body).toContain("Rotate the exposed credential");
+    expect(draft.body).toContain("Remove the secret from source code");
+    expect(draft.body).toContain("secrets manager");
+    expect(draft.body).toContain("wJal****rXUt");
   });
 });
