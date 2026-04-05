@@ -4,6 +4,7 @@ import path from "path";
 import { PatternEngine } from "../../core/pattern-engine.js";
 import { DEFAULT_SECRET_PATTERNS } from "../../scanners/secret-patterns.js";
 import { SkillManager } from "../../utils/skill-manager.js";
+import { fmt, isAgentMode } from "../../utils/formatter.js";
 
 interface QuickScanResults {
   secrets: number;
@@ -28,7 +29,7 @@ async function auditSkill(
 ): Promise<void> {
   // Validate skill file exists
   if (!fs.existsSync(skillPath)) {
-    console.error(`Error: Skill file not found: ${skillPath}`);
+    console.error(fmt.error(`Skill file not found: ${skillPath}`));
     process.exit(2);
   }
 
@@ -38,8 +39,8 @@ async function auditSkill(
 
   // Run deterministic analysis
   if (!opts.json) {
-    console.log(`\n🔍 Auditing skill: ${skillName}\n`);
-    console.log("═".repeat(60));
+    console.log(fmt.header(`Auditing skill: ${skillName}`));
+    console.log(fmt.divider());
     console.log("Running quick security scan...\n");
   }
 
@@ -74,10 +75,10 @@ async function auditSkill(
   // Check if we can use OpenClaw
   if (openClawAvailable && !opts.skipOpenclaw) {
     if (!rafterSkillInstalled) {
-      console.log("\n⚠️  Rafter Security skill not installed in OpenClaw.");
+      console.log(`\n${fmt.warning("Rafter Security skill not installed in OpenClaw.")}`);
       console.log("   Run: rafter agent init\n");
     } else {
-      console.log("\n🤖 For comprehensive security review:\n");
+      console.log(`\n${fmt.info("For comprehensive security review:")}\n`);
       console.log("   1. Open OpenClaw");
       console.log(`   2. Run: /rafter-audit-skill ${absolutePath}`);
       console.log("\n   The auditor will analyze:");
@@ -96,12 +97,12 @@ async function auditSkill(
     }
   } else {
     // OpenClaw not available or skipped - show manual review prompt
-    console.log("\n📋 Manual Security Review Prompt\n");
-    console.log("═".repeat(60));
+    console.log(fmt.header("Manual Security Review Prompt"));
+    console.log(fmt.divider());
     console.log("\nCopy the following to your AI assistant for review:\n");
-    console.log("─".repeat(60));
+    console.log(fmt.divider());
     console.log(generateManualReviewPrompt(skillName, absolutePath, quickScan, skillContent));
-    console.log("─".repeat(60));
+    console.log(fmt.divider());
   }
 
   console.log();
@@ -159,25 +160,25 @@ async function runQuickScan(content: string): Promise<QuickScanResults> {
 }
 
 function displayQuickScan(scan: QuickScanResults, skillName: string): void {
-  console.log("📊 Quick Scan Results");
-  console.log("═".repeat(60));
+  console.log(fmt.header("Quick Scan Results"));
+  console.log(fmt.divider());
 
   // Secrets
   if (scan.secrets === 0) {
-    console.log("✓ Secrets: None detected");
+    console.log(fmt.success("Secrets: None detected"));
   } else {
-    console.log(`⚠️  Secrets: ${scan.secrets} found`);
+    console.log(fmt.warning(`Secrets: ${scan.secrets} found`));
     console.log("   → API keys, tokens, or credentials detected");
     console.log("   → Run: rafter scan local <path> for details");
   }
 
   // URLs
   if (scan.urls.length === 0) {
-    console.log("✓ External URLs: None");
+    console.log(fmt.success("External URLs: None"));
   } else {
-    console.log(`⚠️  External URLs: ${scan.urls.length} found`);
+    console.log(fmt.warning(`External URLs: ${scan.urls.length} found`));
     scan.urls.slice(0, 5).forEach(url => {
-      console.log(`   • ${url}`);
+      console.log(`   - ${url}`);
     });
     if (scan.urls.length > 5) {
       console.log(`   ... and ${scan.urls.length - 5} more`);
@@ -186,11 +187,11 @@ function displayQuickScan(scan: QuickScanResults, skillName: string): void {
 
   // High-risk commands
   if (scan.highRiskCommands.length === 0) {
-    console.log("✓ High-risk commands: None detected");
+    console.log(fmt.success("High-risk commands: None detected"));
   } else {
-    console.log(`⚠️  High-risk commands: ${scan.highRiskCommands.length} found`);
+    console.log(fmt.warning(`High-risk commands: ${scan.highRiskCommands.length} found`));
     scan.highRiskCommands.slice(0, 5).forEach(cmd => {
-      console.log(`   • ${cmd.command} (line ${cmd.line})`);
+      console.log(`   - ${cmd.command} (line ${cmd.line})`);
     });
     if (scan.highRiskCommands.length > 5) {
       console.log(`   ... and ${scan.highRiskCommands.length - 5} more`);

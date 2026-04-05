@@ -77,6 +77,15 @@ program.addCommand(createReportCommand());
 // Shell completions
 program.addCommand(createCompletionCommand());
 
+// Version subcommand (also available as --version)
+program.addCommand(
+  new Command("version")
+    .description("Print version and exit")
+    .action(() => {
+      console.log(VERSION);
+    })
+);
+
 // Non-blocking update check — runs after command, prints to stderr
 checkForUpdate(VERSION).then((notice) => {
   if (notice) process.stderr.write(notice);

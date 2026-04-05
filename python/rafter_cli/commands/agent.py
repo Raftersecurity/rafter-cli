@@ -1086,24 +1086,24 @@ def audit(
             ts = datetime.fromisoformat(ts).strftime("%Y-%m-%d %H:%M:%S")
         except Exception:
             pass
-        et = e.get("event_type", "unknown")
+        et = e.get("eventType", e.get("event_type", "unknown"))
         ind = indicators.get(et, "[EVENT]" if is_agent_mode() else "\U0001f4dd")
         print(f"{ind} [{ts}] {et}")
-        if e.get("agent_type"):
-            print(f"   Agent: {e['agent_type']}")
+        if e.get("agentType") or e.get("agent_type"):
+            print(f"   Agent: {e.get('agentType') or e['agent_type']}")
         action = e.get("action") or {}
         if action.get("command"):
             print(f"   Command: {action['command']}")
-        if action.get("risk_level"):
-            print(f"   Risk: {action['risk_level']}")
-        sc = e.get("security_check") or {}
+        if action.get("riskLevel") or action.get("risk_level"):
+            print(f"   Risk: {action.get('riskLevel') or action['risk_level']}")
+        sc = e.get("securityCheck") or e.get("security_check") or {}
         print(f"   Check: {'PASSED' if sc.get('passed') else 'FAILED'}")
         if sc.get("reason"):
             print(f"   Reason: {sc['reason']}")
         res = e.get("resolution") or {}
-        print(f"   Action: {res.get('action_taken', 'unknown')}")
-        if res.get("override_reason"):
-            print(f"   Override: {res['override_reason']}")
+        print(f"   Action: {res.get('actionTaken', res.get('action_taken', 'unknown'))}")
+        if res.get("overrideReason") or res.get("override_reason"):
+            print(f"   Override: {res.get('overrideReason') or res['override_reason']}")
         print()
 
 
@@ -1117,10 +1117,11 @@ def _truncate_command(cmd: str, max_len: int = 60) -> str:
 
 
 def _format_share_detail(entry: dict) -> str:
-    action = (entry.get("resolution") or {}).get("action_taken", "unknown")
+    res = entry.get("resolution") or {}
+    action = res.get("actionTaken", res.get("action_taken", "unknown"))
     suffix = f"[{action}]"
-    event_type = entry.get("event_type", "")
-    sc = entry.get("security_check") or {}
+    event_type = entry.get("eventType", entry.get("event_type", ""))
+    sc = entry.get("securityCheck") or entry.get("security_check") or {}
     action_block = entry.get("action") or {}
 
     if event_type == "secret_detected":
@@ -1173,9 +1174,9 @@ def _audit_share() -> None:
                 ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
             except Exception:
                 pass
-            event_type = e.get("event_type", "unknown")
+            event_type = e.get("eventType", e.get("event_type", "unknown"))
             event_pad = event_type.ljust(20)
-            risk_raw = (e.get("action") or {}).get("risk_level", "low")
+            risk_raw = (e.get("action") or {}).get("riskLevel", (e.get("action") or {}).get("risk_level", "low"))
             risk_pad = risk_raw.upper().ljust(8)
             detail = _format_share_detail(e)
             lines.append(f"  {ts}  {event_pad}  {risk_pad} {detail}")
@@ -1934,9 +1935,9 @@ def status():
         logger = AuditLogger()
         all_entries = logger.read()
         total = len(all_entries)
-        secrets = sum(1 for e in all_entries if e.get("event_type") == "secret_detected")
-        blocked = sum(1 for e in all_entries if e.get("event_type") == "command_intercepted"
-                      and e.get("resolution", {}).get("action_taken") == "blocked")
+        secrets = sum(1 for e in all_entries if e.get("eventType", e.get("event_type")) == "secret_detected")
+        blocked = sum(1 for e in all_entries if e.get("eventType", e.get("event_type")) == "command_intercepted"
+                      and (e.get("resolution") or {}).get("actionTaken", (e.get("resolution") or {}).get("action_taken")) == "blocked")
         print(f"Total events: {total}  |  Secrets detected: {secrets}  |  Commands blocked: {blocked}")
 
         recent = logger.read(limit=5)
@@ -1944,8 +1945,8 @@ def status():
             print("\nRecent events:")
             for e in reversed(recent):
                 ts = e.get("timestamp", "")[:19].replace("T", " ")
-                evt = e.get("event_type", "unknown")
-                action = e.get("resolution", {}).get("action_taken", "")
+                evt = e.get("eventType", e.get("event_type", "unknown"))
+                action = (e.get("resolution") or {}).get("actionTaken", (e.get("resolution") or {}).get("action_taken", ""))
                 print(f"  {ts}  {evt}  [{action}]")
     else:
         print("No events logged yet.")
