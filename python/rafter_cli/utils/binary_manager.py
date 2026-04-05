@@ -79,6 +79,26 @@ class BinaryManager:
     def is_gitleaks_installed(self) -> bool:
         return self.get_gitleaks_path().exists()
 
+    def find_gitleaks_on_path(self) -> str | None:
+        """Find gitleaks on system PATH (like Node's which/where)."""
+        return shutil.which("gitleaks")
+
+    def verify_gitleaks(self) -> bool:
+        """Check if the managed gitleaks binary works (simple bool)."""
+        if not self.is_gitleaks_installed():
+            return False
+        result = self.verify_gitleaks_verbose()
+        return result["ok"]
+
+    def get_gitleaks_version(self) -> str:
+        """Return installed gitleaks version string, or 'not installed'/'unknown'."""
+        if not self.is_gitleaks_installed():
+            return "not installed"
+        result = self.verify_gitleaks_verbose()
+        if result["ok"] and result["stdout"]:
+            return result["stdout"]
+        return "unknown"
+
     def verify_gitleaks_verbose(self, binary_path: Optional[Path] = None) -> dict:
         """Run 'gitleaks version' and return {ok, stdout, stderr}.
 

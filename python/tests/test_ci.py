@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
 from typer.testing import CliRunner
 
 from rafter_cli.__main__ import app

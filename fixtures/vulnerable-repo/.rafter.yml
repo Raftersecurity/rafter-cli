@@ -1,0 +1,27 @@
+version: "1"
+risk_level: strict
+command_policy:
+  mode: approve-dangerous
+  blocked_patterns:
+    - "rm -rf /"
+    - ":(){ :|:& };:"
+    - "dd if=/dev/zero of=/dev/sd"
+  require_approval:
+    - "npm publish"
+    - "git push --force"
+    - "curl -X DELETE"
+scan:
+  exclude_paths:
+    - "node_modules/"
+    - ".git/"
+    - "vendor/"
+  custom_patterns:
+    - name: "Internal Service Token"
+      regex: "SVC_TOKEN_[A-Z0-9]{32}"
+      severity: critical
+    - name: "Fixture DB Password"
+      regex: "FIXTURE_DB_PASS=[^\\s]+"
+      severity: high
+audit:
+  retention_days: 90
+  log_level: info
