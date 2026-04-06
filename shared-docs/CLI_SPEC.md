@@ -17,7 +17,7 @@ The CLI follows UNIX principles:
 
 ## Exit Codes
 
-### Backend Commands (`rafter run`, `rafter get`, `rafter usage`)
+### Remote Commands (`rafter run`, `rafter get`, `rafter usage`)
 
 | Code | Meaning |
 |------|---------|
@@ -40,7 +40,7 @@ The CLI follows UNIX principles:
 ## Global Options
 
 - `-a, --agent` — Plain output (no colors, no emoji)
-- `-V, --version` — Print version
+- `-V, --version` — Print version and exit (preferred form; `rafter version` subcommand also works)
 - `-h, --help` — Show help
 
 ---
@@ -83,10 +83,6 @@ Check API quota and usage statistics.
 
 - `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
 - `-h, --help`
-
-### rafter version
-
-Print version and exit.
 
 ---
 
@@ -377,6 +373,9 @@ Config keys: `agent.riskLevel`, `agent.skills.autoUpdate`, `agent.skills.install
 
 Generate project-level instruction files so AI agents discover Rafter at session start. Creates `.cursorrules`, `AGENTS.md`, or other platform-specific files in the project root.
 
+- `--only <platforms>` — comma-separated list of platforms to target (`claude-code`, `codex`, `gemini`, `cursor`, `windsurf`, `continue`, `aider`)
+- `--list` — list which files would be created without writing them
+
 Node only. Not yet implemented in Python.
 
 ### rafter agent verify
@@ -390,6 +389,8 @@ Show agent security status dashboard. Displays config summary, installed integra
 ### rafter agent update-gitleaks [OPTIONS]
 
 Update (or reinstall) the managed gitleaks binary.
+
+- `--version <version>` — specific gitleaks version to install (default: current bundled version)
 
 ### rafter agent baseline SUBCOMMAND
 
@@ -406,7 +407,8 @@ Generate CI/CD pipeline configuration for secret scanning.
 
 - `--platform <platform>` — `github`, `gitlab`, or `circleci` (default: auto-detect)
 - `--output <path>` — output file path (default: platform-specific)
-- `--with-backend` — include backend security audit job (requires `RAFTER_API_KEY`)
+- `--with-remote` — include remote security audit job (requires `RAFTER_API_KEY`)
+- `--with-backend` — deprecated alias for `--with-remote`
 
 Auto-detection: checks for `.github/`, `.gitlab-ci.yml`, `.circleci/` in cwd.
 
@@ -437,9 +439,49 @@ PostToolUse hook handler. Reads tool output from stdin, redacts any secrets foun
 
 ### rafter mcp serve [OPTIONS]
 
-Start MCP server over stdio transport. Exposes 4 tools (`scan_secrets`, `evaluate_command`, `read_audit_log`, `get_config`) and 2 resources (`rafter://config`, `rafter://policy`).
+Start MCP server over stdio transport. Exposes 4 tools and 2 resources.
 
 - `--transport <type>` — transport type (currently only `stdio`, default: `stdio`)
+
+#### MCP Tools
+
+| Tool | Description | Required inputs |
+|------|-------------|-----------------|
+| `scan_secrets` | Scan files or directories for leaked secrets, API keys, tokens, passwords, and credentials | `path` (string) |
+| `evaluate_command` | Check if a shell command is safe to run per the active security policy | `command` (string) |
+| `read_audit_log` | Read security event history — blocked commands, detected secrets, policy overrides | none (optional: `limit`, `event_type`, `since`) |
+| `get_config` | Read active Rafter configuration and policy | none (optional: `key` dot-path) |
+
+**`scan_secrets` inputs:**
+- `path` (required) — file or directory path to scan
+- `engine` (optional) — `auto` (default), `gitleaks`, or `patterns`
+
+**`evaluate_command` output schema:**
+```json
+{
+  "allowed": true,
+  "risk_level": "low",
+  "requires_approval": false,
+  "reason": "optional explanation string"
+}
+```
+
+**`read_audit_log` inputs:**
+- `limit` (optional, number) — max entries to return (default: 20)
+- `event_type` (optional, string) — filter by event type (e.g. `command_intercepted`, `secret_detected`)
+- `since` (optional, ISO 8601 string) — only return entries after this timestamp
+
+**`get_config` inputs:**
+- `key` (optional, string) — dot-path config key (e.g. `agent.commandPolicy`); omit for full config
+
+#### MCP Resources
+
+| URI | MIME type | Description |
+|-----|-----------|-------------|
+| `rafter://config` | `application/json` | Current Rafter configuration (`~/.rafter/config.json`) |
+| `rafter://policy` | `application/json` | Active security policy — merged `.rafter.yml` + global config |
+
+`rafter://policy` returns the result of merging the project-level `.rafter.yml` (if present) over the global config. It reflects the effective policy that `evaluate_command` and `scan_secrets` enforce.
 
 ### rafter policy export [OPTIONS]
 
@@ -473,8 +515,29 @@ Node only. Not yet implemented in Python.
 
 GitHub Issues integration — create issues from scan findings or natural text.
 
-- `rafter issues create from-scan [options]` — create GitHub issues from scan results
-- `rafter issues create from-text [options]` — create a GitHub issue from natural language text (stdin, file, or inline)
+#### rafter issues create from-scan [OPTIONS]
+
+Create GitHub issues from scan results.
+
+- `--scan-id <id>` — remote scan ID to create issues from
+- `--from-local <path>` — path to local scan JSON (from `rafter scan local --format json`)
+- `-r, --repo <repo>` — target GitHub repo (`org/repo`)
+- `-k, --api-key <key>` — Rafter API key (required with `--scan-id`)
+- `--no-dedup` — skip deduplication check (create even if matching issue exists)
+- `--dry-run` — show issues that would be created without actually creating them
+- `--quiet` — suppress status messages
+
+#### rafter issues create from-text [OPTIONS]
+
+Create a GitHub issue from natural language text (stdin, file, or inline).
+
+- `-r, --repo <repo>` — target GitHub repo (`org/repo`)
+- `-t, --text <text>` — inline text to convert to an issue
+- `-f, --file <path>` — read text from file
+- `--title <title>` — override extracted title
+- `--labels <labels>` — comma-separated labels to add
+- `--dry-run` — show parsed issue without creating it
+- `--quiet` — suppress status messages
 
 ### rafter completion <shell>
 
@@ -525,7 +588,7 @@ Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not a
 
 ## Usage Examples
 
-### Backend Code Analysis
+### Remote Code Analysis
 
 ```bash
 # Run scan, auto-detect repo/branch
@@ -615,7 +678,7 @@ rafter agent config set agent.riskLevel aggressive
 
 - API key: provided via `--api-key` flag, `RAFTER_API_KEY` env var, or `.env` file
 - Git auto-detection works in CI (supports `GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, `CI_REPOSITORY`, `CI_COMMIT_BRANCH`, `CI_BRANCH`)
-- Backend code analysis targets the remote repository, not local files
+- Remote code analysis targets the remote repository, not local files
 - All scan data to stdout, all status messages to stderr
 - `--quiet` suppresses stderr; stdout is unaffected
 - Agent commands are available in both Node and Python implementations
