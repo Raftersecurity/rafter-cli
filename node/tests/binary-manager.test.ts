@@ -375,7 +375,7 @@ describe("BinaryManager SHA256 computation", () => {
     const bm = new BinaryManager();
     const hash = await (bm as any).computeSHA256(tmpFile);
     // SHA256 of "hello world\n"
-    expect(hash).toBe("ecf701f727d9e2d77c4aa49ac6fbbcc997278aca010bddeeb961c10cf54d435a");
+    expect(hash).toBe("a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447");
   });
 
   it("returns a 64-character hex string", async () => {

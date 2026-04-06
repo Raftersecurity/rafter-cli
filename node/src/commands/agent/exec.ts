@@ -128,6 +128,8 @@ async function promptApproval(): Promise<boolean> {
   });
 
   return new Promise((resolve) => {
+    // Handle EOF / non-interactive stdin (e.g. piped or closed stdin)
+    rl.on("close", () => resolve(false));
     rl.question("Approve this command? (yes/no): ", (answer) => {
       rl.close();
       const normalized = answer.trim().toLowerCase();

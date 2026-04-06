@@ -47,7 +47,7 @@ function initRepo(dir: string): void {
 
 // Fake but realistic-looking secrets for testing
 const FAKE_AWS_KEY = "AKIAIOSFODNN7EXAMPLE";
-const FAKE_GITHUB_TOKEN = "ghp_FAKEEFabcdef1234567890abcdef1234567";
+const FAKE_GITHUB_TOKEN = "ghp_FAKEEFabcdef1234567890abcdef12345678";
 const FAKE_PRIVATE_KEY = `-----BEGIN RSA PRIVATE KEY-----
 MIIBPAIBAAJBALRiMLAB9pm5DhB2m1pGv43example1234567890abcdefghijklmn
 opqrstuvwxyz1234567890ABCDEFGHIJKLMNOPQRSTUV==

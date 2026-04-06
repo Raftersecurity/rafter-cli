@@ -73,13 +73,17 @@ export const DEFAULT_REQUIRE_APPROVAL: string[] = [
 /** Read-only commands whose arguments should not trigger risk patterns. */
 const SAFE_PREFIX = /^(grep|egrep|fgrep|rg|ag|ack|echo|printf)\s/;
 
+/** Shell operators that chain independent commands. */
+const CHAIN_OPERATORS = /[;|&]|&&|\|\|/;
+
 /**
  * Assess risk level of a command string.
  */
 export function assessCommandRisk(command: string): CommandRiskLevel {
   const cmd = command.toLowerCase().trim();
 
-  if (SAFE_PREFIX.test(cmd)) return "low";
+  // Safe prefix only applies to simple (non-chained) commands
+  if (SAFE_PREFIX.test(cmd) && !CHAIN_OPERATORS.test(cmd)) return "low";
 
   for (const pattern of CRITICAL_PATTERNS) {
     if (pattern.test(cmd)) return "critical";

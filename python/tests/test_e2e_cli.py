@@ -189,12 +189,12 @@ class TestLocalScanning:
         assert rc == 2
 
     def test_invalid_engine_does_not_crash(self, tmp_path):
-        """Python implementation falls back gracefully for unknown engines."""
+        """Python implementation rejects unknown engines with exit code 2."""
         f = tmp_path / "clean.txt"
         f.write_text("ok\n")
         _, _, rc = rafter(f"scan local {f} --engine badengine")
-        # Python silently defaults to patterns engine — exits 0
-        assert rc == 0
+        # Python rejects invalid engines with exit code 2
+        assert rc == 2
 
     def test_invalid_format_does_not_crash(self, tmp_path):
         """Python implementation falls back gracefully for unknown formats."""

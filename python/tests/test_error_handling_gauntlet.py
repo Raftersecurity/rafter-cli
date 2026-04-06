@@ -173,9 +173,12 @@ class TestResolveKey:
         monkeypatch.delenv("RAFTER_API_KEY", raising=False)
         # Prevent .env file from being loaded
         monkeypatch.chdir(tempfile.mkdtemp())
-        with pytest.raises(SystemExit) as exc_info:
+        # typer.Exit raises click.exceptions.Exit which is not a SystemExit
+        from click.exceptions import Exit as ClickExit
+        with pytest.raises((SystemExit, ClickExit)) as exc_info:
             resolve_key(None)
-        assert exc_info.value.code == EXIT_GENERAL_ERROR
+        code = getattr(exc_info.value, "code", getattr(exc_info.value, "exit_code", None))
+        assert code == EXIT_GENERAL_ERROR
         err = capsys.readouterr().err
         assert "No API key" in err
 
@@ -329,7 +332,7 @@ class TestScannerErrors:
 
     def test_custom_patterns(self, tmp_path):
         custom_file = tmp_path / "custom.txt"
-        custom_file.write_text("INTERNAL_ABCDEF12345678901234567890AB\n")
+        custom_file.write_text("INTERNAL_ABCDEF1234567890ABCDEF1234567890\n")
         scanner = RegexScanner(
             custom_patterns=[
                 {
@@ -351,7 +354,7 @@ class TestScannerErrors:
     def test_scan_directory_with_secrets(self, tmp_path):
         secret_file = tmp_path / "test.env"
         secret_file.write_text(
-            "STRIPE_SECRET_KEY=sk_l1ve_abcdefghijklmnopqrstuvwx\n"
+            "STRIPE_SECRET_KEY=" + "sk_live" + "_abcdefghijklmnopqrstuvwx\n"
         )
         scanner = RegexScanner()
         results = scanner.scan_directory(str(tmp_path))
@@ -414,13 +417,13 @@ class TestScanJsonSchema:
 # 5. AuditLogger — error paths
 # ---------------------------------------------------------------------------
 
-from rafter_cli.core.audit_logger import AuditLogger
+from rafter_cli.core.audit_logger import AuditLogger, validate_webhook_url
 
 
 class TestAuditLoggerErrors:
     def test_reads_empty_log_gracefully(self, tmp_path):
-        logger = AuditLogger(rafter_dir=str(tmp_path))
-        entries = logger.read_log()
+        logger = AuditLogger(log_path=tmp_path / "audit.jsonl")
+        entries = logger.read()
         assert isinstance(entries, list)
         assert len(entries) == 0
 
@@ -431,19 +434,25 @@ class TestAuditLoggerErrors:
             "{bad json\n"
             '{"eventType":"test2","timestamp":"2026-01-02T00:00:00Z","sessionId":"s2","securityCheck":{"passed":true},"resolution":{"actionTaken":"allowed"}}\n'
         )
-        logger = AuditLogger(rafter_dir=str(tmp_path))
-        entries = logger.read_log()
+        logger = AuditLogger(log_path=log_path)
+        entries = logger.read()
         # Should skip corrupt line, return valid entries
         assert len(entries) == 2
 
     def test_log_writes_valid_jsonl(self, tmp_path):
-        logger = AuditLogger(rafter_dir=str(tmp_path))
-        logger.log(
-            event_type="command_intercepted",
-            passed=True,
-            action_taken="allowed",
-        )
+        from unittest.mock import patch, MagicMock
         log_path = tmp_path / "audit.jsonl"
+        logger = AuditLogger(log_path=log_path)
+        # Mock ConfigManager so log_all_actions is True
+        mock_config = MagicMock()
+        mock_config.agent.audit.log_all_actions = True
+        mock_config.agent.notifications.webhook = None
+        with patch("rafter_cli.core.config_manager.ConfigManager.load", return_value=mock_config):
+            logger.log({
+                "eventType": "command_intercepted",
+                "securityCheck": {"passed": True},
+                "resolution": {"actionTaken": "allowed"},
+            })
         assert log_path.exists()
         content = log_path.read_text().strip()
         entry = json.loads(content)
@@ -453,24 +462,19 @@ class TestAuditLoggerErrors:
 
     def test_webhook_rejects_private_ips(self, tmp_path):
         with pytest.raises((ValueError, Exception)):
-            AuditLogger(
-                rafter_dir=str(tmp_path),
-                webhook_url="http://192.168.1.1/hook",
-            )
+            validate_webhook_url("http://192.168.1.1/hook")
 
     def test_webhook_rejects_localhost(self, tmp_path):
         with pytest.raises((ValueError, Exception)):
-            AuditLogger(
-                rafter_dir=str(tmp_path),
-                webhook_url="http://localhost/hook",
-            )
+            validate_webhook_url("http://localhost/hook")
 
     def test_webhook_accepts_valid_https(self, tmp_path):
-        # Should not raise
-        AuditLogger(
-            rafter_dir=str(tmp_path),
-            webhook_url="https://hooks.example.com/services/T/B/xxx",
-        )
+        from unittest.mock import patch
+        # Mock DNS resolution to return a public IP so validation passes
+        mock_info = [(2, 1, 6, '', ('93.184.216.34', 0))]
+        with patch("rafter_cli.core.audit_logger.socket.getaddrinfo", return_value=mock_info):
+            # Should not raise
+            validate_webhook_url("https://hooks.example.com/services/T/B/xxx")
 
 
 # ---------------------------------------------------------------------------
@@ -543,8 +547,10 @@ class TestGitleaksScannerErrors:
         assert isinstance(result, bool)
 
     def test_scan_file_with_missing_binary(self, tmp_path):
-        """Scanner with invalid binary path should handle error gracefully."""
-        scanner = GitleaksScanner(binary_path="/nonexistent/gitleaks")
+        """Scanner with no gitleaks binary should handle error gracefully."""
+        scanner = GitleaksScanner()
+        # Override the binary path after construction
+        scanner._path = "/nonexistent/gitleaks"
         test_file = tmp_path / "test.txt"
         test_file.write_text("test content")
         try:

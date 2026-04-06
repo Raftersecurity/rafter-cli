@@ -777,8 +777,9 @@ export function createInitCommand(): Command {
       }
 
       // Install Claude Code skills + hooks if opted in
+      // When --with-claude-code is explicitly passed, install even if .claude doesn't exist yet
       let claudeCodeOk = false;
-      if (hasClaudeCode && wantClaudeCode) {
+      if ((hasClaudeCode || opts.withClaudeCode) && wantClaudeCode) {
         try {
           await installClaudeCodeSkills();
           installClaudeCodeHooks();

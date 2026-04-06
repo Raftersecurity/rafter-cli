@@ -166,7 +166,7 @@ describe("MCP Server — real stdio transport: scan_secrets", () => {
 
   it("should scan a directory and find secrets", async () => {
     fs.writeFileSync(path.join(tmpDir, "clean.txt"), "nothing here\n");
-    fs.writeFileSync(path.join(tmpDir, "secret.env"), "GITHUB_TOKEN=ghp_FAKEEFabcdef1234567890abcdef1234567\n");
+    fs.writeFileSync(path.join(tmpDir, "secret.env"), "GITHUB_TOKEN=ghp_FAKEEFabcdef1234567890abcdef12345678\n");
 
     const result = await client.callTool({
       name: "scan_secrets",

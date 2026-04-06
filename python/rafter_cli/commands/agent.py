@@ -658,6 +658,11 @@ def init(
 
 def _select_engine(preference: str, quiet: bool) -> str:
     """Return 'gitleaks' or 'patterns'."""
+    valid_engines = ("auto", "gitleaks", "patterns")
+    if preference not in valid_engines:
+        print(f"Invalid engine: {preference}. Valid values: {', '.join(valid_engines)}", file=sys.stderr)
+        raise typer.Exit(code=2)
+
     if preference == "patterns":
         return "patterns"
 

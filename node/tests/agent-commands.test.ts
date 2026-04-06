@@ -35,27 +35,25 @@ function runCli(
   homeDir: string,
   extraEnv?: Record<string, string>,
 ): { stdout: string; stderr: string; exitCode: number } {
-  try {
-    const stdout = execSync(`npx tsx ${CLI_ENTRY} ${args}`, {
-      cwd: PROJECT_ROOT,
-      encoding: "utf-8",
-      timeout: 25_000,
-      env: {
-        ...process.env,
-        HOME: homeDir,
-        XDG_CONFIG_HOME: path.join(homeDir, ".config"),
-        ...extraEnv,
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return { stdout, stderr: "", exitCode: 0 };
-  } catch (e: any) {
-    return {
-      stdout: e.stdout || "",
-      stderr: e.stderr || "",
-      exitCode: e.status ?? 1,
-    };
-  }
+  const { spawnSync } = require("child_process");
+  const result = spawnSync(`npx tsx ${CLI_ENTRY} ${args}`, {
+    cwd: PROJECT_ROOT,
+    encoding: "utf-8",
+    timeout: 25_000,
+    shell: true,
+    env: {
+      ...process.env,
+      HOME: homeDir,
+      XDG_CONFIG_HOME: path.join(homeDir, ".config"),
+      ...extraEnv,
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  return {
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    exitCode: result.status ?? 1,
+  };
 }
 
 // ─── agent config ────────────────────────────────────────────────────────────
@@ -264,7 +262,7 @@ describe("agent scan", () => {
 
   it("--json outputs valid JSON array", () => {
     const f = path.join(tmpDir, "api.txt");
-    fs.writeFileSync(f, "token=ghp_FAKE567890abcdefghijklmnopqrstuAB\n");
+    fs.writeFileSync(f, "token=ghp_FAKE567890abcdefghijklmnopqrstuABCDE\n");
     const r = runCli(`agent scan ${f} --engine patterns --json`, home);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
@@ -329,7 +327,7 @@ describe("agent scan", () => {
 
   it("text format shows human-readable output for findings", () => {
     const f = path.join(tmpDir, "leak.txt");
-    fs.writeFileSync(f, "sk_l1ve_1234567890abcdefghijklmn\n");
+    fs.writeFileSync(f, ["sk_live", "_1234567890abcdefghijklmn"].join("") + "\n");
     const r = runCli(`agent scan ${f} --engine patterns`, home);
     expect(r.exitCode).toBe(1);
     // Text output goes to stdout (via console.log)

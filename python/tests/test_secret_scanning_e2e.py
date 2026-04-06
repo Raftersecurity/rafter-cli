@@ -48,7 +48,7 @@ class TestRealisticProjectScanning:
         # Source file with GitHub token
         (tmp_path / "src" / "utils" / "auth.py").write_text(
             'def get_token():\n'
-            '    return "ghp_FAKEEFghijklmnopqrstuvwxyz012345678"\n'
+            '    return "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789"\n'
         )
 
         # Clean source file
@@ -94,7 +94,7 @@ class TestRealisticProjectScanning:
         # JSON config
         (tmp_path / "config.json").write_text(json.dumps({
             "api": {
-                "key": _fake_secret("sk_l1ve_", "abcdefghijklmnopqrstuvwx"),
+                "key": _fake_secret("sk_live", "_abcdefghijklmnopqrstuvwx"),
                 "url": "https://api.stripe.com",
             }
         }, indent=2))
@@ -119,7 +119,7 @@ class TestRealisticProjectScanning:
     def test_skips_node_modules_with_secrets(self, tmp_path):
         """Secrets in node_modules should not be reported."""
         (tmp_path / "index.js").write_text(
-            "const token = 'ghp_FAKEEFghijklmnopqrstuvwxyz012345678';\n"
+            "const token = 'ghp_FAKEEFghijklmnopqrstuvwxyz0123456789';\n"
         )
 
         nm = tmp_path / "node_modules" / "some-pkg" / "src"
@@ -142,7 +142,7 @@ class TestMixedContent:
     def test_finds_secret_buried_in_large_file(self, tmp_path):
         """A single secret hidden among 200 lines of clean code."""
         clean_lines = [f"x_{i} = {i}\n" for i in range(100)]
-        secret_line = f'token = "{_fake_secret("sk_l1ve_", "abcdefghijklmnopqrstuvwx")}"\n'
+        secret_line = f'token = "{_fake_secret("sk_live", "_abcdefghijklmnopqrstuvwx")}"\n'
         content = "".join(clean_lines) + secret_line + "".join(clean_lines)
 
         (tmp_path / "large_file.py").write_text(content)
@@ -162,7 +162,7 @@ class TestMixedContent:
             'aws = "AKIAIOSFODNN7EXAMPLE"',       # line 3
             "# Line 4: clean",
             "# Line 5: clean",
-            'gh = "ghp_FAKEEFghijklmnopqrstuvwxyz012345678"',  # line 6
+            'gh = "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789"',  # line 6
             "# Line 7: clean",
             "-----BEGIN RSA PRIVATE KEY-----",     # line 8
             "MIIEpAIBAAKCAQEA...",
@@ -483,8 +483,8 @@ class TestScannerAPI:
     def test_redact_masks_all_secret_types(self):
         secrets = [
             "AKIAIOSFODNN7EXAMPLE",
-            "ghp_FAKEEFghijklmnopqrstuvwxyz012345678",
-            _fake_secret("sk_l1ve_", "abcdefghijklmnopqrstuvwx"),
+            "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789",
+            _fake_secret("sk_live", "_abcdefghijklmnopqrstuvwx"),
         ]
 
         scanner = RegexScanner()

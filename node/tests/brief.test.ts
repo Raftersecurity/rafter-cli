@@ -153,7 +153,7 @@ describe("brief command — error handling", () => {
 
   it("exits 1 for unknown setup platform", () => {
     const r = rafter("brief setup/nosuchplatform");
-    expect(r.exitCode).toBe(0); // returns "Unknown platform" string, not an error
-    expect(r.stdout).toContain("Unknown platform: nosuchplatform");
+    expect(r.exitCode).toBe(1); // unknown platform is an error
+    expect(r.stderr).toContain("Unknown topic: setup/nosuchplatform");
   });
 });
