@@ -146,7 +146,8 @@ jobs:
   # ── Backend API integration (only when key available) ──────────────
   backend-api:
     runs-on: ubuntu-latest
-    if: ${{ secrets.RAFTER_API_KEY != '' }}
+    env:
+      RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
     defaults:
       run:
         working-directory: ./node
@@ -164,9 +165,8 @@ jobs:
         run: pnpm install --frozen-lockfile && pnpm run build
 
       - name: Run backend API tests
+        if: ${{ env.RAFTER_API_KEY != '' }}
         run: pnpm exec vitest run tests/backend-api.test.ts
-        env:
-          RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
 
   # ── Package build verification ─────────────────────────────────────
   package-integrity:
