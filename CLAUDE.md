@@ -114,6 +114,35 @@ cd python && python -m build            # wheel + sdist
 
 Both `node/package.json` and `python/pyproject.toml` must have the same version. CI enforces this via `validate-release.yml`.
 
+## Security Invariants
+
+This is a security tool. The following contracts must hold at all times — breaking them silently degrades the security guarantees Rafter provides to users.
+
+**Secrets are never included in output.** Raw secret values must be redacted everywhere: stdout, stderr, audit logs, JSON output, and HTML reports. The redaction format is `XXXX***XXXX` (first/last 4 chars visible for values >8 chars, fully masked otherwise). Any code path that writes secrets verbatim is a bug.
+
+**The audit log never contains raw secrets.** `~/.rafter/audit.jsonl` records event metadata (type, location, risk level) — never the matched value. For `secret_detected` events, log the pattern name and file path, not the credential.
+
+**Exit codes are a stable versioned API.** CI pipelines depend on them. Local scan: `0` = clean, `1` = findings, `2` = runtime error. Backend commands: `0`–`4` per CLI_SPEC.md. Do not change these semantics or add new codes without updating CLI_SPEC.md and bumping the version.
+
+**Dual-implementation parity.** Node and Python must produce byte-identical JSON output for the same inputs on the same platform. If you change a pattern, fix, or formatter in Node, mirror the change in Python. CI enforces this; do not merge if cross-runtime tests fail.
+
+**Secret patterns must be deterministic.** For a given CLI version and input file, the scanner must return the same findings every time. Do not use probabilistic matching or caches that change results between runs.
+
+**Test data for patterns uses fake credentials.** When writing test cases for secret patterns, use realistic-looking but syntactically invalid values (e.g., `AKIAIOSFODNN7EXAMPLE` for AWS key tests — the AWS format but a well-known example value). Never use real credentials, even in tests.
+
+### Before committing changes to the scanner
+
+Always dogfood your changes:
+
+```bash
+# Scan your own staged changes before committing
+rafter scan local --staged
+
+# Verify both engines produce consistent results on test fixtures
+cd node && pnpm test -- --grep "scanner"
+cd python && pytest tests/ -k "scanner"
+```
+
 ## Output Contracts
 
 All scan commands write results to stdout as JSON, status messages to stderr, and use documented exit codes:
