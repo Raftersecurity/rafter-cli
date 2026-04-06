@@ -183,17 +183,44 @@ This command:
 - With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
 - With `--with-gitleaks` or `--all`: downloads [Gitleaks](https://github.com/gitleaks/gitleaks) for enhanced secret scanning (falls back to built-in 21-pattern regex scanner)
 
+### Project-Level Agent Integration
+
+Add Rafter security context to every agent's instruction file in a project. Run once from the repo root — agents starting sessions in that repo will then see Rafter commands at session start:
+
+```sh
+rafter agent init-project                          # all platforms
+rafter agent init-project --only claude-code       # specific platform
+rafter agent init-project --only claude-code,codex # comma-separated
+rafter agent init-project --list                   # preview without writing
+```
+
+Supported platforms: `claude-code`, `codex`, `gemini`, `cursor`, `windsurf`, `continue`, `aider`.
+
+Files written per platform (relative to git root):
+
+| Platform | File |
+|----------|------|
+| Claude Code | `.claude/CLAUDE.md` |
+| Codex CLI | `AGENTS.md` |
+| Gemini CLI | `GEMINI.md` |
+| Cursor | `.cursor/rules/rafter-security.mdc` |
+| Windsurf | `.windsurfrules` |
+| Continue.dev | `.continuerules` |
+| Aider | `.aider/conventions.md` |
+
+Each file gets an idempotent `<!-- rafter:start --> ... <!-- rafter:end -->` block. Re-running updates the block without touching surrounding content. Commit these files so all contributors benefit.
+
 ### Secret Scanning
 
 Fast, reliable, and deterministic for a given CLI version. 21+ built-in patterns covering AWS, GitHub, Google, Slack, Stripe, Twilio, database connection strings, JWTs, private keys, npm/PyPI tokens, and generic API keys. Same inputs produce the same findings — no flaky CI, no phantom alerts.
 
 ```sh
-rafter agent scan .              # scan directory
-rafter agent scan ./config.js    # scan specific file
-rafter agent scan --staged       # scan git staged files only
-rafter agent scan --diff HEAD~1  # scan files changed since a git ref
-rafter agent scan --json         # structured output
-rafter agent scan --quiet        # silent unless secrets found (CI-friendly)
+rafter scan local .              # scan directory
+rafter scan local ./config.js    # scan specific file
+rafter scan local --staged       # scan git staged files only
+rafter scan local --diff HEAD~1  # scan files changed since a git ref
+rafter scan local --json         # structured output
+rafter scan local --quiet        # silent unless secrets found (CI-friendly)
 ```
 
 Exit code 1 if secrets found, 0 if clean.

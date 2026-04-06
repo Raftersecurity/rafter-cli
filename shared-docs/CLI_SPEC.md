@@ -150,6 +150,29 @@ Initialize local security system. Creates config and detects available developme
 - `--with-gitleaks` — download and install Gitleaks binary
 - `--all` — install all detected integrations and download Gitleaks
 
+### rafter agent init-project [OPTIONS]
+
+> **Note:** Currently implemented in Node.js only. Python implementation is pending parity.
+
+Generate project-level instruction files so AI agents discover Rafter at session start. Must be run from inside a git repository. Writes an idempotent `<!-- rafter:start --> ... <!-- rafter:end -->` block into each target file; re-running updates the block without modifying surrounding content.
+
+- `--only <platforms>` — comma-separated list: `claude-code`, `codex`, `gemini`, `cursor`, `windsurf`, `continue`, `aider`
+- `--list` — preview which files would be created or updated without writing them
+
+Files written (relative to git root):
+
+| Platform | File |
+|----------|------|
+| Claude Code | `.claude/CLAUDE.md` |
+| Codex CLI | `AGENTS.md` |
+| Gemini CLI | `GEMINI.md` |
+| Cursor | `.cursor/rules/rafter-security.mdc` |
+| Windsurf | `.windsurfrules` |
+| Continue.dev | `.continuerules` |
+| Aider | `.aider/conventions.md` |
+
+Exit codes: 0 = success (at least one file written or updated), 1 = not in a git repo.
+
 ### rafter scan local [PATH] [OPTIONS]
 
 Alias: `rafter agent scan` (deprecated — use `rafter scan local`)

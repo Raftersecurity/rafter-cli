@@ -30,6 +30,12 @@ If RAFTER_API_KEY is not set, local scanning still works — use what's availabl
 - \`rafter agent audit-skill <path>\` — audit a skill before installing
 - \`rafter agent audit --last 5\` — recent security events
 - \`rafter brief commands\` — full CLI reference
+
+**Secure coding rules:**
+- Never hardcode credentials, tokens, or API keys — use environment variables
+- Rafter output never contains raw secret values (redacted form only: \`AKIA***MPLE\`)
+- Exit codes are stable: 0 = clean, 1 = findings, 2 = runtime error
+- Use \`rafter scan local\`, not \`rafter agent scan\` (deprecated)
 ${RAFTER_MARKER_END}`;
 
 /**
