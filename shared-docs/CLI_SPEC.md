@@ -404,6 +404,176 @@ repos:
 
 ---
 
+## MCP Server
+
+`rafter mcp serve` exposes Rafter security capabilities over the [Model Context Protocol](https://modelcontextprotocol.io/) stdio transport, making them available to any MCP-compatible AI client (Cursor, Windsurf, Claude Desktop, Cline, etc.).
+
+```sh
+rafter mcp serve
+```
+
+MCP client configuration:
+
+```json
+{
+  "rafter": {
+    "command": "rafter",
+    "args": ["mcp", "serve"]
+  }
+}
+```
+
+Server name: `rafter`. Version matches the installed CLI version.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `scan_secrets` | Scan files or directories for leaked secrets, API keys, tokens, and credentials |
+| `evaluate_command` | Check if a shell command is allowed per active security policy |
+| `read_audit_log` | Read security event history with optional filtering |
+| `get_config` | Read current Rafter configuration |
+
+#### `scan_secrets`
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | yes | File or directory path to scan |
+| `engine` | string | no | `"auto"` (default), `"gitleaks"`, or `"patterns"` |
+
+Returns a JSON array of file scan results. Each entry has the same shape as `rafter scan local --json` output.
+
+#### `evaluate_command`
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `command` | string | yes | Shell command to evaluate |
+
+Returns:
+
+```json
+{
+  "allowed": true,
+  "risk_level": "low",
+  "requires_approval": false,
+  "reason": "Optional human-readable explanation"
+}
+```
+
+`reason` is only present when the command is blocked or flagged.
+
+#### `read_audit_log`
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `limit` | number | no | Maximum entries to return (default: 20) |
+| `event_type` | string | no | Filter by event type (e.g. `command_intercepted`, `secret_detected`) |
+| `since` | string | no | ISO 8601 timestamp — only return entries after this time |
+
+Returns a JSON array of audit log entries. Entry schema matches the [Audit Log Schema](#audit-log-schema).
+
+#### `get_config`
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `key` | string | no | Dot-path config key (e.g. `agent.riskLevel`). Omit for full config. |
+
+Returns the config value at the given key, or the full `RafterConfig` object if no key is specified.
+
+### Resources
+
+The MCP server exposes two readable resources. Clients can read these via `resources/read`.
+
+#### `rafter://config`
+
+**MIME type:** `application/json`
+
+Returns the current Rafter configuration loaded from `~/.rafter/config.json`. If no config file exists, returns the default configuration. Falls back to defaults for any invalid fields.
+
+**Schema** (`RafterConfig`):
+
+```json
+{
+  "version": "1",
+  "initialized": "2026-01-15T10:30:00.000Z",
+  "backend": {
+    "apiKey": "...",
+    "endpoint": "https://api.rafter.so"
+  },
+  "agent": {
+    "riskLevel": "moderate",
+    "commandPolicy": {
+      "mode": "approve-dangerous",
+      "blockedPatterns": ["rm -rf /"],
+      "requireApproval": ["git push --force"]
+    },
+    "outputFiltering": {
+      "redactSecrets": true,
+      "blockPatterns": true
+    },
+    "audit": {
+      "logAllActions": true,
+      "retentionDays": 30,
+      "logLevel": "info"
+    },
+    "notifications": {
+      "webhook": "",
+      "minRiskLevel": "high"
+    },
+    "scan": {
+      "excludePaths": ["vendor/", "node_modules/"],
+      "customPatterns": [
+        {
+          "name": "Internal API Key",
+          "regex": "INTERNAL_[A-Z0-9]{32}",
+          "severity": "critical"
+        }
+      ]
+    }
+  }
+}
+```
+
+**Field reference (`agent` block):**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `agent.riskLevel` | string | `"moderate"` | `"minimal"`, `"moderate"`, or `"aggressive"` |
+| `agent.commandPolicy.mode` | string | `"approve-dangerous"` | `"allow-all"`, `"approve-dangerous"`, or `"deny-list"` |
+| `agent.commandPolicy.blockedPatterns` | string[] | `[]` | Shell patterns always blocked |
+| `agent.commandPolicy.requireApproval` | string[] | `[]` | Shell patterns requiring approval |
+| `agent.outputFiltering.redactSecrets` | boolean | `true` | Redact secrets from CLI output |
+| `agent.outputFiltering.blockPatterns` | boolean | `true` | Block known-dangerous output patterns |
+| `agent.audit.logAllActions` | boolean | `true` | Master switch for audit logging |
+| `agent.audit.retentionDays` | number | `30` | Days to retain audit log entries |
+| `agent.audit.logLevel` | string | `"info"` | `"debug"`, `"info"`, `"warn"`, or `"error"` |
+| `agent.notifications.webhook` | string | `""` | Webhook URL for security event notifications |
+| `agent.notifications.minRiskLevel` | string | `"high"` | Minimum risk level to notify: `"high"` or `"critical"` |
+
+#### `rafter://policy`
+
+**MIME type:** `application/json`
+
+Returns the **merged** configuration — global `~/.rafter/config.json` with any `.rafter.yml` project policy applied on top. Use this resource (rather than `rafter://config`) to get the effective policy for the current project.
+
+Merging rules:
+- `.rafter.yml` values override `config.json` values for the same key
+- Arrays **replace** (not append): a `.rafter.yml` `blocked_patterns` list replaces the global list entirely
+- Missing `.rafter.yml` keys leave the global config value unchanged
+
+**Schema:** Same as `rafter://config` (`RafterConfig`).
+
+**Difference from `rafter://config`:** `rafter://config` returns raw global config. `rafter://policy` returns the effective config after project-level policy overrides are applied. If no `.rafter.yml` exists, both resources return identical data.
+
+**When to use each:**
+
+| Resource | Use when |
+|----------|----------|
+| `rafter://config` | Inspecting the user's global baseline settings |
+| `rafter://policy` | Determining the active rules for the current project |
+
+---
+
 ## Policy File (`.rafter.yml`)
 
 Project-level security policy. Placed in project root; CLI walks from cwd to git root.
