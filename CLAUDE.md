@@ -124,6 +124,22 @@ All scan commands write results to stdout as JSON, status messages to stderr, an
 
 See `shared-docs/CLI_SPEC.md` for full JSON schemas and exit code matrix.
 
+## Security Invariants for Agents
+
+These properties are stable across versions — rely on them in tests and orchestrators:
+
+**Redaction contract**: Raw secret values are never included in any output — JSON, text, logs, or audit trails. Every match exposes only a redacted form (e.g., `AKIA***MPLE`). Do not write code that attempts to extract full secret values from rafter output.
+
+**Exit code stability**: Exit codes are part of the output contract. Use them for CI gating — `0` = clean, `1` = findings, `2` = runtime error. These will not change within a major version.
+
+**Dual-implementation parity**: Node.js and Python produce identical JSON output for the same inputs. When adding features or fixing bugs, both implementations must be updated and their tests must pass.
+
+**Test data rules**: Use fake-but-realistic secrets in tests (e.g., `AKIAIOSFODNN7EXAMPLE`). Never use real credentials. The pattern is: looks real enough to trigger detection, obviously fake to a human.
+
+**Canonical scan command**: Use `rafter scan local [path]`, not `rafter agent scan` (deprecated, emits a warning, will be removed in a future major version).
+
+**Dogfooding**: Run `rafter scan local .` before committing changes to this repo. The pre-commit hook does this automatically if installed (`rafter agent install-hook`).
+
 ## AI Policy
 
 We welcome AI-assisted contributions. If your PR was substantially written by an AI tool, add a `Co-Authored-By` trailer and note it in the PR description. We evaluate contributions on quality, not authorship.
