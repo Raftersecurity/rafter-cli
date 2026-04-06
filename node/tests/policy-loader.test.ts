@@ -18,7 +18,7 @@ describe("Policy file parsing (via .rafter.yml)", () => {
   let origCwd: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-policy-"));
+    tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "rafter-policy-")));
     origCwd = process.cwd();
     // Init a git repo so getGitRoot works
     const { execSync } = require("child_process");

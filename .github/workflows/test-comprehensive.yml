@@ -135,7 +135,8 @@ jobs:
       - name: Validate SARIF structure
         run: |
           node -e "
-            const sarif = require('/tmp/output.sarif');
+            const fs = require('fs');
+            const sarif = JSON.parse(fs.readFileSync('/tmp/output.sarif', 'utf8'));
             if (sarif.version !== '2.1.0') throw new Error('Bad SARIF version');
             if (!sarif.runs || sarif.runs.length === 0) throw new Error('No runs');
             if (!sarif.runs[0].tool.driver.name) throw new Error('Missing tool name');
