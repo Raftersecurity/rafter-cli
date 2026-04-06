@@ -150,6 +150,27 @@ Initialize local security system. Creates config and detects available developme
 - `--with-gitleaks` — download and install Gitleaks binary
 - `--all` — install all detected integrations and download Gitleaks
 
+### rafter agent init-project [OPTIONS]
+
+Generate per-repo instruction files so AI agents discover Rafter at session start. Injects a Rafter security context block into project-level instruction files (CLAUDE.md, AGENTS.md, GEMINI.md, Cursor rules, etc.). The injected block teaches agents secure coding rules, scanning commands, and hook behavior for the project.
+
+- `--only <platforms>` — comma-separated list of platforms (`claude-code`, `codex`, `gemini`, `cursor`, `windsurf`, `continue`, `aider`)
+- `--list` — show which files would be created without writing them
+
+**What gets injected (per platform):**
+
+| Platform | File |
+|----------|------|
+| Claude Code | `.claude/CLAUDE.md` |
+| Codex CLI | `AGENTS.md` |
+| Gemini CLI | `GEMINI.md` |
+| Cursor | `.cursor/rules/rafter-security.mdc` |
+| Windsurf | `.windsurfrules` |
+| Continue.dev | `.continuerules` |
+| Aider | `.aider/conventions.md` |
+
+The injected block is idempotent — running again replaces the existing block without touching other content. Commit these files so all contributors and agent sessions benefit.
+
 ### rafter scan local [PATH] [OPTIONS]
 
 Alias: `rafter agent scan` (deprecated — use `rafter scan local`)

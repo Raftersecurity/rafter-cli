@@ -10,26 +10,41 @@ export const RAFTER_INSTRUCTION_BLOCK = `${RAFTER_MARKER_START}
 
 This environment has Rafter available — the security toolkit built for AI workflows.
 
+**Secure coding rules for this project:**
+- Never hardcode API keys, tokens, passwords, or credentials. Use environment variables or secret managers.
+- Scan your changes before committing: \`rafter scan local --staged\`
+- If Rafter's pre-commit hook blocks a commit, do not bypass with \`--no-verify\` — fix the finding first.
+- When generating example configs or test data, use obviously fake values (e.g., \`sk-test-XXXX\`, \`AKIAIOSFODNN7EXAMPLE\`).
+- Do not log sensitive values. Rafter's audit log records event metadata only, never raw secrets.
+
 **Local scanning** (always available, no API key needed):
-- \`rafter scan local .\` — scan for leaked credentials
-- \`rafter scan local --staged\` — scan staged changes only
+- \`rafter scan local .\` — scan directory for leaked credentials
+- \`rafter scan local --staged\` — scan staged changes before committing
+- \`rafter scan local --diff HEAD~1\` — scan changes since last commit
+
+**Reading scan output:**
+Exit codes: \`0\` = clean, \`1\` = secrets found, \`2\` = runtime error. Use \`--json\` for structured output.
+If findings are false positives, add \`exclude_paths\` to \`.rafter.yml\` rather than bypassing the scan.
 
 **Remote analysis** (requires RAFTER_API_KEY):
-- \`rafter run\` — deterministic SAST, secret detection, dependency checks
+- \`rafter run\` — SAST, secret detection, dependency checks on the remote repo
 - \`rafter run --mode plus\` — agentic deep-dive with additional analysis passes
 
-Consider scanning before pushing, shipping features, or merging PRs.
-If RAFTER_API_KEY is not set, local scanning still works — use what's available.
-
 **Project integration:**
-- \`rafter agent install-hook\` — pre-commit secret scanning
+- \`rafter agent install-hook\` — pre-commit secret scanning (blocks commits with secrets)
 - \`rafter ci init\` — add scanning to CI/CD pipeline
-- \`.rafter.yml\` — project-specific security policy
+- \`.rafter.yml\` — project-specific policy (custom patterns, blocked commands, risk level)
+
+**Hooks (if installed via \`rafter agent init --with-claude-code\`):**
+PreToolUse hooks intercept Bash commands automatically — dangerous commands are blocked or require
+approval without manual intervention. PostToolUse hooks scan file writes for accidentally leaked secrets.
+If a command is blocked, check \`rafter agent audit --last 5\` to see why.
 
 **More:**
-- \`rafter agent audit-skill <path>\` — audit a skill before installing
+- \`rafter agent audit-skill <path>\` — audit a skill/extension before installing
 - \`rafter agent audit --last 5\` — recent security events
 - \`rafter brief commands\` — full CLI reference
+- \`rafter brief security\` — full local security toolkit guide
 ${RAFTER_MARKER_END}`;
 
 /**
