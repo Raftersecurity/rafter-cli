@@ -25,7 +25,7 @@ Rafter is the security layer between your agent and your codebase. Install it be
 
 ## Agent Security Features (Free, No Account, Works Offline)
 
-- **Secret scanning**: 21+ built-in patterns (API keys, tokens, credentials), deterministic detection, zero external dependencies. Optional Gitleaks integration for deeper coverage. Secrets are redacted in all output.
+- **Secret scanning**: 21 built-in patterns (API keys, tokens, credentials), deterministic detection, zero external dependencies. Optional Gitleaks integration for deeper coverage. Secrets are redacted in all output.
 - **Command interception**: Risk-tiered approval system (critical/high/medium/low) wrapping shell commands executed by agents. Configurable policies: allow-all, approve-dangerous (default), deny-list.
 - **Policy enforcement**: Project-level `.rafter.yml` files define custom secret patterns, command rules, and risk levels. Policies travel with the repo.
 - **Extension auditing**: Audit third-party agent skills, extensions, and MCP tools for embedded secrets, malicious URLs, and risky command patterns before enabling them.
@@ -38,7 +38,7 @@ Rafter is the security layer between your agent and your codebase. Install it be
 
 - `rafter agent init --all` — Set up security across all detected agent platforms in one command
 - `rafter agent init-project` — Generate per-repo instruction files for agents (CLAUDE.md, AGENTS.md, etc.)
-- `rafter scan local .` — Scan a directory for secrets (21+ patterns, deterministic, offline)
+- `rafter scan local .` — Scan a directory for secrets (21 patterns, deterministic, offline)
 - `rafter agent scan --staged` — Scan git staged files before committing
 - `rafter agent exec "command"` — Execute a shell command through the policy enforcement layer
 - `rafter agent audit --last 20` — Review recent security audit log entries
