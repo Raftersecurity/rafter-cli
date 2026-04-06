@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
 import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
@@ -11,7 +11,7 @@ import { randomBytes } from "crypto";
  *   init, scan, exec, audit, config, status, verify
  *
  * Tests use a fake HOME to isolate from the user's real config.
- * CLI is invoked via tsx (source-level) for accurate behavior.
+ * CLI is invoked via the built dist for speed.
  */
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -19,7 +19,13 @@ vi.setConfig({ testTimeout: 30_000 });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
-const CLI_ENTRY = path.join(PROJECT_ROOT, "src", "index.ts");
+const CLI_ENTRY = path.join(PROJECT_ROOT, "dist", "index.js");
+
+beforeAll(() => {
+  try {
+    execSync("pnpm run build", { cwd: PROJECT_ROOT, stdio: "ignore", timeout: 30000 });
+  } catch { /* dist may already exist */ }
+}, 60000);
 
 function createTempHome(): string {
   const dir = path.join(
@@ -36,10 +42,10 @@ function runCli(
   extraEnv?: Record<string, string>,
 ): { stdout: string; stderr: string; exitCode: number } {
   const { spawnSync } = require("child_process");
-  const result = spawnSync(`npx tsx ${CLI_ENTRY} ${args}`, {
+  const result = spawnSync(`node ${CLI_ENTRY} ${args}`, {
     cwd: PROJECT_ROOT,
     encoding: "utf-8",
-    timeout: 25_000,
+    timeout: 15_000,
     shell: true,
     env: {
       ...process.env,
