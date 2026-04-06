@@ -25,6 +25,7 @@ def rafter(args, *, cwd=None, env_override=None):
         text=True,
         cwd=cwd,
         env=env,
+        timeout=30,
     )
     return result.stdout, result.stderr, result.returncode
 

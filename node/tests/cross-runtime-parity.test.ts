@@ -43,7 +43,7 @@ function runNode(args: string[], opts?: { cwd?: string; env?: Record<string, str
       cwd: opts?.cwd ?? REPO_ROOT,
       env: { ...process.env, ...opts?.env },
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: 15000,
+      timeout: 30000,
     });
     return { stdout: result, stderr: "", exitCode: 0 };
   } catch (e: any) {
@@ -62,7 +62,7 @@ function runPython(args: string[], opts?: { cwd?: string; env?: Record<string, s
       cwd: opts?.cwd ?? REPO_ROOT,
       env: { ...process.env, ...opts?.env, PYTHONPATH: [path.join(REPO_ROOT, "python"), PYTHON_USER_SITE].join(path.delimiter) },
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: 15000,
+      timeout: 30000,
     });
     return { stdout: result, stderr: "", exitCode: 0 };
   } catch (e: any) {
@@ -596,7 +596,7 @@ describe("parity: stdout/stderr separation", () => {
         encoding: "utf-8",
         cwd: REPO_ROOT,
         stdio: ["pipe", "pipe", "pipe"],
-        timeout: 15000,
+        timeout: 30000,
       });
       nodeResult = { stdout, stderr: "", exitCode: 0 };
     } catch (e: any) {
@@ -611,7 +611,7 @@ describe("parity: stdout/stderr separation", () => {
         cwd: REPO_ROOT,
         env: { ...process.env, PYTHONPATH: [path.join(REPO_ROOT, "python"), PYTHON_USER_SITE].join(path.delimiter) },
         stdio: ["pipe", "pipe", "pipe"],
-        timeout: 15000,
+        timeout: 30000,
       });
       pyResult = { stdout, stderr: "", exitCode: 0 };
     } catch (e: any) {

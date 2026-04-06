@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
 import { randomBytes } from "crypto";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -12,7 +12,13 @@ vi.setConfig({ testTimeout: 30_000 });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
-const CLI_ENTRY = path.join(PROJECT_ROOT, "src", "index.ts");
+const CLI_ENTRY = path.join(PROJECT_ROOT, "dist", "index.js");
+
+beforeAll(() => {
+  try {
+    execSync("pnpm run build", { cwd: PROJECT_ROOT, stdio: "ignore", timeout: 30000 });
+  } catch { /* dist may already exist */ }
+}, 60000);
 
 function createTempDir(prefix: string): string {
   const tmpDir = path.join(
@@ -32,28 +38,25 @@ function cleanupDir(dir: string) {
 function runCli(
   args: string,
   homeDir: string,
-  timeout = 30_000
+  timeout = 15_000
 ): { stdout: string; stderr: string; exitCode: number } {
-  try {
-    const stdout = execSync(`npx tsx ${CLI_ENTRY} ${args}`, {
-      cwd: PROJECT_ROOT,
-      encoding: "utf-8",
-      timeout,
-      env: {
-        ...process.env,
-        HOME: homeDir,
-        XDG_CONFIG_HOME: path.join(homeDir, ".config"),
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return { stdout, stderr: "", exitCode: 0 };
-  } catch (e: any) {
-    return {
-      stdout: e.stdout || "",
-      stderr: e.stderr || "",
-      exitCode: e.status ?? 1,
-    };
-  }
+  const result = spawnSync(`node ${CLI_ENTRY} ${args}`, {
+    cwd: PROJECT_ROOT,
+    encoding: "utf-8",
+    timeout,
+    shell: true,
+    env: {
+      ...process.env,
+      HOME: homeDir,
+      XDG_CONFIG_HOME: path.join(homeDir, ".config"),
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  return {
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    exitCode: result.status ?? 1,
+  };
 }
 
 describe("Codex CLI Integration", () => {
