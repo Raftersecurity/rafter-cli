@@ -25,7 +25,7 @@ Rafter is a **security primitive** that any developer or agent can call and trus
 
 **Two capabilities in one package:**
 
-1. **Local Security Toolkit** (free, no account) — Fast secret scanning (21+ built-in patterns, deterministic for a given version), policy enforcement with risk-tiered rules, pre-commit hooks, extension auditing, custom rule authoring, and full audit logging. Works offline. **No API key. No telemetry. No data leaves your machine.** Supports Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, and Aider.
+1. **Local Security Toolkit** (free, no account) — Fast secret scanning (21 built-in patterns, deterministic for a given version), policy enforcement with risk-tiered rules, pre-commit hooks, extension auditing, custom rule authoring, and full audit logging. Works offline. **No API key. No telemetry. No data leaves your machine.** Supports Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, and Aider.
 
 2. **Remote Code Analysis** — Deep security audits that combine agentic analysis with a full SAST/SCA toolchain. Rafter's engine examines your codebase the way a professional penetration tester would — tracing data flows, reasoning about business logic, and surfacing vulnerabilities that static rules alone miss — then cross-references findings with industry-standard SAST, SCA, and secret-detection tools. Structured reports in JSON or Markdown. Pipe to any tool, feed to any workflow.
 
@@ -76,7 +76,7 @@ That's the core loop: scan → protect → audit. Everything works offline, no A
 
 | Feature | Free (individuals & OSS) | Enterprise |
 |---------|:------------------------:|:----------:|
-| Secret scanning (21+ patterns) | **Yes** | Yes |
+| Secret scanning (21 patterns) | **Yes** | Yes |
 | Pre-commit hooks | **Yes** | Yes |
 | Command interception | **Yes** | Yes |
 | Skill/extension auditing | **Yes** | Yes |
@@ -185,7 +185,7 @@ This command:
 
 ### Secret Scanning
 
-Fast, reliable, and deterministic for a given CLI version. 21+ built-in patterns covering AWS, GitHub, Google, Slack, Stripe, Twilio, database connection strings, JWTs, private keys, npm/PyPI tokens, and generic API keys. Same inputs produce the same findings — no flaky CI, no phantom alerts.
+Fast, reliable, and deterministic for a given CLI version. 21 built-in patterns covering AWS, GitHub, Google, Slack, Stripe, Twilio, database connection strings, JWTs, private keys, bearer tokens, npm/PyPI tokens, and generic API keys. Same inputs produce the same findings — no flaky CI, no phantom alerts.
 
 ```sh
 rafter agent scan .              # scan directory
@@ -308,7 +308,7 @@ Config lives at `~/.rafter/config.json`. Project-level overrides via `.rafter.ym
 
 ### Custom Rules
 
-Define your own secret patterns alongside the 21+ built-in ones. Add them to `.rafter.yml` in your project root:
+Define your own secret patterns alongside the 21 built-in ones. Add them to `.rafter.yml` in your project root:
 
 ```yaml
 # .rafter.yml
