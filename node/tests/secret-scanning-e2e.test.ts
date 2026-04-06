@@ -94,7 +94,7 @@ export { API_BASE, API_KEY };
     fs.writeFileSync(
       path.join(tmpDir, "src/utils/auth.ts"),
       `export function getToken() {
-  return "ghp_FAKEEFghijklmnopqrstuvwxyz012345678";
+  return "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789";
 }
 `,
     );
@@ -155,7 +155,7 @@ ssh deploy@server "restart-app"
       JSON.stringify(
         {
           api: {
-            key: fakeSecret("sk_l1ve_", "abcdefghijklmnopqrstuvwx"),
+            key: fakeSecret("sk_live", "_abcdefghijklmnopqrstuvwx"),
             url: "https://api.stripe.com",
           },
         },
@@ -188,7 +188,7 @@ connection = mysql://root:password123@localhost:3306/app
     // Secret in the main src
     fs.writeFileSync(
       path.join(tmpDir, "index.js"),
-      "const token = 'ghp_FAKEEFghijklmnopqrstuvwxyz012345678';\n",
+      "const token = 'ghp_FAKEEFghijklmnopqrstuvwxyz0123456789';\n",
     );
 
     // Secret buried in node_modules
@@ -224,7 +224,7 @@ describe("E2E: mixed content scanning", () => {
   it("finds a secret buried in a large file", () => {
     // 100 lines of clean code, then a secret, then 100 more lines
     const cleanLines = Array.from({ length: 100 }, (_, i) => `const x${i} = ${i};\n`);
-    const secretLine = `const token = "${fakeSecret("sk_l1ve_", "abcdefghijklmnopqrstuvwx")}";\n`;
+    const secretLine = `const token = "${fakeSecret("sk_live", "_abcdefghijklmnopqrstuvwx")}";\n`;
     const content = cleanLines.join("") + secretLine + cleanLines.join("");
 
     fs.writeFileSync(path.join(tmpDir, "large-file.ts"), content);
@@ -244,7 +244,7 @@ describe("E2E: mixed content scanning", () => {
       `const aws = "AKIAIOSFODNN7EXAMPLE";`, // line 3
       "// Line 4: clean",
       "// Line 5: clean",
-      `const gh = "ghp_FAKEEFghijklmnopqrstuvwxyz012345678";`, // line 6
+      `const gh = "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789";`, // line 6
       "// Line 7: clean",
       "-----BEGIN RSA PRIVATE KEY-----", // line 8
       "MIIEpAIBAAKCAQEA...",
@@ -586,7 +586,7 @@ describe("E2E: CLI JSON output structure", () => {
     );
     fs.writeFileSync(
       path.join(src, "b.ts"),
-      "ghp_FAKEEFghijklmnopqrstuvwxyz012345678\n",
+      "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789\n",
     );
     fs.writeFileSync(
       path.join(src, "c.ts"),
@@ -626,7 +626,7 @@ describe("E2E: SARIF output with real files", () => {
     );
     fs.writeFileSync(
       path.join(src, "auth.ts"),
-      "const token = 'ghp_FAKEEFghijklmnopqrstuvwxyz012345678';\n",
+      "const token = 'ghp_FAKEEFghijklmnopqrstuvwxyz0123456789';\n",
     );
 
     const r = rafter(`scan local ${tmpDir} --engine patterns --format sarif`);
@@ -671,7 +671,7 @@ describe("E2E: baseline filtering", () => {
     const secretFile = path.join(tmpDir, "config.ts");
     fs.writeFileSync(
       secretFile,
-      "const key = 'AKIAIOSFODNN7EXAMPLE';\nconst gh = 'ghp_FAKEEFghijklmnopqrstuvwxyz012345678';\n",
+      "const key = 'AKIAIOSFODNN7EXAMPLE';\nconst gh = 'ghp_FAKEEFghijklmnopqrstuvwxyz0123456789';\n",
     );
 
     // Create baseline that suppresses the AWS key but not the GitHub token
@@ -703,7 +703,7 @@ describe("E2E: baseline filtering", () => {
     const secretFile = path.join(tmpDir, "config.ts");
     fs.writeFileSync(
       secretFile,
-      "const key = 'AKIAIOSFODNN7EXAMPLE';\nconst gh = 'ghp_FAKEEFghijklmnopqrstuvwxyz012345678';\n",
+      "const key = 'AKIAIOSFODNN7EXAMPLE';\nconst gh = 'ghp_FAKEEFghijklmnopqrstuvwxyz0123456789';\n",
     );
 
     // Baseline file exists but --baseline flag is not passed
@@ -812,8 +812,8 @@ describe("E2E: RegexScanner API with realistic files", () => {
   it("redact produces masked output for all secret types", () => {
     const secrets = [
       "AKIAIOSFODNN7EXAMPLE",
-      "ghp_FAKEEFghijklmnopqrstuvwxyz012345678",
-      fakeSecret("sk_l1ve_", "abcdefghijklmnopqrstuvwx"),
+      "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789",
+      fakeSecret("sk_live", "_abcdefghijklmnopqrstuvwx"),
     ];
 
     const scanner = new RegexScanner();

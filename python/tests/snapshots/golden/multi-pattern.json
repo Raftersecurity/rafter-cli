@@ -8,7 +8,7 @@
       },
       "line": 4,
       "column": 17,
-      "redacted": "ghp_********************************ghij"
+      "redacted": "ghp_********************************6789"
     },
     {
       "pattern": {
@@ -18,15 +18,6 @@
       "line": 5,
       "column": 16,
       "redacted": "xoxb*********9012"
-    },
-    {
-      "pattern": {
-        "name": "Stripe API Key",
-        "severity": "critical"
-      },
-      "line": 6,
-      "column": 15,
-      "redacted": "sk_l************************uvwx"
     }
   ]
 }
