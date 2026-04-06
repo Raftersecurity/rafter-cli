@@ -435,8 +435,39 @@ Add to any MCP client config:
 - `get_config` — read Rafter configuration
 
 **Resources:**
-- `rafter://config` — current configuration
-- `rafter://policy` — active security policy (merged `.rafter.yml` + config)
+- `rafter://config` — global Rafter configuration (`~/.rafter/config.json`), returned as a JSON object
+- `rafter://policy` — active security policy: global config merged with the nearest `.rafter.yml` found by walking from the current directory to the git root; **policy values win on conflict, arrays replace (not append)**
+
+`rafter://config` example response:
+
+```json
+{
+  "version": "1.0.0",
+  "agent": {
+    "riskLevel": "moderate",
+    "commandPolicy": {
+      "mode": "approve-dangerous",
+      "blockedPatterns": ["rm -rf /", ":(){ :|:& };:"],
+      "requireApproval": ["curl.*\\|\\s*(bash|sh|zsh|dash)\\b", "sudo .*"]
+    },
+    "outputFiltering": { "redactSecrets": true, "blockPatterns": true },
+    "audit": { "logAllActions": true, "retentionDays": 30, "logLevel": "info" }
+  }
+}
+```
+
+`rafter://policy` returns the same shape but with any `.rafter.yml` overrides applied. For example, if the project has:
+
+```yaml
+# .rafter.yml
+risk_level: aggressive
+command_policy:
+  blocked_patterns:
+    - "kubectl delete"
+    - "terraform destroy"
+```
+
+Then `rafter://policy` returns `riskLevel: "aggressive"` and `blockedPatterns: ["kubectl delete", "terraform destroy"]` (replacing the global list entirely). Fields not present in `.rafter.yml` keep their global config values. If no `.rafter.yml` exists, `rafter://policy` returns the same data as `rafter://config`.
 
 ### Supported Platforms
 
