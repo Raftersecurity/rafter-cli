@@ -129,7 +129,7 @@ export class GitleaksScanner {
   /**
    * Scan a directory
    */
-  async scanDirectory(dirPath: string): Promise<GitleaksScanResult[]> {
+  async scanDirectory(dirPath: string, opts?: { useGit?: boolean }): Promise<GitleaksScanResult[]> {
     if (!await this.isAvailable()) {
       throw new Error("Gitleaks not available");
     }
@@ -138,9 +138,13 @@ export class GitleaksScanner {
     const tmpReport = path.join(os.tmpdir(), `gitleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
 
     try {
+      const args = ["detect", "-f", "json", "-r", tmpReport, "-s", dirPath];
+      if (!opts?.useGit) {
+        args.splice(1, 0, "--no-git");
+      }
       // Run gitleaks detect on directory
       await execFileAsync(
-        gitleaksPath, ["detect", "--no-git", "-f", "json", "-r", tmpReport, "-s", dirPath],
+        gitleaksPath, args,
         { timeout: 60000 }
       );
 

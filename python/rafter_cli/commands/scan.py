@@ -96,6 +96,7 @@ def scan_local(
     engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
+    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires gitleaks engine)"),
 ):
     """Scan files or directories for secrets (local). Formerly 'rafter agent scan'."""
     from .agent import (
@@ -215,7 +216,7 @@ def scan_local(
     if os.path.isdir(resolved_path):
         if not quiet:
             print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg)
+        results = _scan_directory(resolved_path, eng, scan_cfg, history=history)
     else:
         if not quiet:
             print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)

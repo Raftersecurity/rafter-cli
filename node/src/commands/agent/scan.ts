@@ -22,6 +22,7 @@ interface ScanOpts {
   diff?: string;
   baseline?: boolean;
   watch?: boolean;
+  history?: boolean;
 }
 
 interface BaselineEntry {
@@ -71,6 +72,7 @@ export function createScanCommand(): Command {
     .option("--engine <engine>", "Scan engine: gitleaks or patterns", "auto")
     .option("--baseline", "Filter findings present in the saved baseline")
     .option("--watch", "Watch for file changes and re-scan on change")
+    .option("--history", "Scan git history for secrets (requires gitleaks engine)")
     .action(async (scanPath, opts: ScanOpts) => {
       // Validate flags before doing any work
       const validEngines = ["auto", "gitleaks", "patterns"];
@@ -140,7 +142,7 @@ export function createScanCommand(): Command {
         if (!opts.quiet) {
           console.error(`Scanning directory: ${resolvedPath} (${engine})`);
         }
-        results = await scanDirectory(resolvedPath, engine, scanCfg);
+        results = await scanDirectory(resolvedPath, engine, scanCfg, opts.history);
       } else {
         if (!opts.quiet) {
           console.error(`Scanning file: ${resolvedPath} (${engine})`);
@@ -462,11 +464,12 @@ async function scanDirectory(
   dirPath: string,
   engine: "gitleaks" | "patterns",
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+  history?: boolean,
 ): Promise<ScanResult[]> {
   if (engine === "gitleaks") {
     try {
       const gitleaks = new GitleaksScanner();
-      return await gitleaks.scanDirectory(dirPath);
+      return await gitleaks.scanDirectory(dirPath, { useGit: history ?? false });
     } catch (e) {
       console.error(fmt.warning("Gitleaks scan failed, falling back to patterns"));
       const scanner = new RegexScanner(scanCfg?.customPatterns);
