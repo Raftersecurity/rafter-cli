@@ -65,7 +65,7 @@ class TestTopicRendering:
         result = runner.invoke(app, ["brief", "commands"])
         assert result.exit_code == 0
         assert "Rafter Command Reference" in result.stdout
-        assert "Backend (Remote Code Analysis)" in result.stdout
+        assert "Remote Code Analysis" in result.stdout
         assert "Agent (Local Security)" in result.stdout
 
     def test_pricing_topic(self):

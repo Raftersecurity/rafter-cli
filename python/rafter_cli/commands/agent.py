@@ -226,9 +226,9 @@ def _install_codex_skills() -> tuple[bool, str]:
         try:
             content = res.joinpath("skills", "rafter", "SKILL.md").read_text(encoding="utf-8")
             (backend_dir / "SKILL.md").write_text(content, encoding="utf-8")
-            rprint(fmt.success(f"Installed Rafter Backend skill to {backend_dir / 'SKILL.md'}"))
+            rprint(fmt.success(f"Installed Rafter Remote skill to {backend_dir / 'SKILL.md'}"))
         except Exception:
-            rprint(fmt.warning("Backend skill template not found in package resources"))
+            rprint(fmt.warning("Remote skill template not found in package resources"))
 
         # Install agent security skill
         agent_dir = agents_skills_dir / "rafter-agent-security"

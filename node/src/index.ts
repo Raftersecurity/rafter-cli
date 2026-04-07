@@ -39,12 +39,12 @@ program.hook("preAction", (thisCommand) => {
   }
 });
 
-// Backend commands
+// Remote scan commands
 program.addCommand(createRunCommand());
 program.addCommand(createGetCommand());
 program.addCommand(createUsageCommand());
 
-// Scan command group (default: remote backend scan; subcommands: local, remote)
+// Scan command group (default: remote scan; subcommands: local, remote)
 program.addCommand(createScanGroupCommand());
 
 // Agent commands

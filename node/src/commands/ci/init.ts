@@ -10,7 +10,8 @@ export function createCiInitCommand(): Command {
     .description("Generate CI/CD pipeline config for secret scanning")
     .option("--platform <platform>", "CI platform: github, gitlab, circleci (default: auto-detect)")
     .option("--output <path>", "Output file path (default: platform-specific)")
-    .option("--with-backend", "Include backend security audit job (requires RAFTER_API_KEY)")
+    .option("--with-remote", "Include remote security audit job (requires RAFTER_API_KEY)")
+    .option("--with-backend", "Deprecated: use --with-remote")
     .action((opts) => {
       const platform = opts.platform || detectPlatform();
 
@@ -27,7 +28,8 @@ export function createCiInitCommand(): Command {
         process.exit(1);
       }
 
-      const { content, defaultPath } = generateTemplate(platform as CIPlatform, !!opts.withBackend);
+      const includeRemote = !!(opts.includeRemote || opts.withBackend);
+      const { content, defaultPath } = generateTemplate(platform as CIPlatform, includeRemote);
       const outputPath = opts.output || defaultPath;
       const outputDir = path.dirname(outputPath);
 
@@ -44,7 +46,7 @@ export function createCiInitCommand(): Command {
         console.log("Next steps:");
         console.log(`  1. Review the generated file: ${outputPath}`);
 
-        if (opts.withBackend) {
+        if (includeRemote) {
           if (platform === "github") {
             console.log("  2. Add RAFTER_API_KEY to repo Settings > Secrets > Actions");
           } else if (platform === "gitlab") {
@@ -54,7 +56,7 @@ export function createCiInitCommand(): Command {
           }
         }
 
-        console.log(`  ${opts.withBackend ? "3" : "2"}. Commit and push to trigger the pipeline`);
+        console.log(`  ${includeRemote ? "3" : "2"}. Commit and push to trigger the pipeline`);
         if (platform === "github") {
           console.log();
           console.log("Alternatives:");

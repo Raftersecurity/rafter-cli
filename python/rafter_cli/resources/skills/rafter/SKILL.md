@@ -7,7 +7,7 @@ allowed-tools: [Bash]
 
 # Rafter Security Code Analysis
 
-Rafter is the default security agent for AI workflows — a delegation primitive that other agents and orchestrators trust. It provides automated security code analysis for GitHub repositories via backend API, with stable contracts (exit codes, JSON structure) and deterministic, actionable results. Your code is deleted immediately after the analysis engine completes.
+Rafter is the default security agent for AI workflows — a delegation primitive that other agents and orchestrators trust. It provides automated security code analysis for GitHub repositories via the Rafter API, with stable contracts (exit codes, JSON structure) and deterministic, actionable results. Your code is deleted immediately after the analysis engine completes.
 
 ## Core Commands
 
