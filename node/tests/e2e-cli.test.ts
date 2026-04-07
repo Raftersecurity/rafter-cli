@@ -24,7 +24,7 @@ function rafter(args: string | string[], opts?: { cwd?: string; env?: Record<str
   const result = spawnSync("node", [CLI, ...argList], {
     encoding: "utf-8",
     cwd: opts?.cwd,
-    env: { ...process.env, ...opts?.env },
+    env: opts?.env ?? process.env,
     stdio: ["pipe", "pipe", "pipe"],
     timeout: EXEC_TIMEOUT,
   });
@@ -230,7 +230,7 @@ describe("CLI e2e — config commands", () => {
   });
 
   it("agent config show outputs current config", () => {
-    const r = rafter("agent config show", { env: { HOME: tmpDir } });
+    const r = rafter("agent config show", { env: { ...process.env, HOME: tmpDir } });
     expect(r.exitCode).toBe(0);
   }, 30000);
 });
@@ -297,7 +297,7 @@ describe("CLI e2e — update checker", () => {
 
   it("update check is suppressed in CI environment", () => {
     const r = rafter("--version", {
-      env: { CI: "true" },
+      env: { ...process.env, CI: "true" },
     });
     expect(r.exitCode).toBe(0);
     expect(r.stderr).not.toContain("Update available");
@@ -305,7 +305,7 @@ describe("CLI e2e — update checker", () => {
 
   it("update check is suppressed with CONTINUOUS_INTEGRATION env", () => {
     const r = rafter("--version", {
-      env: { CONTINUOUS_INTEGRATION: "true" },
+      env: { ...process.env, CONTINUOUS_INTEGRATION: "true" },
     });
     expect(r.exitCode).toBe(0);
     expect(r.stderr).not.toContain("Update available");
@@ -356,7 +356,7 @@ describe("CLI e2e — backend commands without API key", () => {
 
   it("rafter run exits 1 without API key", () => {
     const r = rafter("run --repo test/repo --branch main", {
-      env: { RAFTER_API_KEY: "" },
+      env: { ...process.env, RAFTER_API_KEY: "" },
     });
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain("API key");
@@ -364,7 +364,7 @@ describe("CLI e2e — backend commands without API key", () => {
 
   it("rafter usage exits 1 without API key", () => {
     const r = rafter("usage", {
-      env: { RAFTER_API_KEY: "" },
+      env: { ...process.env, RAFTER_API_KEY: "" },
     });
     expect(r.exitCode).toBe(1);
   }, 30000);

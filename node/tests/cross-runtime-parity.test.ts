@@ -21,13 +21,21 @@ function fakeSecret(prefix: string, body: string): string {
 const REPO_ROOT = path.resolve(__dirname, "../..");
 // Preserve real user site-packages so overriding HOME doesn't break Python imports
 let PYTHON_USER_SITE = "";
+let PYTHON_AVAILABLE = false;
 try {
   PYTHON_USER_SITE = execSync("python3 -c \"import site; print(site.getusersitepackages())\"", {
     encoding: "utf-8",
     timeout: 5000,
   }).trim();
+  // Verify typer (core dependency) is importable
+  execSync("python3 -c \"import typer\"", {
+    encoding: "utf-8",
+    timeout: 5000,
+    env: { ...process.env, PYTHONPATH: [path.join(REPO_ROOT, "python"), PYTHON_USER_SITE].join(path.delimiter) },
+  });
+  PYTHON_AVAILABLE = true;
 } catch {
-  // Fall back — tests requiring Python config may still fail
+  // Python or rafter_cli deps not available — tests will be skipped
 }
 
 interface CLIResult {
@@ -95,9 +103,12 @@ beforeAll(() => {
   }
 }, 60000);
 
+// Skip all parity tests when Python + rafter_cli deps aren't available
+const describeIfPython = PYTHON_AVAILABLE ? describe : describe.skip;
+
 // ─── Version ────────────────────────────────────────────────────────
 
-describe("parity: version", () => {
+describeIfPython("parity: version", () => {
   it("both exit 0 for --version", () => {
     const r = runBoth(["--version"]);
     expect(r.node.exitCode).toBe(0);
@@ -116,7 +127,7 @@ describe("parity: version", () => {
 
 // ─── Help ───────────────────────────────────────────────────────────
 
-describe("parity: help", () => {
+describeIfPython("parity: help", () => {
   it("both exit 0 for --help", () => {
     const r = runBoth(["--help"]);
     expect(r.node.exitCode).toBe(0);
@@ -146,7 +157,7 @@ describe("parity: help", () => {
 
 // ─── Local Secret Scanning ──────────────────────────────────────────
 
-describe("parity: scan local", () => {
+describeIfPython("parity: scan local", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -302,7 +313,7 @@ describe("parity: scan local", () => {
 
 // ─── Agent Exec — Risk Classification ──────────────────────────────
 
-describe("parity: agent exec", () => {
+describeIfPython("parity: agent exec", () => {
   it("both allow safe commands (exit 0)", () => {
     const r = runBoth(["agent", "exec", "echo hello"]);
     expect(r.node.exitCode).toBe(0);
@@ -331,7 +342,7 @@ describe("parity: agent exec", () => {
 
 // ─── Agent Mode Flag ───────────────────────────────────────────────
 
-describe("parity: agent mode flag (-a)", () => {
+describeIfPython("parity: agent mode flag (-a)", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -356,7 +367,7 @@ describe("parity: agent mode flag (-a)", () => {
 
 // ─── Config Commands ───────────────────────────────────────────────
 
-describe("parity: agent config", () => {
+describeIfPython("parity: agent config", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -427,7 +438,7 @@ describe("parity: agent config", () => {
 
 // ─── Brief Command ─────────────────────────────────────────────────
 
-describe("parity: brief", () => {
+describeIfPython("parity: brief", () => {
   it("both exit 0 for brief commands", () => {
     const r = runBoth(["brief", "commands"]);
     expect(r.node.exitCode).toBe(0);
@@ -458,7 +469,7 @@ describe("parity: brief", () => {
 
 // ─── CI Init ────────────────────────────────────────────────────────
 
-describe("parity: ci init", () => {
+describeIfPython("parity: ci init", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -502,7 +513,7 @@ describe("parity: ci init", () => {
 
 // ─── Backend Commands Without API Key ──────────────────────────────
 
-describe("parity: backend commands without API key", () => {
+describeIfPython("parity: backend commands without API key", () => {
   const noKeyEnv = { RAFTER_API_KEY: "" };
 
   it("both exit 1 for rafter run without API key", () => {
@@ -528,7 +539,7 @@ describe("parity: backend commands without API key", () => {
 
 // ─── Secret Pattern Coverage ───────────────────────────────────────
 
-describe("parity: secret pattern detection", () => {
+describeIfPython("parity: secret pattern detection", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -574,7 +585,7 @@ describe("parity: secret pattern detection", () => {
 
 // ─── Stdout/Stderr Separation ──────────────────────────────────────
 
-describe("parity: stdout/stderr separation", () => {
+describeIfPython("parity: stdout/stderr separation", () => {
   let tmpDir: string;
 
   beforeEach(() => {
