@@ -1,8 +1,8 @@
 /**
  * rafter scan — top-level scan command group.
  *
- * Default (no subcommand): remote backend scan (same as `rafter run`)
- * rafter scan remote:       explicit alias for remote backend scan
+ * Default (no subcommand): remote scan (same as `rafter run`)
+ * rafter scan remote:       explicit alias for remote scan
  * rafter scan local [path]: local secret scanner (was `rafter agent scan`)
  */
 import { Command } from "commander";
@@ -30,10 +30,10 @@ export function createScanGroupCommand(): Command {
       await runRemoteScan(opts);
     });
 
-  // Root scan group — default action is remote backend scan
+  // Root scan group — default action is remote scan
   const scanGroup = new Command("scan")
     .description(
-      "Scan for security issues. Default: remote backend scan. Use 'scan local' for local secret scanning."
+      "Scan for security issues. Default: remote scan. Use 'scan local' for local secret scanning."
     )
     .enablePositionalOptions()
     .option("-r, --repo <repo>", "org/repo (default: current)")
@@ -48,7 +48,7 @@ export function createScanGroupCommand(): Command {
   scanGroup.addCommand(localCmd);
   scanGroup.addCommand(remoteCmd);
 
-  // When invoked with no subcommand, run remote backend scan
+  // When invoked with no subcommand, run remote scan
   scanGroup.action(async (opts) => {
     await runRemoteScan(opts);
   });

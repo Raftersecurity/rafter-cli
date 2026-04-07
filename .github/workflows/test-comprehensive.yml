@@ -144,7 +144,7 @@ jobs:
             console.log('SARIF validation passed:', sarif.runs[0].results.length, 'findings');
           "
 
-  # ── Backend API integration (only when key available) ──────────────
+  # ── Remote API integration (only when key available) ───────────────
   backend-api:
     runs-on: ubuntu-latest
     env:

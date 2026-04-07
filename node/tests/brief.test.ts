@@ -89,7 +89,7 @@ describe("brief command — topic rendering", () => {
     const r = rafter("brief commands");
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("Rafter Command Reference");
-    expect(r.stdout).toContain("Backend (Remote Code Analysis)");
+    expect(r.stdout).toContain("Remote Code Analysis");
     expect(r.stdout).toContain("Agent (Local Security)");
   });
 

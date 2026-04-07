@@ -358,7 +358,7 @@ rafter ci init                          # auto-detect platform
 rafter ci init --platform github        # GitHub Actions
 rafter ci init --platform gitlab        # GitLab CI
 rafter ci init --platform circleci      # CircleCI
-rafter ci init --with-backend           # include backend security audit job
+rafter ci init --with-remote            # include remote security audit job
 ```
 
 #### GitHub Action
@@ -474,7 +474,7 @@ Exit codes are part of Rafter's output contract — CI pipelines and orchestrato
 | 1 | Findings — one or more secrets detected | Stop / review |
 | 2 | Runtime error — path not found, invalid ref | Fix input and retry |
 
-### Backend Commands (`rafter run` / `rafter get` / `rafter usage`)
+### Remote Commands (`rafter run` / `rafter get` / `rafter usage`)
 
 | Code | Meaning | Action |
 |------|---------|--------|

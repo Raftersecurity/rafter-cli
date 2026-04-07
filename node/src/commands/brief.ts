@@ -63,7 +63,7 @@ function buildTopics(): Record<string, TopicEntry> {
       render: () => loadSkill("rafter-agent-security"),
     },
     scanning: {
-      description: "Remote SAST/SCA code analysis via backend API",
+      description: "Remote SAST/SCA code analysis via Rafter API",
       render: () => loadSkill("rafter"),
     },
     commands: {
@@ -87,7 +87,7 @@ function buildTopics(): Record<string, TopicEntry> {
         return [
           "# Rafter Command Reference",
           "",
-          "## Backend (Remote Code Analysis)",
+          "## Remote Code Analysis",
           "",
           backCmds,
           "",

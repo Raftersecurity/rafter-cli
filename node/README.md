@@ -23,7 +23,7 @@ yarn global add @rafter-security/cli
 
 ### Getting an API Key
 
-To use backend code analysis features, you'll need a Rafter API key:
+To use remote code analysis features, you'll need a Rafter API key:
 
 1. **Sign up**: Create an account at [rafter.so](https://rafter.so)
 2. **Get API key**: Navigate to Dashboard → Settings → API Keys
@@ -36,9 +36,9 @@ To use backend code analysis features, you'll need a Rafter API key:
    echo "RAFTER_API_KEY=your-api-key-here" >> .env
    ```
 
-**Note**: Agent security features (secret scanning, command execution) work **without an API key**. Only backend code analysis requires authentication.
+**Note**: Agent security features (secret scanning, command execution) work **without an API key**. Only remote code analysis requires authentication.
 
-### Backend Code Analysis
+### Remote Code Analysis
 
 ```bash
 # Set your API key (from above)
@@ -500,7 +500,7 @@ Generate CI/CD pipeline configuration for secret scanning.
 **Options:**
 - `--platform <platform>` - CI platform: `github`, `gitlab`, `circleci` (default: auto-detect)
 - `--output <path>` - Output file path (default: platform-specific)
-- `--with-backend` - Include backend security audit job (requires `RAFTER_API_KEY`)
+- `--with-remote` - Include remote security audit job (requires `RAFTER_API_KEY`)
 
 **Auto-detection:** Checks for `.github/`, `.gitlab-ci.yml`, `.circleci/` in the current directory.
 
@@ -512,8 +512,8 @@ rafter ci init
 # Generate GitHub Actions workflow
 rafter ci init --platform github
 
-# Include backend scanning job
-rafter ci init --with-backend
+# Include remote scanning job
+rafter ci init --with-remote
 
 # Custom output path
 rafter ci init --output .github/workflows/security.yml
@@ -624,7 +624,7 @@ When OpenClaw is detected, `rafter agent init` automatically installs a skill to
 
 Rafter provides TWO skills for Claude Code:
 
-### 1. Backend Code Analysis Skill (Core Feature)
+### 1. Remote Code Analysis Skill (Core Feature)
 
 **Automatic Integration** - Claude can proactively suggest security scans
 
@@ -680,10 +680,10 @@ Explicitly invoke commands:
 
 ### Why Two Skills?
 
-- **Backend code analysis skill** - Safe for Claude to auto-invoke (read-only API calls)
+- **Remote code analysis skill** - Safe for Claude to auto-invoke (read-only API calls)
 - **Agent security skill** - Requires user permission (local file access, command execution)
 
-This separation emphasizes Rafter's core backend code analysis capabilities while keeping local security features safely behind user control.
+This separation emphasizes Rafter's core remote code analysis capabilities while keeping local security features safely behind user control.
 
 ## Documentation
 

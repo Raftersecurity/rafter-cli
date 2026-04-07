@@ -89,10 +89,10 @@ def version_cmd():
     typer.echo(__version__)
 
 
-# Backend commands (run, get, usage) on root app
+# Remote scan commands (run, get, usage) on root app
 register_backend_commands(app)
 
-# Scan command group (default: remote backend scan; subcommands: local, remote)
+# Scan command group (default: remote scan; subcommands: local, remote)
 app.add_typer(scan_app)
 
 # Sub-apps

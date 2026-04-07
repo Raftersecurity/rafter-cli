@@ -511,9 +511,9 @@ async function installClaudeCodeSkills(): Promise<void> {
 
   if (fs.existsSync(backendTemplatePath)) {
     fs.copyFileSync(backendTemplatePath, backendSkillPath);
-    console.log(fmt.success(`Installed Rafter Backend skill to ${backendSkillPath}`));
+    console.log(fmt.success(`Installed Rafter Remote skill to ${backendSkillPath}`));
   } else {
-    console.log(fmt.warning(`Backend skill template not found at ${backendTemplatePath}`));
+    console.log(fmt.warning(`Remote skill template not found at ${backendTemplatePath}`));
   }
 
   // Install Agent Security Skill
@@ -548,9 +548,9 @@ function installCodexSkills(): void {
 
   if (fs.existsSync(backendTemplatePath)) {
     fs.copyFileSync(backendTemplatePath, backendSkillPath);
-    console.log(fmt.success(`Installed Rafter Backend skill to ${backendSkillPath}`));
+    console.log(fmt.success(`Installed Rafter Remote skill to ${backendSkillPath}`));
   } else {
-    console.log(fmt.warning(`Backend skill template not found at ${backendTemplatePath}`));
+    console.log(fmt.warning(`Remote skill template not found at ${backendTemplatePath}`));
   }
 
   // Install Agent Security Skill

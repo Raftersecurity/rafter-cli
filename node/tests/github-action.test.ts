@@ -356,10 +356,13 @@ describe("test-comprehensive.yml — CI matrix", () => {
     expect(installStep).toBeDefined();
   });
 
-  it("backend-api job is conditional on API key", () => {
+  it("backend-api job gates test step on API key", () => {
     const apiJob = workflow.jobs["backend-api"];
     expect(apiJob).toBeDefined();
-    expect(apiJob.if).toContain("RAFTER_API_KEY");
+    expect(apiJob.env.RAFTER_API_KEY).toBeDefined();
+    const testStep = apiJob.steps.find((s: any) => s.run?.includes("vitest"));
+    expect(testStep).toBeDefined();
+    expect(testStep.if).toContain("RAFTER_API_KEY");
   });
 
   it("SARIF validation job exists", () => {

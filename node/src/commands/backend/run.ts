@@ -119,7 +119,7 @@ function addRunOptions(cmd: Command): Command {
 export function createRunCommand(): Command {
   return addRunOptions(
     new Command("run")
-      .description("Trigger a remote backend security scan")
+      .description("Trigger a remote security scan")
   ).action(async (opts) => {
     await runRemoteScan(opts);
   });

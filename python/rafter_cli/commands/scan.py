@@ -1,7 +1,7 @@
 """Top-level rafter scan command group.
 
-Default (no subcommand): remote backend scan (same as `rafter run`)
-rafter scan remote:       explicit alias for remote backend scan
+Default (no subcommand): remote scan (same as `rafter run`)
+rafter scan remote:       explicit alias for remote scan
 rafter scan local [path]: local secret scanner (formerly `rafter agent scan`)
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from rich import print as rprint
 scan_app = typer.Typer(
     name="scan",
     help=(
-        "Scan for security issues. Default: remote backend scan. "
+        "Scan for security issues. Default: remote scan. "
         "Use 'scan local' for local secret scanning."
     ),
     invoke_without_command=True,
@@ -40,7 +40,7 @@ remote_app = typer.Typer(
 scan_app.add_typer(remote_app)
 
 
-# ── default: remote backend scan ─────────────────────────────────────
+# ── default: remote scan ─────────────────────────────────────
 
 @scan_app.callback()
 def scan_default(
@@ -54,9 +54,9 @@ def scan_default(
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
-    """Scan for security issues. Defaults to remote backend scan."""
+    """Scan for security issues. Defaults to remote scan."""
     if ctx.invoked_subcommand is None:
-        # No subcommand — run remote backend scan
+        # No subcommand — run remote scan
         _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token)
 
 
@@ -78,7 +78,7 @@ def scan_remote(
 
 
 def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode="fast", github_token=None):
-    """Shared handler: invoke remote backend scan (same logic as `rafter run`)."""
+    """Shared handler: invoke remote scan (same logic as `rafter run`)."""
     from ..commands.backend import _do_remote_scan
     _do_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token=github_token)
 

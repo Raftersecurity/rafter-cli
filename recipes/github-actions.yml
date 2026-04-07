@@ -8,7 +8,7 @@
 #
 # Options:
 #   - Uncomment the security-audit job for full SAST/SCA via the Rafter API
-#   - Set RAFTER_API_KEY in repo Settings > Secrets if using backend code analysis
+#   - Set RAFTER_API_KEY in repo Settings > Secrets if using remote code analysis
 #
 # Docs: https://docs.rafter.so/cli/ci
 
@@ -34,7 +34,7 @@ jobs:
         with:
           scan-path: '.'
 
-  # --- Uncomment below for full backend security audit ---
+  # --- Uncomment below for full remote security audit ---
   # security-audit:
   #   runs-on: ubuntu-latest
   #   needs: secret-scan
