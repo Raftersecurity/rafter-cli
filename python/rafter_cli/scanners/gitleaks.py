@@ -117,8 +117,8 @@ class GitleaksScanner:
             matches=[self._convert(r) for r in results],
         )
 
-    def scan_directory(self, dir_path: str) -> list[GitleaksScanResult]:
-        results = self._run_scan(dir_path)
+    def scan_directory(self, dir_path: str, *, use_git: bool = False) -> list[GitleaksScanResult]:
+        results = self._run_scan(dir_path, use_git=use_git)
         grouped: dict[str, list[PatternMatch]] = {}
         for r in results:
             f = r.get("File", "unknown")
@@ -127,15 +127,18 @@ class GitleaksScanner:
 
     # ------------------------------------------------------------------
 
-    def _run_scan(self, target: str) -> list[dict]:
+    def _run_scan(self, target: str, *, use_git: bool = False) -> list[dict]:
         if not self._path:
             raise RuntimeError("Gitleaks not available")
 
         with tempfile.TemporaryDirectory(prefix="gitleaks-") as tmp_dir:
             report_path = os.path.join(tmp_dir, "report.json")
             try:
+                cmd = [self._path, "detect", "-f", "json", "-r", report_path, "-s", target]
+                if not use_git:
+                    cmd.insert(2, "--no-git")
                 subprocess.run(
-                    [self._path, "detect", "--no-git", "-f", "json", "-r", report_path, "-s", target],
+                    cmd,
                     capture_output=True, timeout=60,
                 )
                 if not os.path.exists(report_path):

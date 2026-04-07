@@ -696,7 +696,7 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
         return [r] if r.matches else []
 
 
-def _scan_directory(dir_path: str, engine: str, scan_cfg=None) -> list[ScanResult]:
+def _scan_directory(dir_path: str, engine: str, scan_cfg=None, *, history: bool = False) -> list[ScanResult]:
     custom = None
     exclude = None
     if scan_cfg:
@@ -706,7 +706,7 @@ def _scan_directory(dir_path: str, engine: str, scan_cfg=None) -> list[ScanResul
     if engine == "gitleaks":
         try:
             gl = GitleaksScanner()
-            results = gl.scan_directory(dir_path)
+            results = gl.scan_directory(dir_path, use_git=history)
             return [ScanResult(file=r.file, matches=r.matches) for r in results]
         except Exception:
             scanner = RegexScanner(custom)
