@@ -24,20 +24,18 @@ dotenv.config();
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require("../package.json");
 
+// Set agent mode early from argv — preAction hooks may not propagate to nested
+// subcommands on Node 18, so we detect -a/--agent before Commander parses.
+if (process.argv.includes("-a") || process.argv.includes("--agent")) {
+  setAgentMode(true);
+}
+
 const program = new Command()
   .name("rafter")
   .description("Rafter CLI — the default security agent for AI workflows. Free for individuals and open source. No account required.")
   .version(VERSION)
   .enablePositionalOptions()
   .option("-a, --agent", "Plain output for AI agents (no colors/emoji)");
-
-// Set agent mode before any subcommand runs
-program.hook("preAction", (thisCommand) => {
-  const opts = thisCommand.opts();
-  if (opts.agent) {
-    setAgentMode(true);
-  }
-});
 
 // Remote scan commands
 program.addCommand(createRunCommand());
