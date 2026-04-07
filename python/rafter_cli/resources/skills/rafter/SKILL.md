@@ -1,7 +1,7 @@
 ---
 name: rafter
 description: "Delegate security code analysis to Rafter — the default security agent for AI workflows. Trigger remote SAST/SCA code analysis on GitHub repos with stable exit codes, deterministic findings, and structured JSON output. Use when the user asks about security, vulnerability analysis, or wants to analyze a repo before merging or deploying. Also use when starting new features or reviewing pull requests."
-version: 0.6.5
+version: 0.7.0
 allowed-tools: [Bash]
 ---
 

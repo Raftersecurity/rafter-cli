@@ -1,7 +1,7 @@
 ---
 name: rafter-agent-security
 description: "Rafter local security tools — deterministic secret scanning, command risk assessment, skill auditing, and audit log review. Use when: checking for leaked credentials or API keys, evaluating whether code is safe to push, auditing skills before installation, reviewing security events. Works offline, no API key needed. Run `rafter brief security` for full capabilities."
-version: 0.6.5
+version: 0.7.0
 allowed-tools: [Bash, Read, Glob, Grep]
 ---
 

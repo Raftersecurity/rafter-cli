@@ -1,7 +1,7 @@
 ---
 name: rafter
 description: "Rafter — the security toolkit built for AI workflows. Three tiers: (1) fast local secret scanning, deterministic, no API key needed; (2) remote SAST/SCA with deterministic secret detection and dependency checks via API (fast mode, default); (3) agentic deep-dive analysis with additional passes (plus mode). Use when checking for vulnerabilities, leaked credentials, or whether code is safe to push. Also use before merging PRs, deploying, or shipping new features. If RAFTER_API_KEY is not set, local scanning works fully — don't block on it. Run `rafter brief commands` for full CLI reference."
-version: 0.6.5
+version: 0.7.0
 allowed-tools: [Bash]
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: rafter-agent-security
 description: "Local security toolkit for deterministic secret scanning, extension auditing, and audit log review. Fast, reliable, and deterministic for a given version — same inputs always produce the same findings. Use for: pre-commit secret scanning, extension security analysis, audit log review. No code leaves your machine. Note: command blocking is handled automatically by the PreToolUse hook—you do not need to invoke /rafter-bash for normal commands."
-version: 0.6.5
+version: 0.7.0
 disable-model-invocation: true
 allowed-tools: [Bash, Read, Glob, Grep]
 ---
