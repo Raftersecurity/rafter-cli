@@ -36,7 +36,10 @@ _STDIO_WORKS: bool | None = None
 
 
 async def create_connected_session():
-    """Create a stdio connection and return (session, read_stream, write_stream, cm).
+    """Create a stdio connection and return (session, cm).
+
+    The session's context manager is entered so that the receive loop is
+    running — callers must call ``cleanup(session, cm)`` when done.
 
     Raises ``pytest.skip`` when the MCP stdio transport cannot connect
     (e.g. SDK version mismatch or environment issue).
@@ -57,6 +60,9 @@ async def create_connected_session():
 
     session = ClientSession(read_stream, write_stream)
     try:
+        # Enter the session context manager to start the receive loop,
+        # then initialize the MCP protocol handshake.
+        await asyncio.wait_for(session.__aenter__(), timeout=10)
         await asyncio.wait_for(session.initialize(), timeout=10)
     except (asyncio.TimeoutError, Exception) as exc:
         _STDIO_WORKS = False
@@ -216,7 +222,7 @@ class TestScanSecrets:
     async def test_scans_directory_finds_secrets(self, tmp_path):
         (tmp_path / "clean.txt").write_text("nothing here\n")
         (tmp_path / "secret.env").write_text(
-            "GITHUB_TOKEN=ghp_FAKEEFabcdef1234567890abcdef1234567\n"
+            "GITHUB_TOKEN=ghp_FAKEEFabcdef1234567890abcdef12345678\n"
         )
 
         result = await self.session.call_tool(
