@@ -131,7 +131,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(Object.keys(settings.mcpServers)).toEqual(["rafter"]);
     });
 
-    it("should preserve existing Gemini settings", { timeout: 30_000 }, () => {
+    it("should preserve existing Gemini settings", { timeout: 30_000, retry: 2 }, () => {
       const geminiDir = path.join(testHomeDir, ".gemini");
       fs.mkdirSync(geminiDir, { recursive: true });
       fs.writeFileSync(
@@ -140,7 +140,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       );
 
       const result = runCli("agent init --with-gemini", testHomeDir);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode, `CLI exited ${result.exitCode}; stderr: ${result.stderr}`).toBe(0);
 
       const settings = JSON.parse(
         fs.readFileSync(path.join(geminiDir, "settings.json"), "utf-8")

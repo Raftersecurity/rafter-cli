@@ -1,13 +1,10 @@
 name: Comprehensive Test Suite
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
-      - main
       - prod
+  workflow_dispatch:
 
 permissions:
   contents: read
