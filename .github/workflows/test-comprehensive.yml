@@ -41,6 +41,9 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Verify build
+        run: node -e "import('./dist/index.js').then(() => console.log('Build OK')).catch(e => { console.error(e); process.exit(1); })"
+
       - name: Run all tests
         run: pnpm test
         env:
@@ -224,6 +227,7 @@ jobs:
   # ── Cross-platform smoke test ──────────────────────────────────────
   cross-platform:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         node: ["18", "20", "22"]
@@ -241,8 +245,13 @@ jobs:
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
 
-      - name: Install, build, test
+      - name: Install and build
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
-          pnpm test
+
+      - name: Verify build
+        run: node -e "import('./dist/index.js').then(() => console.log('Build OK')).catch(e => { console.error(e); process.exit(1); })"
+
+      - name: Run tests
+        run: pnpm test
