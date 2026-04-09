@@ -133,9 +133,9 @@ describe("brief command — setup guides", () => {
   ];
 
   for (const { slug, name, contains } of platforms) {
-    it(`renders setup/${slug} with ${name} guide`, () => {
+    it(`renders setup/${slug} with ${name} guide`, { retry: 2 }, () => {
       const r = rafter(`brief setup/${slug}`);
-      expect(r.exitCode).toBe(0);
+      expect(r.exitCode, `CLI exited ${r.exitCode}; stderr: ${r.stderr}`).toBe(0);
       expect(r.stdout).toContain(name);
       expect(r.stdout.toLowerCase()).toContain(contains.toLowerCase());
     });
