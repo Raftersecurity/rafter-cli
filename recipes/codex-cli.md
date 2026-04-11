@@ -47,7 +47,7 @@ Two skills are installed to `~/.agents/skills/`:
 
 | Skill | Trigger | Purpose |
 |-------|---------|---------|
-| `rafter/` | Auto-invoked | Backend security audits (read-only API calls) |
+| `rafter/` | Auto-invoked | Remote security audits (read-only API calls) |
 | `rafter-agent-security/` | User-invoked | Local secret scanning, command validation, skill auditing |
 
 ### 3. MCP server (alternative)

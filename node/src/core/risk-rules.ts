@@ -5,9 +5,16 @@
 
 export type CommandRiskLevel = "low" | "medium" | "high" | "critical";
 
+/** Directories where `rm -rf /<dir>` is catastrophic (data loss / unbootable). */
+const CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt";
+
 export const CRITICAL_PATTERNS: RegExp[] = [
-  /rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*\s+\//,  // rm -rf / (any flag order: -rf, -fr, -r -f, -f -r)
-  /rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*\s+\//,  // rm -fr / (reversed)
+  // rm -rf / (root only, any flag order)
+  new RegExp(`rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+/(\\s|$)`),
+  new RegExp(`rm\\s+(-[a-z]*f[a-z]*\\s+)*-[a-z]*r[a-z]*\\s+/(\\s|$)`),
+  // rm -rf on critical top-level directories
+  new RegExp(`rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+/(${CRITICAL_DIRS})(/|\\s|$)`),
+  new RegExp(`rm\\s+(-[a-z]*f[a-z]*\\s+)*-[a-z]*r[a-z]*\\s+/(${CRITICAL_DIRS})(/|\\s|$)`),
   /:\(\)\{\s*:\|:&\s*\};:/,  // fork bomb
   /dd\s+if=.*of=\/dev\/sd/,
   />\s*\/dev\/sd/,
@@ -63,11 +70,20 @@ export const DEFAULT_REQUIRE_APPROVAL: string[] = [
   "git push .* \\+",
 ];
 
+/** Read-only commands whose arguments should not trigger risk patterns. */
+const SAFE_PREFIX = /^(grep|egrep|fgrep|rg|ag|ack|echo|printf)\s/;
+
+/** Shell operators that chain independent commands. */
+const CHAIN_OPERATORS = /[;|&]|&&|\|\|/;
+
 /**
  * Assess risk level of a command string.
  */
 export function assessCommandRisk(command: string): CommandRiskLevel {
-  const cmd = command.toLowerCase();
+  const cmd = command.toLowerCase().trim();
+
+  // Safe prefix only applies to simple (non-chained) commands
+  if (SAFE_PREFIX.test(cmd) && !CHAIN_OPERATORS.test(cmd)) return "low";
 
   for (const pattern of CRITICAL_PATTERNS) {
     if (pattern.test(cmd)) return "critical";

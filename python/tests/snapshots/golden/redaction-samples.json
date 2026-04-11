@@ -1,0 +1,22 @@
+[
+  {
+    "label": "aws-key-20char",
+    "input_length": 20,
+    "redacted": "AKIA************MPLE"
+  },
+  {
+    "label": "github-pat-40char",
+    "input_length": 40,
+    "redacted": "ghp_********************************6789"
+  },
+  {
+    "label": "stripe-30char",
+    "input_length": 32,
+    "redacted": "sk_l1ve_abcdefghijklmnopqrstuvwx"
+  },
+  {
+    "label": "short-token-7char",
+    "input_length": 7,
+    "redacted": "xoxb-12"
+  }
+]

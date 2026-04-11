@@ -1,0 +1,15 @@
+# Token store — INTENTIONAL FAKE SECRETS for fixture testing
+github:
+  pat: "ghp_FAKE0123456789abcdefABCDEF0123456789abcd"
+  oauth: "gho_FAKE0123456789abcdefABCDEF0123456789abcd"
+  app_user: "ghu_FAKE0123456789abcdefABCDEF0123456789abcd"
+  app_server: "ghs_FAKE0123456789abcdefABCDEF0123456789abcd"
+  refresh: "ghr_FAKE0123456789abcdefABCDEF0123456789abcdefABCDEF0123456789abcdefABCDEF01234567890A"
+
+slack:
+  bot_token: "xoxb-FAKENOTREAL-FAKENOTREAL123-FAKEnotrealtokenvalue"
+
+npm:
+  token: "npm_FAKEaBcDeFgHiJkLmNoPqRsTuVwXyZ01234"
+pypi:
+  token: "pypi-FAKEAgEIcHlwaS5vcmcAAAABMDEyMzQ1Njc4OTBhYmNkZWZBQkNERUYwMTIz"

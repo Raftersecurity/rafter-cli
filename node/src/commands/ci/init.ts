@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import fs from "fs";
 import path from "path";
-import { fmt } from "../../utils/formatter.js";
+import { fmt, isAgentMode } from "../../utils/formatter.js";
 
 type CIPlatform = "github" | "gitlab" | "circleci";
 
@@ -10,7 +10,8 @@ export function createCiInitCommand(): Command {
     .description("Generate CI/CD pipeline config for secret scanning")
     .option("--platform <platform>", "CI platform: github, gitlab, circleci (default: auto-detect)")
     .option("--output <path>", "Output file path (default: platform-specific)")
-    .option("--with-backend", "Include backend security audit job (requires RAFTER_API_KEY)")
+    .option("--with-remote", "Include remote security audit job (requires RAFTER_API_KEY)")
+    .option("--with-backend", "Deprecated: use --with-remote")
     .action((opts) => {
       const platform = opts.platform || detectPlatform();
 
@@ -27,7 +28,8 @@ export function createCiInitCommand(): Command {
         process.exit(1);
       }
 
-      const { content, defaultPath } = generateTemplate(platform as CIPlatform, !!opts.withBackend);
+      const includeRemote = !!(opts.includeRemote || opts.withBackend);
+      const { content, defaultPath } = generateTemplate(platform as CIPlatform, includeRemote);
       const outputPath = opts.output || defaultPath;
       const outputDir = path.dirname(outputPath);
 
@@ -38,28 +40,31 @@ export function createCiInitCommand(): Command {
       fs.writeFileSync(outputPath, content, "utf-8");
 
       console.log(fmt.success(`Generated ${platform} CI config at ${outputPath}`));
-      console.log();
-      console.log("Next steps:");
-      console.log(`  1. Review the generated file: ${outputPath}`);
 
-      if (opts.withBackend) {
-        if (platform === "github") {
-          console.log("  2. Add RAFTER_API_KEY to repo Settings > Secrets > Actions");
-        } else if (platform === "gitlab") {
-          console.log("  2. Add RAFTER_API_KEY to Settings > CI/CD > Variables");
-        } else {
-          console.log("  2. Add RAFTER_API_KEY to project environment variables");
-        }
-      }
-
-      console.log(`  ${opts.withBackend ? "3" : "2"}. Commit and push to trigger the pipeline`);
-      if (platform === "github") {
+      if (!isAgentMode()) {
         console.log();
-        console.log("Alternatives:");
-        console.log("  - GitHub Action: uses: Raftersecurity/rafter-cli@v1");
-        console.log("  - Pre-commit:  https://github.com/Raftersecurity/rafter-cli#pre-commit-framework");
+        console.log("Next steps:");
+        console.log(`  1. Review the generated file: ${outputPath}`);
+
+        if (includeRemote) {
+          if (platform === "github") {
+            console.log("  2. Add RAFTER_API_KEY to repo Settings > Secrets > Actions");
+          } else if (platform === "gitlab") {
+            console.log("  2. Add RAFTER_API_KEY to Settings > CI/CD > Variables");
+          } else {
+            console.log("  2. Add RAFTER_API_KEY to project environment variables");
+          }
+        }
+
+        console.log(`  ${includeRemote ? "3" : "2"}. Commit and push to trigger the pipeline`);
+        if (platform === "github") {
+          console.log();
+          console.log("Alternatives:");
+          console.log("  - GitHub Action: uses: Raftersecurity/rafter-cli@v1");
+          console.log("  - Pre-commit:  https://github.com/Raftersecurity/rafter-cli#pre-commit-framework");
+        }
+        console.log();
       }
-      console.log();
     });
 }
 

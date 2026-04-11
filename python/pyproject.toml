@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "rafter-cli"
-version = "0.6.6"
+version = "0.7.0"
 description = "Rafter CLI — the default security agent for AI workflows. Free for individuals and open source."
 authors = ["Rafter Team <hello@rafter.so>"]
 license = "MIT"
@@ -24,6 +24,10 @@ rafter = "rafter_cli.__main__:app"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"
 pytest-mock = "^3.14.0"
+pytest-asyncio = "^0.24.0"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

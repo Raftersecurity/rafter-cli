@@ -232,7 +232,7 @@ export function createVerifyCommand(): Command {
         const warnNote = warned.length > 0 ? ` (${warned.length} optional check${warned.length > 1 ? "s" : ""} not configured)` : "";
         console.log(fmt.success(`${passed.length}/${results.length} core checks passed${warnNote}`));
       } else {
-        console.log(fmt.error(`${hardFailed.length} check${hardFailed.length > 1 ? "s" : ""} failed`));
+        console.log(fmt.error(`${passed.length}/${results.length} checks passed — ${hardFailed.length} failed`));
       }
       console.log();
 

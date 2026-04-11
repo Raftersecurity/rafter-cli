@@ -1,30 +1,35 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { execSync } from "child_process";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import { execSync, spawnSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import os from "os";
 
-const CLI_PATH = path.resolve(__dirname, "../src/index.ts");
+const PROJECT_ROOT = path.resolve(__dirname, "..");
+const CLI_PATH = path.resolve(PROJECT_ROOT, "dist/index.js");
+
+beforeAll(() => {
+  try {
+    execSync("pnpm run build", { cwd: PROJECT_ROOT, stdio: "ignore", timeout: 30000 });
+  } catch { /* dist may already exist */ }
+}, 60000);
 
 /**
- * Helper to run the CLI scan command via tsx and return parsed output.
+ * Helper to run the CLI scan command and return parsed output.
  */
 function runScan(args: string, cwd?: string): { stdout: string; stderr: string; exitCode: number } {
-  try {
-    const stdout = execSync(`npx tsx ${CLI_PATH} agent scan ${args}`, {
-      encoding: "utf-8",
-      cwd: cwd || process.cwd(),
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, NO_COLOR: "1" },
-    });
-    return { stdout, stderr: "", exitCode: 0 };
-  } catch (e: any) {
-    return {
-      stdout: e.stdout || "",
-      stderr: e.stderr || "",
-      exitCode: e.status ?? 1,
-    };
-  }
+  const result = spawnSync(`node ${CLI_PATH} agent scan ${args}`, {
+    encoding: "utf-8",
+    cwd: cwd || process.cwd(),
+    shell: true,
+    timeout: 15_000,
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  return {
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    exitCode: result.status ?? 1,
+  };
 }
 
 describe("scan --format sarif", () => {

@@ -24,7 +24,7 @@ Highlights risky commands in shell scripts, Dockerfiles, and Makefiles with inli
 
 View rafter audit events in the sidebar:
 
-- Live-updating event feed from `~/.rafter/audit.log`
+- Live-updating event feed from `~/.rafter/audit.jsonl`
 - Risk overview with event counts by severity
 - Detailed tooltips with command, risk level, and resolution
 
@@ -46,7 +46,7 @@ View rafter audit events in the sidebar:
 | `rafter.scanOnSave` | `true` | Scan files for secrets on save |
 | `rafter.scanOnOpen` | `false` | Scan files for secrets when opened |
 | `rafter.riskHighlighting` | `true` | Highlight risky commands in shell scripts |
-| `rafter.auditLogPath` | `""` | Custom audit log path (default: `~/.rafter/audit.log`) |
+| `rafter.auditLogPath` | `""` | Custom audit log path (default: `~/.rafter/audit.jsonl`) |
 | `rafter.excludePatterns` | `["**/node_modules/**", ...]` | Glob patterns to exclude from scanning |
 
 ## Installation

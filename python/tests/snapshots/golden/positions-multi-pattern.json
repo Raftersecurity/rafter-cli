@@ -1,0 +1,12 @@
+[
+  {
+    "pattern": "GitHub Personal Access Token",
+    "line": 4,
+    "column": 17
+  },
+  {
+    "pattern": "Slack Token",
+    "line": 5,
+    "column": 16
+  }
+]

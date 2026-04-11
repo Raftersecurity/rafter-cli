@@ -13,6 +13,7 @@ from .commands.issues.issues_app import issues_app
 from .commands.mcp_server import mcp_app
 from .commands.notify import notify_app
 from .commands.policy import policy_app
+from .commands.report import report_main
 from .commands.scan import scan_app
 from .utils.formatter import set_agent_mode
 
@@ -82,10 +83,16 @@ def completion(
     typer.echo(result.stdout, nl=False)
 
 
-# Backend commands (run, get, usage) on root app
+@app.command("version")
+def version_cmd():
+    """Print version and exit."""
+    typer.echo(__version__)
+
+
+# Remote scan commands (run, get, usage) on root app
 register_backend_commands(app)
 
-# Scan command group (default: remote backend scan; subcommands: local, remote)
+# Scan command group (default: remote scan; subcommands: local, remote)
 app.add_typer(scan_app)
 
 # Sub-apps
@@ -97,6 +104,7 @@ app.add_typer(issues_app)
 app.add_typer(mcp_app)
 app.add_typer(notify_app)
 app.add_typer(policy_app)
+app.command("report")(report_main)
 
 if __name__ == "__main__":
     app()

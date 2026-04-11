@@ -367,7 +367,7 @@ def _render_platform_setup(platform: str) -> str:
 
 TOPIC_DESCRIPTIONS: dict[str, str] = {
     "security": "Local agent security — scanning, auditing, risk assessment",
-    "scanning": "Remote SAST/SCA code analysis via backend API",
+    "scanning": "Remote SAST/SCA code analysis via Rafter API",
     "commands": "Condensed command reference for all rafter commands",
     "setup": "Setup instructions for all supported agent platforms",
     "setup/claude-code": "Setup instructions for Claude Code",
@@ -403,7 +403,7 @@ def _render_topic(topic: str) -> str | None:
         return "\n".join([
             "# Rafter Command Reference",
             "",
-            "## Backend (Remote Code Analysis)",
+            "## Remote Code Analysis",
             "",
             back_cmds,
             "",

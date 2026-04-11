@@ -90,9 +90,13 @@ def _do_remote_scan(
     skip_interactive: bool,
     quiet: bool,
     mode: str = "fast",
+    github_token: "str | None" = None,
 ) -> None:
     """Shared implementation for remote backend scan — used by both `rafter run` and `rafter scan`."""
+    import os as _os
+
     key = resolve_key(api_key)
+    gh_token = github_token or _os.environ.get("RAFTER_GITHUB_TOKEN")
     try:
         repo_slug, branch_name = detect_repo(repo, branch)
     except RuntimeError as e:
@@ -104,10 +108,14 @@ def _do_remote_scan(
 
     headers = {"x-api-key": key, "Content-Type": "application/json"}
 
+    body: dict = {"repository_name": repo_slug, "branch_name": branch_name, "scan_mode": mode}
+    if gh_token:
+        body["github_token"] = gh_token
+
     resp = requests.post(
         f"{API_BASE}/static/scan",
         headers=headers,
-        json={"repository_name": repo_slug, "branch_name": branch_name, "scan_mode": mode},
+        json=body,
         timeout=API_TIMEOUT,
     )
 
@@ -141,11 +149,12 @@ def register_backend_commands(app: typer.Typer) -> None:
         api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
         fmt: str = typer.Option("md", "--format", "-f", help="json | md"),
         mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus"),
+        github_token: str = typer.Option(None, "--github-token", envvar="RAFTER_GITHUB_TOKEN", help="GitHub PAT for private repos"),
         skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
         quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
     ):
         """Trigger a security scan."""
-        _do_remote_scan(repo, branch, api_key, fmt, skip_interactive, quiet, mode)
+        _do_remote_scan(repo, branch, api_key, fmt, skip_interactive, quiet, mode, github_token=github_token)
 
     @app.command()
     def get(
