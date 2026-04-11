@@ -1,13 +1,10 @@
 name: Comprehensive Test Suite
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
-      - main
       - prod
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,14 +23,26 @@ jobs:
         with:
           node-version: "20"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Python dependencies (for cross-runtime parity tests)
+        working-directory: ./python
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+
       - name: Build
         run: pnpm run build
+
+      - name: Verify build
+        run: node -e "import('./dist/index.js').then(() => console.log('Build OK')).catch(e => { console.error(e); process.exit(1); })"
 
       - name: Run all tests
         run: pnpm test
@@ -55,7 +64,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
-          pip install pytest pytest-mock
+          pip install pytest pytest-mock pytest-asyncio
 
       - name: Run all tests
         run: python -m pytest tests/ -v
@@ -135,7 +144,8 @@ jobs:
       - name: Validate SARIF structure
         run: |
           node -e "
-            const sarif = require('/tmp/output.sarif');
+            const fs = require('fs');
+            const sarif = JSON.parse(fs.readFileSync('/tmp/output.sarif', 'utf8'));
             if (sarif.version !== '2.1.0') throw new Error('Bad SARIF version');
             if (!sarif.runs || sarif.runs.length === 0) throw new Error('No runs');
             if (!sarif.runs[0].tool.driver.name) throw new Error('Missing tool name');
@@ -143,10 +153,11 @@ jobs:
             console.log('SARIF validation passed:', sarif.runs[0].results.length, 'findings');
           "
 
-  # ── Backend API integration (only when key available) ──────────────
+  # ── Remote API integration (only when key available) ───────────────
   backend-api:
     runs-on: ubuntu-latest
-    if: ${{ secrets.RAFTER_API_KEY != '' }}
+    env:
+      RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
     defaults:
       run:
         working-directory: ./node
@@ -164,9 +175,8 @@ jobs:
         run: pnpm install --frozen-lockfile && pnpm run build
 
       - name: Run backend API tests
+        if: ${{ env.RAFTER_API_KEY != '' }}
         run: pnpm exec vitest run tests/backend-api.test.ts
-        env:
-          RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
 
   # ── Package build verification ─────────────────────────────────────
   package-integrity:
@@ -217,6 +227,7 @@ jobs:
   # ── Cross-platform smoke test ──────────────────────────────────────
   cross-platform:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         node: ["18", "20", "22"]
@@ -234,8 +245,13 @@ jobs:
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
 
-      - name: Install, build, test
+      - name: Install and build
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
-          pnpm test
+
+      - name: Verify build
+        run: node -e "import('./dist/index.js').then(() => console.log('Build OK')).catch(e => { console.error(e); process.exit(1); })"
+
+      - name: Run tests
+        run: pnpm test

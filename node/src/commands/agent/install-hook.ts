@@ -4,6 +4,7 @@ import os from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { fileURLToPath } from 'url';
+import { fmt } from "../../utils/formatter.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,7 +33,7 @@ async function installHook(opts: { global?: boolean; push?: boolean }): Promise<
 function getTemplatePath(templateName: string): string {
   const templatePath = path.join(__dirname, "..", "..", "..", "resources", templateName);
   if (!fs.existsSync(templatePath)) {
-    console.error("❌ Error: Hook template not found");
+    console.error(fmt.error("Hook template not found"));
     console.error(`   Expected at: ${templatePath}`);
     process.exit(1);
   }
@@ -46,7 +47,7 @@ async function installLocalHook(hookName: string, templateName: string): Promise
   try {
     execSync("git rev-parse --git-dir", { stdio: "pipe" });
   } catch (e) {
-    console.error("❌ Error: Not in a git repository");
+    console.error(fmt.error("Not in a git repository"));
     console.error("   Run this command from inside a git repository");
     process.exit(1);
   }
@@ -63,31 +64,31 @@ async function installLocalHook(hookName: string, templateName: string): Promise
     const existing = fs.readFileSync(hookPath, "utf-8");
     const marker = hookName === "pre-push" ? "Rafter Security Pre-Push Hook" : "Rafter Security Pre-Commit Hook";
     if (existing.includes(marker)) {
-      console.log(`✓ Rafter ${hookName} hook already installed`);
+      console.log(fmt.success(`Rafter ${hookName} hook already installed`));
       return;
     }
     const backupPath = `${hookPath}.backup-${Date.now()}`;
     fs.copyFileSync(hookPath, backupPath);
-    console.log(`📦 Backed up existing hook to: ${path.basename(backupPath)}`);
+    console.log(fmt.info(`Backed up existing hook to: ${path.basename(backupPath)}`));
   }
 
   const hookContent = fs.readFileSync(getTemplatePath(templateName), "utf-8");
   fs.writeFileSync(hookPath, hookContent, "utf-8");
   fs.chmodSync(hookPath, 0o755);
 
-  console.log(`✓ Installed Rafter ${hookName} hook`);
+  console.log(fmt.success(`Installed Rafter ${hookName} hook`));
   console.log(`  Location: ${hookPath}`);
   console.log();
   if (hookName === "pre-push") {
     console.log("The hook will:");
-    console.log("  • Scan commits being pushed for secrets");
-    console.log("  • Block pushes if secrets are detected");
-    console.log("  • Can be bypassed with: git push --no-verify (not recommended)");
+    console.log("  - Scan commits being pushed for secrets");
+    console.log("  - Block pushes if secrets are detected");
+    console.log("  - Can be bypassed with: git push --no-verify (not recommended)");
   } else {
     console.log("The hook will:");
-    console.log("  • Scan staged files for secrets before each commit");
-    console.log("  • Block commits if secrets are detected");
-    console.log("  • Can be bypassed with: git commit --no-verify (not recommended)");
+    console.log("  - Scan staged files for secrets before each commit");
+    console.log("  - Block commits if secrets are detected");
+    console.log("  - Can be bypassed with: git commit --no-verify (not recommended)");
   }
   console.log();
 }
@@ -98,7 +99,7 @@ async function installLocalHook(hookName: string, templateName: string): Promise
 async function installGlobalHook(hookName: string, templateName: string): Promise<void> {
   const homeDir = os.homedir();
   if (!homeDir) {
-    console.error("❌ Error: Could not determine home directory");
+    console.error(fmt.error("Could not determine home directory"));
     process.exit(1);
   }
 
@@ -115,7 +116,7 @@ async function installGlobalHook(hookName: string, templateName: string): Promis
 
   try {
     execSync(`git config --global core.hooksPath "${globalHooksDir}"`, { stdio: "pipe" });
-    console.log(`✓ Installed Rafter ${hookName} hook globally`);
+    console.log(fmt.success(`Installed Rafter ${hookName} hook globally`));
     console.log(`  Location: ${hookPath}`);
     console.log(`  Git config: core.hooksPath = ${globalHooksDir}`);
     console.log();
@@ -128,7 +129,7 @@ async function installGlobalHook(hookName: string, templateName: string): Promis
     console.log(`  cd <repo> && rafter agent install-hook${hookName === "pre-push" ? " --push" : ""}`);
     console.log();
   } catch (e) {
-    console.error("❌ Failed to configure global git hooks");
+    console.error(fmt.error("Failed to configure global git hooks"));
     console.error("   You may need to manually set: git config --global core.hooksPath ~/.rafter/git-hooks");
     process.exit(1);
   }

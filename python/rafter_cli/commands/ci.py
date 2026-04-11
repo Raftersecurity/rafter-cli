@@ -160,9 +160,11 @@ _GENERATORS = {
 def ci_init(
     platform: str = typer.Option(None, "--platform", help="github, gitlab, or circleci (default: auto-detect)"),
     output: str = typer.Option(None, "--output", help="Output file path"),
-    with_backend: bool = typer.Option(False, "--with-backend", help="Include backend security audit job"),
+    with_remote: bool = typer.Option(False, "--with-remote", help="Include remote security audit job"),
+    with_backend: bool = typer.Option(False, "--with-backend", help="Deprecated: use --with-remote", hidden=True),
 ):
     """Generate CI/CD pipeline config for secret scanning."""
+    include_remote = with_remote or with_backend
     plat = platform or _detect_platform()
 
     if not plat:
@@ -177,7 +179,7 @@ def ci_init(
         raise typer.Exit(code=1)
 
     gen_fn, default_path = _GENERATORS[plat]
-    content = gen_fn(with_backend)
+    content = gen_fn(include_remote)
     out_path = Path(output or default_path)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,7 +190,7 @@ def ci_init(
     rprint("Next steps:")
     rprint(f"  1. Review the generated file: {out_path}")
 
-    if with_backend:
+    if include_remote:
         secret_instructions = {
             "github": "  2. Add RAFTER_API_KEY to repo Settings > Secrets > Actions",
             "gitlab": "  2. Add RAFTER_API_KEY to Settings > CI/CD > Variables",
@@ -196,7 +198,7 @@ def ci_init(
         }
         rprint(secret_instructions[plat])
 
-    step = "3" if with_backend else "2"
+    step = "3" if include_remote else "2"
     rprint(f"  {step}. Commit and push to trigger the pipeline")
     if plat == "github":
         rprint()

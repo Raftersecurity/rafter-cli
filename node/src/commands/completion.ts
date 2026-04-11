@@ -69,7 +69,7 @@ _rafter_completions() {
       if [[ "\${COMP_WORDS[1]}" == "agent" ]]; then
         COMPREPLY=( $(compgen -W "--risk-level --with-openclaw --with-claude-code --with-codex --with-gemini --with-aider --with-cursor --with-windsurf --with-continue --with-gitleaks --all --help" -- "\${cur}") )
       elif [[ "\${COMP_WORDS[1]}" == "ci" ]]; then
-        COMPREPLY=( $(compgen -W "--platform --output --with-backend --help" -- "\${cur}") )
+        COMPREPLY=( $(compgen -W "--platform --output --with-remote --with-backend --help" -- "\${cur}") )
       fi
       return 0
       ;;
@@ -83,7 +83,7 @@ const ZSH_COMPLETION = `#compdef rafter
 _rafter() {
   local -a commands
   commands=(
-    'run:Submit a security scan to the Rafter backend'
+    'run:Submit a remote security scan'
     'scan:Alias for run'
     'get:Retrieve scan results'
     'usage:Check API usage quota'
@@ -372,7 +372,8 @@ complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcom
 complete -c rafter -n '__fish_seen_subcommand_from ci' -a init -d 'Initialize CI pipeline'
 complete -c rafter -n '__fish_seen_subcommand_from ci; and __fish_seen_subcommand_from init' -l platform -d 'CI platform' -ra 'github gitlab circleci'
 complete -c rafter -n '__fish_seen_subcommand_from ci; and __fish_seen_subcommand_from init' -l output -d 'Output path' -r
-complete -c rafter -n '__fish_seen_subcommand_from ci; and __fish_seen_subcommand_from init' -l with-backend -d 'Include backend audit'
+complete -c rafter -n '__fish_seen_subcommand_from ci; and __fish_seen_subcommand_from init' -l with-remote -d 'Include remote audit'
+complete -c rafter -n '__fish_seen_subcommand_from ci; and __fish_seen_subcommand_from init' -l with-backend -d 'Deprecated: use --with-remote'
 
 # hook subcommands
 complete -c rafter -n '__fish_seen_subcommand_from hook' -a pretool -d 'PreToolUse hook handler'

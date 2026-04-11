@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execSync } from "child_process";
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
+import { execSync, spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -8,38 +8,38 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
-const CLI_ENTRY = path.join(PROJECT_ROOT, "src", "index.ts");
+const CLI_ENTRY = path.join(PROJECT_ROOT, "dist", "index.js");
+
+beforeAll(() => {
+  try {
+    execSync("pnpm run build", { cwd: PROJECT_ROOT, stdio: "ignore", timeout: 30000 });
+  } catch { /* dist may already exist */ }
+}, 60000);
 
 let tmpDir: string;
 
 function runAuditSkill(
   skillPath: string,
   opts: string = "",
-  timeout = 30_000
+  timeout = 15_000
 ): { stdout: string; stderr: string; exitCode: number } {
-  try {
-    const stdout = execSync(
-      `npx tsx ${CLI_ENTRY} agent audit-skill ${skillPath} ${opts}`,
-      {
-        cwd: PROJECT_ROOT,
-        encoding: "utf-8",
-        timeout,
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          XDG_CONFIG_HOME: path.join(tmpDir, ".config"),
-        },
-        stdio: ["pipe", "pipe", "pipe"],
-      }
-    );
-    return { stdout, stderr: "", exitCode: 0 };
-  } catch (e: any) {
-    return {
-      stdout: e.stdout || "",
-      stderr: e.stderr || "",
-      exitCode: e.status ?? 1,
-    };
-  }
+  const argList = ["agent", "audit-skill", skillPath, ...opts.split(/\s+/).filter(Boolean)];
+  const result = spawnSync("node", [CLI_ENTRY, ...argList], {
+    cwd: PROJECT_ROOT,
+    encoding: "utf-8",
+    timeout,
+    env: {
+      ...process.env,
+      HOME: tmpDir,
+      XDG_CONFIG_HOME: path.join(tmpDir, ".config"),
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  return {
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    exitCode: result.status ?? 1,
+  };
 }
 
 describe("rafter agent audit-skill", () => {

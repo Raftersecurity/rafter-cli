@@ -1,7 +1,7 @@
 """Top-level rafter scan command group.
 
-Default (no subcommand): remote backend scan (same as `rafter run`)
-rafter scan remote:       explicit alias for remote backend scan
+Default (no subcommand): remote scan (same as `rafter run`)
+rafter scan remote:       explicit alias for remote scan
 rafter scan local [path]: local secret scanner (formerly `rafter agent scan`)
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from rich import print as rprint
 scan_app = typer.Typer(
     name="scan",
     help=(
-        "Scan for security issues. Default: remote backend scan. "
+        "Scan for security issues. Default: remote scan. "
         "Use 'scan local' for local secret scanning."
     ),
     invoke_without_command=True,
@@ -40,7 +40,7 @@ remote_app = typer.Typer(
 scan_app.add_typer(remote_app)
 
 
-# ── default: remote backend scan ─────────────────────────────────────
+# ── default: remote scan ─────────────────────────────────────
 
 @scan_app.callback()
 def scan_default(
@@ -50,13 +50,14 @@ def scan_default(
     api_key: Optional[str] = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
     fmt_: str = typer.Option("md", "--format", "-f", help="json | md"),
     mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus"),
+    github_token: Optional[str] = typer.Option(None, "--github-token", envvar="RAFTER_GITHUB_TOKEN", help="GitHub PAT for private repos"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
-    """Scan for security issues. Defaults to remote backend scan."""
+    """Scan for security issues. Defaults to remote scan."""
     if ctx.invoked_subcommand is None:
-        # No subcommand — run remote backend scan
-        _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode)
+        # No subcommand — run remote scan
+        _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token)
 
 
 # ── rafter scan remote ────────────────────────────────────────────────
@@ -68,17 +69,18 @@ def scan_remote(
     api_key: Optional[str] = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
     fmt_: str = typer.Option("md", "--format", "-f", help="json | md"),
     mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus"),
+    github_token: Optional[str] = typer.Option(None, "--github-token", envvar="RAFTER_GITHUB_TOKEN", help="GitHub PAT for private repos"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
     """Trigger a remote backend security scan (explicit alias for 'rafter run')."""
-    _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode)
+    _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token)
 
 
-def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode="fast"):
-    """Shared handler: invoke remote backend scan (same logic as `rafter run`)."""
+def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode="fast", github_token=None):
+    """Shared handler: invoke remote scan (same logic as `rafter run`)."""
     from ..commands.backend import _do_remote_scan
-    _do_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode)
+    _do_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token=github_token)
 
 
 # ── rafter scan local ─────────────────────────────────────────────────
@@ -94,6 +96,7 @@ def scan_local(
     engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
+    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires gitleaks engine)"),
 ):
     """Scan files or directories for secrets (local). Formerly 'rafter agent scan'."""
     from .agent import (
@@ -213,7 +216,7 @@ def scan_local(
     if os.path.isdir(resolved_path):
         if not quiet:
             print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg)
+        results = _scan_directory(resolved_path, eng, scan_cfg, history=history)
     else:
         if not quiet:
             print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)

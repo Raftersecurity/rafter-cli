@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from ..core.pattern_engine import Pattern, PatternMatch
+from ..utils.binary_manager import BinaryManager
 
 
 @dataclass
@@ -28,7 +29,12 @@ class GitleaksCheckResult(NamedTuple):
 
 class GitleaksScanner:
     def __init__(self) -> None:
-        self._path = shutil.which("gitleaks")
+        self._binary_manager = BinaryManager()
+        # Prefer managed binary, fall back to system PATH
+        if self._binary_manager.is_gitleaks_installed():
+            self._path: str | None = str(self._binary_manager.get_gitleaks_path())
+        else:
+            self._path = self._binary_manager.find_gitleaks_on_path()
 
     def is_available(self) -> bool:
         return self.check().available
@@ -38,7 +44,7 @@ class GitleaksScanner:
         if not self._path:
             return GitleaksCheckResult(
                 available=False, stdout="", stderr="",
-                error="gitleaks not found on PATH",
+                error="gitleaks not found (not installed via rafter and not on PATH)",
             )
         try:
             result = subprocess.run(
@@ -111,8 +117,8 @@ class GitleaksScanner:
             matches=[self._convert(r) for r in results],
         )
 
-    def scan_directory(self, dir_path: str) -> list[GitleaksScanResult]:
-        results = self._run_scan(dir_path)
+    def scan_directory(self, dir_path: str, *, use_git: bool = False) -> list[GitleaksScanResult]:
+        results = self._run_scan(dir_path, use_git=use_git)
         grouped: dict[str, list[PatternMatch]] = {}
         for r in results:
             f = r.get("File", "unknown")
@@ -121,15 +127,18 @@ class GitleaksScanner:
 
     # ------------------------------------------------------------------
 
-    def _run_scan(self, target: str) -> list[dict]:
+    def _run_scan(self, target: str, *, use_git: bool = False) -> list[dict]:
         if not self._path:
             raise RuntimeError("Gitleaks not available")
 
         with tempfile.TemporaryDirectory(prefix="gitleaks-") as tmp_dir:
             report_path = os.path.join(tmp_dir, "report.json")
             try:
+                cmd = [self._path, "detect", "-f", "json", "-r", report_path, "-s", target]
+                if not use_git:
+                    cmd.insert(2, "--no-git")
                 subprocess.run(
-                    [self._path, "detect", "--no-git", "-f", "json", "-r", report_path, "-s", target],
+                    cmd,
                     capture_output=True, timeout=60,
                 )
                 if not os.path.exists(report_path):

@@ -1,0 +1,9 @@
+# Intentionally WEAK .gitignore — common mistake that leaks secrets
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.DS_Store
+
+# NOTE: .env, *.key, tokens.yml are NOT ignored
+# This is a realistic pattern where developers forget to exclude secrets

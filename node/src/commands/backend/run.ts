@@ -19,6 +19,7 @@ export interface RunOpts {
   mode?: string;
   skipInteractive?: boolean;
   quiet?: boolean;
+  githubToken?: string;
 }
 
 /**
@@ -26,6 +27,7 @@ export interface RunOpts {
  */
 export async function runRemoteScan(opts: RunOpts): Promise<void> {
   const key = resolveKey(opts.apiKey);
+  const ghToken = opts.githubToken || process.env.RAFTER_GITHUB_TOKEN;
   let repo: string | undefined, branch: string | undefined;
   try {
     ({ repo, branch } = detectRepo({ repo: opts.repo, branch: opts.branch, quiet: opts.quiet }));
@@ -38,12 +40,19 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
     process.exit(EXIT_GENERAL_ERROR);
   }
 
+  const body: Record<string, string> = {
+    repository_name: repo!,
+    branch_name: branch!,
+    scan_mode: opts.mode ?? "fast",
+  };
+  if (ghToken) body.github_token = ghToken;
+
   if (!opts.quiet) {
     const spinner = ora("Submitting scan").start();
     try {
       const { data } = await axios.post(
         `${API}/static/scan`,
-        { repository_name: repo, branch_name: branch, scan_mode: opts.mode ?? "fast" },
+        body,
         { headers: { "x-api-key": key } }
       );
       spinner.succeed(`Scan ID: ${data.scan_id}`);
@@ -71,7 +80,7 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
     try {
       const { data } = await axios.post(
         `${API}/static/scan`,
-        { repository_name: repo, branch_name: branch, scan_mode: opts.mode ?? "fast" },
+        body,
         { headers: { "x-api-key": key } }
       );
       if (opts.skipInteractive) return;
@@ -102,6 +111,7 @@ function addRunOptions(cmd: Command): Command {
     .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
     .option("-f, --format <format>", "json | md", "md")
     .option("-m, --mode <mode>", "scan mode: fast | plus", "fast")
+    .option("--github-token <token>", "GitHub PAT for private repos (or RAFTER_GITHUB_TOKEN env var)")
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages");
 }
@@ -109,7 +119,7 @@ function addRunOptions(cmd: Command): Command {
 export function createRunCommand(): Command {
   return addRunOptions(
     new Command("run")
-      .description("Trigger a remote backend security scan")
+      .description("Trigger a remote security scan")
   ).action(async (opts) => {
     await runRemoteScan(opts);
   });

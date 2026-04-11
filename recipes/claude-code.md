@@ -52,7 +52,7 @@ Two skills are installed to `~/.claude/skills/`:
 
 | Skill | Trigger | Purpose |
 |-------|---------|---------|
-| `rafter/` | Auto-invoked | Backend security audits (read-only API calls) |
+| `rafter/` | Auto-invoked | Remote security audits (read-only API calls) |
 | `rafter-agent-security/` | `/rafter-scan`, `/rafter-bash`, `/rafter-audit-skill`, `/rafter-audit` | Local secret scanning, command validation, skill auditing |
 
 ### 4. MCP server (alternative)

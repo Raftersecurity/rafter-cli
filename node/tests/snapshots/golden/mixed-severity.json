@@ -1,0 +1,41 @@
+{
+  "file": "mixed-severity.js",
+  "matches": [
+    {
+      "pattern": {
+        "name": "AWS Access Key ID",
+        "severity": "critical"
+      },
+      "line": 4,
+      "column": 12,
+      "redacted": "AKIA************MPLE"
+    },
+    {
+      "pattern": {
+        "name": "Generic API Key",
+        "severity": "high"
+      },
+      "line": 6,
+      "column": 3,
+      "redacted": "api_***********************************fQ2\""
+    },
+    {
+      "pattern": {
+        "name": "Bearer Token",
+        "severity": "high"
+      },
+      "line": 8,
+      "column": 10,
+      "redacted": "Bear***********************************************************************************************************sR8U"
+    },
+    {
+      "pattern": {
+        "name": "JSON Web Token",
+        "severity": "high"
+      },
+      "line": 8,
+      "column": 17,
+      "redacted": "eyJh****************************************************************************************************sR8U"
+    }
+  ]
+}

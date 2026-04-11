@@ -1,11 +1,11 @@
 {"issue_id":"rc-0zz","label":"blocked-on-human"}
+{"issue_id":"rc-3lm","label":"desire-path"}
 {"issue_id":"rc-4bt","label":"plan"}
 {"issue_id":"rc-ap7","label":"blocked-on-human"}
 {"issue_id":"rc-d46","label":"desire-path"}
 {"issue_id":"rc-raftercli-polecat-amber","label":"gt:agent"}
 {"issue_id":"rc-raftercli-polecat-garnet","label":"gt:agent"}
 {"issue_id":"rc-raftercli-polecat-jasper","label":"gt:agent"}
-{"issue_id":"rc-raftercli-polecat-obsidian","label":"gt:agent"}
 {"issue_id":"rc-raftercli-polecat-onyx","label":"gt:agent"}
 {"issue_id":"rc-raftercli-polecat-opal","label":"gt:agent"}
 {"issue_id":"rc-raftercli-polecat-quartz","label":"gt:agent"}

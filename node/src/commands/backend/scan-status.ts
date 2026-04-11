@@ -6,6 +6,7 @@ import {
   EXIT_GENERAL_ERROR,
   EXIT_SCAN_NOT_FOUND
 } from "../../utils/api.js";
+import { fmt as output } from "../../utils/formatter.js";
 
 export async function handleScanStatus(scan_id: string, headers: any, fmt: string, quiet?: boolean): Promise<number> {
   // First poll
@@ -17,10 +18,10 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
     );
   } catch (e: any) {
     if (e.response?.status === 404) {
-      console.error(`Scan '${scan_id}' not found`);
+      console.error(output.error(`Scan '${scan_id}' not found`));
       return EXIT_SCAN_NOT_FOUND;
     }
-    console.error(`Error: ${e.response?.data || e.message}`);
+    console.error(output.error(`${e.response?.data || e.message}`));
     return EXIT_GENERAL_ERROR;
   }
 

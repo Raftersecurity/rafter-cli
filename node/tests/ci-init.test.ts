@@ -3,6 +3,7 @@ import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import yaml from "js-yaml";
 
 const CLI = path.resolve(__dirname, "../dist/index.js");
 
@@ -164,5 +165,142 @@ describe("ci init — --output", () => {
     expect(fs.existsSync(customPath)).toBe(true);
     const content = fs.readFileSync(customPath, "utf-8");
     expect(content).toContain("rafter scan local");
+  });
+});
+
+describe("ci init — generated workflow YAML validation", () => {
+  function readAndParse(filePath: string): any {
+    const content = fs.readFileSync(filePath, "utf-8");
+    return yaml.load(content);
+  }
+
+  describe("GitHub Actions", () => {
+    it("generates valid YAML with required structure", () => {
+      rafter("ci init --platform github", { cwd: tmpDir });
+      const doc = readAndParse(path.join(tmpDir, ".github/workflows/rafter-security.yml"));
+      expect(doc.name).toBe("Rafter Security");
+      expect(doc.on).toBeDefined();
+      expect(doc.on.push.branches).toContain("main");
+      expect(doc.on.pull_request.branches).toContain("main");
+      expect(doc.permissions).toEqual({ contents: "read" });
+      expect(doc.jobs["secret-scan"]).toBeDefined();
+      expect(doc.jobs["secret-scan"]["runs-on"]).toBe("ubuntu-latest");
+    });
+
+    it("secret-scan steps include checkout and scan", () => {
+      rafter("ci init --platform github", { cwd: tmpDir });
+      const doc = readAndParse(path.join(tmpDir, ".github/workflows/rafter-security.yml"));
+      const steps = doc.jobs["secret-scan"].steps;
+      expect(steps).toHaveLength(3);
+      expect(steps[0].uses).toBe("actions/checkout@v4");
+      expect(steps[1].run).toContain("@rafter-security/cli");
+      expect(steps[2].run).toBe("rafter scan local . --quiet");
+    });
+
+    it("--with-backend adds security-audit job with correct dependency", () => {
+      rafter("ci init --platform github --with-backend", { cwd: tmpDir });
+      const doc = readAndParse(path.join(tmpDir, ".github/workflows/rafter-security.yml"));
+      expect(doc.jobs["security-audit"]).toBeDefined();
+      expect(doc.jobs["security-audit"].needs).toBe("secret-scan");
+      expect(doc.jobs["security-audit"]["runs-on"]).toBe("ubuntu-latest");
+      const auditSteps = doc.jobs["security-audit"].steps;
+      const runStep = auditSteps.find((s: any) => s.run?.includes("rafter run"));
+      expect(runStep).toBeDefined();
+      expect(runStep.env.RAFTER_API_KEY).toContain("secrets.RAFTER_API_KEY");
+    });
+
+    it("without --with-backend has no security-audit job", () => {
+      rafter("ci init --platform github", { cwd: tmpDir });
+      const doc = readAndParse(path.join(tmpDir, ".github/workflows/rafter-security.yml"));
+      expect(Object.keys(doc.jobs)).toEqual(["secret-scan"]);
+    });
+  });
+
+  describe("GitLab CI", () => {
+    it("generates valid YAML with required structure", () => {
+      rafter("ci init --platform gitlab", { cwd: tmpDir });
+      const doc = readAndParse(path.join(tmpDir, ".gitlab-ci-rafter.yml"));
+      expect(doc.stages).toContain("security");
+      expect(doc["secret-scan"]).toBeDefined();
+      expect(doc["secret-scan"].stage).toBe("security");
+      expect(doc["secret-scan"].image).toBe("node:20");
+    });
+
+    it("secret-scan has script and rules", () => {
+      rafter("ci init --platform gitlab", { cwd: tmpDir });
+      const doc = readAndParse(path.join(tmpDir, ".gitlab-ci-rafter.yml"));
+      const job = doc["secret-scan"];
+      expect(job.script).toBeInstanceOf(Array);
+      expect(job.script).toContain("rafter scan local . --quiet");
+      expect(job.rules).toBeInstanceOf(Array);
+      expect(job.rules.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("--with-backend adds security-audit with needs", () => {
+      rafter("ci init --platform gitlab --with-backend", { cwd: tmpDir });
+      const doc = readAndParse(path.join(tmpDir, ".gitlab-ci-rafter.yml"));
+      expect(doc["security-audit"]).toBeDefined();
+      expect(doc["security-audit"].needs).toEqual(["secret-scan"]);
+      expect(doc["security-audit"].variables.RAFTER_API_KEY).toBeDefined();
+    });
+  });
+
+  describe("CircleCI", () => {
+    it("generates valid YAML with required structure", () => {
+      rafter("ci init --platform circleci", { cwd: tmpDir });
+      const doc = readAndParse(path.join(tmpDir, ".circleci/rafter-security.yml"));
+      expect(doc.version).toBe(2.1);
+      expect(doc.jobs["secret-scan"]).toBeDefined();
+      expect(doc.jobs["secret-scan"].docker[0].image).toBe("cimg/node:20.0");
+      expect(doc.workflows).toBeDefined();
+      expect(doc.workflows.security.jobs).toContain("secret-scan");
+    });
+
+    it("secret-scan steps include checkout and commands", () => {
+      rafter("ci init --platform circleci", { cwd: tmpDir });
+      const doc = readAndParse(path.join(tmpDir, ".circleci/rafter-security.yml"));
+      const steps = doc.jobs["secret-scan"].steps;
+      expect(steps[0]).toBe("checkout");
+      expect(steps[1].run.command).toContain("@rafter-security/cli");
+      expect(steps[2].run.command).toBe("rafter scan local . --quiet");
+    });
+
+    it("--with-backend adds security-audit with requires in workflow", () => {
+      rafter("ci init --platform circleci --with-backend", { cwd: tmpDir });
+      const doc = readAndParse(path.join(tmpDir, ".circleci/rafter-security.yml"));
+      expect(doc.jobs["security-audit"]).toBeDefined();
+      const workflowJobs = doc.workflows.security.jobs;
+      const auditEntry = workflowJobs.find((j: any) => typeof j === "object" && j["security-audit"]);
+      expect(auditEntry).toBeDefined();
+      expect(auditEntry["security-audit"].requires).toContain("secret-scan");
+    });
+  });
+});
+
+describe("ci init — edge cases", () => {
+  it("idempotent: running twice overwrites without error", () => {
+    rafter("ci init --platform github", { cwd: tmpDir });
+    const r = rafter("ci init --platform github", { cwd: tmpDir });
+    expect(r.exitCode).toBe(0);
+    const doc = yaml.load(
+      fs.readFileSync(path.join(tmpDir, ".github/workflows/rafter-security.yml"), "utf-8"),
+    ) as any;
+    expect(doc.jobs["secret-scan"]).toBeDefined();
+  });
+
+  it("auto-detect prefers github when both .github and .circleci exist", () => {
+    fs.mkdirSync(path.join(tmpDir, ".github"));
+    fs.mkdirSync(path.join(tmpDir, ".circleci"));
+    const r = rafter("ci init", { cwd: tmpDir });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("github");
+    expect(fs.existsSync(path.join(tmpDir, ".github/workflows/rafter-security.yml"))).toBe(true);
+  });
+
+  it("creates nested output directories", () => {
+    const deep = path.join(tmpDir, "a/b/c/d/workflow.yml");
+    const r = rafter(["ci", "init", "--platform", "github", "--output", deep], { cwd: tmpDir });
+    expect(r.exitCode).toBe(0);
+    expect(fs.existsSync(deep)).toBe(true);
   });
 });

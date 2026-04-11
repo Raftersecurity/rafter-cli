@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { ConfigManager } from "../../core/config-manager.js";
+import { fmt } from "../../utils/formatter.js";
 
 export function createConfigCommand(): Command {
   const config = new Command("config")
@@ -54,7 +55,7 @@ export function createConfigCommand(): Command {
       }
 
       manager.set(key, parsedValue);
-      console.log(`✓ Set ${key} = ${JSON.stringify(parsedValue)}`);
+      console.log(fmt.success(`Set ${key} = ${JSON.stringify(parsedValue)}`));
     });
 
   return config;

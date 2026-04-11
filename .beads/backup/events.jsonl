@@ -727,15 +727,25 @@
 {"actor":"raftercli/crew/lucy","comment":null,"created_at":"2026-03-28T18:56:43Z","event_type":"closed","id":518,"issue_id":"rc-x72","new_value":"Done: badges section added to README.md + badges/README.md with 4 variants in Markdown/HTML/RST formats","old_value":""}
 {"actor":"raftercli/crew/lucy","comment":null,"created_at":"2026-03-28T18:56:44Z","event_type":"closed","id":519,"issue_id":"rc-cx5","new_value":"Done: SKILL.md created (275 lines) — covers install, platform init, scanning, hooks, MCP, policy, audit, CI/CD. Written for AI agent audience.","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:49:04Z","event_type":"closed","id":519,"issue_id":"rc-wisp-4x71n","new_value":"Closed","old_value":""}
+{"actor":"raftercli/crew/jack","comment":null,"created_at":"2026-03-28T20:25:32Z","event_type":"created","id":520,"issue_id":"rc-5xn","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:49:05Z","event_type":"claimed","id":520,"issue_id":"rc-wisp-4puun","new_value":"","old_value":""}
+{"actor":"raftercli/crew/jack","comment":null,"created_at":"2026-03-28T20:25:33Z","event_type":"created","id":521,"issue_id":"rc-708","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:49:23Z","event_type":"closed","id":521,"issue_id":"rc-wisp-4puun","new_value":"Closed","old_value":""}
+{"actor":"raftercli/crew/jack","comment":null,"created_at":"2026-03-28T20:25:34Z","event_type":"created","id":522,"issue_id":"rc-bjw","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:49:24Z","event_type":"claimed","id":522,"issue_id":"rc-wisp-f6e2b","new_value":"","old_value":""}
+{"actor":"raftercli/crew/jack","comment":null,"created_at":"2026-03-28T20:25:35Z","event_type":"created","id":523,"issue_id":"rc-50v","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:49:41Z","event_type":"closed","id":523,"issue_id":"rc-wisp-f6e2b","new_value":"Closed","old_value":""}
+{"actor":"raftercli/crew/lucy","comment":null,"created_at":"2026-03-29T02:29:32Z","event_type":"created","id":524,"issue_id":"rc-3lm","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:49:42Z","event_type":"claimed","id":524,"issue_id":"rc-wisp-0cbar","new_value":"","old_value":""}
+{"actor":"raftercli/crew/lucy","comment":"Added label: desire-path","created_at":"2026-03-29T02:29:32Z","event_type":"label_added","id":525,"issue_id":"rc-3lm","new_value":null,"old_value":null}
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T08:49:42Z","event_type":"created","id":525,"issue_id":"rc-wisp-vsm4h","new_value":"","old_value":""}
+{"actor":"Rome-1","comment":null,"created_at":"2026-03-29T07:15:14Z","event_type":"created","id":526,"issue_id":"rc-753","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T08:49:43Z","event_type":"closed","id":526,"issue_id":"rc-wisp-mel7t","new_value":"done","old_value":""}
+{"actor":"Rome-1","comment":null,"created_at":"2026-03-29T07:17:05Z","event_type":"created","id":527,"issue_id":"rf-h0e","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:49:58Z","event_type":"closed","id":527,"issue_id":"rc-wisp-0cbar","new_value":"Closed","old_value":""}
+{"actor":"Rome-1","comment":null,"created_at":"2026-03-29T07:17:16Z","event_type":"closed","id":528,"issue_id":"rf-h0e","new_value":"Test bead — prefix works","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:50:20Z","event_type":"closed","id":528,"issue_id":"rc-wisp-j0kyb","new_value":"Closed","old_value":""}
+{"actor":"Rome-1","comment":null,"created_at":"2026-03-29T07:19:09Z","event_type":"created","id":529,"issue_id":"rf-cz8","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:50:21Z","event_type":"closed","id":529,"issue_id":"rc-wisp-sug0v","new_value":"all steps complete","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:50:27Z","event_type":"created","id":530,"issue_id":"rc-wisp-4valn","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/quartz","comment":"","created_at":"2026-03-06T08:50:27Z","event_type":"closed","id":531,"issue_id":"rc-wisp-sug0v","new_value":"done","old_value":""}
@@ -789,8 +799,6 @@
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T09:15:49Z","event_type":"claimed","id":585,"issue_id":"rc-wisp-p3kxc","new_value":"","old_value":""}
 {"actor":"raftercli/polecats/obsidian","comment":"","created_at":"2026-03-06T09:16:19Z","event_type":"closed","id":586,"issue_id":"rc-wisp-p3kxc","new_value":"Closed","old_value":""}
 {"actor":"mayor","comment":"","created_at":"2026-03-06T09:16:58Z","event_type":"closed","id":588,"issue_id":"rc-wisp-uqrbd","new_value":"burned: polecat nuked","old_value":""}
-{"actor":"raftercli/crew/lucy","comment":"","created_at":"2026-03-20T05:58:24Z","event_type":"created","id":1007,"issue_id":"rc-raftercli-polecat-obsidian","new_value":"","old_value":""}
-{"actor":"raftercli/crew/lucy","comment":"","created_at":"2026-03-21T20:31:10Z","event_type":"created","id":1032,"issue_id":"rc-raftercli-polecat-obsidian","new_value":"","old_value":""}
 {"actor":"raftercli/crew/lucy","comment":"","created_at":"2026-03-24T19:56:25Z","event_type":"created","id":1042,"issue_id":"rc-raftercli-polecat-quartz","new_value":"","old_value":""}
 {"actor":"raftercli/crew/lucy","comment":"","created_at":"2026-03-24T19:57:26Z","event_type":"created","id":1043,"issue_id":"rc-raftercli-polecat-jasper","new_value":"","old_value":""}
 {"actor":"raftercli/crew/lucy","comment":"","created_at":"2026-03-24T19:58:59Z","event_type":"created","id":1045,"issue_id":"rc-raftercli-polecat-onyx","new_value":"","old_value":""}

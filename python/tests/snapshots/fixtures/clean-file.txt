@@ -1,0 +1,6 @@
+# This file contains no secrets
+# Just some regular configuration
+
+log_level = info
+max_retries = 3
+timeout = 30
