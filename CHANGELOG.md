@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-17
+
+### Added
+- **`rafter agent init --local`** (Node + Python): install integration configs into the current working directory instead of the user home. Writes `./.claude/`, `./.agents/`, `./.gemini/`, `./.cursor/` etc. Supports `--with-claude-code`, `--with-codex`, `--with-gemini`, `--with-cursor`. User-scope side effects (auto-detection, `agent.environments.*.enabled`, gitleaks download) are suppressed in `--local` mode. Unblocks benchmark harnesses, CI runners, and ephemeral containers that need per-repo opt-in without mutating user-global config.
+
+### Fixed
+- **Claude Code + Codex skill install now wires all 4 skills** (Node + Python): `installClaudeCodeSkills` and `installCodexSkills` previously only copied `rafter` and `rafter-agent-security`, silently dropping `rafter-secure-design` and `rafter-code-review` even though their `SKILL.md` files ship in `resources/skills/`. Replaced the hardcoded list with a table-driven `AGENT_SKILLS` so every bundled skill is delivered by `agent init`.
+- **Python agent install parity** (Python): the Python implementation had drifted — no `_install_claude_code_skills` or `_install_global_instructions` existed, so `agent init --with-claude-code` on Python was missing skill delivery and the project-level `CLAUDE.md` instructions file. Both now implemented and match the Node installer.
+
 ### Changed
 - **Secret pattern consistency** (Python): tightened Generic Secret regex to require both digit and letter with 12+ char minimum (was 8+, digit-only). Tightened Bearer Token regex to require both digit and letter with 20+ char minimum (was 1+). Now matches Node behavior for reduced false positives.
 - **Config schema parity** (Python): added 5 missing environment configs (gemini, aider, cursor, windsurf, continue_dev) and `skills` config section (autoUpdate, installOnInit, backupBeforeUpdate) to match Node.
