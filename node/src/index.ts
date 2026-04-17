@@ -11,6 +11,7 @@ import { createHookCommand } from "./commands/hook/index.js";
 import { createMcpCommand } from "./commands/mcp/index.js";
 import { createPolicyCommand } from "./commands/policy/index.js";
 import { createBriefCommand } from "./commands/brief.js";
+import { createDocsCommand } from "./commands/docs/index.js";
 import { createNotifyCommand } from "./commands/notify.js";
 import { createCompletionCommand } from "./commands/completion.js";
 import { createIssuesCommand } from "./commands/issues/index.js";
@@ -59,6 +60,9 @@ program.addCommand(createMcpCommand());
 
 // Policy commands
 program.addCommand(createPolicyCommand());
+
+// Docs — repo-specific security docs from .rafter.yml
+program.addCommand(createDocsCommand());
 
 // GitHub Issues integration
 program.addCommand(createIssuesCommand());

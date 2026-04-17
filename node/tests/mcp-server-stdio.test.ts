@@ -46,9 +46,9 @@ describe("MCP Server — real stdio transport: tool listing", () => {
     await client.close();
   });
 
-  it("should register exactly 4 tools over stdio", async () => {
+  it("should register exactly 6 tools over stdio", async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(6);
   });
 
   it("tool names match expected set", async () => {
@@ -57,6 +57,8 @@ describe("MCP Server — real stdio transport: tool listing", () => {
     expect(names).toEqual([
       "evaluate_command",
       "get_config",
+      "get_doc",
+      "list_docs",
       "read_audit_log",
       "scan_secrets",
     ]);
@@ -103,9 +105,9 @@ describe("MCP Server — real stdio transport: resource listing", () => {
     await client.close();
   });
 
-  it("should register exactly 2 resources", async () => {
+  it("should register exactly 3 resources", async () => {
     const { resources } = await client.listResources();
-    expect(resources).toHaveLength(2);
+    expect(resources).toHaveLength(3);
   });
 
   it("should expose rafter://config with JSON mime type", async () => {
@@ -375,7 +377,7 @@ describe("MCP Server — real stdio transport: lifecycle", () => {
     const { client } = await createConnectedClient();
     // Verify we can list tools (connection works)
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(6);
     await client.close();
   });
 
@@ -383,7 +385,7 @@ describe("MCP Server — real stdio transport: lifecycle", () => {
     for (let i = 0; i < 3; i++) {
       const { client } = await createConnectedClient();
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(4);
+      expect(tools).toHaveLength(6);
       await client.close();
     }
   });
