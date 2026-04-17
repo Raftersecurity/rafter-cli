@@ -1679,7 +1679,12 @@ def audit_skill(
     skip_openclaw: bool = typer.Option(False, "--skip-openclaw", help="Skip OpenClaw integration, show manual review prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Security audit of a Claude Code skill file."""
+    """[deprecated] Security audit of a Claude Code skill file — use `rafter skill review` instead."""
+    if not json_output:
+        print(
+            "[deprecated] `rafter agent audit-skill` is deprecated; use `rafter skill review <path-or-url>` instead.",
+            file=sys.stderr,
+        )
     # Validate skill file exists
     resolved = Path(skill_path).resolve()
     if not resolved.exists():

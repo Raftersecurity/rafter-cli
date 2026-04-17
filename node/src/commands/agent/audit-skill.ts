@@ -14,11 +14,14 @@ interface QuickScanResults {
 
 export function createAuditSkillCommand(): Command {
   return new Command("audit-skill")
-    .description("Security audit of a Claude Code skill file")
+    .description("[deprecated] Security audit of a Claude Code skill file — use `rafter skill review` instead")
     .argument("<skill-path>", "Path to skill file to audit")
     .option("--skip-openclaw", "Skip OpenClaw integration, show manual review prompt")
     .option("--json", "Output results as JSON")
     .action(async (skillPath: string, opts: { skipOpenclaw?: boolean; json?: boolean }) => {
+      process.stderr.write(
+        "[deprecated] `rafter agent audit-skill` is deprecated; use `rafter skill review <path-or-url>` instead.\n",
+      );
       await auditSkill(skillPath, opts);
     });
 }
