@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execSync, execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
@@ -41,18 +41,6 @@ function rafter(
     };
   }
 }
-
-beforeAll(() => {
-  try {
-    execSync("pnpm run build", {
-      cwd: path.resolve(__dirname, ".."),
-      stdio: "ignore",
-      timeout: 30000,
-    });
-  } catch {
-    // Build may already be done
-  }
-}, 60000);
 
 // ── Realistic project structure scanning ────────────────────────────
 
