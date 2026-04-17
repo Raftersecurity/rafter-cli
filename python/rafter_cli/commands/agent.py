@@ -109,10 +109,20 @@ def _resolve_rafter_path() -> str:
     return "rafter"
 
 
-def _install_claude_code_hooks() -> None:
-    """Install Rafter PreToolUse hooks into ~/.claude/settings.json."""
-    home = Path.home()
-    claude_dir = home / ".claude"
+# Skills installed by `rafter agent init` for Claude Code / Codex.
+# Keep this list in sync with Node's AGENT_SKILLS and the SKILL.md files
+# actually shipped under rafter_cli/resources/skills/.
+_AGENT_SKILLS: list[dict[str, str]] = [
+    {"name": "rafter", "description": "Rafter Remote"},
+    {"name": "rafter-agent-security", "description": "Rafter Agent Security"},
+    {"name": "rafter-secure-design", "description": "Rafter Secure Design"},
+    {"name": "rafter-code-review", "description": "Rafter Code Review"},
+]
+
+
+def _install_claude_code_hooks(root: Path) -> None:
+    """Install Rafter PreToolUse hooks into <root>/.claude/settings.json."""
+    claude_dir = root / ".claude"
     settings_path = claude_dir / "settings.json"
 
     claude_dir.mkdir(parents=True, exist_ok=True)
@@ -181,6 +191,54 @@ def _install_claude_code_hooks() -> None:
 # ── init ─────────────────────────────────────────────────────────────
 
 
+def _install_skills_to(skills_dir: Path) -> None:
+    """Copy all four AGENT_SKILLS into <skills_dir>/<skill>/SKILL.md."""
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    res = importlib.resources.files("rafter_cli.resources")
+    for skill in _AGENT_SKILLS:
+        dest_dir = skills_dir / skill["name"]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = dest_dir / "SKILL.md"
+        try:
+            content = res.joinpath("skills", skill["name"], "SKILL.md").read_text(encoding="utf-8")
+            dest_path.write_text(content, encoding="utf-8")
+            rprint(fmt.success(f"Installed {skill['description']} skill to {dest_path}"))
+        except Exception:
+            rprint(fmt.warning(f"{skill['description']} skill template not found in package resources"))
+
+
+def _install_claude_code_skills(root: Path) -> None:
+    """Copy all four Rafter skills into <root>/.claude/skills/."""
+    _install_skills_to(root / ".claude" / "skills")
+
+
+def _install_global_instructions(
+    claude_code: bool,
+    cursor: bool,
+    root: Path,
+) -> None:
+    """Install Rafter instruction files for platforms that support them.
+
+    Claude Code: <root>/.claude/CLAUDE.md
+    Cursor: <root>/.cursor/rules/rafter-security.mdc
+    """
+    if claude_code:
+        try:
+            file_path = root / ".claude" / "CLAUDE.md"
+            _inject_instruction_file(file_path)
+            rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
+        except Exception as e:
+            rprint(fmt.warning(f"Failed to write Claude Code instructions: {e}"))
+
+    if cursor:
+        try:
+            file_path = root / ".cursor" / "rules" / "rafter-security.mdc"
+            _inject_instruction_file(file_path)
+            rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
+        except Exception as e:
+            rprint(fmt.warning(f"Failed to write Cursor instructions: {e}"))
+
+
 def _install_openclaw_skill() -> tuple[bool, str, str, str]:
     """Install Rafter Security skill to OpenClaw. Returns (ok, source, dest, error)."""
     home = Path.home()
@@ -213,33 +271,10 @@ def _install_openclaw_skill() -> tuple[bool, str, str, str]:
         return False, source_path, str(dest_path), str(e)
 
 
-def _install_codex_skills() -> tuple[bool, str]:
-    """Install Rafter skills to ~/.agents/skills/ for Codex CLI. Returns (ok, error)."""
-    home = Path.home()
-    agents_skills_dir = home / ".agents" / "skills"
-
+def _install_codex_skills(root: Path) -> tuple[bool, str]:
+    """Install all Rafter skills to <root>/.agents/skills/ for Codex CLI."""
     try:
-        # Install backend skill
-        backend_dir = agents_skills_dir / "rafter"
-        backend_dir.mkdir(parents=True, exist_ok=True)
-        res = importlib.resources.files("rafter_cli.resources")
-        try:
-            content = res.joinpath("skills", "rafter", "SKILL.md").read_text(encoding="utf-8")
-            (backend_dir / "SKILL.md").write_text(content, encoding="utf-8")
-            rprint(fmt.success(f"Installed Rafter Remote skill to {backend_dir / 'SKILL.md'}"))
-        except Exception:
-            rprint(fmt.warning("Remote skill template not found in package resources"))
-
-        # Install agent security skill
-        agent_dir = agents_skills_dir / "rafter-agent-security"
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            content = res.joinpath("skills", "rafter-agent-security", "SKILL.md").read_text(encoding="utf-8")
-            (agent_dir / "SKILL.md").write_text(content, encoding="utf-8")
-            rprint(fmt.success(f"Installed Rafter Agent Security skill to {agent_dir / 'SKILL.md'}"))
-        except Exception:
-            rprint(fmt.warning("Agent Security skill template not found in package resources"))
-
+        _install_skills_to(root / ".agents" / "skills")
         return True, ""
     except Exception as e:
         return False, str(e)
@@ -253,10 +288,9 @@ _RAFTER_MCP_ENTRY = {
 }
 
 
-def _install_gemini_mcp() -> bool:
-    """Install MCP server config for Gemini CLI (~/.gemini/settings.json)."""
-    home = Path.home()
-    gemini_dir = home / ".gemini"
+def _install_gemini_mcp(root: Path) -> bool:
+    """Install MCP server config for Gemini CLI (<root>/.gemini/settings.json)."""
+    gemini_dir = root / ".gemini"
     settings_path = gemini_dir / "settings.json"
 
     gemini_dir.mkdir(parents=True, exist_ok=True)
@@ -277,10 +311,9 @@ def _install_gemini_mcp() -> bool:
     return True
 
 
-def _install_cursor_mcp() -> bool:
-    """Install MCP server config for Cursor (~/.cursor/mcp.json)."""
-    home = Path.home()
-    cursor_dir = home / ".cursor"
+def _install_cursor_mcp(root: Path) -> bool:
+    """Install MCP server config for Cursor (<root>/.cursor/mcp.json)."""
+    cursor_dir = root / ".cursor"
     mcp_path = cursor_dir / "mcp.json"
 
     cursor_dir.mkdir(parents=True, exist_ok=True)
@@ -301,10 +334,9 @@ def _install_cursor_mcp() -> bool:
     return True
 
 
-def _install_windsurf_mcp() -> bool:
-    """Install MCP server config for Windsurf (~/.codeium/windsurf/mcp_config.json)."""
-    home = Path.home()
-    windsurf_dir = home / ".codeium" / "windsurf"
+def _install_windsurf_mcp(root: Path) -> bool:
+    """Install MCP server config for Windsurf (<root>/.codeium/windsurf/mcp_config.json)."""
+    windsurf_dir = root / ".codeium" / "windsurf"
     mcp_path = windsurf_dir / "mcp_config.json"
 
     windsurf_dir.mkdir(parents=True, exist_ok=True)
@@ -325,10 +357,9 @@ def _install_windsurf_mcp() -> bool:
     return True
 
 
-def _install_continue_dev_mcp() -> bool:
-    """Install MCP server config for Continue.dev (~/.continue/config.json)."""
-    home = Path.home()
-    continue_dir = home / ".continue"
+def _install_continue_dev_mcp(root: Path) -> bool:
+    """Install MCP server config for Continue.dev (<root>/.continue/config.json)."""
+    continue_dir = root / ".continue"
     config_path = continue_dir / "config.json"
 
     continue_dir.mkdir(parents=True, exist_ok=True)
@@ -359,10 +390,9 @@ def _install_continue_dev_mcp() -> bool:
     return True
 
 
-def _install_aider_mcp() -> bool:
-    """Install MCP config for Aider (~/.aider.conf.yml)."""
-    home = Path.home()
-    config_path = home / ".aider.conf.yml"
+def _install_aider_mcp(root: Path) -> bool:
+    """Install MCP config for Aider (<root>/.aider.conf.yml)."""
+    config_path = root / ".aider.conf.yml"
 
     content = ""
     if config_path.exists():
@@ -392,6 +422,14 @@ def init(
     with_continue: bool = typer.Option(False, "--with-continue", help="Install Continue.dev integration"),
     all_integrations: bool = typer.Option(False, "--all", help="Install all detected integrations and download Gitleaks"),
     update: bool = typer.Option(False, "--update", help="Re-download gitleaks and reinstall integrations without resetting config"),
+    local: bool = typer.Option(
+        False,
+        "--local",
+        help=(
+            "Install integration configs project-locally (in CWD) instead of user-globally. "
+            "Supported for Claude Code, Codex, Gemini, Cursor. Other platforms are skipped in local mode."
+        ),
+    ),
 ):
     """Initialize agent security system."""
     rprint(fmt.header("Rafter Agent Security Setup"))
@@ -399,28 +437,34 @@ def init(
     rprint()
 
     manager = ConfigManager()
+    root = Path.cwd() if local else Path.home()
+    scope = "project" if local else "user"
+    if local:
+        rprint(fmt.info(f"Project-local install — writing configs under {root}"))
 
-    # Detect environments
+    # Detect environments. In local scope, don't probe user-global paths —
+    # the user must opt in explicitly via --with-<platform>.
     home = Path.home()
-    has_openclaw = (home / ".openclaw").exists()
-    has_claude_code = (home / ".claude").exists()
-    has_codex = (home / ".codex").exists()
-    has_gemini = (home / ".gemini").exists()
-    has_cursor = (home / ".cursor").exists()
-    has_windsurf = (home / ".codeium" / "windsurf").exists()
-    has_continue_dev = (home / ".continue").exists()
-    has_aider = (home / ".aider.conf.yml").exists()
+    has_openclaw = scope == "user" and (home / ".openclaw").exists()
+    has_claude_code = scope == "user" and (home / ".claude").exists()
+    has_codex = scope == "user" and (home / ".codex").exists()
+    has_gemini = scope == "user" and (home / ".gemini").exists()
+    has_cursor = scope == "user" and (home / ".cursor").exists()
+    has_windsurf = scope == "user" and (home / ".codeium" / "windsurf").exists()
+    has_continue_dev = scope == "user" and (home / ".continue").exists()
+    has_aider = scope == "user" and (home / ".aider.conf.yml").exists()
 
-    # Resolve opt-in flags (--all enables all detected)
-    want_openclaw = with_openclaw or all_integrations
+    # Resolve opt-in flags. In --local scope, --all is restricted to platforms with
+    # a project-local config story (claudeCode, codex, gemini, cursor).
+    want_openclaw = with_openclaw or (all_integrations and not local)
     want_claude_code = with_claude_code or all_integrations
     want_codex = with_codex or all_integrations
     want_gemini = with_gemini or all_integrations
     want_cursor = with_cursor or all_integrations
-    want_windsurf = with_windsurf or all_integrations
-    want_continue = with_continue or all_integrations
-    want_aider = with_aider or all_integrations
-    want_gitleaks = with_gitleaks or all_integrations
+    want_windsurf = with_windsurf or (all_integrations and not local)
+    want_continue = with_continue or (all_integrations and not local)
+    want_aider = with_aider or (all_integrations and not local)
+    want_gitleaks = with_gitleaks or (all_integrations and not local)
 
     # Show detected environments
     detected = []
@@ -446,23 +490,25 @@ def init(
     else:
         rprint(fmt.info("No agent environments detected"))
 
-    # Warn about requested but undetected environments
-    if want_openclaw and not has_openclaw:
-        rprint(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"))
-    if want_claude_code and not has_claude_code:
-        rprint(fmt.warning("Claude Code requested but not detected (~/.claude not found)"))
-    if want_codex and not has_codex:
-        rprint(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"))
-    if want_gemini and not has_gemini:
-        rprint(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"))
-    if want_cursor and not has_cursor:
-        rprint(fmt.warning("Cursor requested but not detected (~/.cursor not found)"))
-    if want_windsurf and not has_windsurf:
-        rprint(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"))
-    if want_continue and not has_continue_dev:
-        rprint(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
-    if want_aider and not has_aider:
-        rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
+    # Warn about requested but undetected environments (user scope only —
+    # in --local scope we create the directories in CWD as needed).
+    if scope == "user":
+        if want_openclaw and not has_openclaw:
+            rprint(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"))
+        if want_claude_code and not has_claude_code:
+            rprint(fmt.warning("Claude Code requested but not detected (~/.claude not found)"))
+        if want_codex and not has_codex:
+            rprint(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"))
+        if want_gemini and not has_gemini:
+            rprint(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"))
+        if want_cursor and not has_cursor:
+            rprint(fmt.warning("Cursor requested but not detected (~/.cursor not found)"))
+        if want_windsurf and not has_windsurf:
+            rprint(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"))
+        if want_continue and not has_continue_dev:
+            rprint(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
+        if want_aider and not has_aider:
+            rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
 
     # Initialize
     manager.initialize()
@@ -528,45 +574,54 @@ def init(
             if error:
                 rprint(fmt.warning(f"  Error: {error}"))
 
-    # Install Claude Code hooks if opted in
+    def _local_unsupported(label: str) -> None:
+        rprint(fmt.warning(
+            f"{label} is not supported in --local mode yet. Skipping. "
+            "Re-run without --local to install for this platform user-globally."
+        ))
+
+    # Install Claude Code skills + hooks if opted in
+    # When --with-claude-code is explicitly passed (or --local), install even if <root>/.claude doesn't exist yet
     claude_code_ok = False
-    if has_claude_code and want_claude_code:
+    if (has_claude_code or with_claude_code or (local and want_claude_code)) and want_claude_code:
         try:
-            _install_claude_code_hooks()
-            manager.set("agent.environments.claude_code.enabled", True)
+            _install_claude_code_skills(root)
+            _install_claude_code_hooks(root)
+            if scope == "user":
+                manager.set("agent.environments.claude_code.enabled", True)
             claude_code_ok = True
         except Exception as e:
-            rprint(fmt.error(f"Failed to install Claude Code hooks: {e}"))
+            rprint(fmt.error(f"Failed to install Claude Code integration: {e}"))
 
-    # Install Codex CLI skills if opted in
+    # Install Codex CLI skills + hooks if opted in
     codex_ok = False
-    if has_codex and want_codex:
+    if (has_codex or (local and want_codex)) and want_codex:
         try:
-            ok, error = _install_codex_skills()
+            ok, error = _install_codex_skills(root)
             codex_ok = ok
-            if ok:
+            if ok and scope == "user":
                 manager.set("agent.environments.codex.enabled", True)
-            else:
+            elif not ok:
                 rprint(fmt.error(f"Failed to install Codex CLI skills: {error}"))
         except Exception as e:
             rprint(fmt.error(f"Failed to install Codex CLI integration: {e}"))
 
     # Install Gemini CLI MCP if opted in
     gemini_ok = False
-    if has_gemini and want_gemini:
+    if (has_gemini or (local and want_gemini)) and want_gemini:
         try:
-            gemini_ok = _install_gemini_mcp()
-            if gemini_ok:
+            gemini_ok = _install_gemini_mcp(root)
+            if gemini_ok and scope == "user":
                 manager.set("agent.environments.gemini.enabled", True)
         except Exception as e:
             rprint(fmt.error(f"Failed to install Gemini CLI integration: {e}"))
 
     # Install Cursor MCP if opted in
     cursor_ok = False
-    if has_cursor and want_cursor:
+    if (has_cursor or (local and want_cursor)) and want_cursor:
         try:
-            cursor_ok = _install_cursor_mcp()
-            if cursor_ok:
+            cursor_ok = _install_cursor_mcp(root)
+            if cursor_ok and scope == "user":
                 manager.set("agent.environments.cursor.enabled", True)
         except Exception as e:
             rprint(fmt.error(f"Failed to install Cursor integration: {e}"))
@@ -575,31 +630,44 @@ def init(
     windsurf_ok = False
     if has_windsurf and want_windsurf:
         try:
-            windsurf_ok = _install_windsurf_mcp()
+            windsurf_ok = _install_windsurf_mcp(root)
             if windsurf_ok:
                 manager.set("agent.environments.windsurf.enabled", True)
         except Exception as e:
             rprint(fmt.error(f"Failed to install Windsurf integration: {e}"))
+    elif local and want_windsurf:
+        _local_unsupported("Windsurf")
 
     # Install Continue.dev MCP if opted in
     continue_ok = False
     if has_continue_dev and want_continue:
         try:
-            continue_ok = _install_continue_dev_mcp()
+            continue_ok = _install_continue_dev_mcp(root)
             if continue_ok:
                 manager.set("agent.environments.continue_dev.enabled", True)
         except Exception as e:
             rprint(fmt.error(f"Failed to install Continue.dev integration: {e}"))
+    elif local and want_continue:
+        _local_unsupported("Continue.dev")
 
     # Install Aider MCP if opted in
     aider_ok = False
     if has_aider and want_aider:
         try:
-            aider_ok = _install_aider_mcp()
+            aider_ok = _install_aider_mcp(root)
             if aider_ok:
                 manager.set("agent.environments.aider.enabled", True)
         except Exception as e:
             rprint(fmt.error(f"Failed to install Aider integration: {e}"))
+    elif local and want_aider:
+        _local_unsupported("Aider")
+
+    # Install global instruction files for platforms that support them
+    _install_global_instructions(
+        claude_code=claude_code_ok,
+        cursor=cursor_ok,
+        root=root,
+    )
 
     rprint()
     rprint(fmt.success("Agent security initialized!"))
@@ -625,6 +693,12 @@ def init(
             rprint("  - Restart Continue.dev to load MCP server")
         if aider_ok:
             rprint("  - Restart Aider to load MCP server")
+    elif scope == "project":
+        rprint("No integrations were installed. In --local mode, pass one or more opt-in flags:")
+        rprint("  rafter agent init --local --with-claude-code")
+        rprint("  rafter agent init --local --with-codex")
+        rprint("  rafter agent init --local --with-gemini")
+        rprint("  rafter agent init --local --with-cursor")
     elif detected:
         rprint("No integrations were installed. To install, re-run with opt-in flags:")
         rprint("  rafter agent init --all                  # Install all detected")
@@ -2133,6 +2207,7 @@ def baseline_add(
 # ── components: list / enable / disable ──────────────────────────────
 
 from .agent_components import (  # noqa: E402
+    _inject_instruction_file,
     get_registry as _components_get_registry,
     record_component_state as _components_record_state,
     resolve_component as _components_resolve,
