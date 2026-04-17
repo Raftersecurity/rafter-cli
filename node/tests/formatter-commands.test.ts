@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
-import { execSync, execFileSync } from "child_process";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -40,18 +40,6 @@ function rafter(
     };
   }
 }
-
-beforeAll(() => {
-  try {
-    execSync("pnpm run build", {
-      cwd: path.resolve(__dirname, ".."),
-      stdio: "ignore",
-      timeout: 30000,
-    });
-  } catch {
-    // dist may already exist
-  }
-}, 60000);
 
 // ── scan local: agent vs human mode ──────────────────────────────────
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execSync, execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
@@ -89,19 +89,6 @@ function runBoth(args: string[], opts?: { cwd?: string; env?: Record<string, str
     python: runPython(args, opts),
   };
 }
-
-// Build Node CLI before running tests
-beforeAll(() => {
-  try {
-    execSync("pnpm run build", {
-      cwd: path.resolve(__dirname, ".."),
-      stdio: "ignore",
-      timeout: 30000,
-    });
-  } catch {
-    // Build may already be done
-  }
-}, 60000);
 
 // Skip all parity tests when Python + rafter_cli deps aren't available
 const describeIfPython = PYTHON_AVAILABLE ? describe : describe.skip;

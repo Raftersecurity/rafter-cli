@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execSync, spawnSync } from "child_process";
+import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { randomBytes } from "crypto";
 
@@ -18,14 +18,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const CLI_ENTRY = path.join(PROJECT_ROOT, "dist", "index.js");
-
-beforeAll(() => {
-  try {
-    execSync("pnpm run build", { cwd: PROJECT_ROOT, stdio: "ignore", timeout: 30000 });
-  } catch {
-    /* dist may already exist */
-  }
-}, 60000);
 
 function makeHome(): string {
   const dir = path.join(os.tmpdir(), `rafter-comp-${Date.now()}-${randomBytes(4).toString("hex")}`);
