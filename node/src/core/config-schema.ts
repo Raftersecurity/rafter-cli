@@ -84,5 +84,15 @@ export interface RafterConfig {
       excludePaths?: string[];
       customPatterns?: ScanCustomPattern[];
     };
+    /**
+     * Fine-grained per-component install state. Keys are component IDs like
+     * "claude-code.hooks" or "cursor.mcp". Set by `rafter agent enable/disable`
+     * and used by `rafter agent list` to distinguish explicitly-disabled
+     * components from ones that were never installed.
+     */
+    components?: Record<string, {
+      enabled: boolean;
+      updatedAt?: string;
+    }>;
   };
 }

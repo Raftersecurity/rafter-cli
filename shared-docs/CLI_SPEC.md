@@ -158,6 +158,64 @@ Initialize local security system. Creates config and detects available developme
 - `-i, --interactive` — guided setup — prompts for each detected integration (Node only)
 - `--update` — re-download gitleaks and reinstall integrations without resetting config
 
+### rafter agent list [OPTIONS]
+
+List every installable component across all supported platforms with its current state. Useful for auditing what's active and for scripting toggles.
+
+- `--json` — machine-readable output
+- `--installed` — show only components currently installed
+- `--detected` — show only components whose platform was detected on disk
+
+A **component** is a `<platform>.<kind>` pair, where `kind ∈ {hooks, mcp, instructions, skills}`. Each component has a state:
+
+| State | Meaning |
+|-------|---------|
+| `installed` | Rafter is active in this platform's config |
+| `not-installed` | Platform is detected but Rafter is not wired in |
+| `not-detected` | Platform config directory does not exist on disk |
+
+#### JSON Output (`--json`)
+
+```json
+{
+  "components": [
+    {
+      "id": "cursor.mcp",
+      "platform": "cursor",
+      "kind": "mcp",
+      "description": "Cursor MCP server entry",
+      "path": "/home/user/.cursor/mcp.json",
+      "detected": true,
+      "installed": true,
+      "state": "installed"
+    }
+  ]
+}
+```
+
+Exit code: 0 on success.
+
+### rafter agent enable COMPONENTS... [OPTIONS]
+
+Install one or more components. Accepts one or more component IDs (e.g. `cursor.mcp`, `claude-code.hooks`). Aliases: `claude.*` → `claude-code.*`, `continuedev.*` → `continue.*`.
+
+- `--force` — install even when the platform is not detected (creates the platform directory)
+
+Exit codes:
+- `0` — all components installed (or were already installed — the operation is idempotent)
+- `1` — unknown component ID (the error lists known IDs on stderr)
+- `2` — platform not detected for one or more components (use `--force` to override)
+
+Persists `agent.components.<id>.enabled = true` in `~/.rafter/config.json`.
+
+### rafter agent disable COMPONENTS... [OPTIONS]
+
+Uninstall one or more components without affecting other components on the same platform. For MCP files, removes the `rafter` server entry while preserving unrelated entries. For hooks, removes only rafter's hook commands. For instruction files, strips the `<!-- rafter:start -->` / `<!-- rafter:end -->` block and leaves surrounding content intact.
+
+Exit code: 0 on success (missing/not-installed components are reported, not errored).
+
+Persists `agent.components.<id>.enabled = false` in `~/.rafter/config.json`.
+
 ### rafter scan local [PATH] [OPTIONS]
 
 Alias: `rafter agent scan` (deprecated — use `rafter scan local`)
