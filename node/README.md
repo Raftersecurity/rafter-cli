@@ -59,6 +59,12 @@ rafter usage
 ```bash
 # Initialize local security
 rafter agent init
+rafter agent init --local              # write config to ./.rafter (ephemeral/benchmark)
+
+# Granular per-component control
+rafter agent list
+rafter agent enable claude-code
+rafter agent disable gemini
 
 # Scan files for secrets
 rafter agent scan .
@@ -72,6 +78,17 @@ rafter agent audit --verify            # verify chain; exit 1 if tampered
 
 # Manage configuration
 rafter agent config show
+```
+
+### Skills
+
+Four first-party skills ship with the CLI: `rafter` (CYOA router), `rafter-code-review`, `rafter-secure-design`, `rafter-skill-review`.
+
+```bash
+rafter skill list                              # installed + available
+rafter skill install --all                     # install all four
+rafter skill review github:owner/repo          # audit a third-party skill before install
+rafter skill review --installed                # audit every skill already on disk
 ```
 
 ## Global Options
