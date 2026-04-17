@@ -125,6 +125,66 @@ def _dest_path(platform: str, skill_name: str) -> Path:
     }[platform]
 
 
+def _skill_base_dir(platform: str) -> Path:
+    """Base dir where INSTALLED skills live for each platform.
+
+    claude-code / codex: <base>/<name>/SKILL.md  (per-skill subdir)
+    openclaw:            <base>/<name>.md         (flat .md file)
+    cursor:              <base>/<name>.mdc        (flat .mdc file)
+    """
+    home = Path.home()
+    return {
+        "claude-code": home / ".claude" / "skills",
+        "codex": home / ".agents" / "skills",
+        "openclaw": home / ".openclaw" / "skills",
+        "cursor": home / ".cursor" / "rules",
+    }[platform]
+
+
+@dataclass
+class DiscoveredSkill:
+    platform: str
+    name: str
+    path: Path
+
+
+def _discover_installed_skills(platform: str | None = None) -> list[DiscoveredSkill]:
+    """Walk every platform's skill base and yield one entry per installed file.
+
+    Missing dirs and unreadable entries are silently skipped so a single bad
+    subdir can't abort the whole walk (needed for permission-denied tests).
+    """
+    targets = [platform] if platform else list(SKILL_PLATFORMS)
+    out: list[DiscoveredSkill] = []
+    for p in targets:
+        base = _skill_base_dir(p)
+        try:
+            entries = list(base.iterdir())
+        except (FileNotFoundError, PermissionError, NotADirectoryError, OSError):
+            continue
+        for entry in entries:
+            try:
+                if p in ("claude-code", "codex"):
+                    if not entry.is_dir():
+                        continue
+                    skill_file = entry / "SKILL.md"
+                    if not skill_file.is_file():
+                        continue
+                    out.append(DiscoveredSkill(platform=p, name=entry.name, path=skill_file))
+                elif p == "openclaw":
+                    if not entry.is_file() or entry.suffix.lower() != ".md":
+                        continue
+                    out.append(DiscoveredSkill(platform=p, name=entry.stem, path=entry))
+                elif p == "cursor":
+                    if not entry.is_file() or entry.suffix.lower() != ".mdc":
+                        continue
+                    out.append(DiscoveredSkill(platform=p, name=entry.stem, path=entry))
+            except (PermissionError, OSError):
+                continue
+    out.sort(key=lambda d: (d.platform, d.name))
+    return out
+
+
 def _resolve_explicit_dest(dest: str, skill_name: str) -> Path:
     lower = dest.lower()
     if lower.endswith(".md") or lower.endswith(".mdc"):
@@ -816,10 +876,122 @@ def run_skill_review(
             shutil.rmtree(cleanup, ignore_errors=True)
 
 
+_SEVERITY_ORDER: tuple[str, ...] = ("clean", "low", "medium", "high", "critical")
+
+
+def run_skill_review_installed(agent: str | None = None) -> tuple[dict[str, Any], int]:
+    """Audit every installed skill across detected agent skill directories.
+
+    Exit 1 iff any HIGH or CRITICAL finding. Lower severities do not fail the
+    audit — use `rafter skill review <path>` for a stricter per-skill gate.
+    """
+    if agent is not None and agent not in SKILL_PLATFORMS:
+        raise ValueError(
+            f"Unknown agent: {agent}. Known: {', '.join(SKILL_PLATFORMS)}"
+        )
+    discovered = _discover_installed_skills(agent)
+    installations: list[dict[str, Any]] = []
+    severity_counts: dict[str, int] = {s: 0 for s in _SEVERITY_ORDER}
+    platform_counts: dict[str, int] = {}
+    findings = 0
+    worst = "clean"
+
+    for d in discovered:
+        report = _build_report(str(d.path), d.path, "file")
+        installations.append({
+            "platform": d.platform,
+            "skill": d.name,
+            "path": str(d.path),
+            "report": report.to_json(),
+        })
+        sev = report.summary["severity"]
+        severity_counts[sev] += 1
+        platform_counts[d.platform] = platform_counts.get(d.platform, 0) + 1
+        findings += report.summary["findings"]
+        if _SEVERITY_ORDER.index(sev) > _SEVERITY_ORDER.index(worst):
+            worst = sev
+
+    aggregate = {
+        "target": {"mode": "installed", "agent": agent if agent else "all"},
+        "installations": installations,
+        "summary": {
+            "totalSkills": len(installations),
+            "severityCounts": severity_counts,
+            "platformCounts": platform_counts,
+            "findings": findings,
+            "worst": worst,
+        },
+    }
+    exit_code = 1 if severity_counts["high"] + severity_counts["critical"] > 0 else 0
+    return aggregate, exit_code
+
+
+def _render_installed_summary(report: dict[str, Any]) -> None:
+    rprint(fmt.header("Installed skill audit"))
+    rprint(fmt.divider())
+    rprint(f"Agent filter: {report['target']['agent']}")
+    rprint(f"Skills audited: {report['summary']['totalSkills']}")
+    rprint()
+
+    if not report["installations"]:
+        rprint(fmt.info("No installed skills found across the requested platform(s)."))
+        return
+
+    plat_w, skill_w, sev_w = 11, 28, 8
+    head = (
+        "PLATFORM".ljust(plat_w)
+        + "  "
+        + "SKILL".ljust(skill_w)
+        + "  "
+        + "SEVERITY".ljust(sev_w)
+        + "  "
+        + "FINDINGS"
+    )
+    rprint(head)
+    rprint("-" * len(head))
+    for row in report["installations"]:
+        skill = row["skill"]
+        if len(skill) > skill_w:
+            skill = skill[: skill_w - 1] + "…"
+        sev = row["report"]["summary"]["severity"]
+        line = (
+            row["platform"].ljust(plat_w)
+            + "  "
+            + skill.ljust(skill_w)
+            + "  "
+            + sev.ljust(sev_w)
+            + "  "
+            + str(row["report"]["summary"]["findings"])
+        )
+        if sev in ("critical", "high"):
+            rprint(fmt.error(line), file=sys.stderr)
+        elif sev in ("medium", "low"):
+            rprint(fmt.warning(line))
+        else:
+            rprint(fmt.success(line))
+
+    rprint()
+    sc = report["summary"]["severityCounts"]
+    rprint(
+        f"Totals: {sc['clean']} clean · {sc['low']} low · {sc['medium']} medium · "
+        f"{sc['high']} high · {sc['critical']} critical"
+    )
+    if sc["high"] + sc["critical"] > 0:
+        rprint(
+            fmt.error(
+                f"Worst severity: {report['summary']['worst'].upper()} — "
+                "review flagged skills before trusting them."
+            ),
+            file=sys.stderr,
+        )
+    else:
+        rprint(fmt.success(f"Worst severity: {report['summary']['worst'].upper()}"))
+
+
 @skill_app.command("review")
 def review_cmd(
-    path_or_url: str = typer.Argument(
-        ..., help="Local path (file or directory) OR git URL (https/ssh/.git)"
+    path_or_url: str | None = typer.Argument(
+        None, help="Local path (file or directory) OR git URL (https/ssh/.git). Omit when using --installed."
     ),
     json_output: bool = typer.Option(
         False, "--json", help="Emit JSON report to stdout (shortcut for --format json)"
@@ -827,8 +999,52 @@ def review_cmd(
     format_: str = typer.Option(
         "text", "--format", help="Output format: text | json", case_sensitive=False
     ),
+    installed: bool = typer.Option(
+        False,
+        "--installed",
+        help="Audit every installed skill across detected agent skill directories instead of a path.",
+    ),
+    agent: str | None = typer.Option(
+        None,
+        "--agent",
+        help=f"Restrict --installed to a single agent. One of: {', '.join(SKILL_PLATFORMS)}",
+    ),
+    summary: bool = typer.Option(
+        False,
+        "--summary",
+        help="Print a terse human-readable table instead of JSON (only with --installed).",
+    ),
 ):
-    """Security review of a skill/plugin/extension before installing it (path or git URL)."""
+    """Security review of a skill/plugin/extension before installing it (path or git URL), or --installed to audit every skill on this machine."""
+    if installed:
+        if path_or_url:
+            rprint(
+                fmt.error("Cannot pass both <path-or-url> and --installed. Use one."),
+                file=sys.stderr,
+            )
+            raise typer.Exit(code=1)
+        try:
+            aggregate, exit_code = run_skill_review_installed(agent)
+        except ValueError as err:
+            rprint(fmt.error(str(err)), file=sys.stderr)
+            raise typer.Exit(code=1)
+        if summary:
+            _render_installed_summary(aggregate)
+        else:
+            print(json.dumps(aggregate, indent=2))
+        if exit_code != 0:
+            raise typer.Exit(code=exit_code)
+        return
+
+    if not path_or_url:
+        rprint(
+            fmt.error(
+                "Missing <path-or-url>. Pass a path / git URL, or use --installed to audit installed skills."
+            ),
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=2)
+
     _, exit_code = run_skill_review(path_or_url, json_out=json_output, format_=format_)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)

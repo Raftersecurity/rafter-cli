@@ -6,6 +6,11 @@ import { spawnSync } from "child_process";
 import { PatternEngine } from "../../core/pattern-engine.js";
 import { DEFAULT_SECRET_PATTERNS } from "../../scanners/secret-patterns.js";
 import { fmt } from "../../utils/formatter.js";
+import {
+  discoverInstalledSkills,
+  SKILL_PLATFORMS,
+  SkillPlatform,
+} from "./registry.js";
 
 interface HighRiskCommand {
   command: string;
@@ -570,14 +575,222 @@ export function runSkillReview(
   }
 }
 
+export interface InstalledSkillEntry {
+  platform: SkillPlatform;
+  skill: string;
+  path: string;
+  report: SkillReviewReport;
+}
+
+export interface InstalledReviewReport {
+  target: { mode: "installed"; agent: SkillPlatform | "all" };
+  installations: InstalledSkillEntry[];
+  summary: {
+    totalSkills: number;
+    severityCounts: Record<"clean" | "low" | "medium" | "high" | "critical", number>;
+    platformCounts: Record<string, number>;
+    findings: number;
+    worst: "clean" | "low" | "medium" | "high" | "critical";
+  };
+}
+
+const SEVERITY_ORDER: ReadonlyArray<
+  "clean" | "low" | "medium" | "high" | "critical"
+> = ["clean", "low", "medium", "high", "critical"];
+
+export function runSkillReviewInstalled(opts: {
+  agent?: string;
+}): { report: InstalledReviewReport; exitCode: number } {
+  let filter: SkillPlatform | undefined;
+  if (opts.agent) {
+    const a = opts.agent as SkillPlatform;
+    if (!SKILL_PLATFORMS.includes(a)) {
+      throw new Error(
+        `Unknown agent: ${opts.agent}. Known: ${SKILL_PLATFORMS.join(", ")}`,
+      );
+    }
+    filter = a;
+  }
+  const discovered = discoverInstalledSkills(filter);
+  const installations: InstalledSkillEntry[] = [];
+  const severityCounts: InstalledReviewReport["summary"]["severityCounts"] = {
+    clean: 0,
+    low: 0,
+    medium: 0,
+    high: 0,
+    critical: 0,
+  };
+  const platformCounts: Record<string, number> = {};
+  let findings = 0;
+  let worst: (typeof SEVERITY_ORDER)[number] = "clean";
+
+  for (const d of discovered) {
+    const report = buildReport(d.path, d.path, "file");
+    installations.push({
+      platform: d.platform,
+      skill: d.name,
+      path: d.path,
+      report,
+    });
+    severityCounts[report.summary.severity] += 1;
+    platformCounts[d.platform] = (platformCounts[d.platform] ?? 0) + 1;
+    findings += report.summary.findings;
+    if (
+      SEVERITY_ORDER.indexOf(report.summary.severity) >
+      SEVERITY_ORDER.indexOf(worst)
+    ) {
+      worst = report.summary.severity;
+    }
+  }
+
+  const aggregate: InstalledReviewReport = {
+    target: { mode: "installed", agent: filter ?? "all" },
+    installations,
+    summary: {
+      totalSkills: installations.length,
+      severityCounts,
+      platformCounts,
+      findings,
+      worst,
+    },
+  };
+
+  // Exit 1 iff any HIGH or CRITICAL finding (per rf-61x contract). Lower
+  // severities do not fail the audit — use `rafter skill review <path>` for
+  // a stricter per-skill gate.
+  const exitCode =
+    severityCounts.high + severityCounts.critical > 0 ? 1 : 0;
+  return { report: aggregate, exitCode };
+}
+
+function renderInstalledSummary(report: InstalledReviewReport): void {
+  console.log(fmt.header(`Installed skill audit`));
+  console.log(fmt.divider());
+  const agent = report.target.agent;
+  console.log(`Agent filter: ${agent}`);
+  console.log(`Skills audited: ${report.summary.totalSkills}`);
+  console.log();
+
+  if (report.installations.length === 0) {
+    console.log(
+      fmt.info("No installed skills found across the requested platform(s)."),
+    );
+    return;
+  }
+
+  // Column widths — clamp platform col at "claude-code" length (11) and skill
+  // col at 28 so the table stays readable on 80-col terminals.
+  const platW = 11;
+  const skillW = 28;
+  const sevW = 8;
+  const head =
+    "PLATFORM".padEnd(platW) +
+    "  " +
+    "SKILL".padEnd(skillW) +
+    "  " +
+    "SEVERITY".padEnd(sevW) +
+    "  " +
+    "FINDINGS";
+  console.log(head);
+  console.log("-".repeat(head.length));
+  for (const row of report.installations) {
+    const skill =
+      row.skill.length > skillW ? row.skill.slice(0, skillW - 1) + "…" : row.skill;
+    const sev = row.report.summary.severity;
+    const findings = row.report.summary.findings;
+    const line =
+      row.platform.padEnd(platW) +
+      "  " +
+      skill.padEnd(skillW) +
+      "  " +
+      sev.padEnd(sevW) +
+      "  " +
+      String(findings);
+    if (sev === "critical" || sev === "high") console.error(fmt.error(line));
+    else if (sev === "medium" || sev === "low") console.log(fmt.warning(line));
+    else console.log(fmt.success(line));
+  }
+  console.log();
+  const sc = report.summary.severityCounts;
+  console.log(
+    `Totals: ${sc.clean} clean · ${sc.low} low · ${sc.medium} medium · ${sc.high} high · ${sc.critical} critical`,
+  );
+  if (sc.high + sc.critical > 0) {
+    console.error(
+      fmt.error(
+        `Worst severity: ${report.summary.worst.toUpperCase()} — review flagged skills before trusting them.`,
+      ),
+    );
+  } else {
+    console.log(
+      fmt.success(`Worst severity: ${report.summary.worst.toUpperCase()}`),
+    );
+  }
+}
+
 export function createReviewCommand(): Command {
   return new Command("review")
-    .description("Security review of a skill / plugin / extension before installing it (path or git URL)")
-    .argument("<path-or-url>", "Local path (file or directory) OR git URL (https/ssh/.git)")
+    .description("Security review of a skill / plugin / extension before installing it (path or git URL), or --installed to audit every skill on this machine")
+    .argument("[path-or-url]", "Local path (file or directory) OR git URL (https/ssh/.git). Omit when using --installed.")
     .option("--json", "Emit JSON report to stdout (shortcut for --format json)")
     .option("--format <format>", "Output format: text | json", "text")
-    .action((input: string, opts: { json?: boolean; format?: "text" | "json" }) => {
-      const { exitCode } = runSkillReview(input, opts);
-      process.exit(exitCode);
-    });
+    .option(
+      "--installed",
+      "Audit every installed skill across detected agent skill directories instead of a path",
+    )
+    .option(
+      "--agent <name>",
+      `Restrict --installed to a single agent. One of: ${SKILL_PLATFORMS.join(", ")}`,
+    )
+    .option(
+      "--summary",
+      "Print a terse human-readable table instead of JSON (only with --installed)",
+    )
+    .action(
+      (
+        input: string | undefined,
+        opts: {
+          json?: boolean;
+          format?: "text" | "json";
+          installed?: boolean;
+          agent?: string;
+          summary?: boolean;
+        },
+      ) => {
+        if (opts.installed) {
+          if (input) {
+            console.error(
+              fmt.error(
+                "Cannot pass both <path-or-url> and --installed. Use one.",
+              ),
+            );
+            process.exit(1);
+          }
+          let result: ReturnType<typeof runSkillReviewInstalled>;
+          try {
+            result = runSkillReviewInstalled({ agent: opts.agent });
+          } catch (e) {
+            console.error(fmt.error(`${e instanceof Error ? e.message : String(e)}`));
+            process.exit(1);
+          }
+          if (opts.summary) {
+            renderInstalledSummary(result.report);
+          } else {
+            console.log(JSON.stringify(result.report, null, 2));
+          }
+          process.exit(result.exitCode);
+        }
+
+        if (!input) {
+          console.error(
+            fmt.error(
+              "Missing <path-or-url>. Pass a path / git URL, or use --installed to audit installed skills.",
+            ),
+          );
+          process.exit(2);
+        }
+        const { exitCode } = runSkillReview(input, opts);
+        process.exit(exitCode);
+      },
+    );
 }
