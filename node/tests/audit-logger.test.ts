@@ -151,6 +151,39 @@ describe("AuditLogger", () => {
       expect(entries[0].gitRepo).toBeDefined();
     });
 
+    it("verify() returns no breaks on a pristine chain", () => {
+      const logger = new AuditLogger(logPath);
+      logger.logCommandIntercepted("echo 1", true, "allowed");
+      logger.logCommandIntercepted("echo 2", true, "allowed");
+      logger.logCommandIntercepted("echo 3", true, "allowed");
+      expect(logger.verify()).toEqual([]);
+    });
+
+    it("verify() detects an edited entry in the middle of the chain", () => {
+      const logger = new AuditLogger(logPath);
+      logger.logCommandIntercepted("echo 1", true, "allowed");
+      logger.logCommandIntercepted("echo 2", true, "allowed");
+      logger.logCommandIntercepted("echo 3", true, "allowed");
+      // Tamper: change "echo 2" to "echo EVIL" in-place
+      const tampered = fs.readFileSync(logPath, "utf-8").replace("echo 2", "echo EVIL");
+      fs.writeFileSync(logPath, tampered);
+      const breaks = logger.verify();
+      expect(breaks.length).toBeGreaterThan(0);
+      expect(breaks[0].line).toBe(3); // line 3's prevHash no longer matches tampered line 2
+    });
+
+    it("verify() detects a deleted entry", () => {
+      const logger = new AuditLogger(logPath);
+      logger.logCommandIntercepted("echo 1", true, "allowed");
+      logger.logCommandIntercepted("echo 2", true, "allowed");
+      logger.logCommandIntercepted("echo 3", true, "allowed");
+      const lines = fs.readFileSync(logPath, "utf-8").split("\n").filter(l => l);
+      // Drop line 2
+      fs.writeFileSync(logPath, [lines[0], lines[2]].join("\n") + "\n");
+      const breaks = logger.verify();
+      expect(breaks.length).toBeGreaterThan(0);
+    });
+
     it("filters read() by gitRepo substring", () => {
       const logger = new AuditLogger(logPath);
       // forge entries with different repo paths
@@ -245,6 +278,55 @@ describe("AuditLogger", () => {
       const remaining = logger.read();
       expect(remaining).toHaveLength(1);
       expect(remaining[0].sessionId).toBe("new");
+    });
+
+    it("re-seals the hash chain after retention prune", () => {
+      vi.spyOn(ConfigManager.prototype, "load").mockReturnValue({
+        version: "1",
+        agent: {
+          riskLevel: "moderate",
+          commandPolicy: { mode: "approve-dangerous", blockedPatterns: [], requireApproval: [] },
+          audit: { retentionDays: 7, logLevel: "info", logAllActions: true },
+          outputFiltering: { redactSecrets: true, blockPatterns: false },
+          notifications: {},
+          scan: {},
+        },
+      } as any);
+
+      // Mix: two old entries that will get pruned, three recent that survive.
+      const old1 = new Date(); old1.setDate(old1.getDate() - 30);
+      const old2 = new Date(); old2.setDate(old2.getDate() - 20);
+      const recent1 = new Date(); recent1.setDate(recent1.getDate() - 2);
+      const recent2 = new Date(); recent2.setDate(recent2.getDate() - 1);
+
+      const logger = new AuditLogger(logPath);
+      // Use real log() calls so the chain is initially valid.
+      logger.logCommandIntercepted("echo old1", true, "allowed");
+      logger.logCommandIntercepted("echo old2", true, "allowed");
+      logger.logCommandIntercepted("echo recent1", true, "allowed");
+      logger.logCommandIntercepted("echo recent2", true, "allowed");
+      logger.logCommandIntercepted("echo recent3", true, "allowed");
+
+      // Rewrite first two entries' timestamps to be old.
+      const lines = fs.readFileSync(logPath, "utf-8").split("\n").filter(l => l.trim());
+      const parsed = lines.map(l => JSON.parse(l));
+      parsed[0].timestamp = old1.toISOString();
+      parsed[1].timestamp = old2.toISOString();
+      fs.writeFileSync(logPath, parsed.map(e => JSON.stringify(e)).join("\n") + "\n");
+
+      logger.cleanup();
+
+      const after = logger.read();
+      expect(after).toHaveLength(3);
+      // Chain must verify clean after cleanup re-seals it.
+      expect(logger.verify()).toEqual([]);
+
+      // Sidecar must record the prune.
+      const sidecar = logPath + ".retention.log";
+      expect(fs.existsSync(sidecar)).toBe(true);
+      const note = JSON.parse(fs.readFileSync(sidecar, "utf-8").trim());
+      expect(note.prunedCount).toBe(2);
+      expect(note.retainedCount).toBe(3);
     });
   });
 
