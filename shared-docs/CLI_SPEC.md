@@ -35,6 +35,15 @@ The CLI follows UNIX principles:
 | 1 | Findings — one or more secrets detected |
 | 2 | Runtime error — path not found, not a git repo, invalid ref |
 
+### Docs (`rafter docs list`, `rafter docs show`)
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error (read failure, URL fetch failure with no cache) |
+| 2 | Selector did not match any configured doc |
+| 3 | No docs configured in `.rafter.yml` |
+
 ---
 
 ## Global Options
@@ -439,7 +448,7 @@ PostToolUse hook handler. Reads tool output from stdin, redacts any secrets foun
 
 ### rafter mcp serve [OPTIONS]
 
-Start MCP server over stdio transport. Exposes 4 tools and 2 resources.
+Start MCP server over stdio transport. Exposes 6 tools and 3 resources.
 
 - `--transport <type>` — transport type (currently only `stdio`, default: `stdio`)
 
@@ -451,6 +460,8 @@ Start MCP server over stdio transport. Exposes 4 tools and 2 resources.
 | `evaluate_command` | Check if a shell command is safe to run per the active security policy | `command` (string) |
 | `read_audit_log` | Read security event history — blocked commands, detected secrets, policy overrides | none (optional: `limit`, `event_type`, `since`) |
 | `get_config` | Read active Rafter configuration and policy | none (optional: `key` dot-path) |
+| `list_docs` | List repo-specific security docs declared in `.rafter.yml` (metadata only, no content) | none (optional: `tag`) |
+| `get_doc` | Return the content of a repo-specific security doc by id or tag | `id_or_tag` (string); optional: `refresh` (bool) |
 
 **`scan_secrets` inputs:**
 - `path` (required) — file or directory path to scan
@@ -474,14 +485,21 @@ Start MCP server over stdio transport. Exposes 4 tools and 2 resources.
 **`get_config` inputs:**
 - `key` (optional, string) — dot-path config key (e.g. `agent.commandPolicy`); omit for full config
 
+**`list_docs` output schema:** array of `{ id, source, source_kind, description, tags, cache_status }` where `source_kind` is `"path"` or `"url"` and `cache_status` is one of `local` (path-backed), `cached`, `not-cached`, `stale`.
+
+**`get_doc` output schema:** array of `{ id, source, source_kind, stale, content }`. Returns multiple entries when `id_or_tag` matches a tag shared by several docs; returns a single entry when it matches an `id` exactly.
+
 #### MCP Resources
 
 | URI | MIME type | Description |
 |-----|-----------|-------------|
 | `rafter://config` | `application/json` | Current Rafter configuration (`~/.rafter/config.json`) |
 | `rafter://policy` | `application/json` | Active security policy — merged `.rafter.yml` + global config |
+| `rafter://docs` | `application/json` | Repo-specific security docs declared in `.rafter.yml` (metadata only, no content) |
 
 `rafter://policy` returns the result of merging the project-level `.rafter.yml` (if present) over the global config. It reflects the effective policy that `evaluate_command` and `scan_secrets` enforce.
+
+`rafter://docs` returns the same array shape as the `list_docs` tool. Use `get_doc` to retrieve actual content.
 
 ### rafter policy export [OPTIONS]
 
@@ -489,6 +507,49 @@ Export Rafter policy for agent platforms.
 
 - `--format <format>` — target format: `claude` or `codex`
 - `--output <path>` — write to file instead of stdout
+
+### rafter docs list [OPTIONS]
+
+List repo-specific security docs declared under `docs:` in `.rafter.yml`. Never performs network I/O — for URL-backed docs, reports cache status only.
+
+- `--tag <tag>` — filter to docs whose tags include this value
+- `--json` — output as JSON
+
+Human-readable output format:
+```
+<id>  <source>[ (cached|stale|not-cached)][ [tag1, tag2]][ — <description>]
+```
+
+JSON output (array):
+```json
+[
+  {
+    "id": "secure-coding",
+    "source": "docs/security/secure.md",
+    "source_kind": "path",
+    "description": "Internal secure-coding rules",
+    "tags": ["owasp", "internal"],
+    "cache_status": "local"
+  }
+]
+```
+
+Exit codes: `0` on success, `3` if no docs configured.
+
+### rafter docs show <ID_OR_TAG> [OPTIONS]
+
+Print the content of a doc. If the argument exactly matches a doc `id`, prints that doc. Otherwise, any doc whose `tags` include the argument is concatenated with separator headers.
+
+- `--refresh` — force re-fetch for URL-backed docs (bypass cache)
+- `--json` — output as JSON array of `{ id, source, source_kind, stale, content }`
+
+Behavior for URL docs:
+- On cache hit within TTL, reads from cache.
+- On miss or expired, fetches and updates cache.
+- On network failure with a stale cache present, returns stale content and prints a warning to stderr.
+- On network failure with no cache, exits `1`.
+
+Exit codes: `0` ok, `1` fetch/read error, `2` selector did not match, `3` no docs configured.
 
 ### rafter notify [SCAN_ID] [OPTIONS]
 
@@ -580,9 +641,29 @@ scan:
 audit:
   retention_days: 90
   log_level: info
+docs:
+  - id: secure-coding                 # optional — defaults to basename(path) without extension, or sha256(url)[:8]
+    path: docs/security/secure.md     # exactly one of { path, url } is required
+    description: Internal secure-coding rules
+    tags: [owasp, internal]
+  - id: app-threat-model
+    url: https://internal.example.com/threat-model.md
+    description: Application threat model
+    tags: [threat-model]
+    cache:
+      ttl_seconds: 86400              # optional, default 86400; only valid with url
 ```
 
 Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not append.
+
+**Docs validation rules:**
+- Each entry must have exactly one of `path` or `url` — both or neither is skipped with a warning.
+- Duplicate `id`s are skipped with a warning (first one wins).
+- `tags` must be a list of strings if present.
+- `cache.ttl_seconds` must be a positive number and is only valid for `url` entries.
+- Unknown keys per-entry are ignored with a warning.
+
+**URL caching:** URL-backed docs are cached at `~/.rafter/docs-cache/` keyed by `sha256(url)[:32]`. Default TTL is 86400 seconds. On network failure, a stale cached copy is served and a warning is printed. `docs list` never fetches; `docs show` fetches on miss/expired or when `--refresh` is set.
 
 ---
 
