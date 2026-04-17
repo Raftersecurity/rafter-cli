@@ -29,16 +29,22 @@ rafter brief shift-left      # this doc
 #   Read skills/rafter-secure-design/SKILL.md
 ```
 
-## `rafter-code-review` (filed as rf-z7j)
+## `rafter-code-review` (landed)
 
-Use during code review — your own or an AI's. Structured walkthroughs driven by OWASP / MITRE / ASVS categories. It's the *analysis* counterpart to automated scanning:
+Use during code review — your own or an AI's. A CYOA router into OWASP / MITRE / ASVS walkthroughs phrased as *questions*, not as monolithic audits. It's the *analysis* counterpart to automated scanning.
 
-- OWASP Top 10 pass: one branch per risk class.
-- OWASP ASVS level 1 / 2 / 3 checklists, depending on risk tier of the code.
-- MITRE ATT&CK framing for untrusted-input paths.
-- Language-specific pitfalls (Python deserialization, JS prototype pollution, Go goroutine leaks, etc.).
+Pick the category that matches the code in front of you:
 
-Pair it with `rafter run --mode plus` when you want both a human-style walkthrough and the backend's deep pass on the same diff.
+- **Web app** → `rafter-code-review/docs/web-app.md` (OWASP Top 10 2021).
+- **REST / GraphQL / gRPC API** → `rafter-code-review/docs/api.md` (OWASP API Top 10 2023).
+- **LLM-integrated feature** → `rafter-code-review/docs/llm.md` (OWASP LLM Top 10 2025).
+- **CLI / library / IaC** → `rafter-code-review/docs/cwe-top25.md` (MITRE CWE Top 25, keyed by language).
+- **Need to pick review depth** → `rafter-code-review/docs/asvs.md` (ASVS L1/L2/L3 selection + spot-checks).
+- **Single suspicious finding to chase** → `rafter-code-review/docs/investigation-playbook.md`.
+
+Start at `rafter-code-review/SKILL.md` — it's a router; Read only the one sub-doc you need so you don't flood context.
+
+Pair with `rafter run --mode plus` when you want both a human-style walkthrough and the backend's deep pass on the same diff.
 
 ## When to use which (cheat sheet)
 
@@ -52,8 +58,7 @@ Do not duplicate. If a sibling skill already owns the topic, Read it and stop �
 
 ## Status
 
-Both sibling skills are tracked separately:
-- `rafter-secure-design` — bead `rf-bcr` (new skill, shift-left design)
-- `rafter-code-review` — bead `rf-z7j` (new skill, OWASP/ASVS code review)
+- `rafter-code-review` — **landed** (rf-z7j). Ships alongside this skill; invoke directly.
+- `rafter-secure-design` — tracked as `rf-bcr` (new skill, shift-left design). Until it lands, use the design patterns above as prompts to an agent.
 
-If they're not yet installed on this machine, you can still use the patterns above as prompts to an agent; once they land, prefer invoking them directly for structured output.
+Once both are installed, prefer invoking them directly for structured output over re-deriving checklists here.
