@@ -18,6 +18,21 @@ function loadSkill(name: string): string {
   return raw.replace(/^---[\s\S]*?---\n*/, "").trim();
 }
 
+function loadSkillDoc(skill: string, doc: string): string {
+  return readFileSync(
+    join(RESOURCES_DIR, skill, "docs", `${doc}.md`),
+    "utf-8",
+  ).trim();
+}
+
+const RAFTER_SUBDOCS: Array<{ slug: string; desc: string }> = [
+  { slug: "cli-reference", desc: "Full rafter CLI tree by category" },
+  { slug: "guardrails", desc: "PreToolUse hooks, risk tiers, overrides" },
+  { slug: "backend", desc: "Remote fast vs plus, setup, cost/latency" },
+  { slug: "shift-left", desc: "Pointers to secure-design & code-review skills" },
+  { slug: "finding-triage", desc: "How to read a finding and decide next steps" },
+];
+
 function extractSections(content: string, headings: string[]): string {
   const lines = content.split("\n");
   const sections: string[] = [];
@@ -175,6 +190,15 @@ function buildTopics(): Record<string, TopicEntry> {
           "the tools developers use every day.",
         ].join("\n"),
     },
+    ...Object.fromEntries(
+      RAFTER_SUBDOCS.map(({ slug, desc }): [string, TopicEntry] => [
+        slug,
+        {
+          description: desc,
+          render: () => loadSkillDoc("rafter", slug),
+        },
+      ]),
+    ),
     all: {
       description: "Everything — full security + scanning + setup briefing",
       render: () => {
@@ -525,6 +549,9 @@ function renderTopicList(topics: Record<string, TopicEntry>): string {
   lines.push("  rafter brief commands          # full command reference");
   lines.push("  rafter brief setup/claude-code # Claude Code setup guide");
   lines.push("  rafter brief setup/generic     # setup for any agent");
+  lines.push("  rafter brief cli-reference     # full CLI tree");
+  lines.push("  rafter brief guardrails        # hooks + risk tiers");
+  lines.push("  rafter brief finding-triage    # interpret findings");
   lines.push("  rafter brief all               # everything");
   return lines.join("\n");
 }
