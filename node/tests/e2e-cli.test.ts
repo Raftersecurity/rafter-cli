@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
-import { execSync, execFileSync, spawnSync } from "child_process";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFileSync, spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -34,15 +34,6 @@ function rafter(args: string | string[], opts?: { cwd?: string; env?: Record<str
     exitCode: result.status ?? 1,
   };
 }
-
-// Build before running e2e tests — use beforeAll at file level
-beforeAll(() => {
-  try {
-    execSync("pnpm run build", { cwd: path.resolve(__dirname, ".."), stdio: "ignore", timeout: 30000 });
-  } catch {
-    // Build may have already been done or dist may exist
-  }
-}, 60000);
 
 describe("CLI e2e — version and help", () => {
 

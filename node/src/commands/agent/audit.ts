@@ -15,7 +15,10 @@ export function createAuditCommand(): Command {
     .option("--event <type>", "Filter by event type")
     .option("--agent <type>", "Filter by agent type (openclaw, claude-code)")
     .option("--since <date>", "Show entries since date (YYYY-MM-DD)")
+    .option("--repo <pattern>", "Filter by git repo path (substring match)")
+    .option("--cwd <pattern>", "Filter by working directory (substring match)")
     .option("--share", "Generate a redacted excerpt for issue reports")
+    .option("--verify", "Verify the audit log hash chain and report tampering")
     .action((opts) => {
       if (opts.share) {
         generateShareExcerpt();
@@ -23,6 +26,19 @@ export function createAuditCommand(): Command {
       }
 
       const logger = new AuditLogger();
+
+      if (opts.verify) {
+        const breaks = logger.verify();
+        if (breaks.length === 0) {
+          console.log("✓ Audit log hash chain intact");
+          return;
+        }
+        console.error(`✗ Audit log hash chain broken (${breaks.length} break${breaks.length === 1 ? "" : "s"}):`);
+        for (const b of breaks) {
+          console.error(`  line ${b.line}: ${b.reason}`);
+        }
+        process.exit(1);
+      }
 
       const filter: any = {
         limit: parseInt(opts.last, 10)
@@ -38,6 +54,14 @@ export function createAuditCommand(): Command {
 
       if (opts.since) {
         filter.since = new Date(opts.since);
+      }
+
+      if (opts.repo) {
+        filter.gitRepo = opts.repo;
+      }
+
+      if (opts.cwd) {
+        filter.cwd = opts.cwd;
       }
 
       const entries = logger.read(filter);
@@ -57,6 +81,12 @@ export function createAuditCommand(): Command {
 
         if (entry.agentType) {
           console.log(`   Agent: ${entry.agentType}`);
+        }
+
+        if (entry.gitRepo) {
+          console.log(`   Repo: ${entry.gitRepo}`);
+        } else if (entry.cwd) {
+          console.log(`   Cwd: ${entry.cwd}`);
         }
 
         if (entry.action?.command) {

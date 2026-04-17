@@ -996,6 +996,7 @@ def scan(
     engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
+    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires gitleaks engine)"),
 ):
     """Scan files or directories for secrets. [deprecated: use 'rafter scan local' instead]"""
     print(
@@ -1090,7 +1091,7 @@ def scan(
     if os.path.isdir(resolved_path):
         if not quiet:
             print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg)
+        results = _scan_directory(resolved_path, eng, scan_cfg, history=history)
     else:
         if not quiet:
             print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
@@ -1127,7 +1128,10 @@ def audit(
     event: str = typer.Option(None, "--event", help="Filter by event type"),
     agent_type: str = typer.Option(None, "--agent", help="Filter by agent type"),
     since: str = typer.Option(None, "--since", help="Show entries since date (YYYY-MM-DD)"),
+    repo: str = typer.Option(None, "--repo", help="Filter by git repo path (substring match)"),
+    cwd: str = typer.Option(None, "--cwd", help="Filter by working directory (substring match)"),
     share: bool = typer.Option(False, "--share", help="Generate a redacted excerpt for issue reports"),
+    verify: bool = typer.Option(False, "--verify", help="Verify the audit log hash chain and report tampering"),
 ):
     """View audit log entries."""
     if share:
@@ -1135,6 +1139,17 @@ def audit(
         return
 
     logger = AuditLogger()
+
+    if verify:
+        breaks = logger.verify()
+        if not breaks:
+            print("\u2713 Audit log hash chain intact")
+            return
+        plural = "" if len(breaks) == 1 else "s"
+        print(f"\u2717 Audit log hash chain broken ({len(breaks)} break{plural}):", file=sys.stderr)
+        for b in breaks:
+            print(f"  line {b['line']}: {b['reason']}", file=sys.stderr)
+        raise typer.Exit(code=1)
 
     since_dt = None
     if since:
@@ -1149,6 +1164,8 @@ def audit(
         agent_type=agent_type,
         since=since_dt,
         limit=last,
+        cwd=cwd,
+        git_repo=repo,
     )
 
     if not entries:
@@ -1170,6 +1187,10 @@ def audit(
         print(f"{ind} [{ts}] {et}")
         if e.get("agentType") or e.get("agent_type"):
             print(f"   Agent: {e.get('agentType') or e['agent_type']}")
+        if e.get("gitRepo"):
+            print(f"   Repo: {e['gitRepo']}")
+        elif e.get("cwd"):
+            print(f"   Cwd: {e['cwd']}")
         action = e.get("action") or {}
         if action.get("command"):
             print(f"   Command: {action['command']}")

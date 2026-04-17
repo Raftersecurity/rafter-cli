@@ -300,6 +300,7 @@ Scan files or directories for secrets (21+ patterns).
 - `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
+- `--history` — scan the full git history for previously-committed secrets (requires `--engine gitleaks`; invokes `gitleaks detect` against the repo history)
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
 
@@ -556,6 +557,7 @@ View security audit log.
 - `--agent <type>` — filter by agent type (`openclaw`, `claude-code`)
 - `--since <date>` — entries since date (YYYY-MM-DD)
 - `--share` — generate a redacted excerpt for issue reports
+- `--verify` — verify the tamper-evident hash chain and report any breaks (exit 0 = intact, 1 = tampering detected)
 
 Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`, `scan_executed`, `config_changed`.
 
@@ -571,6 +573,11 @@ The audit log is written to `~/.rafter/audit.jsonl` as newline-delimited JSON (J
 | `sessionId` | string | yes | Unique session identifier (`{epoch_ms}-{random}`) |
 | `eventType` | string | yes | One of the event types below |
 | `agentType` | string | no | `"openclaw"` or `"claude-code"` |
+| `cwd` | string | no | Working directory where the event was recorded |
+| `gitRepo` | string | no | Absolute path to the enclosing git repository root, if any |
+| `prevHash` | string\|null | yes | SHA-256 of the prior line (or `null` for the first entry) — forms the tamper-evident hash chain verified by `rafter agent audit --verify` |
+
+**Log location:** Defaults to `~/.rafter/audit.jsonl`. Overridable per project via `.rafter.yml` → `agent.audit.logPath` (e.g. set to `.rafter/audit.jsonl` for a repo-local log that each contributor can verify independently).
 
 **`action` object (optional):**
 

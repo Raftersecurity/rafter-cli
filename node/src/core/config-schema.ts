@@ -75,6 +75,7 @@ export interface RafterConfig {
       logAllActions: boolean;
       retentionDays: number;
       logLevel: LogLevel;
+      logPath?: string;
     };
     notifications?: {
       webhook?: string;

@@ -49,6 +49,7 @@ class AuditConfig:
     log_all_actions: bool = True
     retention_days: int = 30
     log_level: LogLevel = "info"
+    log_path: str | None = None
 
 
 @dataclass
