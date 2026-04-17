@@ -198,6 +198,7 @@ rafter agent scan .              # scan directory
 rafter agent scan ./config.js    # scan specific file
 rafter agent scan --staged       # scan git staged files only
 rafter agent scan --diff HEAD~1  # scan files changed since a git ref
+rafter agent scan --history      # scan full git history (requires gitleaks engine)
 rafter agent scan --json         # structured output
 rafter agent scan --quiet        # silent unless secrets found (CI-friendly)
 ```

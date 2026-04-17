@@ -42,6 +42,7 @@ rafter agent list                # show detected integrations + status
 rafter agent enable claude-code  # toggle a single platform on/off
 rafter agent scan .              # scan for secrets
 rafter agent scan --diff HEAD~1  # scan changed files
+rafter agent scan --history      # scan full git history (gitleaks engine)
 rafter agent exec "git commit"   # execute with risk assessment
 rafter agent audit               # view security logs
 rafter agent audit --verify      # verify tamper-evident hash chain

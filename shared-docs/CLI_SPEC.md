@@ -300,6 +300,7 @@ Scan files or directories for secrets (21+ patterns).
 - `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
+- `--history` — scan the full git history for previously-committed secrets (requires `--engine gitleaks`; invokes `gitleaks detect` against the repo history)
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
 
