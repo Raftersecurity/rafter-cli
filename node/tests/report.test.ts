@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
-import { execFileSync, execSync } from "child_process";
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -28,18 +28,6 @@ function rafter(
     };
   }
 }
-
-beforeAll(() => {
-  try {
-    execSync("pnpm run build", {
-      cwd: path.resolve(__dirname, ".."),
-      stdio: "ignore",
-      timeout: 30000,
-    });
-  } catch {
-    // Build may have already been done
-  }
-}, 60000);
 
 const sampleResults = JSON.stringify([
   {
