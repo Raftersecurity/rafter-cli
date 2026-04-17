@@ -284,6 +284,20 @@ def _load_skill(name: str) -> str:
     return re.sub(r"^---[\s\S]*?---\n*", "", raw).strip()
 
 
+def _load_skill_doc(skill: str, doc: str) -> str:
+    """Load a sub-doc from <skill>/docs/<doc>.md."""
+    return (RESOURCES_DIR / skill / "docs" / f"{doc}.md").read_text().strip()
+
+
+RAFTER_SUBDOCS: list[tuple[str, str]] = [
+    ("cli-reference", "Full rafter CLI tree by category"),
+    ("guardrails", "PreToolUse hooks, risk tiers, overrides"),
+    ("backend", "Remote fast vs plus, setup, cost/latency"),
+    ("shift-left", "Pointers to secure-design & code-review skills"),
+    ("finding-triage", "How to read a finding and decide next steps"),
+]
+
+
 def _extract_sections(content: str, headings: list[str]) -> str:
     """Extract sections whose heading contains any of the given strings."""
     lines = content.split("\n")
@@ -380,6 +394,7 @@ TOPIC_DESCRIPTIONS: dict[str, str] = {
     "setup/continue": "Setup instructions for Continue.dev",
     "setup/generic": "Setup instructions for unsupported / generic agents",
     "pricing": "What's free, what's paid, and the philosophy behind it",
+    **{slug: desc for slug, desc in RAFTER_SUBDOCS},
     "all": "Everything — full security + scanning + setup briefing",
 }
 
@@ -416,6 +431,8 @@ def _render_topic(topic: str) -> str | None:
     if topic.startswith("setup/"):
         platform = topic.split("/", 1)[1]
         return _render_platform_setup(platform)
+    if topic in {slug for slug, _ in RAFTER_SUBDOCS}:
+        return _load_skill_doc("rafter", topic)
     if topic == "pricing":
         return "\n".join([
             "# Rafter Pricing",
@@ -477,6 +494,9 @@ def _render_topic_list() -> str:
         "  rafter brief commands          # full command reference",
         "  rafter brief setup/claude-code # Claude Code setup guide",
         "  rafter brief setup/generic     # setup for any agent",
+        "  rafter brief cli-reference     # full CLI tree",
+        "  rafter brief guardrails        # hooks + risk tiers",
+        "  rafter brief finding-triage    # interpret findings",
         "  rafter brief all               # everything",
     ])
     return "\n".join(lines)

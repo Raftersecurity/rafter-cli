@@ -6,8 +6,11 @@ from typer.testing import CliRunner
 
 from rafter_cli.__main__ import app
 from rafter_cli.commands.brief import (
+    RAFTER_SUBDOCS,
+    RESOURCES_DIR,
     _extract_sections,
     _load_skill,
+    _load_skill_doc,
     _render_platform_setup,
     _render_setup_guide,
     _render_topic,
@@ -179,3 +182,45 @@ class TestInternalFunctions:
         ]
         for platform in expected:
             assert platform in PLATFORM_GUIDES
+
+
+class TestRafterSkillCYOA:
+    """Top-level rafter skill is a CYOA router; sub-docs live in docs/."""
+
+    def test_skill_md_parses_and_is_under_120_lines(self):
+        skill_path = RESOURCES_DIR / "rafter" / "SKILL.md"
+        raw = skill_path.read_text()
+        assert raw.startswith("---"), "SKILL.md must start with YAML frontmatter"
+        # frontmatter closes
+        assert raw.count("---") >= 2
+        # under the 120-line budget
+        assert len(raw.splitlines()) < 120, \
+            f"top-level SKILL.md grew to {len(raw.splitlines())} lines; keep <120"
+
+    def test_skill_md_references_each_subdoc(self):
+        body = _load_skill("rafter")
+        for slug, _desc in RAFTER_SUBDOCS:
+            assert f"docs/{slug}.md" in body, \
+                f"SKILL.md should reference docs/{slug}.md as a Read pointer"
+
+    def test_all_subdoc_paths_resolve(self):
+        for slug, _desc in RAFTER_SUBDOCS:
+            path = RESOURCES_DIR / "rafter" / "docs" / f"{slug}.md"
+            assert path.exists(), f"missing sub-doc: {path}"
+            assert path.read_text().strip(), f"sub-doc is empty: {path}"
+
+    def test_load_skill_doc_returns_content(self):
+        for slug, _desc in RAFTER_SUBDOCS:
+            content = _load_skill_doc("rafter", slug)
+            assert len(content) > 100
+
+    def test_brief_exposes_each_subdoc_as_topic(self):
+        for slug, _desc in RAFTER_SUBDOCS:
+            result = runner.invoke(app, ["brief", slug])
+            assert result.exit_code == 0, f"brief {slug} failed: {result.output}"
+            assert len(result.stdout) > 100
+
+    def test_brief_lists_subdoc_topics(self):
+        result = runner.invoke(app, ["brief"])
+        for slug, _desc in RAFTER_SUBDOCS:
+            assert slug in result.stdout
