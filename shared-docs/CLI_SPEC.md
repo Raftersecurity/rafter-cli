@@ -353,13 +353,16 @@ Execute shell command with risk assessment and approval workflow.
 
 Risk tiers: critical (blocked), high (approval required), medium (approval on moderate+), low (allowed).
 
-### rafter skill review PATH_OR_URL [OPTIONS]
+### rafter skill review [PATH_OR_URL] [OPTIONS]
 
-Security review of a third-party skill, plugin, or agent extension before installing it. Operates on a local file, a local directory, or a git URL (https / ssh / `.git`). Emits a structured deterministic report: secrets, external URLs, high-risk shell patterns, obfuscation signals, binary/suspicious file inventory, and `SKILL.md` frontmatter (`name`, `version`, `allowed-tools`).
+Security review of a third-party skill, plugin, or agent extension before installing it — **or** (`--installed`) an audit of every skill already on disk across detected agent directories. Operates on a local file, a local directory, a git URL (https / ssh / `.git`), or (in `--installed` mode) the whole machine. Emits a structured deterministic report: secrets, external URLs, high-risk shell patterns, obfuscation signals, binary/suspicious file inventory, and `SKILL.md` frontmatter (`name`, `version`, `allowed-tools`).
 
-- `PATH_OR_URL` — local path (file or directory) OR a git URL (shallow-cloned to a temp dir for the duration of the review; removed on exit)
+- `PATH_OR_URL` — local path (file or directory) OR a git URL (shallow-cloned to a temp dir for the duration of the review; removed on exit). Omit when using `--installed`.
 - `--json` — emit JSON to stdout (shortcut for `--format json`)
 - `--format text|json` — output format (default: `text`)
+- `--installed` — audit every installed skill across detected agent skill directories instead of a path
+- `--agent <name>` — restrict `--installed` to a single agent (`claude-code`, `codex`, `openclaw`, or `cursor`)
+- `--summary` — print a terse human-readable table instead of JSON (only with `--installed`)
 
 JSON shape (`--json`):
 
@@ -406,12 +409,56 @@ JSON shape (`--json`):
 
 **Severity tiers** (in `summary.severity`): `clean`, `low`, `medium`, `high`, `critical`. A `bidi-override` or `html-comment-imperative` is always `critical`. High-risk commands escalate to at least `high`. Long base64 blobs / zero-width chars / binary-blob files escalate to at least `medium`.
 
-Exit codes:
+Exit codes (default `PATH_OR_URL` mode):
 - `0` — `summary.severity == "clean"` (no findings)
 - `1` — one or more findings (any non-`clean` severity)
-- `2` — input path does not exist, or git clone failed
+- `2` — input path does not exist, or git clone failed; or neither `PATH_OR_URL` nor `--installed` was given
 
 Limits: directory walks skip `.git` / `node_modules` / `.venv`, cap at 2,000 files, and treat files larger than 2 MiB as suspicious binaries. Files containing null bytes in the first 4 KiB are treated as binary.
+
+#### `--installed` mode
+
+Walks every detected agent skill directory and runs the same audit pipeline on each `SKILL.md` (or `.md` / `.mdc`) file found. Directory layout per agent:
+
+| Platform | Skill path |
+|----------|------------|
+| `claude-code` | `~/.claude/skills/<name>/SKILL.md` |
+| `codex` | `~/.agents/skills/<name>/SKILL.md` |
+| `openclaw` | `~/.openclaw/skills/<name>.md` |
+| `cursor` | `~/.cursor/rules/<name>.mdc` |
+
+Missing dirs and unreadable entries are silently skipped — a single permission-denied subdir never aborts the walk. Results are ordered deterministically by `(platform, name)` for golden-file stability.
+
+JSON shape (`--installed`, default output):
+
+```json
+{
+  "target": { "mode": "installed", "agent": "all" },
+  "installations": [
+    {
+      "platform": "claude-code",
+      "skill": "rafter-secure-design",
+      "path": "/home/user/.claude/skills/rafter-secure-design/SKILL.md",
+      "report": { "...": "per-skill report, same shape as `rafter skill review <path>`" }
+    }
+  ],
+  "summary": {
+    "totalSkills": 3,
+    "severityCounts": { "clean": 1, "low": 0, "medium": 1, "high": 0, "critical": 1 },
+    "platformCounts": { "claude-code": 2, "openclaw": 1 },
+    "findings": 6,
+    "worst": "critical"
+  }
+}
+```
+
+`target.agent` is `"all"` by default or the platform name when `--agent <name>` is given.
+
+Exit codes (`--installed` mode):
+- `0` — no installed skill has a `high` or `critical` finding
+- `1` — at least one installed skill has `high` or `critical` severity, **or** an argument was invalid (`--agent` unknown, both `PATH_OR_URL` and `--installed` passed)
+
+Note the looser gate vs. the `PATH_OR_URL` mode: `--installed` tolerates `medium` and below so a routine `rafter skill review --installed` in CI doesn't fail on noisy obfuscation signals across dozens of skills. Use `rafter skill review <path>` for a strict single-skill gate.
 
 ### rafter agent audit-skill SKILL_PATH [OPTIONS]
 
