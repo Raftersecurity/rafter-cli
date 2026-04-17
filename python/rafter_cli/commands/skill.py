@@ -26,6 +26,16 @@ from ..core.pattern_engine import PatternEngine
 from ..scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
 from ..utils.formatter import fmt
 from rich import print as rprint
+from . import skill_remote
+from .skill_remote import (
+    DEFAULT_CACHE_TTL_MS,
+    ResolvedSource,
+    find_skill_files,
+    is_shorthand,
+    parse_cache_ttl,
+    parse_shorthand,
+    resolve_shorthand,
+)
 
 
 skill_app = typer.Typer(
@@ -720,8 +730,19 @@ def _summarize(report: _Report) -> None:
     }
 
 
-def _build_report(root_input: str, resolved: Path, kind: str) -> _Report:
-    report = _Report(target={"input": root_input, "kind": kind, "resolvedPath": str(resolved)})
+def _build_report(
+    root_input: str,
+    resolved: Path,
+    kind: str,
+    source: dict[str, Any] | None = None,
+    skill_rel_dir: str | None = None,
+) -> _Report:
+    target: dict[str, Any] = {"input": root_input, "kind": kind, "resolvedPath": str(resolved)}
+    if source is not None:
+        target["source"] = source
+    if skill_rel_dir is not None:
+        target["skillRelDir"] = skill_rel_dir
+    report = _Report(target=target)
     engine = PatternEngine(DEFAULT_SECRET_PATTERNS)
 
     if kind == "file":
@@ -841,19 +862,164 @@ def _render_text(report: _Report) -> None:
     ))
 
 
+_MULTI_SEVERITY_ORDER: tuple[str, ...] = ("clean", "low", "medium", "high", "critical")
+
+
+def _build_multi_report(
+    root_input: str,
+    resolved: Path,
+    kind: str,
+    locations: list[skill_remote.SkillLocation],
+    source: dict[str, Any] | None,
+) -> dict[str, Any]:
+    severity_counts: dict[str, int] = {s: 0 for s in _MULTI_SEVERITY_ORDER}
+    worst = "clean"
+    findings = 0
+    entries: list[dict[str, Any]] = []
+    for loc in locations:
+        sub = _build_report(root_input, loc.dir, "directory", source)
+        sub.target["kind"] = kind
+        sub.target["skillRelDir"] = loc.rel_dir
+        fm_list = sub.frontmatter
+        fm0 = None
+        for f in fm_list:
+            fpath = f.get("file") or ""
+            if fpath.lower().endswith("skill.md"):
+                fm0 = f
+                break
+        entries.append({
+            "relDir": loc.rel_dir,
+            "name": (fm0 or {}).get("name"),
+            "version": (fm0 or {}).get("version"),
+            "report": sub.to_json(),
+        })
+        sev = sub.summary["severity"]
+        severity_counts[sev] += 1
+        findings += sub.summary["findings"]
+        if _MULTI_SEVERITY_ORDER.index(sev) > _MULTI_SEVERITY_ORDER.index(worst):
+            worst = sev
+
+    reasons: list[str] = []
+    if severity_counts["critical"] > 0:
+        reasons.append(f"{severity_counts['critical']} critical skill(s)")
+    if severity_counts["high"] > 0:
+        reasons.append(f"{severity_counts['high']} high-severity skill(s)")
+    if severity_counts["medium"] > 0:
+        reasons.append(f"{severity_counts['medium']} medium-severity skill(s)")
+    if severity_counts["low"] > 0:
+        reasons.append(f"{severity_counts['low']} low-severity skill(s)")
+    if not reasons:
+        reasons.append(f"{severity_counts['clean']} clean skill(s)")
+
+    target: dict[str, Any] = {
+        "input": root_input,
+        "kind": kind,
+        "resolvedPath": str(resolved),
+        "mode": "multi-skill",
+    }
+    if source is not None:
+        target["source"] = source
+
+    return {
+        "target": target,
+        "skills": entries,
+        "summary": {
+            "totalSkills": len(entries),
+            "severityCounts": severity_counts,
+            "findings": findings,
+            "worst": worst,
+            "reasons": reasons,
+        },
+    }
+
+
+def _render_multi_text(report: dict[str, Any]) -> None:
+    rprint(fmt.header(f"Skill review: {report['target']['input']}"))
+    rprint(fmt.divider())
+    rprint(f"Mode: multi-skill ({report['summary']['totalSkills']} SKILL.md files)")
+    src = report["target"].get("source") or {}
+    if src.get("sha"):
+        rprint(f"Commit: {src['sha'][:12]}")
+    if src.get("version"):
+        rprint(f"Version: {src['version']}")
+    if src.get("cacheHit"):
+        rprint("Cache: hit")
+    rprint()
+    for s in report["skills"]:
+        sev = s["report"]["summary"]["severity"]
+        findings = s["report"]["summary"]["findings"]
+        rel = str(s["relDir"]).ljust(40)
+        line = f"  {rel}  [{sev.upper()}]  {findings} finding(s)"
+        if sev in ("critical", "high"):
+            rprint(fmt.error(line), file=sys.stderr)
+        elif sev in ("medium", "low"):
+            rprint(fmt.warning(line))
+        else:
+            rprint(fmt.success(line))
+    rprint()
+    rprint(
+        f"Worst severity: {report['summary']['worst'].upper()} — "
+        f"{', '.join(report['summary']['reasons'])}"
+    )
+
+
 def run_skill_review(
-    input_: str, *, json_out: bool = False, format_: str = "text"
+    input_: str,
+    *,
+    json_out: bool = False,
+    format_: str = "text",
+    no_cache: bool = False,
+    cache_ttl_ms: int = DEFAULT_CACHE_TTL_MS,
+    cache_root: Path | None = None,
+    ops: skill_remote.RemoteOps | None = None,
 ) -> tuple[dict[str, Any], int]:
     """Implementation entry point — returns (report_dict, exit_code)."""
-    cleanup: Path | None = None
-    if _is_git_url(input_):
+    cleanup = None
+    source: dict[str, Any] | None = None
+    resolved: Path
+    kind: str
+    tree_root: Path | None = None
+
+    if is_shorthand(input_):
+        try:
+            parsed = parse_shorthand(input_)
+        except ValueError as err:
+            rprint(fmt.error(str(err)), file=sys.stderr)
+            return {}, 2
+        try:
+            rs: ResolvedSource = resolve_shorthand(
+                input_,
+                parsed,
+                no_cache=no_cache,
+                cache_ttl_ms=cache_ttl_ms,
+                cache_root=cache_root,
+                ops=ops,
+            )
+        except RuntimeError as err:
+            rprint(fmt.error(str(err)), file=sys.stderr)
+            return {}, 2
+        except Exception as err:  # noqa: BLE001
+            rprint(fmt.error(f"{err}"), file=sys.stderr)
+            return {}, 2
+        resolved = rs.resolved_path
+        kind = rs.kind
+        source = rs.source
+        cleanup = rs.cleanup
+        tree_root = rs.tree_root
+    elif _is_git_url(input_):
         try:
             resolved = _clone_shallow(input_)
         except RuntimeError as err:
             rprint(fmt.error(str(err)), file=sys.stderr)
             return {}, 2
-        cleanup = resolved
+        _resolved_ref = resolved
+
+        def _cleanup_clone() -> None:
+            shutil.rmtree(_resolved_ref, ignore_errors=True)
+
+        cleanup = _cleanup_clone
         kind = "git-url"
+        tree_root = resolved
     else:
         p = Path(input_)
         if not p.exists():
@@ -861,19 +1027,55 @@ def run_skill_review(
             return {}, 2
         resolved = p.resolve()
         kind = "directory" if resolved.is_dir() else "file"
+        tree_root = resolved if resolved.is_dir() else resolved.parent
 
     try:
-        report = _build_report(input_, resolved, kind)
+        # Multi-SKILL.md handling.
+        report_obj: dict[str, Any]
+        if kind != "file" and tree_root is not None:
+            locations = find_skill_files(resolved)
+            if len(locations) > 1:
+                report_obj = _build_multi_report(
+                    input_, resolved, kind, locations, source
+                )
+            else:
+                rep = _build_report(input_, resolved, kind, source)
+                report_obj = rep.to_json()
+        else:
+            rep = _build_report(input_, resolved, kind, source)
+            report_obj = rep.to_json()
+
         fmt_ = "json" if json_out else format_
         if fmt_ == "json":
-            print(json.dumps(report.to_json(), indent=2))
+            print(json.dumps(report_obj, indent=2))
         else:
-            _render_text(report)
-        exit_code = 0 if report.summary["severity"] == "clean" else 1
-        return report.to_json(), exit_code
+            if "skills" in report_obj and isinstance(report_obj.get("skills"), list):
+                _render_multi_text(report_obj)
+            else:
+                # Hydrate _Report for existing _render_text
+                r = _Report()
+                r.target = report_obj["target"]
+                r.frontmatter = report_obj["frontmatter"]
+                r.secrets = report_obj["secrets"]
+                r.urls = report_obj["urls"]
+                r.high_risk_commands = report_obj["highRiskCommands"]
+                r.obfuscation = report_obj["obfuscation"]
+                r.inventory = report_obj["inventory"]
+                r.summary = report_obj["summary"]
+                _render_text(r)
+
+        if "skills" in report_obj:
+            sev = report_obj["summary"]["worst"]
+        else:
+            sev = report_obj["summary"]["severity"]
+        exit_code = 0 if sev == "clean" else 1
+        return report_obj, exit_code
     finally:
         if cleanup is not None:
-            shutil.rmtree(cleanup, ignore_errors=True)
+            try:
+                cleanup()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 _SEVERITY_ORDER: tuple[str, ...] = ("clean", "low", "medium", "high", "critical")
@@ -991,7 +1193,12 @@ def _render_installed_summary(report: dict[str, Any]) -> None:
 @skill_app.command("review")
 def review_cmd(
     path_or_url: str | None = typer.Argument(
-        None, help="Local path (file or directory) OR git URL (https/ssh/.git). Omit when using --installed."
+        None,
+        help=(
+            "Local path (file or directory) OR git URL (https/ssh/.git) OR "
+            "shorthand (github:owner/repo[/subpath], gitlab:owner/repo[/subpath], "
+            "npm:pkg[@version]). Omit when using --installed."
+        ),
     ),
     json_output: bool = typer.Option(
         False, "--json", help="Emit JSON report to stdout (shortcut for --format json)"
@@ -1014,8 +1221,21 @@ def review_cmd(
         "--summary",
         help="Print a terse human-readable table instead of JSON (only with --installed).",
     ),
+    cache_ttl: str = typer.Option(
+        "24h",
+        "--cache-ttl",
+        help=(
+            "TTL for the persistent skill-cache resolution entries "
+            "(e.g. 24h, 30m, 3600s). Default: 24h."
+        ),
+    ),
+    no_cache: bool = typer.Option(
+        False,
+        "--no-cache",
+        help="Bypass the persistent skill-cache; fetch fresh and skip writes.",
+    ),
 ):
-    """Security review of a skill/plugin/extension before installing it (path or git URL), or --installed to audit every skill on this machine."""
+    """Security review of a skill/plugin/extension before installing it (path, git URL, or shorthand), or --installed to audit every skill on this machine."""
     if installed:
         if path_or_url:
             rprint(
@@ -1039,12 +1259,24 @@ def review_cmd(
     if not path_or_url:
         rprint(
             fmt.error(
-                "Missing <path-or-url>. Pass a path / git URL, or use --installed to audit installed skills."
+                "Missing <path-or-url>. Pass a path / git URL / shorthand, or use --installed to audit installed skills."
             ),
             file=sys.stderr,
         )
         raise typer.Exit(code=2)
 
-    _, exit_code = run_skill_review(path_or_url, json_out=json_output, format_=format_)
+    try:
+        ttl_ms = parse_cache_ttl(cache_ttl)
+    except ValueError as err:
+        rprint(fmt.error(str(err)), file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    _, exit_code = run_skill_review(
+        path_or_url,
+        json_out=json_output,
+        format_=format_,
+        no_cache=no_cache,
+        cache_ttl_ms=ttl_ms,
+    )
     if exit_code != 0:
         raise typer.Exit(code=exit_code)

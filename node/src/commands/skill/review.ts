@@ -11,6 +11,28 @@ import {
   SKILL_PLATFORMS,
   SkillPlatform,
 } from "./registry.js";
+import {
+  isShorthand,
+  parseShorthand,
+  ParsedShorthand,
+  defaultCacheRoot,
+  readResolution,
+  writeResolution,
+  resolutionIsFresh,
+  contentKeyGit,
+  contentKeyNpm,
+  contentDir,
+  contentWorkingTree,
+  readContentMeta,
+  contentIsUsable,
+  dropCacheEntry,
+  defaultRemoteOps,
+  RemoteOps,
+  extractNpmTarball,
+  findSkillFiles,
+  SkillLocation,
+  DEFAULT_CACHE_TTL_MS,
+} from "./remote.js";
 
 interface HighRiskCommand {
   command: string;
@@ -52,11 +74,39 @@ interface FrontmatterInfo {
   description?: string;
 }
 
+export type SkillReviewTargetKind =
+  | "file"
+  | "directory"
+  | "git-url"
+  | "github"
+  | "gitlab"
+  | "npm";
+
+export interface SkillReviewSource {
+  /** Resolved git URL or npm tarball URL the content was fetched from. */
+  url?: string;
+  /** Commit SHA when kind is git-url/github/gitlab. */
+  sha?: string;
+  /** Concrete version when kind is npm. */
+  version?: string;
+  /** Subpath filter, if any (shorthand `github:owner/repo/subpath`). */
+  subpath?: string;
+  /** True when the content was served from the persistent cache. */
+  cacheHit?: boolean;
+}
+
 export interface SkillReviewReport {
   target: {
     input: string;
-    kind: "file" | "directory" | "git-url";
+    kind: SkillReviewTargetKind;
     resolvedPath: string;
+    source?: SkillReviewSource;
+    /**
+     * When a multi-skill scope resolves to a single SKILL.md, we still emit
+     * the singular shape. `skillRelDir` records which subtree was audited
+     * relative to the fetched root.
+     */
+    skillRelDir?: string;
   };
   frontmatter: FrontmatterInfo[];
   secrets: SecretHit[];
@@ -372,9 +422,14 @@ function summarize(report: SkillReviewReport): void {
   };
 }
 
-function buildReport(rootInput: string, resolvedPath: string, kind: "file" | "directory" | "git-url"): SkillReviewReport {
+function buildReport(
+  rootInput: string,
+  resolvedPath: string,
+  kind: SkillReviewTargetKind,
+  source?: SkillReviewSource,
+): SkillReviewReport {
   const report: SkillReviewReport = {
-    target: { input: rootInput, kind, resolvedPath },
+    target: { input: rootInput, kind, resolvedPath, source },
     frontmatter: [],
     secrets: [],
     urls: [],
@@ -528,49 +583,442 @@ function renderText(report: SkillReviewReport): void {
   );
 }
 
-export function runSkillReview(
-  input: string,
-  opts: { format?: "json" | "text"; json?: boolean },
-): { report: SkillReviewReport; exitCode: number } {
-  let resolved = input;
-  let kind: "file" | "directory" | "git-url";
-  let cleanup: string | null = null;
+// ── Multi-skill combined report ────────────────────────────────────
 
-  if (isGitUrl(input)) {
-    try {
-      resolved = cloneShallow(input);
-    } catch (e) {
-      console.error(fmt.error(`${e instanceof Error ? e.message : String(e)}`));
-      return { report: null as unknown as SkillReviewReport, exitCode: 2 };
+export interface MultiSkillEntry {
+  /** Directory path relative to the resolved root ("." when at root). */
+  relDir: string;
+  /** SKILL.md name from frontmatter, when present. */
+  name?: string;
+  /** Version from frontmatter, when present. */
+  version?: string;
+  /** Per-skill report scoped to its containing directory. */
+  report: SkillReviewReport;
+}
+
+export type SeverityTier = "clean" | "low" | "medium" | "high" | "critical";
+
+export interface MultiSkillReport {
+  target: {
+    input: string;
+    kind: SkillReviewTargetKind;
+    resolvedPath: string;
+    mode: "multi-skill";
+    source?: SkillReviewSource;
+  };
+  skills: MultiSkillEntry[];
+  summary: {
+    totalSkills: number;
+    severityCounts: Record<SeverityTier, number>;
+    findings: number;
+    worst: SeverityTier;
+    reasons: string[];
+  };
+}
+
+const _SEVERITY_ORDER_LOCAL: readonly SeverityTier[] = [
+  "clean",
+  "low",
+  "medium",
+  "high",
+  "critical",
+];
+
+function buildMultiReport(
+  rootInput: string,
+  resolvedPath: string,
+  kind: SkillReviewTargetKind,
+  skills: SkillLocation[],
+  source?: SkillReviewSource,
+): MultiSkillReport {
+  const severityCounts: Record<SeverityTier, number> = {
+    clean: 0,
+    low: 0,
+    medium: 0,
+    high: 0,
+    critical: 0,
+  };
+  let worst: SeverityTier = "clean";
+  let findings = 0;
+  const entries: MultiSkillEntry[] = [];
+
+  for (const loc of skills) {
+    // Each skill is audited scoped to its containing dir.
+    const sub = buildReport(rootInput, loc.dir, "directory", source);
+    // Overwrite target.kind / skillRelDir so the per-skill target still
+    // carries enough context to be useful standalone.
+    sub.target.kind = kind;
+    sub.target.skillRelDir = loc.relDir;
+    const fm = sub.frontmatter.find((f) => f.file.toLowerCase().endsWith("skill.md"));
+    entries.push({
+      relDir: loc.relDir,
+      name: fm?.name,
+      version: fm?.version,
+      report: sub,
+    });
+    severityCounts[sub.summary.severity] += 1;
+    findings += sub.summary.findings;
+    if (
+      _SEVERITY_ORDER_LOCAL.indexOf(sub.summary.severity) >
+      _SEVERITY_ORDER_LOCAL.indexOf(worst)
+    ) {
+      worst = sub.summary.severity;
     }
-    cleanup = resolved;
-    kind = "git-url";
-  } else if (!fs.existsSync(input)) {
-    console.error(fmt.error(`Not found: ${input}`));
-    return { report: null as unknown as SkillReviewReport, exitCode: 2 };
-  } else {
-    const stat = fs.statSync(input);
-    resolved = path.resolve(input);
-    kind = stat.isDirectory() ? "directory" : "file";
   }
 
+  const reasons: string[] = [];
+  if (severityCounts.critical > 0) reasons.push(`${severityCounts.critical} critical skill(s)`);
+  if (severityCounts.high > 0) reasons.push(`${severityCounts.high} high-severity skill(s)`);
+  if (severityCounts.medium > 0) reasons.push(`${severityCounts.medium} medium-severity skill(s)`);
+  if (severityCounts.low > 0) reasons.push(`${severityCounts.low} low-severity skill(s)`);
+  if (reasons.length === 0) reasons.push(`${severityCounts.clean} clean skill(s)`);
+
+  return {
+    target: {
+      input: rootInput,
+      kind,
+      resolvedPath,
+      mode: "multi-skill",
+      source,
+    },
+    skills: entries,
+    summary: {
+      totalSkills: entries.length,
+      severityCounts,
+      findings,
+      worst,
+      reasons,
+    },
+  };
+}
+
+function renderMultiText(report: MultiSkillReport): void {
+  console.log(fmt.header(`Skill review: ${report.target.input}`));
+  console.log(fmt.divider());
+  console.log(`Mode: multi-skill (${report.summary.totalSkills} SKILL.md files)`);
+  if (report.target.source?.sha) console.log(`Commit: ${report.target.source.sha.slice(0, 12)}`);
+  if (report.target.source?.version) console.log(`Version: ${report.target.source.version}`);
+  if (report.target.source?.cacheHit) console.log(`Cache: hit`);
+  console.log();
+  for (const s of report.skills) {
+    const sev = s.report.summary.severity.toUpperCase();
+    const line = `  ${s.relDir.padEnd(40)}  [${sev}]  ${s.report.summary.findings} finding(s)`;
+    if (s.report.summary.severity === "critical" || s.report.summary.severity === "high") {
+      console.error(fmt.error(line));
+    } else if (s.report.summary.severity === "medium" || s.report.summary.severity === "low") {
+      console.log(fmt.warning(line));
+    } else {
+      console.log(fmt.success(line));
+    }
+  }
+  console.log();
+  console.log(
+    `Worst severity: ${report.summary.worst.toUpperCase()} — ${report.summary.reasons.join(", ")}`,
+  );
+}
+
+// ── Source resolution (shorthand + cache) ──────────────────────────
+
+export interface ResolveOptions {
+  noCache?: boolean;
+  cacheTtlMs?: number;
+  cacheRoot?: string;
+  ops?: RemoteOps;
+}
+
+interface ResolvedSource {
+  kind: SkillReviewTargetKind;
+  // directory or file to audit (may be a subpath of the fetched root)
+  resolvedPath: string;
+  // root of the fetched/extracted content (for multi-skill discovery)
+  treeRoot: string;
+  source: SkillReviewSource;
+  cleanup: (() => void) | null;
+}
+
+function resolveShorthand(
+  input: string,
+  parsed: ParsedShorthand,
+  opts: ResolveOptions,
+): ResolvedSource {
+  const cacheRoot = opts.cacheRoot ?? defaultCacheRoot();
+  const ttlMs = opts.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
+  const ops = opts.ops ?? defaultRemoteOps;
+
+  if (parsed.kind === "npm") {
+    return resolveNpm(input, parsed, { ...opts, cacheRoot, cacheTtlMs: ttlMs, ops });
+  }
+  return resolveGit(input, parsed, { ...opts, cacheRoot, cacheTtlMs: ttlMs, ops });
+}
+
+function resolveGit(
+  input: string,
+  parsed: ParsedShorthand,
+  opts: Required<Pick<ResolveOptions, "cacheRoot" | "cacheTtlMs" | "ops">> & ResolveOptions,
+): ResolvedSource {
+  const { cacheRoot, cacheTtlMs, ops } = opts;
+  let sha: string | undefined;
+  if (!opts.noCache) {
+    const r = readResolution(cacheRoot, input);
+    if (r && resolutionIsFresh(r, cacheTtlMs) && r.sha) sha = r.sha;
+  }
+  if (!sha) {
+    sha = ops.gitLsRemoteHead(parsed.gitUrl!);
+    if (!opts.noCache) {
+      writeResolution(cacheRoot, { shorthand: input, sha, resolvedAt: Date.now() });
+    }
+  }
+
+  const key = contentKeyGit(parsed, sha);
+  let cacheHit = false;
+  let treeRoot: string;
+  let cleanup: (() => void) | null = null;
+
+  if (!opts.noCache && contentIsUsable(cacheRoot, key)) {
+    treeRoot = contentWorkingTree(cacheRoot, key);
+    cacheHit = true;
+  } else {
+    // Corrupt cache guard: drop and re-fetch.
+    if (!opts.noCache) dropCacheEntry(cacheRoot, key);
+    if (opts.noCache) {
+      treeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-skill-review-"));
+      cleanup = () => {
+        try { fs.rmSync(treeRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+      };
+      ops.gitCloneAtSha(parsed.gitUrl!, sha, treeRoot);
+    } else {
+      const dir = contentDir(cacheRoot, key);
+      fs.mkdirSync(dir, { recursive: true });
+      treeRoot = contentWorkingTree(cacheRoot, key);
+      ops.gitCloneAtSha(parsed.gitUrl!, sha, treeRoot);
+      const meta = {
+        source: "git" as const,
+        shorthand: input,
+        key,
+        sha,
+        fetchedAt: Date.now(),
+      };
+      fs.writeFileSync(path.join(dir, "meta.json"), JSON.stringify(meta, null, 2));
+    }
+  }
+
+  const kind: SkillReviewTargetKind = parsed.kind === "github" ? "github" : "gitlab";
+  const subpath = parsed.subpath && parsed.subpath.length > 0 ? parsed.subpath : undefined;
+  let resolvedPath = treeRoot;
+  if (subpath) {
+    const candidate = path.join(treeRoot, subpath);
+    if (!fs.existsSync(candidate)) {
+      if (cleanup) cleanup();
+      throw new Error(`Subpath not found in ${parsed.kind}:${parsed.owner}/${parsed.repo}: ${subpath}`);
+    }
+    resolvedPath = candidate;
+  }
+  return {
+    kind,
+    resolvedPath,
+    treeRoot: resolvedPath, // multi-skill discovery runs inside subpath if given
+    source: {
+      url: parsed.gitUrl,
+      sha,
+      subpath,
+      cacheHit,
+    },
+    cleanup,
+  };
+}
+
+function resolveNpm(
+  input: string,
+  parsed: ParsedShorthand,
+  opts: Required<Pick<ResolveOptions, "cacheRoot" | "cacheTtlMs" | "ops">> & ResolveOptions,
+): ResolvedSource {
+  const { cacheRoot, cacheTtlMs, ops } = opts;
+  let resolvedVersion: string | undefined;
+  let tarballUrl: string | undefined;
+
+  if (!opts.noCache) {
+    const r = readResolution(cacheRoot, input);
+    if (r && resolutionIsFresh(r, cacheTtlMs) && r.version) resolvedVersion = r.version;
+  }
+  // We need the tarball URL regardless of cache — unless content cache is hit
+  // at a known version. Peek content cache first if we have a resolved version.
+  const probeKey = (v: string): string => contentKeyNpm(parsed.pkg!, v);
+  if (!resolvedVersion || !(!opts.noCache && contentIsUsable(cacheRoot, probeKey(resolvedVersion)))) {
+    // Fetch metadata to resolve version and get tarball URL.
+    const meta = ops.npmFetchMetadata(parsed.pkg!);
+    const want = parsed.version ?? "latest";
+    let concrete: string | undefined;
+    if (want === "latest") {
+      concrete = meta["dist-tags"]?.["latest"];
+    } else if (meta["dist-tags"]?.[want]) {
+      concrete = meta["dist-tags"]![want];
+    } else {
+      concrete = want;
+    }
+    if (!concrete || !meta.versions || !meta.versions[concrete]) {
+      throw new Error(`npm:${parsed.pkg}: unknown version "${want}"`);
+    }
+    tarballUrl = meta.versions[concrete].dist?.tarball;
+    if (!tarballUrl) throw new Error(`npm:${parsed.pkg}@${concrete}: no tarball URL`);
+    resolvedVersion = concrete;
+    if (!opts.noCache) {
+      writeResolution(cacheRoot, {
+        shorthand: input,
+        version: concrete,
+        resolvedAt: Date.now(),
+      });
+    }
+  }
+
+  const key = contentKeyNpm(parsed.pkg!, resolvedVersion!);
+  let cacheHit = false;
+  let treeRoot: string;
+  let cleanup: (() => void) | null = null;
+
+  if (!opts.noCache && contentIsUsable(cacheRoot, key)) {
+    treeRoot = contentWorkingTree(cacheRoot, key);
+    cacheHit = true;
+  } else {
+    if (!opts.noCache) dropCacheEntry(cacheRoot, key);
+    // Need tarballUrl if we didn't fetch metadata above. Refetch if missing.
+    if (!tarballUrl) {
+      const meta = ops.npmFetchMetadata(parsed.pkg!);
+      tarballUrl = meta.versions?.[resolvedVersion!]?.dist?.tarball;
+      if (!tarballUrl) throw new Error(`npm:${parsed.pkg}@${resolvedVersion}: no tarball URL`);
+    }
+    if (opts.noCache) {
+      treeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-skill-review-"));
+      cleanup = () => {
+        try { fs.rmSync(treeRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+      };
+      const tgz = path.join(treeRoot, "package.tgz");
+      ops.npmFetchTarball(tarballUrl!, tgz);
+      extractNpmTarball(tgz, treeRoot);
+      try { fs.unlinkSync(tgz); } catch { /* ignore */ }
+    } else {
+      const dir = contentDir(cacheRoot, key);
+      fs.mkdirSync(dir, { recursive: true });
+      treeRoot = contentWorkingTree(cacheRoot, key);
+      fs.mkdirSync(treeRoot, { recursive: true });
+      const tgz = path.join(dir, "package.tgz");
+      ops.npmFetchTarball(tarballUrl!, tgz);
+      extractNpmTarball(tgz, treeRoot);
+      try { fs.unlinkSync(tgz); } catch { /* ignore */ }
+      const meta = {
+        source: "npm" as const,
+        shorthand: input,
+        key,
+        version: resolvedVersion,
+        fetchedAt: Date.now(),
+      };
+      fs.writeFileSync(path.join(dir, "meta.json"), JSON.stringify(meta, null, 2));
+    }
+  }
+
+  return {
+    kind: "npm",
+    resolvedPath: treeRoot,
+    treeRoot,
+    source: {
+      url: tarballUrl,
+      version: resolvedVersion,
+      cacheHit,
+    },
+    cleanup,
+  };
+}
+
+export function runSkillReview(
+  input: string,
+  opts: {
+    format?: "json" | "text";
+    json?: boolean;
+    noCache?: boolean;
+    cacheTtlMs?: number;
+    cacheRoot?: string;
+    ops?: RemoteOps;
+  },
+): { report: SkillReviewReport | MultiSkillReport; exitCode: number } {
+  let resolved = input;
+  let kind: SkillReviewTargetKind;
+  let cleanup: (() => void) | null = null;
+  let source: SkillReviewSource | undefined;
+  let treeRoot: string | null = null;
+
   try {
-    const report = buildReport(input, resolved, kind);
+    if (isShorthand(input)) {
+      let parsed: ParsedShorthand;
+      try {
+        parsed = parseShorthand(input);
+      } catch (e) {
+        console.error(fmt.error(e instanceof Error ? e.message : String(e)));
+        return { report: null as unknown as SkillReviewReport, exitCode: 2 };
+      }
+      let r: ResolvedSource;
+      try {
+        r = resolveShorthand(input, parsed, opts);
+      } catch (e) {
+        console.error(fmt.error(e instanceof Error ? e.message : String(e)));
+        return { report: null as unknown as SkillReviewReport, exitCode: 2 };
+      }
+      resolved = r.resolvedPath;
+      kind = r.kind;
+      source = r.source;
+      cleanup = r.cleanup;
+      treeRoot = r.treeRoot;
+    } else if (isGitUrl(input)) {
+      try {
+        resolved = cloneShallow(input);
+      } catch (e) {
+        console.error(fmt.error(`${e instanceof Error ? e.message : String(e)}`));
+        return { report: null as unknown as SkillReviewReport, exitCode: 2 };
+      }
+      const dir = resolved;
+      cleanup = () => {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+      };
+      kind = "git-url";
+      treeRoot = resolved;
+    } else if (!fs.existsSync(input)) {
+      console.error(fmt.error(`Not found: ${input}`));
+      return { report: null as unknown as SkillReviewReport, exitCode: 2 };
+    } else {
+      const stat = fs.statSync(input);
+      resolved = path.resolve(input);
+      kind = stat.isDirectory() ? "directory" : "file";
+      treeRoot = stat.isDirectory() ? resolved : path.dirname(resolved);
+    }
+
+    // Multi-SKILL.md handling: only applicable when scanning a directory.
+    let report: SkillReviewReport | MultiSkillReport;
+    if (kind !== "file" && treeRoot) {
+      const locations = findSkillFiles(resolved);
+      if (locations.length > 1) {
+        report = buildMultiReport(input, resolved, kind, locations, source);
+      } else {
+        report = buildReport(input, resolved, kind, source);
+      }
+    } else {
+      report = buildReport(input, resolved, kind, source);
+    }
+
     const format = opts.json ? "json" : opts.format ?? "text";
     if (format === "json") {
       console.log(JSON.stringify(report, null, 2));
     } else {
-      renderText(report);
+      if ("skills" in report) {
+        renderMultiText(report);
+      } else {
+        renderText(report);
+      }
     }
-    const exitCode = report.summary.severity === "clean" ? 0 : 1;
+    const sev =
+      "skills" in report ? report.summary.worst : report.summary.severity;
+    const exitCode = sev === "clean" ? 0 : 1;
     return { report, exitCode };
   } finally {
     if (cleanup) {
-      try {
-        fs.rmSync(cleanup, { recursive: true, force: true });
-      } catch {
-        // non-fatal
-      }
+      try { cleanup(); } catch { /* non-fatal */ }
     }
   }
 }
@@ -728,10 +1176,25 @@ function renderInstalledSummary(report: InstalledReviewReport): void {
   }
 }
 
+/** Parse `--cache-ttl` values like "24h", "30m", "3600s", "1d", or bare seconds. */
+export function parseCacheTtl(raw: string): number {
+  const m = String(raw).trim().match(/^(\d+)\s*([smhd]?)$/i);
+  if (!m) throw new Error(`Invalid --cache-ttl: ${raw} (try 24h / 30m / 3600s / 1d)`);
+  const n = parseInt(m[1], 10);
+  const unit = (m[2] || "s").toLowerCase();
+  const mult = unit === "s" ? 1000 : unit === "m" ? 60_000 : unit === "h" ? 3_600_000 : 86_400_000;
+  return n * mult;
+}
+
 export function createReviewCommand(): Command {
   return new Command("review")
-    .description("Security review of a skill / plugin / extension before installing it (path or git URL), or --installed to audit every skill on this machine")
-    .argument("[path-or-url]", "Local path (file or directory) OR git URL (https/ssh/.git). Omit when using --installed.")
+    .description(
+      "Security review of a skill / plugin / extension before installing it. Accepts a local path, git URL, or shorthand (github:/gitlab:/npm:); or --installed to audit every skill on this machine.",
+    )
+    .argument(
+      "[path-or-url]",
+      "Local path (file or directory) OR git URL (https/ssh/.git) OR shorthand (github:owner/repo[/subpath], gitlab:owner/repo[/subpath], npm:pkg[@version]). Omit when using --installed.",
+    )
     .option("--json", "Emit JSON report to stdout (shortcut for --format json)")
     .option("--format <format>", "Output format: text | json", "text")
     .option(
@@ -746,6 +1209,12 @@ export function createReviewCommand(): Command {
       "--summary",
       "Print a terse human-readable table instead of JSON (only with --installed)",
     )
+    .option(
+      "--cache-ttl <duration>",
+      "TTL for the persistent skill-cache resolution entries (e.g. 24h, 30m, 3600s). Default: 24h.",
+      "24h",
+    )
+    .option("--no-cache", "Bypass the persistent skill-cache; fetch fresh and skip writes.")
     .action(
       (
         input: string | undefined,
@@ -755,6 +1224,8 @@ export function createReviewCommand(): Command {
           installed?: boolean;
           agent?: string;
           summary?: boolean;
+          cacheTtl?: string;
+          cache?: boolean; // commander sets this to false when --no-cache is passed
         },
       ) => {
         if (opts.installed) {
@@ -784,12 +1255,23 @@ export function createReviewCommand(): Command {
         if (!input) {
           console.error(
             fmt.error(
-              "Missing <path-or-url>. Pass a path / git URL, or use --installed to audit installed skills.",
+              "Missing <path-or-url>. Pass a path / git URL / shorthand, or use --installed to audit installed skills.",
             ),
           );
           process.exit(2);
         }
-        const { exitCode } = runSkillReview(input, opts);
+        let ttlMs: number;
+        try {
+          ttlMs = parseCacheTtl(opts.cacheTtl ?? "24h");
+        } catch (e) {
+          console.error(fmt.error(e instanceof Error ? e.message : String(e)));
+          process.exit(2);
+        }
+        const { exitCode } = runSkillReview(input, {
+          ...opts,
+          noCache: opts.cache === false,
+          cacheTtlMs: ttlMs,
+        });
         process.exit(exitCode);
       },
     );
