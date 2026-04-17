@@ -357,12 +357,48 @@ Risk tiers: critical (blocked), high (approval required), medium (approval on mo
 
 Security review of a third-party skill, plugin, or agent extension before installing it — **or** (`--installed`) an audit of every skill already on disk across detected agent directories. Operates on a local file, a local directory, a git URL (https / ssh / `.git`), or (in `--installed` mode) the whole machine. Emits a structured deterministic report: secrets, external URLs, high-risk shell patterns, obfuscation signals, binary/suspicious file inventory, and `SKILL.md` frontmatter (`name`, `version`, `allowed-tools`).
 
-- `PATH_OR_URL` — local path (file or directory) OR a git URL (shallow-cloned to a temp dir for the duration of the review; removed on exit). Omit when using `--installed`.
+- `PATH_OR_URL` — one of:
+  - a local path (file or directory)
+  - a raw git URL (https / ssh / `.git`) — shallow-cloned to a temp dir for the review
+  - a remote **shorthand**:
+    - `github:<owner>/<repo>[/<subpath>]` — resolves to `https://github.com/<owner>/<repo>.git`
+    - `gitlab:<owner>/<repo>[/<subpath>]` — resolves to `https://gitlab.com/<owner>/<repo>.git`
+    - `npm:<pkg>[@<version>]` — fetches the tarball from the npm registry (default `@latest`); supports scoped packages (e.g. `npm:@scope/pkg@1.2.3`)
+
+  Omit when using `--installed`.
 - `--json` — emit JSON to stdout (shortcut for `--format json`)
 - `--format text|json` — output format (default: `text`)
+- `--cache-ttl <duration>` — TTL for the persistent shorthand-resolution cache. Accepts `<n>[s|m|h|d]` (e.g. `30s`, `5m`, `24h`, `1d`). Default: `24h`. Only applies to shorthand forms.
+- `--no-cache` — bypass the persistent shorthand cache: always fetch fresh and never write to cache. Temp dirs used during the review are removed on exit.
 - `--installed` — audit every installed skill across detected agent skill directories instead of a path
 - `--agent <name>` — restrict `--installed` to a single agent (`claude-code`, `codex`, `openclaw`, or `cursor`)
 - `--summary` — print a terse human-readable table instead of JSON (only with `--installed`)
+
+#### Persistent shorthand cache
+
+Shorthand resolutions and fetched content are cached under `~/.rafter/skill-cache/` (override: `RAFTER_SKILL_CACHE_DIR`) in a two-level layout:
+
+```
+~/.rafter/skill-cache/
+├── resolutions/<sha256(shorthand)>.json   # { shorthand, sha|version, resolvedAt }
+└── content/<content-key>/                 # keyed by git SHA or npm version
+    ├── meta.json                          # { source, shorthand, key, sha|version, fetchedAt }
+    └── content/                           # extracted working tree
+```
+
+- `github:`/`gitlab:` content keys: `git-<kind>-<owner>-<repo>-<sha-40>` (content-addressed; immutable).
+- `npm:` content keys: `npm-<pkg-safe>-<version>` (immutable per version).
+- `--cache-ttl` applies only to the **resolution** layer (how long `github:foo/bar` → SHA stays fresh). Content under a resolved SHA/version is immutable and kept until manually pruned.
+- Corrupt cache entries (missing `meta.json`, empty `content/`) are detected and dropped automatically — the next run re-fetches.
+- With `--no-cache`, neither layer is read or written; content is extracted to a temp dir and deleted after the review.
+
+#### Remote fetch exit codes
+
+In addition to the path-mode codes listed below, shorthand forms may exit `2` for:
+- unresolvable `git ls-remote` (network failure, invalid owner/repo, private repo without creds)
+- npm registry 404, HTTP failure, or unknown `@version`
+- requested `subpath` missing in the fetched tree
+- malformed shorthand (e.g. `npm:` with no package name)
 
 JSON shape (`--json`):
 
@@ -404,6 +440,46 @@ JSON shape (`--json`):
   }
 }
 ```
+
+**Shorthand provenance** (`target.source`): when `PATH_OR_URL` is a shorthand, `target.kind` is `"github"`, `"gitlab"`, or `"npm"` (instead of `"directory"`/`"file"`/`"git-url"`), and `target.source` is added with provenance info. When a `subpath` was requested, `target.skillRelDir` is the path within the cloned tree that was audited.
+
+```json
+// github/gitlab:
+"source": { "url": "https://github.com/foo/bar.git", "sha": "<40-hex>", "subpath": "skills/review", "cacheHit": false }
+// npm:
+"source": { "url": "https://registry.npmjs.org/.../pkg-1.2.3.tgz", "version": "1.2.3", "cacheHit": true }
+```
+
+**Multi-`SKILL.md` mode**: when a directory or fetched tree contains **more than one** `SKILL.md`, the review audits each independently (scoped to its containing directory) and emits a combined report. The JSON shape switches to:
+
+```json
+{
+  "target": {
+    "input": "github:foo/bar",
+    "kind": "github",
+    "resolvedPath": "/abs/.../content",
+    "mode": "multi-skill",
+    "source": { "url": "...", "sha": "...", "cacheHit": false }
+  },
+  "skills": [
+    {
+      "relDir": "skills/alpha",
+      "name": "alpha",
+      "version": "1.0.0",
+      "report": { "...": "same shape as the single-skill JSON above, with target.skillRelDir set" }
+    }
+  ],
+  "summary": {
+    "totalSkills": 2,
+    "severityCounts": { "clean": 1, "low": 0, "medium": 0, "high": 0, "critical": 1 },
+    "findings": 4,
+    "worst": "critical",
+    "reasons": ["1 critical skill(s)"]
+  }
+}
+```
+
+The exit code for multi-skill mode follows the worst per-skill severity: `0` iff every skill is `clean`, else `1`.
 
 **Obfuscation kinds**: `zero-width-char`, `bidi-override`, `base64-blob`, `hex-escape-rope`, `html-comment-imperative`.
 
