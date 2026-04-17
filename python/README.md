@@ -41,6 +41,7 @@ rafter agent scan .              # scan for secrets
 rafter agent scan --diff HEAD~1  # scan changed files
 rafter agent exec "git commit"   # execute with risk assessment
 rafter agent audit               # view security logs
+rafter agent audit --verify      # verify tamper-evident hash chain
 rafter agent config show         # view configuration
 ```
 
