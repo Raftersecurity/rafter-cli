@@ -108,6 +108,92 @@ export function skillDetectDir(platform: SkillPlatform): string {
   }
 }
 
+/**
+ * Base directory where a platform stores INSTALLED skill files. Used by
+ * `rafter skill review --installed` to walk every skill on this machine.
+ *
+ * Shape per platform (see `skillDestPath` for where we *write* skills):
+ *   claude-code → ~/.claude/skills/<name>/SKILL.md
+ *   codex       → ~/.agents/skills/<name>/SKILL.md
+ *   openclaw    → ~/.openclaw/skills/<name>.md
+ *   cursor      → ~/.cursor/rules/<name>.mdc
+ */
+export function skillBaseDir(platform: SkillPlatform): string {
+  const home = os.homedir();
+  switch (platform) {
+    case "claude-code":
+      return path.join(home, ".claude", "skills");
+    case "codex":
+      return path.join(home, ".agents", "skills");
+    case "openclaw":
+      return path.join(home, ".openclaw", "skills");
+    case "cursor":
+      return path.join(home, ".cursor", "rules");
+  }
+}
+
+export interface DiscoveredSkill {
+  platform: SkillPlatform;
+  name: string;
+  path: string; // absolute path to the skill file (SKILL.md / .md / .mdc)
+}
+
+/**
+ * Walk every known platform's skill base directory and return one entry per
+ * installed skill file. Platform layout determines whether skills are per-dir
+ * (claude-code, codex) or flat files (openclaw, cursor). Missing base dirs are
+ * silently skipped. Unreadable entries are silently skipped (permission denied
+ * on a single subdir never aborts the whole walk).
+ */
+export function discoverInstalledSkills(
+  platform?: SkillPlatform,
+): DiscoveredSkill[] {
+  const targets = platform ? [platform] : SKILL_PLATFORMS;
+  const out: DiscoveredSkill[] = [];
+  for (const p of targets) {
+    const base = skillBaseDir(p);
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(base, { withFileTypes: true });
+    } catch {
+      continue; // missing or unreadable → nothing to audit here
+    }
+    for (const entry of entries) {
+      const full = path.join(base, entry.name);
+      if (p === "claude-code" || p === "codex") {
+        if (!entry.isDirectory()) continue;
+        const skillFile = path.join(full, "SKILL.md");
+        try {
+          if (!fs.statSync(skillFile).isFile()) continue;
+        } catch {
+          continue;
+        }
+        out.push({ platform: p, name: entry.name, path: skillFile });
+      } else if (p === "openclaw") {
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
+        out.push({
+          platform: p,
+          name: entry.name.replace(/\.md$/i, ""),
+          path: full,
+        });
+      } else if (p === "cursor") {
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".mdc")) continue;
+        out.push({
+          platform: p,
+          name: entry.name.replace(/\.mdc$/i, ""),
+          path: full,
+        });
+      }
+    }
+  }
+  // Deterministic ordering — tests golden-file against this.
+  out.sort((a, b) => {
+    if (a.platform !== b.platform) return a.platform.localeCompare(b.platform);
+    return a.name.localeCompare(b.name);
+  });
+  return out;
+}
+
 /** Destination file path for a skill on a given platform. */
 export function skillDestPath(platform: SkillPlatform, skillName: string): string {
   const home = os.homedir();
