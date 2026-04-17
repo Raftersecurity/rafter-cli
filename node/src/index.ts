@@ -6,6 +6,7 @@ import { createGetCommand } from "./commands/backend/get.js";
 import { createUsageCommand } from "./commands/backend/usage.js";
 import { createScanGroupCommand } from "./commands/scan/index.js";
 import { createAgentCommand } from "./commands/agent/index.js";
+import { createSkillCommand } from "./commands/skill/index.js";
 import { createCiCommand } from "./commands/ci/index.js";
 import { createHookCommand } from "./commands/hook/index.js";
 import { createMcpCommand } from "./commands/mcp/index.js";
@@ -48,6 +49,9 @@ program.addCommand(createScanGroupCommand());
 
 // Agent commands
 program.addCommand(createAgentCommand());
+
+// Skill commands (install / uninstall / list rafter-authored skills)
+program.addCommand(createSkillCommand());
 
 // CI commands
 program.addCommand(createCiCommand());
