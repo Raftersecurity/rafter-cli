@@ -68,6 +68,7 @@ rafter agent disable gemini
 
 # Scan files for secrets
 rafter agent scan .
+rafter agent scan --history            # full git history (gitleaks engine)
 
 # Execute commands safely
 rafter agent exec "git commit -m 'Add feature'"
