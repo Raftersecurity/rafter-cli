@@ -216,6 +216,74 @@ Exit code: 0 on success (missing/not-installed components are reported, not erro
 
 Persists `agent.components.<id>.enabled = false` in `~/.rafter/config.json`.
 
+### rafter skill list [OPTIONS]
+
+List rafter-authored skills shipped with this CLI and their install state across every supported platform. A skill is a bundled `SKILL.md` file (e.g. `rafter`, `rafter-agent-security`, `rafter-secure-design`, `rafter-code-review`). A platform is one of `claude-code`, `codex`, `openclaw`, `cursor`.
+
+- `--json` — machine-readable output
+- `--installed` — only show `(skill, platform)` pairs where the skill is installed
+- `--platform <name>` — restrict to a single platform
+
+JSON shape (`--json`):
+
+```json
+{
+  "skills": [
+    { "name": "rafter-secure-design", "version": "0.1.0", "description": "..." }
+  ],
+  "installations": [
+    {
+      "name": "rafter-secure-design",
+      "platform": "claude-code",
+      "path": "/home/user/.claude/skills/rafter-secure-design/SKILL.md",
+      "detected": true,
+      "installed": true,
+      "version": "0.1.0"
+    }
+  ]
+}
+```
+
+Exit codes: `0` on success; `1` on unknown `--platform`.
+
+### rafter skill install NAME [OPTIONS]
+
+Install a rafter-authored skill. The SKILL.md file is copied (not symlinked) so the install is reproducible and does not depend on the CLI's installation path at run time.
+
+- `--platform <name...>` — target platform(s); repeatable. Default: every platform whose config directory is detected on this machine.
+- `--to <path>` — explicit destination. If `<path>` ends in `.md` or `.mdc`, used as the literal file path. Otherwise treated as a skills *base* directory, installing to `<path>/<name>/SKILL.md`.
+- `--force` — when no `--platform` is given and no platform is detected, install to every known platform anyway.
+
+Destinations per platform:
+
+| Platform | Path |
+|----------|------|
+| `claude-code` | `~/.claude/skills/<name>/SKILL.md` |
+| `codex` | `~/.agents/skills/<name>/SKILL.md` |
+| `openclaw` | `~/.openclaw/skills/<name>.md` |
+| `cursor` | `~/.cursor/rules/<name>.mdc` |
+
+Exit codes:
+- `0` — install(s) succeeded (re-running is idempotent; the file is overwritten in place)
+- `1` — unknown skill name or unknown platform
+- `2` — no target platform detected (and `--force` was not passed), or an explicit `--platform` was not detected and `--force` was not passed
+
+Persists `skillInstallations.<platform>.<name> = { enabled: true, version, updatedAt }` in `~/.rafter/config.json`.
+
+### rafter skill uninstall NAME [OPTIONS]
+
+Remove a rafter-authored skill from one or more platforms.
+
+- `--platform <name...>` — target platform(s). Default: every platform on which the skill is currently installed.
+
+Missing files are reported, not errored. If the skill is not installed anywhere, the command exits 0 and reports "no changes".
+
+Exit codes:
+- `0` — uninstall(s) succeeded or were already absent
+- `1` — unknown skill name or unknown platform
+
+Persists `skillInstallations.<platform>.<name>.enabled = false` in `~/.rafter/config.json`.
+
 ### rafter scan local [PATH] [OPTIONS]
 
 Alias: `rafter agent scan` (deprecated — use `rafter scan local`)
