@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import dns from "dns/promises";
 import fs from "fs";
 import net from "net";
@@ -118,6 +118,8 @@ export interface AuditLogEntry {
   agentType?: AgentType;
   cwd?: string;
   gitRepo?: string;
+  /** sha256 of the previous raw line (including trailing newline). null for the first entry. */
+  prevHash?: string | null;
   action?: {
     command?: string;
     tool?: string;
@@ -132,6 +134,67 @@ export interface AuditLogEntry {
     actionTaken: ActionTaken;
     overrideReason?: string;
   };
+}
+
+/**
+ * Return sha256 hex of the last non-empty line of the file (including its
+ * trailing newline), or null if the file is empty / does not exist.
+ * Reads only the tail of the file so this is cheap even for large logs.
+ */
+export function readLastLineHash(filePath: string): string | null {
+  if (!fs.existsSync(filePath)) return null;
+  const stat = fs.statSync(filePath);
+  if (stat.size === 0) return null;
+  // Read the last 64KB — an audit line tops out well under this.
+  const readBytes = Math.min(stat.size, 65536);
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buf = Buffer.alloc(readBytes);
+    fs.readSync(fd, buf, 0, readBytes, stat.size - readBytes);
+    const text = buf.toString("utf-8");
+    // Find last non-empty line
+    const lines = text.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].trim()) {
+        return createHash("sha256").update(lines[i] + "\n").digest("hex");
+      }
+    }
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Best-effort exclusive file lock via O_EXCL sibling lock file. Retries briefly
+ * then gives up (better to log without chain integrity than to drop the event).
+ */
+export function acquireLock(targetPath: string, maxAttempts: number = 20, delayMs: number = 25): () => void {
+  const lockPath = targetPath + ".lock";
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const fd = fs.openSync(lockPath, "wx", 0o600);
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return () => {
+        try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
+      };
+    } catch (e: any) {
+      if (e.code !== "EEXIST") throw e;
+      // Stale lock detection: if older than 5s, steal it
+      try {
+        const st = fs.statSync(lockPath);
+        if (Date.now() - st.mtimeMs > 5000) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch { /* race with another releaser — retry */ }
+      const until = Date.now() + delayMs;
+      while (Date.now() < until) { /* busy wait */ }
+    }
+  }
+  // Degrade gracefully: caller proceeds without the lock.
+  return () => {};
 }
 
 /**
@@ -210,20 +273,73 @@ export class AuditLogger {
     const cwd = entry.cwd ?? process.cwd();
     const gitRepo = entry.gitRepo ?? findGitRepoRoot(cwd);
 
-    const fullEntry: AuditLogEntry = {
-      ...entry,
-      cwd,
-      gitRepo,
-      timestamp: new Date().toISOString(),
-      sessionId: this.sessionId
-    };
+    // Atomic read-last-line + append under a file lock so concurrent writers
+    // don't race and produce entries with duplicate prevHash values.
+    const release = acquireLock(this.logPath);
+    try {
+      const prevHash = readLastLineHash(this.logPath);
+      const fullEntry: AuditLogEntry = {
+        ...entry,
+        cwd,
+        gitRepo,
+        prevHash,
+        timestamp: new Date().toISOString(),
+        sessionId: this.sessionId
+      };
 
-    // Append to log file
-    const line = JSON.stringify(fullEntry) + "\n";
-    fs.appendFileSync(this.logPath, line, { encoding: "utf-8", mode: 0o600 });
+      const line = JSON.stringify(fullEntry) + "\n";
+      fs.appendFileSync(this.logPath, line, { encoding: "utf-8", mode: 0o600 });
 
-    // Send webhook notification if configured and risk meets threshold
-    this.sendNotification(fullEntry, config);
+      // Send webhook notification if configured and risk meets threshold
+      this.sendNotification(fullEntry, config);
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * Verify the hash chain integrity of the audit log.
+   * Returns break locations (1-indexed line numbers where prevHash didn't
+   * match the sha256 of the actual prior line). Empty array means the chain
+   * is intact. A non-empty result means the log has been tampered with,
+   * truncated, or rewritten (including by the legacy cleanup() path).
+   */
+  verify(): Array<{ line: number; reason: string }> {
+    if (!fs.existsSync(this.logPath)) {
+      return [];
+    }
+    const content = fs.readFileSync(this.logPath, "utf-8");
+    const rawLines = content.split("\n");
+    const breaks: Array<{ line: number; reason: string }> = [];
+    let lastRawLine: string | null = null;
+
+    for (let i = 0; i < rawLines.length; i++) {
+      const raw = rawLines[i];
+      if (!raw.trim()) continue;
+      let entry: AuditLogEntry;
+      try {
+        entry = JSON.parse(raw);
+      } catch {
+        breaks.push({ line: i + 1, reason: "malformed JSON" });
+        lastRawLine = raw;
+        continue;
+      }
+      const expected = lastRawLine === null
+        ? null
+        : createHash("sha256").update(lastRawLine + "\n").digest("hex");
+      const actual = entry.prevHash ?? null;
+      if (actual !== expected) {
+        breaks.push({
+          line: i + 1,
+          reason: expected === null
+            ? `first entry has prevHash ${actual} but expected null`
+            : `prevHash ${actual ?? "null"} does not match expected ${expected}`,
+        });
+      }
+      lastRawLine = raw;
+    }
+
+    return breaks;
   }
 
   /**
@@ -425,7 +541,14 @@ export class AuditLogger {
   }
 
   /**
-   * Clean up old log entries based on retention policy
+   * Clean up old log entries based on retention policy.
+   *
+   * Retention rewrites break the on-disk hash chain by design (some entries
+   * disappear). To keep verify() meaningful post-cleanup we re-seal the
+   * chain across surviving entries and record a sidecar `audit.retention.log`
+   * line capturing the pre-cleanup tip hash and pruned count, so a verifier
+   * can cross-check that retention — not tampering — is what broke the
+   * old chain.
    */
   cleanup(): void {
     const config = this.configManager.load();
@@ -433,12 +556,68 @@ export class AuditLogger {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
 
-    const entries = this.read();
-    const filtered = entries.filter(e => new Date(e.timestamp) >= cutoffDate);
+    const release = acquireLock(this.logPath);
+    try {
+      if (!fs.existsSync(this.logPath)) return;
+      const preTipHash = readLastLineHash(this.logPath);
+      const raw = fs.readFileSync(this.logPath, "utf-8");
+      const rawLines = raw.split("\n").filter(l => l.trim());
 
-    // Rewrite log file with only retained entries
-    const content = filtered.map(e => JSON.stringify(e)).join("\n") + "\n";
-    fs.writeFileSync(this.logPath, content, { encoding: "utf-8", mode: 0o600 });
+      const kept: AuditLogEntry[] = [];
+      let prunedCount = 0;
+      for (const line of rawLines) {
+        try {
+          const entry = JSON.parse(line) as AuditLogEntry;
+          if (!entry.timestamp) { prunedCount++; continue; }
+          if (new Date(entry.timestamp) >= cutoffDate) {
+            kept.push(entry);
+          } else {
+            prunedCount++;
+          }
+        } catch {
+          prunedCount++;
+        }
+      }
+
+      // Re-seal the chain across surviving entries.
+      const output: string[] = [];
+      let prevLine: string | null = null;
+      for (const entry of kept) {
+        const resealed: AuditLogEntry = {
+          ...entry,
+          prevHash: prevLine === null
+            ? null
+            : createHash("sha256").update(prevLine + "\n").digest("hex"),
+        };
+        const serialized = JSON.stringify(resealed);
+        output.push(serialized);
+        prevLine = serialized;
+      }
+
+      const content = output.length > 0 ? output.join("\n") + "\n" : "";
+      // Atomic replace so readers never see a truncated file.
+      const tmpPath = this.logPath + ".tmp-" + randomBytes(4).toString("hex");
+      fs.writeFileSync(tmpPath, content, { encoding: "utf-8", mode: 0o600 });
+      fs.renameSync(tmpPath, this.logPath);
+
+      if (prunedCount > 0) {
+        const sidecar = this.logPath + ".retention.log";
+        const note = {
+          timestamp: new Date().toISOString(),
+          prunedCount,
+          retainedCount: kept.length,
+          retentionDays,
+          preCleanupTipHash: preTipHash,
+        };
+        try {
+          fs.appendFileSync(sidecar, JSON.stringify(note) + "\n", { encoding: "utf-8", mode: 0o600 });
+        } catch {
+          // sidecar is best-effort — don't fail cleanup if we can't write it
+        }
+      }
+    } finally {
+      release();
+    }
   }
 
   /**

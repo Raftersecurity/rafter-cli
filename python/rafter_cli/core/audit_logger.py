@@ -1,6 +1,8 @@
 """JSONL audit logger."""
 from __future__ import annotations
 
+import errno
+import hashlib
 import ipaddress
 import json
 import os
@@ -76,6 +78,55 @@ def validate_webhook_url(raw_url: str) -> None:
             )
 
 
+def read_last_line_hash(path: Path) -> str | None:
+    """sha256 hex of the last non-empty line of path (including its trailing
+    newline), or None if the file is empty / missing."""
+    if not path.exists():
+        return None
+    size = path.stat().st_size
+    if size == 0:
+        return None
+    read_bytes = min(size, 65536)
+    with path.open("rb") as f:
+        f.seek(size - read_bytes)
+        tail = f.read(read_bytes).decode("utf-8", errors="replace")
+    for line in reversed(tail.split("\n")):
+        if line.strip():
+            return hashlib.sha256((line + "\n").encode("utf-8")).hexdigest()
+    return None
+
+
+def acquire_lock(target: Path, max_attempts: int = 20, delay_s: float = 0.025):
+    """Best-effort exclusive lock via O_EXCL sibling file. Returns a releaser.
+    Degrades gracefully if lock can't be acquired (returns a no-op releaser)."""
+    lock_path = target.parent / (target.name + ".lock")
+    for _ in range(max_attempts):
+        try:
+            fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+
+            def release() -> None:
+                try:
+                    os.unlink(lock_path)
+                except FileNotFoundError:
+                    pass
+
+            return release
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
+            # Steal stale locks (>5s old)
+            try:
+                if time.time() - lock_path.stat().st_mtime > 5:
+                    os.unlink(lock_path)
+                    continue
+            except FileNotFoundError:
+                continue
+            time.sleep(delay_s)
+    return lambda: None
+
+
 def find_git_repo_root(start_dir: Path, max_depth: int = 20) -> str | None:
     """Walk up from start_dir looking for a .git directory."""
     d = start_dir.resolve()
@@ -120,21 +171,56 @@ class AuditLogger:
         if git_repo is None:
             git_repo = find_git_repo_root(Path(cwd))
 
-        full = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "sessionId": self._session_id,
-            "cwd": cwd,
-            "gitRepo": git_repo,
-            **entry,
-        }
-        fd = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        release = acquire_lock(self._path)
         try:
-            os.write(fd, (json.dumps(full) + "\n").encode())
-        finally:
-            os.close(fd)
+            prev_hash = read_last_line_hash(self._path)
+            full = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "sessionId": self._session_id,
+                "cwd": cwd,
+                "gitRepo": git_repo,
+                "prevHash": prev_hash,
+                **entry,
+            }
+            fd = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            try:
+                os.write(fd, (json.dumps(full) + "\n").encode())
+            finally:
+                os.close(fd)
 
-        # Send webhook notification if configured and risk meets threshold
-        self._send_notification(full, config)
+            # Send webhook notification if configured and risk meets threshold
+            self._send_notification(full, config)
+        finally:
+            release()
+
+    def verify(self) -> list[dict]:
+        """Verify hash chain integrity. Returns list of breaks (1-indexed line numbers)."""
+        if not self._path.exists():
+            return []
+        breaks: list[dict] = []
+        last_raw: str | None = None
+        for i, raw in enumerate(self._path.read_text().split("\n"), start=1):
+            if not raw.strip():
+                continue
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError:
+                breaks.append({"line": i, "reason": "malformed JSON"})
+                last_raw = raw
+                continue
+            expected = (
+                hashlib.sha256((last_raw + "\n").encode("utf-8")).hexdigest()
+                if last_raw is not None
+                else None
+            )
+            actual = entry.get("prevHash")
+            if actual != expected:
+                if expected is None:
+                    breaks.append({"line": i, "reason": f"first entry has prevHash {actual} but expected null"})
+                else:
+                    breaks.append({"line": i, "reason": f"prevHash {actual!r} does not match expected {expected}"})
+            last_raw = raw
+        return breaks
 
     def _send_notification(self, entry: dict[str, Any], config: Any) -> None:
         """Send webhook notification for high-risk events (fire-and-forget)."""
@@ -277,18 +363,96 @@ class AuditLogger:
         return entries
 
     def cleanup(self, retention_days: int = 30) -> None:
+        """Drop entries older than retention_days and re-seal the hash chain.
+
+        Retention rewrites break the on-disk hash chain by design (some
+        entries disappear). To keep verify() meaningful post-cleanup we
+        re-seal the chain across surviving entries and record a sidecar
+        `audit.retention.log` line capturing the pre-cleanup tip hash and
+        pruned count, so a verifier can cross-check that retention — not
+        tampering — is what broke the old chain.
+        """
         cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
-        entries = self.read(since=cutoff)
-        content = ("\n".join(json.dumps(e) for e in entries) + "\n" if entries else "").encode()
-        fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=".audit_tmp_")
+        release = acquire_lock(self._path)
         try:
-            os.write(fd, content)
-            os.close(fd)
-            os.replace(tmp, self._path)
-        except Exception:
-            os.close(fd)
-            os.unlink(tmp)
-            raise
+            if not self._path.exists():
+                return
+            pre_tip_hash = read_last_line_hash(self._path)
+            raw_lines = [l for l in self._path.read_text().split("\n") if l.strip()]
+
+            kept: list[dict] = []
+            pruned_count = 0
+            for line in raw_lines:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    pruned_count += 1
+                    continue
+                ts = entry.get("timestamp")
+                if not ts:
+                    pruned_count += 1
+                    continue
+                try:
+                    entry_ts = datetime.fromisoformat(ts)
+                except ValueError:
+                    pruned_count += 1
+                    continue
+                if entry_ts >= cutoff:
+                    kept.append(entry)
+                else:
+                    pruned_count += 1
+
+            # Re-seal the chain across surviving entries.
+            output: list[str] = []
+            prev_line: str | None = None
+            for entry in kept:
+                entry["prevHash"] = (
+                    hashlib.sha256((prev_line + "\n").encode("utf-8")).hexdigest()
+                    if prev_line is not None
+                    else None
+                )
+                serialized = json.dumps(entry)
+                output.append(serialized)
+                prev_line = serialized
+
+            content = ("\n".join(output) + "\n").encode() if output else b""
+            fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=".audit_tmp_")
+            try:
+                os.write(fd, content)
+                os.close(fd)
+                os.chmod(tmp, 0o600)
+                os.replace(tmp, self._path)
+            except Exception:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                try:
+                    os.unlink(tmp)
+                except FileNotFoundError:
+                    pass
+                raise
+
+            if pruned_count > 0:
+                sidecar = self._path.parent / (self._path.name + ".retention.log")
+                note = {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "prunedCount": pruned_count,
+                    "retainedCount": len(kept),
+                    "retentionDays": retention_days,
+                    "preCleanupTipHash": pre_tip_hash,
+                }
+                try:
+                    sfd = os.open(sidecar, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+                    try:
+                        os.write(sfd, (json.dumps(note) + "\n").encode())
+                    finally:
+                        os.close(sfd)
+                except OSError:
+                    # sidecar is best-effort — don't fail cleanup if we can't write it
+                    pass
+        finally:
+            release()
 
     # ------------------------------------------------------------------
 

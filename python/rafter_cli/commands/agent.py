@@ -1130,6 +1130,7 @@ def audit(
     repo: str = typer.Option(None, "--repo", help="Filter by git repo path (substring match)"),
     cwd: str = typer.Option(None, "--cwd", help="Filter by working directory (substring match)"),
     share: bool = typer.Option(False, "--share", help="Generate a redacted excerpt for issue reports"),
+    verify: bool = typer.Option(False, "--verify", help="Verify the audit log hash chain and report tampering"),
 ):
     """View audit log entries."""
     if share:
@@ -1137,6 +1138,17 @@ def audit(
         return
 
     logger = AuditLogger()
+
+    if verify:
+        breaks = logger.verify()
+        if not breaks:
+            print("\u2713 Audit log hash chain intact")
+            return
+        plural = "" if len(breaks) == 1 else "s"
+        print(f"\u2717 Audit log hash chain broken ({len(breaks)} break{plural}):", file=sys.stderr)
+        for b in breaks:
+            print(f"  line {b['line']}: {b['reason']}", file=sys.stderr)
+        raise typer.Exit(code=1)
 
     since_dt = None
     if since:

@@ -18,6 +18,7 @@ export function createAuditCommand(): Command {
     .option("--repo <pattern>", "Filter by git repo path (substring match)")
     .option("--cwd <pattern>", "Filter by working directory (substring match)")
     .option("--share", "Generate a redacted excerpt for issue reports")
+    .option("--verify", "Verify the audit log hash chain and report tampering")
     .action((opts) => {
       if (opts.share) {
         generateShareExcerpt();
@@ -25,6 +26,19 @@ export function createAuditCommand(): Command {
       }
 
       const logger = new AuditLogger();
+
+      if (opts.verify) {
+        const breaks = logger.verify();
+        if (breaks.length === 0) {
+          console.log("✓ Audit log hash chain intact");
+          return;
+        }
+        console.error(`✗ Audit log hash chain broken (${breaks.length} break${breaks.length === 1 ? "" : "s"}):`);
+        for (const b of breaks) {
+          console.error(`  line ${b.line}: ${b.reason}`);
+        }
+        process.exit(1);
+      }
 
       const filter: any = {
         limit: parseInt(opts.last, 10)
