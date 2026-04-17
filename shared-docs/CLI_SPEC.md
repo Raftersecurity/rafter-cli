@@ -157,6 +157,7 @@ Initialize local security system. Creates config and detects available developme
 - `--all` — install all detected integrations and download Gitleaks
 - `-i, --interactive` — guided setup — prompts for each detected integration (Node only)
 - `--update` — re-download gitleaks and reinstall integrations without resetting config
+- `--local` — install integration configs into the current working directory instead of the user home. Writes to `./.claude/`, `./.agents/`, `./.gemini/`, `./.cursor/` etc. Supports `--with-claude-code`, `--with-codex`, `--with-gemini`, `--with-cursor`. User-level side effects (global config, `agent.environments.*.enabled`, auto-detection, gitleaks download) are suppressed in this mode. Intended for benchmark harnesses, one-off project setup, and ephemeral containers.
 
 ### rafter agent list [OPTIONS]
 
