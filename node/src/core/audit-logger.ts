@@ -6,6 +6,7 @@ import path from "path";
 import { getAuditLogPath } from "./config-defaults.js";
 import { ConfigManager } from "./config-manager.js";
 import { assessCommandRisk } from "./risk-rules.js";
+import { RegexScanner } from "../scanners/regex-scanner.js";
 
 /**
  * Validate a webhook URL to prevent SSRF attacks.
@@ -142,11 +143,13 @@ export class AuditLogger {
   private logPath: string;
   private sessionId: string;
   private configManager: ConfigManager;
+  private scanner: RegexScanner;
 
   constructor(logPath?: string) {
     this.logPath = logPath || getAuditLogPath();
     this.sessionId = this.generateSessionId();
     this.configManager = new ConfigManager();
+    this.scanner = new RegexScanner();
 
     // Ensure log directory exists
     const dir = path.dirname(this.logPath);
@@ -236,7 +239,7 @@ export class AuditLogger {
       eventType: "command_intercepted",
       agentType,
       action: {
-        command,
+        command: this.scanner.redact(command),
         riskLevel: this.assessCommandRisk(command)
       },
       securityCheck: {
@@ -308,7 +311,7 @@ export class AuditLogger {
       eventType: "policy_override",
       agentType,
       action: {
-        command,
+        command: command ? this.scanner.redact(command) : command,
         riskLevel: "high"
       },
       securityCheck: {
