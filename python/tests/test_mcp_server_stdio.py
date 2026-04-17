@@ -127,9 +127,9 @@ class TestToolListing:
         await cleanup(self.session, self.cm)
 
     @pytest.mark.asyncio
-    async def test_registers_exactly_4_tools(self):
+    async def test_registers_exactly_6_tools(self):
         result = await self.session.list_tools()
-        assert len(result.tools) == 4
+        assert len(result.tools) == 6
 
     @pytest.mark.asyncio
     async def test_tool_names_match_expected_set(self):
@@ -138,6 +138,8 @@ class TestToolListing:
         assert names == [
             "evaluate_command",
             "get_config",
+            "get_doc",
+            "list_docs",
             "read_audit_log",
             "scan_secrets",
         ]
@@ -170,9 +172,9 @@ class TestResourceListing:
         await cleanup(self.session, self.cm)
 
     @pytest.mark.asyncio
-    async def test_registers_exactly_2_resources(self):
+    async def test_registers_exactly_3_resources(self):
         result = await self.session.list_resources()
-        assert len(result.resources) == 2
+        assert len(result.resources) == 3
 
     @pytest.mark.asyncio
     async def test_exposes_config_resource(self):
@@ -411,7 +413,7 @@ class TestLifecycle:
     async def test_connect_disconnect_cleanly(self):
         session, cm = await create_connected_session()
         result = await session.list_tools()
-        assert len(result.tools) == 4
+        assert len(result.tools) == 6
         await cleanup(session, cm)
 
     @pytest.mark.asyncio
@@ -419,5 +421,5 @@ class TestLifecycle:
         for _ in range(3):
             session, cm = await create_connected_session()
             result = await session.list_tools()
-            assert len(result.tools) == 4
+            assert len(result.tools) == 6
             await cleanup(session, cm)

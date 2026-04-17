@@ -160,10 +160,12 @@ class AuditLogger:
         reason: str | None = None,
         agent_type: str | None = None,
     ) -> None:
+        from ..scanners.regex_scanner import RegexScanner
+        redacted = RegexScanner().redact(command)
         self.log({
             "eventType": "command_intercepted",
             "agentType": agent_type,
-            "action": {"command": command, "riskLevel": self._assess_command_risk(command)},
+            "action": {"command": redacted, "riskLevel": self._assess_command_risk(command)},
             "securityCheck": {"passed": passed, "reason": reason},
             "resolution": {"actionTaken": action_taken},
         })

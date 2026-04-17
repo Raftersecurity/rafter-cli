@@ -162,7 +162,10 @@ class TestServerFactory:
             pass
 
         if tool_names:
-            expected = {"scan_secrets", "evaluate_command", "read_audit_log", "get_config"}
+            expected = {
+                "scan_secrets", "evaluate_command", "read_audit_log", "get_config",
+                "list_docs", "get_doc",
+            }
             assert expected == tool_names
 
     def test_registers_expected_resources(self):
@@ -176,6 +179,7 @@ class TestServerFactory:
         if resource_uris:
             assert "rafter://config" in resource_uris
             assert "rafter://policy" in resource_uris
+            assert "rafter://docs" in resource_uris
 
 
 class TestVersion:

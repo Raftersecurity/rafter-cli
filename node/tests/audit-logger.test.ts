@@ -114,6 +114,32 @@ describe("AuditLogger", () => {
       expect(entries[0].eventType).toBe("policy_override");
       expect(entries[0].action?.riskLevel).toBe("high");
     });
+
+    it("logCommandIntercepted redacts secrets before persisting", () => {
+      const logger = new AuditLogger(logPath);
+      const token = "ghp_FAKE1234567890abcdefghijklmnopqrstuvwxyz";
+      logger.logCommandIntercepted(
+        `export GITHUB_TOKEN=${token} && gh repo list`,
+        true,
+        "allowed",
+      );
+      const entries = logger.read();
+      expect(entries).toHaveLength(1);
+      const logged = entries[0].action?.command as string;
+      expect(logged).not.toContain(token);
+      expect(logged).toMatch(/ghp_\*+/);
+      // raw content must not appear anywhere on disk
+      const onDisk = fs.readFileSync(logPath, "utf-8");
+      expect(onDisk).not.toContain(token);
+    });
+
+    it("logPolicyOverride redacts secrets in the command", () => {
+      const logger = new AuditLogger(logPath);
+      const token = "ghp_FAKE1234567890abcdefghijklmnopqrstuvwxyz";
+      logger.logPolicyOverride("user approved", `gh auth login --with-token ${token}`);
+      const onDisk = fs.readFileSync(logPath, "utf-8");
+      expect(onDisk).not.toContain(token);
+    });
   });
 
   describe("read with filters", () => {

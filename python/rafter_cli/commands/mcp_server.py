@@ -12,6 +12,7 @@ import typer
 from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
 from ..core.config_manager import ConfigManager
+from ..core.docs_loader import fetch_doc, list_docs, resolve_doc_selector
 from ..scanners.gitleaks import GitleaksScanner
 from ..scanners.regex_scanner import RegexScanner
 
@@ -135,6 +136,47 @@ def handle_get_policy_resource() -> str:
     return json.dumps(asdict(manager.load_with_policy()), indent=2)
 
 
+def handle_list_docs(tag: str | None = None) -> list[dict]:
+    """List repo-specific security docs from .rafter.yml."""
+    entries = list_docs()
+    if tag:
+        entries = [e for e in entries if tag in (e.tags or [])]
+    return [
+        {
+            "id": e.id,
+            "source": e.source,
+            "source_kind": e.source_kind,
+            "description": e.description or "",
+            "tags": e.tags or [],
+            "cache_status": e.cache_status,
+        }
+        for e in entries
+    ]
+
+
+def handle_get_doc(id_or_tag: str, refresh: bool = False) -> list[dict]:
+    """Return content for docs matching id or tag."""
+    matches = resolve_doc_selector(id_or_tag)
+    if not matches:
+        raise RuntimeError(f"No doc matched id or tag: {id_or_tag}")
+    results = []
+    for entry in matches:
+        fetched = fetch_doc(entry, refresh=refresh)
+        results.append({
+            "id": entry["id"],
+            "source": fetched.source,
+            "source_kind": fetched.source_kind,
+            "stale": fetched.stale,
+            "content": fetched.content,
+        })
+    return results
+
+
+def handle_get_docs_resource() -> str:
+    """Return docs list metadata as JSON string."""
+    return json.dumps(handle_list_docs(), indent=2)
+
+
 # ── MCP server factory ────────────────────────────────────────────────
 
 
@@ -187,6 +229,28 @@ def create_mcp_server():
         """
         return json.dumps(handle_get_config(key))
 
+    @mcp.tool()
+    def list_docs(tag: str | None = None) -> str:
+        """List repo-specific security docs declared in .rafter.yml.
+
+        Call this early in any security-relevant task to discover project-specific
+        rules, threat models, or compliance policies the user expects agents to follow.
+
+        Args:
+            tag: Filter to docs whose tags include this value.
+        """
+        return json.dumps(handle_list_docs(tag))
+
+    @mcp.tool()
+    def get_doc(id_or_tag: str, refresh: bool = False) -> str:
+        """Return the content of a repo-specific security doc by id or tag.
+
+        Args:
+            id_or_tag: Doc id or tag selector.
+            refresh: Force re-fetch for URL-backed docs (bypass cache).
+        """
+        return json.dumps(handle_get_doc(id_or_tag, refresh))
+
     @mcp.resource("rafter://config")
     def config_resource() -> str:
         """Current Rafter configuration."""
@@ -196,6 +260,11 @@ def create_mcp_server():
     def policy_resource() -> str:
         """Active security policy (merged .rafter.yml + config)."""
         return handle_get_policy_resource()
+
+    @mcp.resource("rafter://docs")
+    def docs_resource() -> str:
+        """Repo-specific security docs declared in .rafter.yml (metadata only)."""
+        return handle_get_docs_resource()
 
     return mcp
 

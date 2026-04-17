@@ -8,6 +8,7 @@ from .commands.agent import agent_app
 from .commands.backend import register_backend_commands
 from .commands.brief import brief_app
 from .commands.ci import ci_app
+from .commands.docs import docs_app
 from .commands.hook import hook_app
 from .commands.issues.issues_app import issues_app
 from .commands.mcp_server import mcp_app
@@ -15,6 +16,7 @@ from .commands.notify import notify_app
 from .commands.policy import policy_app
 from .commands.report import report_main
 from .commands.scan import scan_app
+from .commands.skill import skill_app
 from .utils.formatter import set_agent_mode
 
 app = typer.Typer(
@@ -99,11 +101,13 @@ app.add_typer(scan_app)
 app.add_typer(agent_app)
 app.add_typer(brief_app)
 app.add_typer(ci_app)
+app.add_typer(docs_app)
 app.add_typer(hook_app)
 app.add_typer(issues_app)
 app.add_typer(mcp_app)
 app.add_typer(notify_app)
 app.add_typer(policy_app)
+app.add_typer(skill_app)
 app.command("report")(report_main)
 
 if __name__ == "__main__":

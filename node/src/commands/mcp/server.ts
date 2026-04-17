@@ -12,6 +12,7 @@ import { GitleaksScanner } from "../../scanners/gitleaks.js";
 import { CommandInterceptor } from "../../core/command-interceptor.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { listDocs, resolveDocSelector, fetchDoc } from "../../core/docs-loader.js";
 import { createRequire } from "module";
 
 const _require = createRequire(import.meta.url);
@@ -112,6 +113,28 @@ export function createServer(): Server {
           },
         },
       },
+      {
+        name: "list_docs",
+        description: "List repo-specific security docs declared in .rafter.yml. Call this early in any security-relevant task to discover project-specific rules, threat models, or compliance policies the user expects agents to follow.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            tag: { type: "string", description: "Filter to docs whose tags include this value" },
+          },
+        },
+      },
+      {
+        name: "get_doc",
+        description: "Return the content of a repo-specific security doc by id or tag. Use after list_docs to read a specific document.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            id_or_tag: { type: "string", description: "Doc id or tag selector" },
+            refresh: { type: "boolean", description: "Force re-fetch for URL-backed docs (bypass cache)" },
+          },
+          required: ["id_or_tag"],
+        },
+      },
     ],
   }));
 
@@ -177,6 +200,45 @@ export function createServer(): Server {
         return textResult(value);
       }
 
+      case "list_docs": {
+        const tag = args?.tag as string | undefined;
+        const entries = listDocs().filter(d =>
+          !tag || (Array.isArray(d.tags) && d.tags.includes(tag))
+        );
+        return textResult(entries.map(e => ({
+          id: e.id,
+          source: e.source,
+          source_kind: e.sourceKind,
+          description: e.description || "",
+          tags: e.tags || [],
+          cache_status: e.cacheStatus,
+        })));
+      }
+
+      case "get_doc": {
+        const selector = args?.id_or_tag as string;
+        if (!selector) return errorResult("id_or_tag is required");
+        const matches = resolveDocSelector(selector);
+        if (matches.length === 0) return errorResult(`No doc matched id or tag: ${selector}`);
+        const refresh = Boolean(args?.refresh);
+        const results: Array<{ id: string; source: string; source_kind: string; stale: boolean; content: string }> = [];
+        for (const entry of matches) {
+          try {
+            const fetched = await fetchDoc(entry, { refresh });
+            results.push({
+              id: entry.id,
+              source: fetched.source,
+              source_kind: fetched.sourceKind,
+              stale: fetched.stale,
+              content: fetched.content,
+            });
+          } catch (err: any) {
+            return errorResult(`Failed to fetch ${entry.id}: ${err.message || err}`);
+          }
+        }
+        return textResult(results);
+      }
+
       default:
         return errorResult(`Unknown tool: ${name}`);
     }
@@ -196,6 +258,12 @@ export function createServer(): Server {
         uri: "rafter://policy",
         name: "Rafter Policy",
         description: "Active security policy (merged .rafter.yml + config)",
+        mimeType: "application/json",
+      },
+      {
+        uri: "rafter://docs",
+        name: "Rafter Docs",
+        description: "Repo-specific security docs declared in .rafter.yml (metadata only, no content)",
         mimeType: "application/json",
       },
     ],
@@ -223,6 +291,24 @@ export function createServer(): Server {
             text: JSON.stringify(manager.loadWithPolicy(), null, 2),
           }],
         };
+
+      case "rafter://docs": {
+        const entries = listDocs().map(e => ({
+          id: e.id,
+          source: e.source,
+          source_kind: e.sourceKind,
+          description: e.description || "",
+          tags: e.tags || [],
+          cache_status: e.cacheStatus,
+        }));
+        return {
+          contents: [{
+            uri: "rafter://docs",
+            mimeType: "application/json",
+            text: JSON.stringify(entries, null, 2),
+          }],
+        };
+      }
 
       default:
         throw new Error(`Unknown resource: ${uri}`);
