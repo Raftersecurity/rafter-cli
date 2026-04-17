@@ -2123,3 +2123,135 @@ def baseline_add(
     _save_baseline(data)
 
     rprint(fmt.success(f"Added to baseline: {pattern} in {file}"))
+
+
+# ── components: list / enable / disable ──────────────────────────────
+
+from .agent_components import (  # noqa: E402
+    get_registry as _components_get_registry,
+    record_component_state as _components_record_state,
+    resolve_component as _components_resolve,
+    snapshot_components as _components_snapshot,
+)
+
+
+@agent_app.command("list")
+def components_list(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+    installed_only: bool = typer.Option(False, "--installed", help="Only show installed components"),
+    detected_only: bool = typer.Option(False, "--detected", help="Only show components whose platform is detected"),
+):
+    """List agent integration components and their state."""
+    rows = _components_snapshot()
+    if installed_only:
+        rows = [r for r in rows if r["installed"]]
+    if detected_only:
+        rows = [r for r in rows if r["detected"]]
+
+    if json_output:
+        print(json.dumps({"components": rows}, indent=2))
+        return
+
+    by_platform: dict[str, list[dict]] = {}
+    for r in rows:
+        by_platform.setdefault(r["platform"], []).append(r)
+
+    rprint(fmt.header("Rafter agent components"))
+    rprint(fmt.divider())
+    for platform, items in by_platform.items():
+        detected = items[0]["detected"] if items else False
+        suffix = "" if detected else " (not detected)"
+        rprint(f"\n{platform}{suffix}")
+        for r in items:
+            label = r["id"].ljust(28)
+            if r["state"] == "installed":
+                marker = "● installed"
+            elif r["state"] == "not-installed":
+                marker = "○ not installed"
+            else:
+                marker = "· platform not detected"
+            rprint(f"  {label} {marker}")
+    rprint()
+    rprint(fmt.info(
+        "Use `rafter agent enable <id>` or `rafter agent disable <id>` "
+        "to toggle individual components.",
+    ))
+
+
+def _known_component_ids_hint() -> str:
+    return ", ".join(spec.id for spec in _components_get_registry())
+
+
+@agent_app.command("enable")
+def components_enable(
+    components: list[str] = typer.Argument(..., help="Component IDs (e.g. claude-code.mcp, cursor.hooks)"),
+    force: bool = typer.Option(False, "--force", help="Install even if platform is not detected"),
+):
+    """Install a specific agent component."""
+    exit_code = 0
+    seen: set[str] = set()
+    for raw in components:
+        if raw in seen:
+            continue
+        seen.add(raw)
+
+        spec = _components_resolve(raw)
+        if spec is None:
+            rprint(fmt.error(f"Unknown component: {raw}"), file=sys.stderr)
+            rprint(fmt.info(f"Run 'rafter agent list' to see available components. Known IDs: {_known_component_ids_hint()}"), file=sys.stderr)
+            exit_code = 1
+            continue
+
+        if not spec.detect_dir.exists() and not force:
+            rprint(fmt.warning(
+                f"{spec.id}: platform not detected ({spec.detect_dir}). "
+                f"Re-run with --force to install anyway."
+            ), file=sys.stderr)
+            exit_code = exit_code or 2
+            continue
+
+        try:
+            spec.install()
+            _components_record_state(spec.id, True)
+            rprint(fmt.success(f"Enabled {spec.id} → {spec.path}"))
+        except Exception as err:
+            rprint(fmt.error(f"Failed to enable {spec.id}: {err}"), file=sys.stderr)
+            exit_code = 1
+
+    if exit_code:
+        raise typer.Exit(code=exit_code)
+
+
+@agent_app.command("disable")
+def components_disable(
+    components: list[str] = typer.Argument(..., help="Component IDs to uninstall"),
+):
+    """Uninstall a specific agent component."""
+    exit_code = 0
+    seen: set[str] = set()
+    for raw in components:
+        if raw in seen:
+            continue
+        seen.add(raw)
+
+        spec = _components_resolve(raw)
+        if spec is None:
+            rprint(fmt.error(f"Unknown component: {raw}"), file=sys.stderr)
+            rprint(fmt.info(f"Run 'rafter agent list' to see available components. Known IDs: {_known_component_ids_hint()}"), file=sys.stderr)
+            exit_code = 1
+            continue
+
+        try:
+            was_installed = spec.is_installed()
+            spec.uninstall()
+            _components_record_state(spec.id, False)
+            if was_installed:
+                rprint(fmt.success(f"Disabled {spec.id} (removed from {spec.path})"))
+            else:
+                rprint(fmt.info(f"{spec.id} was not installed — no changes"))
+        except Exception as err:
+            rprint(fmt.error(f"Failed to disable {spec.id}: {err}"), file=sys.stderr)
+            exit_code = 1
+
+    if exit_code:
+        raise typer.Exit(code=exit_code)
