@@ -59,6 +59,6 @@ Do not duplicate. If a sibling skill already owns the topic, Read it and stop �
 ## Status
 
 - `rafter-code-review` — **landed** (rf-z7j). Ships alongside this skill; invoke directly.
-- `rafter-secure-design` — tracked as `rf-bcr` (new skill, shift-left design). Until it lands, use the design patterns above as prompts to an agent.
+- `rafter-secure-design` — **landed** (rf-bcr). Ships alongside this skill; invoke directly. Router skill with sub-docs for auth, data storage, API design, ingestion, deployment, dependencies, threat modeling, and standards pointers.
 
-Once both are installed, prefer invoking them directly for structured output over re-deriving checklists here.
+Both are installed — prefer invoking them directly for structured output over re-deriving checklists here.
