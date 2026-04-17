@@ -18,7 +18,7 @@ Requires Python 3.10+.
 
 ## Quick Start
 
-### Backend Code Analysis
+### Remote Code Analysis
 
 ```bash
 export RAFTER_API_KEY="your-key"   # or add to .env file
@@ -37,12 +37,28 @@ rafter usage                                  # check quota
 ```bash
 rafter agent init                # initialize config + detect environments
 rafter agent init --all          # install all detected integrations
+rafter agent init --local        # write config to ./.rafter (ephemeral/benchmark)
+rafter agent list                # show detected integrations + status
+rafter agent enable claude-code  # toggle a single platform on/off
 rafter agent scan .              # scan for secrets
 rafter agent scan --diff HEAD~1  # scan changed files
+rafter agent scan --history      # scan full git history (gitleaks engine)
 rafter agent exec "git commit"   # execute with risk assessment
 rafter agent audit               # view security logs
+rafter agent audit --verify      # verify tamper-evident hash chain
 rafter agent config show         # view configuration
 ```
+
+### Skills
+
+```bash
+rafter skill list                      # installed + available skills
+rafter skill install --all             # install all four skills
+rafter skill review github:owner/repo  # audit a third-party skill before install
+rafter skill review --installed        # audit every skill already on disk
+```
+
+Four skills ship with the CLI: `rafter` (router), `rafter-code-review`, `rafter-secure-design`, `rafter-skill-review`.
 
 ### Pretool Hooks (Claude Code)
 

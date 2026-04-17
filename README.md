@@ -173,15 +173,21 @@ Every developer gets the same policies and the same deterministic output.
 ### Setup
 
 ```sh
-rafter agent init --all           # install all detected integrations
-rafter agent init --with-claude-code  # or install specific ones
+rafter agent init --all                    # install all detected integrations
+rafter agent init --with-claude-code       # or install specific ones
+rafter agent init --local                  # write config to ./.rafter (not ~/.rafter)
+rafter agent list                          # show detected integrations + status
+rafter agent enable claude-code            # opt a single platform in
+rafter agent disable gemini                # opt a single platform out
 ```
 
 This command:
-- Creates `~/.rafter/` config and audit log
+- Creates `~/.rafter/` config and audit log (or `./.rafter/` with `--local` for ephemeral / containerized / benchmark setups)
 - Auto-detects Claude Code, Codex CLI, OpenClaw, Gemini, Cursor, Windsurf, Continue.dev, and Aider
 - With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
 - With `--with-gitleaks` or `--all`: downloads [Gitleaks](https://github.com/gitleaks/gitleaks) for enhanced secret scanning (falls back to built-in 21-pattern regex scanner)
+
+Use `rafter agent list/enable/disable` for granular per-component control after the initial install — toggle any platform on or off without re-running `init`.
 
 ### Secret Scanning
 
@@ -192,6 +198,7 @@ rafter agent scan .              # scan directory
 rafter agent scan ./config.js    # scan specific file
 rafter agent scan --staged       # scan git staged files only
 rafter agent scan --diff HEAD~1  # scan files changed since a git ref
+rafter agent scan --history      # scan full git history (requires gitleaks engine)
 rafter agent scan --json         # structured output
 rafter agent scan --quiet        # silent unless secrets found (CI-friendly)
 ```
@@ -237,7 +244,7 @@ Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-c
 ```yaml
 repos:
   - repo: https://github.com/raftersecurity/rafter-cli
-    rev: v0.6.5
+    rev: v0.7.1
     hooks:
       - id: rafter-scan-node
 ```
@@ -264,32 +271,56 @@ rafter agent exec "rm -rf /"                       # critical → blocked
 
 For git commands (`git commit`, `git push`), Rafter scans staged files for secrets before execution and blocks if any are found.
 
-### Skill Auditing
+### Skills — Install, Audit, Manage
 
 **Treat third-party agent skill ecosystems as hostile by default.** There have been reports of malware distributed through AI agent skill marketplaces, using social-engineering instructions to run obfuscated shell commands.
 
+Rafter ships four first-party skills you can install into any supported agent:
+
+| Skill | When to use |
+|-------|-------------|
+| `rafter` | CYOA router — detection (`rafter scan` / `rafter run`) and day-to-day usage |
+| `rafter-code-review` | OWASP / MITRE / ASVS-style structured code review during PR / refactor |
+| `rafter-secure-design` | Shift-left design-phase threat modeling at feature kickoff |
+| `rafter-skill-review` | Guided security review of third-party skills before install |
+
 ```sh
-rafter agent audit-skill path/to/untrusted-skill.md
+rafter skill list                              # show installed + available skills
+rafter skill install rafter-code-review        # install one
+rafter skill install --all                     # install all four
+rafter skill uninstall rafter-secure-design    # remove one
 ```
 
-**Quick scan** (deterministic, runs instantly): detects embedded secrets, external URLs, and high-risk commands (`curl|sh`, `eval()`, `base64|sh`, fork bombs, etc.). Every finding includes file, line, rule ID, and a concrete fix hint — actionable, not just advisory.
+**Auditing untrusted skills** (preferred over deprecated `rafter agent audit-skill`):
 
-**Deep analysis** (via OpenClaw, if installed): 12-dimension security review covering trust/attribution, network security, command execution, file system access, credential handling, input validation, data exfiltration, obfuscation, scope alignment, error handling, dependencies, and environment manipulation.
+```sh
+rafter skill review ./path/to/skill           # local file or directory
+rafter skill review github:owner/repo         # remote shorthand (also gitlab:, npm:)
+rafter skill review --installed               # audit every skill already on disk
+rafter skill review --installed --summary     # terse table across all agents
+```
 
-Without OpenClaw, generates an LLM-ready review prompt you can paste into any model.
+**Quick scan** (deterministic, runs instantly): detects embedded secrets, external URLs, high-risk commands (`curl|sh`, `eval()`, `base64|sh`, fork bombs), obfuscation signals, and binary/suspicious file inventory. Every finding includes file, line, rule ID, and a concrete fix hint.
+
+**Persistent cache** for remote shorthands (`github:`, `gitlab:`, `npm:`) keeps repeated reviews fast — tune with `--cache-ttl 1h` or bypass via `--no-cache`.
+
+**Deep analysis** (via OpenClaw, if installed): 12-dimension security review covering trust/attribution, network security, command execution, file system access, credential handling, input validation, data exfiltration, obfuscation, scope alignment, error handling, dependencies, and environment manipulation. Without OpenClaw, generates an LLM-ready review prompt you can paste into any model.
 
 ### Audit Log
 
-Every security-relevant event is logged to `~/.rafter/audit.jsonl` in JSON-lines format.
+Every security-relevant event is logged to `~/.rafter/audit.jsonl` in JSON-lines format. Each entry carries a `prevHash` forming a SHA-256 chain, plus the `cwd` and enclosing `gitRepo` where the event was recorded — so tampering, truncation, and out-of-context replays are all detectable.
 
 ```sh
 rafter agent audit                           # last 10 entries
 rafter agent audit --last 20                 # last 20
 rafter agent audit --event secret_detected   # filter by type
 rafter agent audit --since 2026-02-01        # filter by date
+rafter agent audit --verify                  # verify hash chain (exit 1 if tampered)
 ```
 
 Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`, `scan_executed`, `config_changed`.
+
+Point the log at a repo-local path by setting `agent.audit.logPath` in `.rafter.yml` (e.g. `.rafter/audit.jsonl`) so every contributor can verify their own chain independently. Retention pruning rewrites the log atomically and re-seals the chain, preserving a sidecar manifest (`audit.jsonl.retention.log`) that records the hashes of pruned entries — verify still passes after legitimate cleanup, and fails on forgery.
 
 ### Configuration
 
@@ -400,7 +431,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/raftersecurity/rafter-cli
-    rev: v0.6.5
+    rev: v0.7.1
     hooks:
       - id: rafter-scan-node      # auto-installs via npm
       # - id: rafter-scan-python  # auto-installs via pip
@@ -453,10 +484,14 @@ Add to any MCP client config:
 
 `rafter agent init` auto-detects which platforms are installed. Use `--with-*` flags or `--all` to install integrations.
 
-**Skill-based platforms** (Claude Code, Codex, OpenClaw) get two skills:
+**Skill-based platforms** (Claude Code, Codex, OpenClaw) get the full Rafter skill set:
 
-- **Remote Code Analysis** — Auto-invokable (read-only API calls). Triggers remote security audits, retrieves results.
-- **Local Security Toolkit** — User-invoked. Secret scanning, policy enforcement, extension auditing, audit log.
+- **`rafter`** — CYOA router for detection (remote + local scanning, audit log, policy).
+- **`rafter-code-review`** — Structured OWASP / MITRE / ASVS walkthrough during PR review or refactoring.
+- **`rafter-secure-design`** — Shift-left threat modeling at feature kickoff (auth, data, API, ingestion, deployment, dependencies).
+- **`rafter-skill-review`** — Guided review of third-party skills before install.
+
+Install, remove, or audit them at any time with `rafter skill list/install/uninstall/review`.
 
 **MCP-based platforms** (Gemini, Cursor, Windsurf, Continue.dev, Aider) connect to the Rafter MCP server (`rafter mcp serve`), which exposes `scan_secrets`, `evaluate_command`, `read_audit_log`, and `get_config` tools. See individual setup recipes in [`recipes/`](recipes/).
 

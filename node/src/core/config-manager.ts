@@ -297,6 +297,9 @@ export class ConfigManager {
       if (policy.audit.logLevel) {
         config.agent.audit.logLevel = policy.audit.logLevel as any;
       }
+      if (policy.audit.logPath) {
+        config.agent.audit.logPath = policy.audit.logPath;
+      }
     }
 
     return config;

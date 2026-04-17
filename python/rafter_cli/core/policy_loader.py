@@ -95,6 +95,8 @@ def _map_policy(raw: dict) -> dict:
                 print(f'Warning: "audit.retention_days" must be a number — ignoring.', file=sys.stderr)
         if audit.get("log_level"):
             policy["audit"]["log_level"] = audit["log_level"]
+        if audit.get("log_path"):
+            policy["audit"]["log_path"] = str(audit["log_path"])
 
     docs_raw = raw.get("docs")
     if isinstance(docs_raw, list):
@@ -225,5 +227,8 @@ def _validate_policy(policy: dict, raw: dict) -> dict:
         if "log_level" in audit and audit["log_level"] not in _VALID_LOG_LEVELS:
             print('Warning: "audit.log_level" must be one of: debug, info, warn, error \u2014 ignoring.', file=sys.stderr)
             del audit["log_level"]
+        if "log_path" in audit and not isinstance(audit["log_path"], str):
+            print('Warning: "audit.log_path" must be a string \u2014 ignoring.', file=sys.stderr)
+            del audit["log_path"]
 
     return policy

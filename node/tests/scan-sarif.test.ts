@@ -1,17 +1,11 @@
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
-import { execSync, spawnSync } from "child_process";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { spawnSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import os from "os";
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const CLI_PATH = path.resolve(PROJECT_ROOT, "dist/index.js");
-
-beforeAll(() => {
-  try {
-    execSync("pnpm run build", { cwd: PROJECT_ROOT, stdio: "ignore", timeout: 30000 });
-  } catch { /* dist may already exist */ }
-}, 60000);
 
 /**
  * Helper to run the CLI scan command and return parsed output.
