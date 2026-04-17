@@ -66,8 +66,9 @@ rafter agent scan .
 # Execute commands safely
 rafter agent exec "git commit -m 'Add feature'"
 
-# View audit logs
+# View audit logs (tamper-evident hash chain)
 rafter agent audit
+rafter agent audit --verify            # verify chain; exit 1 if tampered
 
 # Manage configuration
 rafter agent config show

@@ -280,16 +280,19 @@ Without OpenClaw, generates an LLM-ready review prompt you can paste into any mo
 
 ### Audit Log
 
-Every security-relevant event is logged to `~/.rafter/audit.jsonl` in JSON-lines format.
+Every security-relevant event is logged to `~/.rafter/audit.jsonl` in JSON-lines format. Each entry carries a `prevHash` forming a SHA-256 chain, plus the `cwd` and enclosing `gitRepo` where the event was recorded — so tampering, truncation, and out-of-context replays are all detectable.
 
 ```sh
 rafter agent audit                           # last 10 entries
 rafter agent audit --last 20                 # last 20
 rafter agent audit --event secret_detected   # filter by type
 rafter agent audit --since 2026-02-01        # filter by date
+rafter agent audit --verify                  # verify hash chain (exit 1 if tampered)
 ```
 
 Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`, `scan_executed`, `config_changed`.
+
+Point the log at a repo-local path by setting `agent.audit.logPath` in `.rafter.yml` (e.g. `.rafter/audit.jsonl`) so every contributor can verify their own chain independently. Retention pruning rewrites the log atomically and re-seals the chain, preserving a sidecar manifest (`audit.jsonl.retention.log`) that records the hashes of pruned entries — verify still passes after legitimate cleanup, and fails on forgery.
 
 ### Configuration
 
