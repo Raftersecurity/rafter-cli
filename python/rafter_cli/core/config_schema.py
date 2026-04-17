@@ -122,6 +122,9 @@ class AgentConfig:
     audit: AuditConfig = field(default_factory=AuditConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
+    # Fine-grained per-component install state (set by `rafter agent enable/disable`).
+    # Keys are component IDs like "claude-code.hooks"; values are `{enabled, updatedAt}`.
+    components: dict = field(default_factory=dict)
 
 
 @dataclass
