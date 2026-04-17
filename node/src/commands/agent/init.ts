@@ -17,24 +17,36 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
+ * Skills installed by `rafter agent init` for Claude Code / Codex.
+ *
+ * Sourced from `resources/skills/<name>/SKILL.md` in the shipped package.
+ * Keep this list in sync with Python's installer and the skills that actually
+ * ship in both resources/skills/ trees.
+ */
+const AGENT_SKILLS: { name: string; description: string }[] = [
+  { name: "rafter", description: "Rafter Remote" },
+  { name: "rafter-agent-security", description: "Rafter Agent Security" },
+  { name: "rafter-secure-design", description: "Rafter Secure Design" },
+  { name: "rafter-code-review", description: "Rafter Code Review" },
+];
+
+/**
  * Install global instruction files for platforms that support them.
  *
- * Only Claude Code (~/.claude/CLAUDE.md) and Cursor (~/.cursor/rules/*.mdc)
- * have confirmed global instruction file paths. Other platforms (Codex, Gemini,
- * Windsurf, Continue.dev, Aider) only support project-level instruction files
- * (AGENTS.md, GEMINI.md, .windsurfrules, .continuerules, .aider/conventions.md)
- * which are handled by `rafter agent init-project` (not yet implemented).
+ * User scope: Claude Code (~/.claude/CLAUDE.md), Cursor (~/.cursor/rules/*.mdc).
+ * Project scope: both platforms also honor <cwd>/.claude/CLAUDE.md and
+ * <cwd>/.cursor/rules/*.mdc. Other platforms (Codex, Gemini, Windsurf,
+ * Continue.dev, Aider) have project-only instruction file conventions
+ * (AGENTS.md, GEMINI.md, etc.) handled by `rafter agent init-project`.
  */
 function installGlobalInstructions(platforms: {
   claudeCode?: boolean;
   cursor?: boolean;
-}): void {
-  const homeDir = os.homedir();
-
-  // Claude Code — ~/.claude/CLAUDE.md (confirmed global instruction file)
+}, root: string): void {
+  // Claude Code — <root>/.claude/CLAUDE.md
   if (platforms.claudeCode) {
     try {
-      const filePath = path.join(homeDir, ".claude", "CLAUDE.md");
+      const filePath = path.join(root, ".claude", "CLAUDE.md");
       injectInstructionFile(filePath);
       console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
     } catch (e) {
@@ -42,10 +54,10 @@ function installGlobalInstructions(platforms: {
     }
   }
 
-  // Cursor — ~/.cursor/rules/rafter-security.mdc (global rules directory, markdown format)
+  // Cursor — <root>/.cursor/rules/rafter-security.mdc
   if (platforms.cursor) {
     try {
-      const filePath = path.join(homeDir, ".cursor", "rules", "rafter-security.mdc");
+      const filePath = path.join(root, ".cursor", "rules", "rafter-security.mdc");
       injectInstructionFile(filePath);
       console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
     } catch (e) {
@@ -54,10 +66,9 @@ function installGlobalInstructions(platforms: {
   }
 }
 
-function installClaudeCodeHooks(): void {
-  const homeDir = os.homedir();
-  const settingsPath = path.join(homeDir, ".claude", "settings.json");
-  const claudeDir = path.join(homeDir, ".claude");
+function installClaudeCodeHooks(root: string): void {
+  const settingsPath = path.join(root, ".claude", "settings.json");
+  const claudeDir = path.join(root, ".claude");
 
   if (!fs.existsSync(claudeDir)) {
     fs.mkdirSync(claudeDir, { recursive: true });
@@ -110,9 +121,8 @@ function installClaudeCodeHooks(): void {
   console.log(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
 }
 
-function installCodexHooks(): void {
-  const homeDir = os.homedir();
-  const codexDir = path.join(homeDir, ".codex");
+function installCodexHooks(root: string): void {
+  const codexDir = path.join(root, ".codex");
 
   if (!fs.existsSync(codexDir)) {
     fs.mkdirSync(codexDir, { recursive: true });
@@ -156,9 +166,8 @@ function installCodexHooks(): void {
   console.log(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
-function installCursorHooks(): void {
-  const homeDir = os.homedir();
-  const cursorDir = path.join(homeDir, ".cursor");
+function installCursorHooks(root: string): void {
+  const cursorDir = path.join(root, ".cursor");
 
   if (!fs.existsSync(cursorDir)) {
     fs.mkdirSync(cursorDir, { recursive: true });
@@ -194,9 +203,8 @@ function installCursorHooks(): void {
   console.log(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
-function installGeminiHooks(): void {
-  const homeDir = os.homedir();
-  const geminiDir = path.join(homeDir, ".gemini");
+function installGeminiHooks(root: string): void {
+  const geminiDir = path.join(root, ".gemini");
 
   if (!fs.existsSync(geminiDir)) {
     fs.mkdirSync(geminiDir, { recursive: true });
@@ -238,9 +246,8 @@ function installGeminiHooks(): void {
   console.log(fmt.success(`Installed hooks to ${settingsPath}`));
 }
 
-function installWindsurfHooks(): void {
-  const homeDir = os.homedir();
-  const windsurfDir = path.join(homeDir, ".windsurf");
+function installWindsurfHooks(root: string): void {
+  const windsurfDir = path.join(root, ".windsurf");
 
   if (!fs.existsSync(windsurfDir)) {
     fs.mkdirSync(windsurfDir, { recursive: true });
@@ -282,9 +289,8 @@ function installWindsurfHooks(): void {
   console.log(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
-function installContinueDevHooks(): void {
-  const homeDir = os.homedir();
-  const continueDir = path.join(homeDir, ".continue");
+function installContinueDevHooks(root: string): void {
+  const continueDir = path.join(root, ".continue");
 
   if (!fs.existsSync(continueDir)) {
     fs.mkdirSync(continueDir, { recursive: true });
@@ -337,9 +343,8 @@ const RAFTER_MCP_ENTRY = {
 /**
  * Install MCP server config for Gemini CLI (~/.gemini/settings.json)
  */
-function installGeminiMcp(): boolean {
-  const homeDir = os.homedir();
-  const geminiDir = path.join(homeDir, ".gemini");
+function installGeminiMcp(root: string): boolean {
+  const geminiDir = path.join(root, ".gemini");
   const settingsPath = path.join(geminiDir, "settings.json");
 
   if (!fs.existsSync(geminiDir)) {
@@ -366,9 +371,8 @@ function installGeminiMcp(): boolean {
 /**
  * Install MCP server config for Cursor (~/.cursor/mcp.json)
  */
-function installCursorMcp(): boolean {
-  const homeDir = os.homedir();
-  const cursorDir = path.join(homeDir, ".cursor");
+function installCursorMcp(root: string): boolean {
+  const cursorDir = path.join(root, ".cursor");
   const mcpPath = path.join(cursorDir, "mcp.json");
 
   if (!fs.existsSync(cursorDir)) {
@@ -395,9 +399,8 @@ function installCursorMcp(): boolean {
 /**
  * Install MCP server config for Windsurf (~/.codeium/windsurf/mcp_config.json)
  */
-function installWindsurfMcp(): boolean {
-  const homeDir = os.homedir();
-  const windsurfDir = path.join(homeDir, ".codeium", "windsurf");
+function installWindsurfMcp(root: string): boolean {
+  const windsurfDir = path.join(root, ".codeium", "windsurf");
   const mcpPath = path.join(windsurfDir, "mcp_config.json");
 
   if (!fs.existsSync(windsurfDir)) {
@@ -424,9 +427,8 @@ function installWindsurfMcp(): boolean {
 /**
  * Install MCP server config for Continue.dev (~/.continue/config.json)
  */
-function installContinueDevMcp(): boolean {
-  const homeDir = os.homedir();
-  const continueDir = path.join(homeDir, ".continue");
+function installContinueDevMcp(root: string): boolean {
+  const continueDir = path.join(root, ".continue");
   const configPath = path.join(continueDir, "config.json");
 
   if (!fs.existsSync(continueDir)) {
@@ -468,9 +470,8 @@ function installContinueDevMcp(): boolean {
  * Install MCP config for Aider (~/.aider.conf.yml)
  * Aider uses YAML config with mcpServers list
  */
-function installAiderMcp(): boolean {
-  const homeDir = os.homedir();
-  const configPath = path.join(homeDir, ".aider.conf.yml");
+function installAiderMcp(root: string): boolean {
+  const configPath = path.join(root, ".aider.conf.yml");
 
   // Aider's YAML config is simple — we append the MCP flag if not present
   let content = "";
@@ -491,83 +492,34 @@ function installAiderMcp(): boolean {
   return true;
 }
 
-async function installClaudeCodeSkills(): Promise<void> {
-  const homeDir = os.homedir();
-  const claudeSkillsDir = path.join(homeDir, ".claude", "skills");
-
-  // Ensure .claude/skills directory exists
-  if (!fs.existsSync(claudeSkillsDir)) {
-    fs.mkdirSync(claudeSkillsDir, { recursive: true });
+function installSkillsTo(skillsDir: string): void {
+  if (!fs.existsSync(skillsDir)) {
+    fs.mkdirSync(skillsDir, { recursive: true });
   }
-
-  // Install Backend Skill
-  const backendSkillDir = path.join(claudeSkillsDir, "rafter");
-  const backendSkillPath = path.join(backendSkillDir, "SKILL.md");
-  const backendTemplatePath = path.join(__dirname, "..", "..", "..", "resources", "skills", "rafter", "SKILL.md");
-
-  if (!fs.existsSync(backendSkillDir)) {
-    fs.mkdirSync(backendSkillDir, { recursive: true });
-  }
-
-  if (fs.existsSync(backendTemplatePath)) {
-    fs.copyFileSync(backendTemplatePath, backendSkillPath);
-    console.log(fmt.success(`Installed Rafter Remote skill to ${backendSkillPath}`));
-  } else {
-    console.log(fmt.warning(`Remote skill template not found at ${backendTemplatePath}`));
-  }
-
-  // Install Agent Security Skill
-  const agentSkillDir = path.join(claudeSkillsDir, "rafter-agent-security");
-  const agentSkillPath = path.join(agentSkillDir, "SKILL.md");
-  const agentTemplatePath = path.join(__dirname, "..", "..", "..", "resources", "skills", "rafter-agent-security", "SKILL.md");
-
-  if (!fs.existsSync(agentSkillDir)) {
-    fs.mkdirSync(agentSkillDir, { recursive: true });
-  }
-
-  if (fs.existsSync(agentTemplatePath)) {
-    fs.copyFileSync(agentTemplatePath, agentSkillPath);
-    console.log(fmt.success(`Installed Rafter Agent Security skill to ${agentSkillPath}`));
-  } else {
-    console.log(fmt.warning(`Agent Security skill template not found at ${agentTemplatePath}`));
+  for (const skill of AGENT_SKILLS) {
+    const destDir = path.join(skillsDir, skill.name);
+    const destPath = path.join(destDir, "SKILL.md");
+    const srcPath = path.join(
+      __dirname, "..", "..", "..", "resources", "skills", skill.name, "SKILL.md",
+    );
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, destPath);
+      console.log(fmt.success(`Installed ${skill.description} skill to ${destPath}`));
+    } else {
+      console.log(fmt.warning(`${skill.description} skill template not found at ${srcPath}`));
+    }
   }
 }
 
-function installCodexSkills(): void {
-  const homeDir = os.homedir();
-  const agentsSkillsDir = path.join(homeDir, ".agents", "skills");
+async function installClaudeCodeSkills(root: string): Promise<void> {
+  installSkillsTo(path.join(root, ".claude", "skills"));
+}
 
-  // Install Backend Skill
-  const backendDir = path.join(agentsSkillsDir, "rafter");
-  const backendSkillPath = path.join(backendDir, "SKILL.md");
-  const backendTemplatePath = path.join(__dirname, "..", "..", "..", "resources", "skills", "rafter", "SKILL.md");
-
-  if (!fs.existsSync(backendDir)) {
-    fs.mkdirSync(backendDir, { recursive: true });
-  }
-
-  if (fs.existsSync(backendTemplatePath)) {
-    fs.copyFileSync(backendTemplatePath, backendSkillPath);
-    console.log(fmt.success(`Installed Rafter Remote skill to ${backendSkillPath}`));
-  } else {
-    console.log(fmt.warning(`Remote skill template not found at ${backendTemplatePath}`));
-  }
-
-  // Install Agent Security Skill
-  const agentDir = path.join(agentsSkillsDir, "rafter-agent-security");
-  const agentSkillPath = path.join(agentDir, "SKILL.md");
-  const agentTemplatePath = path.join(__dirname, "..", "..", "..", "resources", "skills", "rafter-agent-security", "SKILL.md");
-
-  if (!fs.existsSync(agentDir)) {
-    fs.mkdirSync(agentDir, { recursive: true });
-  }
-
-  if (fs.existsSync(agentTemplatePath)) {
-    fs.copyFileSync(agentTemplatePath, agentSkillPath);
-    console.log(fmt.success(`Installed Rafter Agent Security skill to ${agentSkillPath}`));
-  } else {
-    console.log(fmt.warning(`Agent Security skill template not found at ${agentTemplatePath}`));
-  }
+function installCodexSkills(root: string): void {
+  installSkillsTo(path.join(root, ".agents", "skills"));
 }
 
 async function askYesNo(question: string, defaultYes = true): Promise<boolean> {
@@ -599,33 +551,50 @@ export function createInitCommand(): Command {
     .option("--all", "Install all detected integrations and download Gitleaks")
     .option("-i, --interactive", "Guided setup — prompts for each detected integration")
     .option("--update", "Re-download gitleaks and reinstall integrations without resetting config")
+    .option(
+      "--local",
+      "Install integration configs project-locally (in CWD) instead of user-globally. " +
+      "Supported for Claude Code, Codex, Gemini, Cursor. Other platforms are skipped in local mode.",
+    )
     .action(async (opts) => {
       console.log(fmt.header("Rafter Agent Security Setup"));
       console.log(fmt.divider());
       console.log();
 
       const manager = new ConfigManager();
+      const root = opts.local ? process.cwd() : os.homedir();
+      const scope: "project" | "user" = opts.local ? "project" : "user";
+      if (opts.local) {
+        console.log(fmt.info(`Project-local install — writing configs under ${root}`));
+      }
 
-      // Detect environments
-      const hasOpenClaw = fs.existsSync(path.join(os.homedir(), ".openclaw"));
-      const hasClaudeCode = fs.existsSync(path.join(os.homedir(), ".claude"));
-      const hasCodex = fs.existsSync(path.join(os.homedir(), ".codex"));
-      const hasGemini = fs.existsSync(path.join(os.homedir(), ".gemini"));
-      const hasCursor = fs.existsSync(path.join(os.homedir(), ".cursor"));
-      const hasWindsurf = fs.existsSync(path.join(os.homedir(), ".codeium", "windsurf"));
-      const hasContinueDev = fs.existsSync(path.join(os.homedir(), ".continue"));
-      const hasAider = fs.existsSync(path.join(os.homedir(), ".aider.conf.yml"));
+      // Platforms supported in --local scope: Claude Code, Codex, Gemini, Cursor.
+      // Windsurf, Continue.dev, Aider are skipped in --local because their
+      // project-local config story is not established in their CLIs today.
 
-      // Resolve opt-in flags (--all enables all detected, --interactive prompts)
-      let wantOpenClaw = opts.withOpenclaw || opts.all;
+      // Detect environments. In local scope, don't probe user-global paths —
+      // the user must opt in explicitly via --with-<platform>.
+      const hasOpenClaw = scope === "user" && fs.existsSync(path.join(os.homedir(), ".openclaw"));
+      const hasClaudeCode = scope === "user" && fs.existsSync(path.join(os.homedir(), ".claude"));
+      const hasCodex = scope === "user" && fs.existsSync(path.join(os.homedir(), ".codex"));
+      const hasGemini = scope === "user" && fs.existsSync(path.join(os.homedir(), ".gemini"));
+      const hasCursor = scope === "user" && fs.existsSync(path.join(os.homedir(), ".cursor"));
+      const hasWindsurf = scope === "user" && fs.existsSync(path.join(os.homedir(), ".codeium", "windsurf"));
+      const hasContinueDev = scope === "user" && fs.existsSync(path.join(os.homedir(), ".continue"));
+      const hasAider = scope === "user" && fs.existsSync(path.join(os.homedir(), ".aider.conf.yml"));
+
+      // Resolve opt-in flags (--all enables all detected, --interactive prompts).
+      // In --local scope, --all is restricted to platforms that have a project-local
+      // config story (claudeCode, codex, gemini, cursor). The rest require user scope.
+      let wantOpenClaw = opts.withOpenclaw || (opts.all && !opts.local);
       let wantClaudeCode = opts.withClaudeCode || opts.all;
       let wantCodex = opts.withCodex || opts.all;
       let wantGemini = opts.withGemini || opts.all;
       let wantCursor = opts.withCursor || opts.all;
-      let wantWindsurf = opts.withWindsurf || opts.all;
-      let wantContinue = opts.withContinue || opts.all;
-      let wantAider = opts.withAider || opts.all;
-      let wantGitleaks = opts.withGitleaks || opts.all;
+      let wantWindsurf = opts.withWindsurf || (opts.all && !opts.local);
+      let wantContinue = opts.withContinue || (opts.all && !opts.local);
+      let wantAider = opts.withAider || (opts.all && !opts.local);
+      let wantGitleaks = opts.withGitleaks || (opts.all && !opts.local);
 
       // Interactive mode: prompt for each detected integration
       if (opts.interactive && !opts.all) {
@@ -661,15 +630,18 @@ export function createInitCommand(): Command {
         console.log(fmt.info("No agent environments detected"));
       }
 
-      // Warn about requested but undetected environments
-      if (wantOpenClaw && !hasOpenClaw) console.log(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"));
-      if (wantClaudeCode && !hasClaudeCode) console.log(fmt.warning("Claude Code requested but not detected (~/.claude not found)"));
-      if (wantCodex && !hasCodex) console.log(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"));
-      if (wantGemini && !hasGemini) console.log(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"));
-      if (wantCursor && !hasCursor) console.log(fmt.warning("Cursor requested but not detected (~/.cursor not found)"));
-      if (wantWindsurf && !hasWindsurf) console.log(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
-      if (wantContinue && !hasContinueDev) console.log(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
-      if (wantAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
+      // Warn about requested but undetected environments (user scope only —
+      // in --local scope we create the directories in CWD as needed).
+      if (scope === "user") {
+        if (wantOpenClaw && !hasOpenClaw) console.log(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"));
+        if (wantClaudeCode && !hasClaudeCode) console.log(fmt.warning("Claude Code requested but not detected (~/.claude not found)"));
+        if (wantCodex && !hasCodex) console.log(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"));
+        if (wantGemini && !hasGemini) console.log(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"));
+        if (wantCursor && !hasCursor) console.log(fmt.warning("Cursor requested but not detected (~/.cursor not found)"));
+        if (wantWindsurf && !hasWindsurf) console.log(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
+        if (wantContinue && !hasContinueDev) console.log(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
+        if (wantAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
+      }
 
       // Initialize directory structure
       try {
@@ -776,14 +748,22 @@ export function createInitCommand(): Command {
         }
       }
 
+      // Helper: warn that a platform is not supported in --local mode.
+      const localUnsupported = (label: string): void => {
+        console.log(fmt.warning(
+          `${label} is not supported in --local mode yet. Skipping. ` +
+          `Re-run without --local to install for this platform user-globally.`,
+        ));
+      };
+
       // Install Claude Code skills + hooks if opted in
-      // When --with-claude-code is explicitly passed, install even if .claude doesn't exist yet
+      // When --with-claude-code is explicitly passed (or --local), install even if <root>/.claude doesn't exist yet
       let claudeCodeOk = false;
-      if ((hasClaudeCode || opts.withClaudeCode) && wantClaudeCode) {
+      if ((hasClaudeCode || opts.withClaudeCode || (opts.local && wantClaudeCode)) && wantClaudeCode) {
         try {
-          await installClaudeCodeSkills();
-          installClaudeCodeHooks();
-          manager.set("agent.environments.claudeCode.enabled", true);
+          await installClaudeCodeSkills(root);
+          installClaudeCodeHooks(root);
+          if (scope === "user") manager.set("agent.environments.claudeCode.enabled", true);
           claudeCodeOk = true;
         } catch (e) {
           console.error(fmt.error(`Failed to install Claude Code integration: ${e}`));
@@ -792,11 +772,11 @@ export function createInitCommand(): Command {
 
       // Install Codex CLI skills + hooks if opted in
       let codexOk = false;
-      if (hasCodex && wantCodex) {
+      if ((hasCodex || (opts.local && wantCodex)) && wantCodex) {
         try {
-          installCodexSkills();
-          installCodexHooks();
-          manager.set("agent.environments.codex.enabled", true);
+          installCodexSkills(root);
+          installCodexHooks(root);
+          if (scope === "user") manager.set("agent.environments.codex.enabled", true);
           codexOk = true;
         } catch (e) {
           console.error(fmt.error(`Failed to install Codex CLI integration: ${e}`));
@@ -805,11 +785,11 @@ export function createInitCommand(): Command {
 
       // Install Gemini CLI MCP + hooks if opted in
       let geminiOk = false;
-      if (hasGemini && wantGemini) {
+      if ((hasGemini || (opts.local && wantGemini)) && wantGemini) {
         try {
-          geminiOk = installGeminiMcp();
-          installGeminiHooks();
-          if (geminiOk) manager.set("agent.environments.gemini.enabled", true);
+          geminiOk = installGeminiMcp(root);
+          installGeminiHooks(root);
+          if (geminiOk && scope === "user") manager.set("agent.environments.gemini.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Gemini CLI integration: ${e}`));
         }
@@ -817,11 +797,11 @@ export function createInitCommand(): Command {
 
       // Install Cursor MCP + hooks if opted in
       let cursorOk = false;
-      if (hasCursor && wantCursor) {
+      if ((hasCursor || (opts.local && wantCursor)) && wantCursor) {
         try {
-          cursorOk = installCursorMcp();
-          installCursorHooks();
-          if (cursorOk) manager.set("agent.environments.cursor.enabled", true);
+          cursorOk = installCursorMcp(root);
+          installCursorHooks(root);
+          if (cursorOk && scope === "user") manager.set("agent.environments.cursor.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Cursor integration: ${e}`));
         }
@@ -831,42 +811,48 @@ export function createInitCommand(): Command {
       let windsurfOk = false;
       if (hasWindsurf && wantWindsurf) {
         try {
-          windsurfOk = installWindsurfMcp();
-          installWindsurfHooks();
+          windsurfOk = installWindsurfMcp(root);
+          installWindsurfHooks(root);
           if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Windsurf integration: ${e}`));
         }
+      } else if (opts.local && wantWindsurf) {
+        localUnsupported("Windsurf");
       }
 
       // Install Continue.dev MCP + hooks if opted in
       let continueOk = false;
       if (hasContinueDev && wantContinue) {
         try {
-          continueOk = installContinueDevMcp();
-          installContinueDevHooks();
+          continueOk = installContinueDevMcp(root);
+          installContinueDevHooks(root);
           if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Continue.dev integration: ${e}`));
         }
+      } else if (opts.local && wantContinue) {
+        localUnsupported("Continue.dev");
       }
 
       // Install Aider MCP if opted in
       let aiderOk = false;
       if (hasAider && wantAider) {
         try {
-          aiderOk = installAiderMcp();
+          aiderOk = installAiderMcp(root);
           if (aiderOk) manager.set("agent.environments.aider.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Aider integration: ${e}`));
         }
+      } else if (opts.local && wantAider) {
+        localUnsupported("Aider");
       }
 
       // Install global instruction files for platforms that support them
       installGlobalInstructions({
         claudeCode: claudeCodeOk,
         cursor: cursorOk,
-      });
+      }, root);
 
       console.log();
       console.log(fmt.success("Agent security initialized!"));
@@ -884,6 +870,12 @@ export function createInitCommand(): Command {
         if (windsurfOk) console.log("  - Restart Windsurf to load MCP server");
         if (continueOk) console.log("  - Restart Continue.dev to load MCP server");
         if (aiderOk) console.log("  - Restart Aider to load MCP server");
+      } else if (scope === "project") {
+        console.log("No integrations were installed. In --local mode, pass one or more opt-in flags:");
+        console.log("  rafter agent init --local --with-claude-code");
+        console.log("  rafter agent init --local --with-codex");
+        console.log("  rafter agent init --local --with-gemini");
+        console.log("  rafter agent init --local --with-cursor");
       } else if (detected.length > 0) {
         console.log("No integrations were installed. To install, re-run with opt-in flags:");
         console.log("  rafter agent init --all                  # Install all detected");
