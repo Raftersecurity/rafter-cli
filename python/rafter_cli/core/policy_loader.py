@@ -1,6 +1,7 @@
 """Load and parse .rafter.yml policy files."""
 from __future__ import annotations
 
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ from ..utils.git import get_git_root
 
 
 POLICY_FILENAMES = [".rafter.yml", ".rafter.yaml"]
+_KNOWN_DOC_KEYS = {"id", "path", "url", "description", "tags", "cache"}
 
 
 def find_policy_file() -> Path | None:
@@ -94,10 +96,68 @@ def _map_policy(raw: dict) -> dict:
         if audit.get("log_level"):
             policy["audit"]["log_level"] = audit["log_level"]
 
+    docs_raw = raw.get("docs")
+    if isinstance(docs_raw, list):
+        docs: list[dict] = []
+        seen_ids: set[str] = set()
+        for entry in docs_raw:
+            if not isinstance(entry, dict):
+                print("Warning: skipping malformed docs entry — must be an object.", file=sys.stderr)
+                continue
+            has_path = isinstance(entry.get("path"), str) and entry["path"]
+            has_url = isinstance(entry.get("url"), str) and entry["url"]
+            if bool(has_path) == bool(has_url):
+                print('Warning: skipping docs entry — must have exactly one of "path" or "url".', file=sys.stderr)
+                continue
+            source_kind = "path" if has_path else "url"
+            source = entry["path"] if has_path else entry["url"]
+            doc_id = entry.get("id")
+            if not (isinstance(doc_id, str) and doc_id):
+                doc_id = _derive_doc_id(source, source_kind)
+            if doc_id in seen_ids:
+                print(f'Warning: skipping docs entry with duplicate id "{doc_id}".', file=sys.stderr)
+                continue
+            seen_ids.add(doc_id)
+
+            normalized: dict = {"id": doc_id}
+            if has_path:
+                normalized["path"] = entry["path"]
+            if has_url:
+                normalized["url"] = entry["url"]
+            if isinstance(entry.get("description"), str):
+                normalized["description"] = entry["description"]
+            tags = entry.get("tags")
+            if isinstance(tags, list) and all(isinstance(t, str) for t in tags):
+                normalized["tags"] = list(tags)
+            elif tags is not None:
+                print(f'Warning: docs entry "{doc_id}" — tags must be a list of strings, ignoring.', file=sys.stderr)
+            cache = entry.get("cache")
+            if isinstance(cache, dict):
+                ttl = cache.get("ttl_seconds")
+                if not has_url:
+                    print(f'Warning: docs entry "{doc_id}" — cache is only valid with url, ignoring.', file=sys.stderr)
+                elif isinstance(ttl, (int, float)) and ttl > 0:
+                    normalized["cache"] = {"ttl_seconds": int(ttl)}
+                else:
+                    print(f'Warning: docs entry "{doc_id}" — cache.ttl_seconds must be a positive number, ignoring.', file=sys.stderr)
+            for key in entry:
+                if key not in _KNOWN_DOC_KEYS:
+                    print(f'Warning: docs entry "{doc_id}" — unknown key "{key}", ignoring.', file=sys.stderr)
+            docs.append(normalized)
+        policy["docs"] = docs
+
     return policy
 
 
-_VALID_TOP_LEVEL_KEYS = {"version", "risk_level", "command_policy", "scan", "audit"}
+def _derive_doc_id(source: str, kind: str) -> str:
+    if kind == "path":
+        base = Path(source).name
+        stem = base.rsplit(".", 1)[0] if "." in base else base
+        return stem or base
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:8]
+
+
+_VALID_TOP_LEVEL_KEYS = {"version", "risk_level", "command_policy", "scan", "audit", "docs"}
 _VALID_RISK_LEVELS = {"minimal", "moderate", "aggressive"}
 _VALID_COMMAND_MODES = {"allow-all", "approve-dangerous", "deny-list"}
 _VALID_LOG_LEVELS = {"debug", "info", "warn", "error"}
