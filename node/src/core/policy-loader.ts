@@ -9,6 +9,17 @@ export interface PolicyCustomPattern {
   severity: "low" | "medium" | "high" | "critical";
 }
 
+export interface PolicyDocEntry {
+  id: string;
+  path?: string;
+  url?: string;
+  description?: string;
+  tags?: string[];
+  cache?: {
+    ttlSeconds: number;
+  };
+}
+
 export interface PolicyFile {
   version?: string;
   riskLevel?: string;
@@ -25,6 +36,7 @@ export interface PolicyFile {
     retentionDays?: number;
     logLevel?: string;
   };
+  docs?: PolicyDocEntry[];
 }
 
 const POLICY_FILENAMES = [".rafter.yml", ".rafter.yaml"];
@@ -113,10 +125,72 @@ function mapPolicy(raw: Record<string, any>): PolicyFile {
     if (raw.audit.log_level) policy.audit.logLevel = raw.audit.log_level;
   }
 
+  if (Array.isArray(raw.docs)) {
+    policy.docs = [];
+    const seenIds = new Set<string>();
+    for (const entry of raw.docs) {
+      if (!entry || typeof entry !== "object") {
+        console.error(`Warning: skipping malformed docs entry — must be an object.`);
+        continue;
+      }
+      const hasPath = typeof entry.path === "string" && entry.path.length > 0;
+      const hasUrl = typeof entry.url === "string" && entry.url.length > 0;
+      if (hasPath === hasUrl) {
+        console.error(`Warning: skipping docs entry — must have exactly one of "path" or "url".`);
+        continue;
+      }
+      const id = typeof entry.id === "string" && entry.id.length > 0
+        ? entry.id
+        : deriveDocId(hasPath ? entry.path : entry.url, hasPath ? "path" : "url");
+      if (seenIds.has(id)) {
+        console.error(`Warning: skipping docs entry with duplicate id "${id}".`);
+        continue;
+      }
+      seenIds.add(id);
+
+      const doc: PolicyDocEntry = { id };
+      if (hasPath) doc.path = entry.path;
+      if (hasUrl) doc.url = entry.url;
+      if (typeof entry.description === "string") doc.description = entry.description;
+      if (Array.isArray(entry.tags) && entry.tags.every((t: any) => typeof t === "string")) {
+        doc.tags = entry.tags;
+      } else if (entry.tags !== undefined) {
+        console.error(`Warning: docs entry "${id}" — tags must be a list of strings, ignoring.`);
+      }
+      if (entry.cache && typeof entry.cache === "object") {
+        const ttl = entry.cache.ttl_seconds;
+        if (!hasUrl) {
+          console.error(`Warning: docs entry "${id}" — cache is only valid with url, ignoring.`);
+        } else if (typeof ttl === "number" && ttl > 0 && Number.isFinite(ttl)) {
+          doc.cache = { ttlSeconds: Math.floor(ttl) };
+        } else {
+          console.error(`Warning: docs entry "${id}" — cache.ttl_seconds must be a positive number, ignoring.`);
+        }
+      }
+      const known = new Set(["id", "path", "url", "description", "tags", "cache"]);
+      for (const key of Object.keys(entry)) {
+        if (!known.has(key)) {
+          console.error(`Warning: docs entry "${id}" — unknown key "${key}", ignoring.`);
+        }
+      }
+      policy.docs.push(doc);
+    }
+  }
+
   return policy;
 }
 
-const VALID_TOP_LEVEL_KEYS = new Set(["version", "risk_level", "command_policy", "scan", "audit"]);
+function deriveDocId(source: string, kind: "path" | "url"): string {
+  if (kind === "path") {
+    const base = path.basename(source);
+    const withoutExt = base.replace(/\.[^./]+$/, "");
+    return withoutExt || base;
+  }
+  const crypto = require("crypto") as typeof import("crypto");
+  return crypto.createHash("sha256").update(source).digest("hex").slice(0, 8);
+}
+
+const VALID_TOP_LEVEL_KEYS = new Set(["version", "risk_level", "command_policy", "scan", "audit", "docs"]);
 const VALID_RISK_LEVELS = new Set(["minimal", "moderate", "aggressive"]);
 const VALID_COMMAND_MODES = new Set(["allow-all", "approve-dangerous", "deny-list"]);
 const VALID_LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);

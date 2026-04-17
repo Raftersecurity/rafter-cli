@@ -67,6 +67,21 @@ Use this for: code review, refactoring risky modules, OWASP / MITRE ATT&CK / ASV
 
 ---
 
+## Repo-Specific Security Rules
+
+Projects can declare a `docs:` list in `.rafter.yml` pointing at repo-specific security guides, threat models, or compliance policies — files or URLs. **Before doing any security-relevant work (scanning, reviewing, writing auth/crypto/input-handling code), check for these docs:**
+
+```bash
+rafter docs list                    # enumerate available docs (no network)
+rafter docs list --tag threat-model # filter by tag
+rafter docs show secure-coding      # read one by id (fetches + caches URLs)
+rafter docs show owasp              # id OR tag — if a tag matches, all tagged docs are concatenated
+```
+
+If docs exist, treat them as authoritative project rules: they override general guidance when they conflict. If no docs are configured (`exit 3` / "No docs configured"), fall back to the standard OWASP / ASVS advice.
+
+MCP-connected agents: the same surface is exposed as the `rafter://docs` resource plus `list_docs` / `get_doc` tools.
+
 ## Fast Path (most common)
 
 ```bash
