@@ -15,6 +15,7 @@ Integration snippets for adding Rafter security to your development workflow. Ea
 | [Continue.dev](continue-dev.md) | MCP server setup for Continue.dev |
 | [Aider](aider.md) | MCP server setup for Aider |
 | [OpenClaw](openclaw.md) | Skill setup for OpenClaw agents |
+| [npx skills](npx-skills.md) | Audit-before-install workflow for `vercel-labs/skills` |
 | [Homebrew Formula](homebrew-formula.rb) | `brew install rafter` tap formula |
 
 ## Quick start
