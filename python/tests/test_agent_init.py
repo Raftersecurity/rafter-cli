@@ -17,7 +17,7 @@ from rafter_cli.commands.agent import (
 class TestInstallClaudeCodeHooks:
     def test_creates_settings_from_scratch(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        _install_claude_code_hooks()
+        _install_claude_code_hooks(tmp_path)
 
         settings_path = tmp_path / ".claude" / "settings.json"
         assert settings_path.exists()
@@ -45,7 +45,7 @@ class TestInstallClaudeCodeHooks:
         }
         (claude_dir / "settings.json").write_text(json.dumps(existing))
 
-        _install_claude_code_hooks()
+        _install_claude_code_hooks(tmp_path)
 
         settings = json.loads((claude_dir / "settings.json").read_text())
         # Should have 3 entries: existing other-tool + 2 Rafter hooks
@@ -67,7 +67,7 @@ class TestInstallClaudeCodeHooks:
         }
         (claude_dir / "settings.json").write_text(json.dumps(existing))
 
-        _install_claude_code_hooks()
+        _install_claude_code_hooks(tmp_path)
 
         settings = json.loads((claude_dir / "settings.json").read_text())
         # Old ones removed, 2 new ones added = exactly 2
@@ -81,7 +81,7 @@ class TestInstallClaudeCodeHooks:
         existing = {"theme": "dark", "hooks": {}}
         (claude_dir / "settings.json").write_text(json.dumps(existing))
 
-        _install_claude_code_hooks()
+        _install_claude_code_hooks(tmp_path)
 
         settings = json.loads((claude_dir / "settings.json").read_text())
         assert settings["theme"] == "dark"
@@ -91,7 +91,7 @@ class TestInstallClaudeCodeHooks:
 class TestInstallGeminiMcp:
     def test_creates_settings_from_scratch(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        assert _install_gemini_mcp()
+        assert _install_gemini_mcp(tmp_path)
 
         settings_path = tmp_path / ".gemini" / "settings.json"
         assert settings_path.exists()
@@ -105,7 +105,7 @@ class TestInstallGeminiMcp:
         gemini_dir.mkdir()
         (gemini_dir / "settings.json").write_text(json.dumps({"model": "gemini-pro"}))
 
-        _install_gemini_mcp()
+        _install_gemini_mcp(tmp_path)
 
         settings = json.loads((gemini_dir / "settings.json").read_text())
         assert settings["model"] == "gemini-pro"
@@ -115,7 +115,7 @@ class TestInstallGeminiMcp:
 class TestInstallCursorMcp:
     def test_creates_config_from_scratch(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        assert _install_cursor_mcp()
+        assert _install_cursor_mcp(tmp_path)
 
         mcp_path = tmp_path / ".cursor" / "mcp.json"
         assert mcp_path.exists()
@@ -128,7 +128,7 @@ class TestInstallCursorMcp:
         cursor_dir.mkdir()
         (cursor_dir / "mcp.json").write_text(json.dumps({"mcpServers": {"other": {"command": "other"}}}))
 
-        _install_cursor_mcp()
+        _install_cursor_mcp(tmp_path)
 
         config = json.loads((cursor_dir / "mcp.json").read_text())
         assert "other" in config["mcpServers"]
@@ -138,7 +138,7 @@ class TestInstallCursorMcp:
 class TestInstallWindsurfMcp:
     def test_creates_config_from_scratch(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        assert _install_windsurf_mcp()
+        assert _install_windsurf_mcp(tmp_path)
 
         mcp_path = tmp_path / ".codeium" / "windsurf" / "mcp_config.json"
         assert mcp_path.exists()
@@ -149,7 +149,7 @@ class TestInstallWindsurfMcp:
 class TestInstallContinueDevMcp:
     def test_creates_config_with_array_format(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        assert _install_continue_dev_mcp()
+        assert _install_continue_dev_mcp(tmp_path)
 
         config_path = tmp_path / ".continue" / "config.json"
         assert config_path.exists()
@@ -164,7 +164,7 @@ class TestInstallContinueDevMcp:
         existing = {"mcpServers": [{"name": "rafter", "command": "old"}]}
         (continue_dir / "config.json").write_text(json.dumps(existing))
 
-        _install_continue_dev_mcp()
+        _install_continue_dev_mcp(tmp_path)
 
         config = json.loads((continue_dir / "config.json").read_text())
         rafter_entries = [s for s in config["mcpServers"] if s["name"] == "rafter"]
@@ -178,7 +178,7 @@ class TestInstallContinueDevMcp:
         existing = {"mcpServers": {"other": {"command": "other"}}}
         (continue_dir / "config.json").write_text(json.dumps(existing))
 
-        _install_continue_dev_mcp()
+        _install_continue_dev_mcp(tmp_path)
 
         config = json.loads((continue_dir / "config.json").read_text())
         assert config["mcpServers"]["rafter"]["command"] == "rafter"
@@ -188,7 +188,7 @@ class TestInstallContinueDevMcp:
 class TestInstallAiderMcp:
     def test_creates_config_from_scratch(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        assert _install_aider_mcp()
+        assert _install_aider_mcp(tmp_path)
 
         config_path = tmp_path / ".aider.conf.yml"
         assert config_path.exists()
@@ -200,7 +200,7 @@ class TestInstallAiderMcp:
         config_path = tmp_path / ".aider.conf.yml"
         config_path.write_text("mcp-server-command: rafter mcp serve\n")
 
-        assert _install_aider_mcp()
+        assert _install_aider_mcp(tmp_path)
 
         content = config_path.read_text()
         assert content.count("rafter mcp serve") == 1
@@ -210,7 +210,7 @@ class TestInstallAiderMcp:
         config_path = tmp_path / ".aider.conf.yml"
         config_path.write_text("model: gpt-4\n")
 
-        _install_aider_mcp()
+        _install_aider_mcp(tmp_path)
 
         content = config_path.read_text()
         assert "model: gpt-4" in content
@@ -306,7 +306,7 @@ from rafter_cli.commands.agent import _install_codex_skills
 class TestInstallCodexSkills:
     def test_creates_skills_from_scratch(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        ok, error = _install_codex_skills()
+        ok, error = _install_codex_skills(tmp_path)
         assert ok, f"Expected success, got error: {error}"
         assert error == ""
 
@@ -328,7 +328,7 @@ class TestInstallCodexSkills:
         backend_dir.mkdir(parents=True)
         (backend_dir / "SKILL.md").write_text("old content")
 
-        ok, error = _install_codex_skills()
+        ok, error = _install_codex_skills(tmp_path)
         assert ok
 
         content = (backend_dir / "SKILL.md").read_text()

@@ -35,6 +35,15 @@ The CLI follows UNIX principles:
 | 1 | Findings — one or more secrets detected |
 | 2 | Runtime error — path not found, not a git repo, invalid ref |
 
+### Docs (`rafter docs list`, `rafter docs show`)
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error (read failure, URL fetch failure with no cache) |
+| 2 | Selector did not match any configured doc |
+| 3 | No docs configured in `.rafter.yml` |
+
 ---
 
 ## Global Options
@@ -148,6 +157,133 @@ Initialize local security system. Creates config and detects available developme
 - `--all` — install all detected integrations and download Gitleaks
 - `-i, --interactive` — guided setup — prompts for each detected integration (Node only)
 - `--update` — re-download gitleaks and reinstall integrations without resetting config
+- `--local` — install integration configs into the current working directory instead of the user home. Writes to `./.claude/`, `./.agents/`, `./.gemini/`, `./.cursor/` etc. Supports `--with-claude-code`, `--with-codex`, `--with-gemini`, `--with-cursor`. User-level side effects (global config, `agent.environments.*.enabled`, auto-detection, gitleaks download) are suppressed in this mode. Intended for benchmark harnesses, one-off project setup, and ephemeral containers.
+
+### rafter agent list [OPTIONS]
+
+List every installable component across all supported platforms with its current state. Useful for auditing what's active and for scripting toggles.
+
+- `--json` — machine-readable output
+- `--installed` — show only components currently installed
+- `--detected` — show only components whose platform was detected on disk
+
+A **component** is a `<platform>.<kind>` pair, where `kind ∈ {hooks, mcp, instructions, skills}`. Each component has a state:
+
+| State | Meaning |
+|-------|---------|
+| `installed` | Rafter is active in this platform's config |
+| `not-installed` | Platform is detected but Rafter is not wired in |
+| `not-detected` | Platform config directory does not exist on disk |
+
+#### JSON Output (`--json`)
+
+```json
+{
+  "components": [
+    {
+      "id": "cursor.mcp",
+      "platform": "cursor",
+      "kind": "mcp",
+      "description": "Cursor MCP server entry",
+      "path": "/home/user/.cursor/mcp.json",
+      "detected": true,
+      "installed": true,
+      "state": "installed"
+    }
+  ]
+}
+```
+
+Exit code: 0 on success.
+
+### rafter agent enable COMPONENTS... [OPTIONS]
+
+Install one or more components. Accepts one or more component IDs (e.g. `cursor.mcp`, `claude-code.hooks`). Aliases: `claude.*` → `claude-code.*`, `continuedev.*` → `continue.*`.
+
+- `--force` — install even when the platform is not detected (creates the platform directory)
+
+Exit codes:
+- `0` — all components installed (or were already installed — the operation is idempotent)
+- `1` — unknown component ID (the error lists known IDs on stderr)
+- `2` — platform not detected for one or more components (use `--force` to override)
+
+Persists `agent.components.<id>.enabled = true` in `~/.rafter/config.json`.
+
+### rafter agent disable COMPONENTS... [OPTIONS]
+
+Uninstall one or more components without affecting other components on the same platform. For MCP files, removes the `rafter` server entry while preserving unrelated entries. For hooks, removes only rafter's hook commands. For instruction files, strips the `<!-- rafter:start -->` / `<!-- rafter:end -->` block and leaves surrounding content intact.
+
+Exit code: 0 on success (missing/not-installed components are reported, not errored).
+
+Persists `agent.components.<id>.enabled = false` in `~/.rafter/config.json`.
+
+### rafter skill list [OPTIONS]
+
+List rafter-authored skills shipped with this CLI and their install state across every supported platform. A skill is a bundled `SKILL.md` file (e.g. `rafter`, `rafter-agent-security`, `rafter-secure-design`, `rafter-code-review`, `rafter-skill-review`). A platform is one of `claude-code`, `codex`, `openclaw`, `cursor`.
+
+- `--json` — machine-readable output
+- `--installed` — only show `(skill, platform)` pairs where the skill is installed
+- `--platform <name>` — restrict to a single platform
+
+JSON shape (`--json`):
+
+```json
+{
+  "skills": [
+    { "name": "rafter-secure-design", "version": "0.1.0", "description": "..." }
+  ],
+  "installations": [
+    {
+      "name": "rafter-secure-design",
+      "platform": "claude-code",
+      "path": "/home/user/.claude/skills/rafter-secure-design/SKILL.md",
+      "detected": true,
+      "installed": true,
+      "version": "0.1.0"
+    }
+  ]
+}
+```
+
+Exit codes: `0` on success; `1` on unknown `--platform`.
+
+### rafter skill install NAME [OPTIONS]
+
+Install a rafter-authored skill. The SKILL.md file is copied (not symlinked) so the install is reproducible and does not depend on the CLI's installation path at run time.
+
+- `--platform <name...>` — target platform(s); repeatable. Default: every platform whose config directory is detected on this machine.
+- `--to <path>` — explicit destination. If `<path>` ends in `.md` or `.mdc`, used as the literal file path. Otherwise treated as a skills *base* directory, installing to `<path>/<name>/SKILL.md`.
+- `--force` — when no `--platform` is given and no platform is detected, install to every known platform anyway.
+
+Destinations per platform:
+
+| Platform | Path |
+|----------|------|
+| `claude-code` | `~/.claude/skills/<name>/SKILL.md` |
+| `codex` | `~/.agents/skills/<name>/SKILL.md` |
+| `openclaw` | `~/.openclaw/skills/<name>.md` |
+| `cursor` | `~/.cursor/rules/<name>.mdc` |
+
+Exit codes:
+- `0` — install(s) succeeded (re-running is idempotent; the file is overwritten in place)
+- `1` — unknown skill name or unknown platform
+- `2` — no target platform detected (and `--force` was not passed), or an explicit `--platform` was not detected and `--force` was not passed
+
+Persists `skillInstallations.<platform>.<name> = { enabled: true, version, updatedAt }` in `~/.rafter/config.json`.
+
+### rafter skill uninstall NAME [OPTIONS]
+
+Remove a rafter-authored skill from one or more platforms.
+
+- `--platform <name...>` — target platform(s). Default: every platform on which the skill is currently installed.
+
+Missing files are reported, not errored. If the skill is not installed anywhere, the command exits 0 and reports "no changes".
+
+Exit codes:
+- `0` — uninstall(s) succeeded or were already absent
+- `1` — unknown skill name or unknown platform
+
+Persists `skillInstallations.<platform>.<name>.enabled = false` in `~/.rafter/config.json`.
 
 ### rafter scan local [PATH] [OPTIONS]
 
@@ -218,9 +354,192 @@ Execute shell command with risk assessment and approval workflow.
 
 Risk tiers: critical (blocked), high (approval required), medium (approval on moderate+), low (allowed).
 
+### rafter skill review [PATH_OR_URL] [OPTIONS]
+
+Security review of a third-party skill, plugin, or agent extension before installing it — **or** (`--installed`) an audit of every skill already on disk across detected agent directories. Operates on a local file, a local directory, a git URL (https / ssh / `.git`), or (in `--installed` mode) the whole machine. Emits a structured deterministic report: secrets, external URLs, high-risk shell patterns, obfuscation signals, binary/suspicious file inventory, and `SKILL.md` frontmatter (`name`, `version`, `allowed-tools`).
+
+- `PATH_OR_URL` — one of:
+  - a local path (file or directory)
+  - a raw git URL (https / ssh / `.git`) — shallow-cloned to a temp dir for the review
+  - a remote **shorthand**:
+    - `github:<owner>/<repo>[/<subpath>]` — resolves to `https://github.com/<owner>/<repo>.git`
+    - `gitlab:<owner>/<repo>[/<subpath>]` — resolves to `https://gitlab.com/<owner>/<repo>.git`
+    - `npm:<pkg>[@<version>]` — fetches the tarball from the npm registry (default `@latest`); supports scoped packages (e.g. `npm:@scope/pkg@1.2.3`)
+
+  Omit when using `--installed`.
+- `--json` — emit JSON to stdout (shortcut for `--format json`)
+- `--format text|json` — output format (default: `text`)
+- `--cache-ttl <duration>` — TTL for the persistent shorthand-resolution cache. Accepts `<n>[s|m|h|d]` (e.g. `30s`, `5m`, `24h`, `1d`). Default: `24h`. Only applies to shorthand forms.
+- `--no-cache` — bypass the persistent shorthand cache: always fetch fresh and never write to cache. Temp dirs used during the review are removed on exit.
+- `--installed` — audit every installed skill across detected agent skill directories instead of a path
+- `--agent <name>` — restrict `--installed` to a single agent (`claude-code`, `codex`, `openclaw`, or `cursor`)
+- `--summary` — print a terse human-readable table instead of JSON (only with `--installed`)
+
+#### Persistent shorthand cache
+
+Shorthand resolutions and fetched content are cached under `~/.rafter/skill-cache/` (override: `RAFTER_SKILL_CACHE_DIR`) in a two-level layout:
+
+```
+~/.rafter/skill-cache/
+├── resolutions/<sha256(shorthand)>.json   # { shorthand, sha|version, resolvedAt }
+└── content/<content-key>/                 # keyed by git SHA or npm version
+    ├── meta.json                          # { source, shorthand, key, sha|version, fetchedAt }
+    └── content/                           # extracted working tree
+```
+
+- `github:`/`gitlab:` content keys: `git-<kind>-<owner>-<repo>-<sha-40>` (content-addressed; immutable).
+- `npm:` content keys: `npm-<pkg-safe>-<version>` (immutable per version).
+- `--cache-ttl` applies only to the **resolution** layer (how long `github:foo/bar` → SHA stays fresh). Content under a resolved SHA/version is immutable and kept until manually pruned.
+- Corrupt cache entries (missing `meta.json`, empty `content/`) are detected and dropped automatically — the next run re-fetches.
+- With `--no-cache`, neither layer is read or written; content is extracted to a temp dir and deleted after the review.
+
+#### Remote fetch exit codes
+
+In addition to the path-mode codes listed below, shorthand forms may exit `2` for:
+- unresolvable `git ls-remote` (network failure, invalid owner/repo, private repo without creds)
+- npm registry 404, HTTP failure, or unknown `@version`
+- requested `subpath` missing in the fetched tree
+- malformed shorthand (e.g. `npm:` with no package name)
+
+JSON shape (`--json`):
+
+```json
+{
+  "target": {
+    "input": "./their-skill/",
+    "kind": "directory",
+    "resolvedPath": "/abs/path/to/their-skill"
+  },
+  "frontmatter": [
+    {
+      "file": "SKILL.md",
+      "name": "their-skill",
+      "version": "0.1.0",
+      "description": "...",
+      "allowedTools": ["Bash", "Read"]
+    }
+  ],
+  "secrets": [
+    { "pattern": "AWS Secret Access Key", "severity": "critical", "file": "SKILL.md", "line": 17, "redacted": "AWS_***EKEY" }
+  ],
+  "urls": ["https://example.com/install.sh"],
+  "highRiskCommands": [
+    { "command": "curl | sh", "file": "SKILL.md", "line": 11 }
+  ],
+  "obfuscation": [
+    { "kind": "bidi-override", "file": "SKILL.md", "line": 16, "sample": "U+202E" }
+  ],
+  "inventory": {
+    "textFiles": 8,
+    "binaryFiles": 1,
+    "suspiciousFiles": [ { "path": "helper.so", "bytes": 4, "kind": "binary" } ]
+  },
+  "summary": {
+    "severity": "critical",
+    "findings": 4,
+    "reasons": ["1 secret finding(s)", "1 high-risk command(s)", "1 hard obfuscation signal(s)"]
+  }
+}
+```
+
+**Shorthand provenance** (`target.source`): when `PATH_OR_URL` is a shorthand, `target.kind` is `"github"`, `"gitlab"`, or `"npm"` (instead of `"directory"`/`"file"`/`"git-url"`), and `target.source` is added with provenance info. When a `subpath` was requested, `target.skillRelDir` is the path within the cloned tree that was audited.
+
+```json
+// github/gitlab:
+"source": { "url": "https://github.com/foo/bar.git", "sha": "<40-hex>", "subpath": "skills/review", "cacheHit": false }
+// npm:
+"source": { "url": "https://registry.npmjs.org/.../pkg-1.2.3.tgz", "version": "1.2.3", "cacheHit": true }
+```
+
+**Multi-`SKILL.md` mode**: when a directory or fetched tree contains **more than one** `SKILL.md`, the review audits each independently (scoped to its containing directory) and emits a combined report. The JSON shape switches to:
+
+```json
+{
+  "target": {
+    "input": "github:foo/bar",
+    "kind": "github",
+    "resolvedPath": "/abs/.../content",
+    "mode": "multi-skill",
+    "source": { "url": "...", "sha": "...", "cacheHit": false }
+  },
+  "skills": [
+    {
+      "relDir": "skills/alpha",
+      "name": "alpha",
+      "version": "1.0.0",
+      "report": { "...": "same shape as the single-skill JSON above, with target.skillRelDir set" }
+    }
+  ],
+  "summary": {
+    "totalSkills": 2,
+    "severityCounts": { "clean": 1, "low": 0, "medium": 0, "high": 0, "critical": 1 },
+    "findings": 4,
+    "worst": "critical",
+    "reasons": ["1 critical skill(s)"]
+  }
+}
+```
+
+The exit code for multi-skill mode follows the worst per-skill severity: `0` iff every skill is `clean`, else `1`.
+
+**Obfuscation kinds**: `zero-width-char`, `bidi-override`, `base64-blob`, `hex-escape-rope`, `html-comment-imperative`.
+
+**Severity tiers** (in `summary.severity`): `clean`, `low`, `medium`, `high`, `critical`. A `bidi-override` or `html-comment-imperative` is always `critical`. High-risk commands escalate to at least `high`. Long base64 blobs / zero-width chars / binary-blob files escalate to at least `medium`.
+
+Exit codes (default `PATH_OR_URL` mode):
+- `0` — `summary.severity == "clean"` (no findings)
+- `1` — one or more findings (any non-`clean` severity)
+- `2` — input path does not exist, or git clone failed; or neither `PATH_OR_URL` nor `--installed` was given
+
+Limits: directory walks skip `.git` / `node_modules` / `.venv`, cap at 2,000 files, and treat files larger than 2 MiB as suspicious binaries. Files containing null bytes in the first 4 KiB are treated as binary.
+
+#### `--installed` mode
+
+Walks every detected agent skill directory and runs the same audit pipeline on each `SKILL.md` (or `.md` / `.mdc`) file found. Directory layout per agent:
+
+| Platform | Skill path |
+|----------|------------|
+| `claude-code` | `~/.claude/skills/<name>/SKILL.md` |
+| `codex` | `~/.agents/skills/<name>/SKILL.md` |
+| `openclaw` | `~/.openclaw/skills/<name>.md` |
+| `cursor` | `~/.cursor/rules/<name>.mdc` |
+
+Missing dirs and unreadable entries are silently skipped — a single permission-denied subdir never aborts the walk. Results are ordered deterministically by `(platform, name)` for golden-file stability.
+
+JSON shape (`--installed`, default output):
+
+```json
+{
+  "target": { "mode": "installed", "agent": "all" },
+  "installations": [
+    {
+      "platform": "claude-code",
+      "skill": "rafter-secure-design",
+      "path": "/home/user/.claude/skills/rafter-secure-design/SKILL.md",
+      "report": { "...": "per-skill report, same shape as `rafter skill review <path>`" }
+    }
+  ],
+  "summary": {
+    "totalSkills": 3,
+    "severityCounts": { "clean": 1, "low": 0, "medium": 1, "high": 0, "critical": 1 },
+    "platformCounts": { "claude-code": 2, "openclaw": 1 },
+    "findings": 6,
+    "worst": "critical"
+  }
+}
+```
+
+`target.agent` is `"all"` by default or the platform name when `--agent <name>` is given.
+
+Exit codes (`--installed` mode):
+- `0` — no installed skill has a `high` or `critical` finding
+- `1` — at least one installed skill has `high` or `critical` severity, **or** an argument was invalid (`--agent` unknown, both `PATH_OR_URL` and `--installed` passed)
+
+Note the looser gate vs. the `PATH_OR_URL` mode: `--installed` tolerates `medium` and below so a routine `rafter skill review --installed` in CI doesn't fail on noisy obfuscation signals across dozens of skills. Use `rafter skill review <path>` for a strict single-skill gate.
+
 ### rafter agent audit-skill SKILL_PATH [OPTIONS]
 
-Security audit of a skill/extension file before installation.
+**Deprecated** — use `rafter skill review <path-or-url>` instead. Still functional; emits a deprecation warning to stderr.
 
 - `SKILL_PATH` — path to skill file (.md)
 - `--skip-openclaw` — skip OpenClaw integration, show manual review prompt
@@ -439,7 +758,7 @@ PostToolUse hook handler. Reads tool output from stdin, redacts any secrets foun
 
 ### rafter mcp serve [OPTIONS]
 
-Start MCP server over stdio transport. Exposes 4 tools and 2 resources.
+Start MCP server over stdio transport. Exposes 6 tools and 3 resources.
 
 - `--transport <type>` — transport type (currently only `stdio`, default: `stdio`)
 
@@ -451,6 +770,8 @@ Start MCP server over stdio transport. Exposes 4 tools and 2 resources.
 | `evaluate_command` | Check if a shell command is safe to run per the active security policy | `command` (string) |
 | `read_audit_log` | Read security event history — blocked commands, detected secrets, policy overrides | none (optional: `limit`, `event_type`, `since`) |
 | `get_config` | Read active Rafter configuration and policy | none (optional: `key` dot-path) |
+| `list_docs` | List repo-specific security docs declared in `.rafter.yml` (metadata only, no content) | none (optional: `tag`) |
+| `get_doc` | Return the content of a repo-specific security doc by id or tag | `id_or_tag` (string); optional: `refresh` (bool) |
 
 **`scan_secrets` inputs:**
 - `path` (required) — file or directory path to scan
@@ -474,14 +795,21 @@ Start MCP server over stdio transport. Exposes 4 tools and 2 resources.
 **`get_config` inputs:**
 - `key` (optional, string) — dot-path config key (e.g. `agent.commandPolicy`); omit for full config
 
+**`list_docs` output schema:** array of `{ id, source, source_kind, description, tags, cache_status }` where `source_kind` is `"path"` or `"url"` and `cache_status` is one of `local` (path-backed), `cached`, `not-cached`, `stale`.
+
+**`get_doc` output schema:** array of `{ id, source, source_kind, stale, content }`. Returns multiple entries when `id_or_tag` matches a tag shared by several docs; returns a single entry when it matches an `id` exactly.
+
 #### MCP Resources
 
 | URI | MIME type | Description |
 |-----|-----------|-------------|
 | `rafter://config` | `application/json` | Current Rafter configuration (`~/.rafter/config.json`) |
 | `rafter://policy` | `application/json` | Active security policy — merged `.rafter.yml` + global config |
+| `rafter://docs` | `application/json` | Repo-specific security docs declared in `.rafter.yml` (metadata only, no content) |
 
 `rafter://policy` returns the result of merging the project-level `.rafter.yml` (if present) over the global config. It reflects the effective policy that `evaluate_command` and `scan_secrets` enforce.
+
+`rafter://docs` returns the same array shape as the `list_docs` tool. Use `get_doc` to retrieve actual content.
 
 ### rafter policy export [OPTIONS]
 
@@ -489,6 +817,49 @@ Export Rafter policy for agent platforms.
 
 - `--format <format>` — target format: `claude` or `codex`
 - `--output <path>` — write to file instead of stdout
+
+### rafter docs list [OPTIONS]
+
+List repo-specific security docs declared under `docs:` in `.rafter.yml`. Never performs network I/O — for URL-backed docs, reports cache status only.
+
+- `--tag <tag>` — filter to docs whose tags include this value
+- `--json` — output as JSON
+
+Human-readable output format:
+```
+<id>  <source>[ (cached|stale|not-cached)][ [tag1, tag2]][ — <description>]
+```
+
+JSON output (array):
+```json
+[
+  {
+    "id": "secure-coding",
+    "source": "docs/security/secure.md",
+    "source_kind": "path",
+    "description": "Internal secure-coding rules",
+    "tags": ["owasp", "internal"],
+    "cache_status": "local"
+  }
+]
+```
+
+Exit codes: `0` on success, `3` if no docs configured.
+
+### rafter docs show <ID_OR_TAG> [OPTIONS]
+
+Print the content of a doc. If the argument exactly matches a doc `id`, prints that doc. Otherwise, any doc whose `tags` include the argument is concatenated with separator headers.
+
+- `--refresh` — force re-fetch for URL-backed docs (bypass cache)
+- `--json` — output as JSON array of `{ id, source, source_kind, stale, content }`
+
+Behavior for URL docs:
+- On cache hit within TTL, reads from cache.
+- On miss or expired, fetches and updates cache.
+- On network failure with a stale cache present, returns stale content and prints a warning to stderr.
+- On network failure with no cache, exits `1`.
+
+Exit codes: `0` ok, `1` fetch/read error, `2` selector did not match, `3` no docs configured.
 
 ### rafter notify [SCAN_ID] [OPTIONS]
 
@@ -580,9 +951,29 @@ scan:
 audit:
   retention_days: 90
   log_level: info
+docs:
+  - id: secure-coding                 # optional — defaults to basename(path) without extension, or sha256(url)[:8]
+    path: docs/security/secure.md     # exactly one of { path, url } is required
+    description: Internal secure-coding rules
+    tags: [owasp, internal]
+  - id: app-threat-model
+    url: https://internal.example.com/threat-model.md
+    description: Application threat model
+    tags: [threat-model]
+    cache:
+      ttl_seconds: 86400              # optional, default 86400; only valid with url
 ```
 
 Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not append.
+
+**Docs validation rules:**
+- Each entry must have exactly one of `path` or `url` — both or neither is skipped with a warning.
+- Duplicate `id`s are skipped with a warning (first one wins).
+- `tags` must be a list of strings if present.
+- `cache.ttl_seconds` must be a positive number and is only valid for `url` entries.
+- Unknown keys per-entry are ignored with a warning.
+
+**URL caching:** URL-backed docs are cached at `~/.rafter/docs-cache/` keyed by `sha256(url)[:32]`. Default TTL is 86400 seconds. On network failure, a stale cached copy is served and a warning is printed. `docs list` never fetches; `docs show` fetches on miss/expired or when `--refresh` is set.
 
 ---
 

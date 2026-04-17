@@ -308,6 +308,7 @@ class ConfigManager:
                     for p in (agent_raw.get("scan") or {}).get("custom_patterns", (agent_raw.get("scan") or {}).get("customPatterns", []))
                 ],
             ),
+            components=agent_raw.get("components") or {},
         )
 
         return RafterConfig(

@@ -126,9 +126,9 @@ describe("MCP Server — tool registration and schema", () => {
   beforeAll(setupClientServer);
   afterAll(teardown);
 
-  it("should register exactly 4 tools", async () => {
+  it("should register exactly 6 tools", async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(6);
   });
 
   it("should expose scan_secrets with correct schema", async () => {
@@ -171,9 +171,27 @@ describe("MCP Server — tool registration and schema", () => {
     expect(names).toEqual([
       "evaluate_command",
       "get_config",
+      "get_doc",
+      "list_docs",
       "read_audit_log",
       "scan_secrets",
     ]);
+  });
+
+  it("should expose list_docs with optional tag input", async () => {
+    const { tools } = await client.listTools();
+    const tool = tools.find(t => t.name === "list_docs");
+    expect(tool).toBeDefined();
+    expect(tool!.inputSchema.properties).toHaveProperty("tag");
+    expect(tool!.inputSchema.required).toBeUndefined();
+  });
+
+  it("should expose get_doc with required id_or_tag input", async () => {
+    const { tools } = await client.listTools();
+    const tool = tools.find(t => t.name === "get_doc");
+    expect(tool).toBeDefined();
+    expect(tool!.inputSchema.required).toContain("id_or_tag");
+    expect(tool!.inputSchema.properties).toHaveProperty("refresh");
   });
 });
 
@@ -181,9 +199,9 @@ describe("MCP Server — resource registration", () => {
   beforeAll(setupClientServer);
   afterAll(teardown);
 
-  it("should register exactly 2 resources", async () => {
+  it("should register exactly 3 resources", async () => {
     const { resources } = await client.listResources();
-    expect(resources).toHaveLength(2);
+    expect(resources).toHaveLength(3);
   });
 
   it("should expose rafter://config resource", async () => {
@@ -198,6 +216,20 @@ describe("MCP Server — resource registration", () => {
     const res = resources.find(r => r.uri === "rafter://policy");
     expect(res).toBeDefined();
     expect(res!.mimeType).toBe("application/json");
+  });
+
+  it("should expose rafter://docs resource", async () => {
+    const { resources } = await client.listResources();
+    const res = resources.find(r => r.uri === "rafter://docs");
+    expect(res).toBeDefined();
+    expect(res!.mimeType).toBe("application/json");
+  });
+
+  it("should return valid JSON array from rafter://docs", async () => {
+    const result = await client.readResource({ uri: "rafter://docs" });
+    expect(result.contents).toHaveLength(1);
+    const parsed = JSON.parse(result.contents[0].text as string);
+    expect(Array.isArray(parsed)).toBe(true);
   });
 
   it("should return valid JSON from rafter://config", async () => {
@@ -420,7 +452,7 @@ describe("MCP Server — lifecycle", () => {
 
       // Quick sanity — tools are still listed
       const { tools } = await c.listTools();
-      expect(tools).toHaveLength(4);
+      expect(tools).toHaveLength(6);
 
       await c.close();
       await s.close();

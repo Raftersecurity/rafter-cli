@@ -11,6 +11,9 @@ import { createVerifyCommand } from "./verify.js";
 import { createStatusCommand } from "./status.js";
 import { createUpdateGitleaksCommand } from "./update-gitleaks.js";
 import { createBaselineCommand } from "./baseline.js";
+import { createListCommand } from "./list.js";
+import { createEnableCommand } from "./enable.js";
+import { createDisableCommand } from "./disable.js";
 
 export function createAgentCommand(): Command {
   const agent = new Command("agent")
@@ -29,6 +32,9 @@ export function createAgentCommand(): Command {
   agent.addCommand(createStatusCommand());
   agent.addCommand(createUpdateGitleaksCommand());
   agent.addCommand(createBaselineCommand());
+  agent.addCommand(createListCommand());
+  agent.addCommand(createEnableCommand());
+  agent.addCommand(createDisableCommand());
 
   return agent;
 }

@@ -6,11 +6,13 @@ import { createGetCommand } from "./commands/backend/get.js";
 import { createUsageCommand } from "./commands/backend/usage.js";
 import { createScanGroupCommand } from "./commands/scan/index.js";
 import { createAgentCommand } from "./commands/agent/index.js";
+import { createSkillCommand } from "./commands/skill/index.js";
 import { createCiCommand } from "./commands/ci/index.js";
 import { createHookCommand } from "./commands/hook/index.js";
 import { createMcpCommand } from "./commands/mcp/index.js";
 import { createPolicyCommand } from "./commands/policy/index.js";
 import { createBriefCommand } from "./commands/brief.js";
+import { createDocsCommand } from "./commands/docs/index.js";
 import { createNotifyCommand } from "./commands/notify.js";
 import { createCompletionCommand } from "./commands/completion.js";
 import { createIssuesCommand } from "./commands/issues/index.js";
@@ -48,6 +50,9 @@ program.addCommand(createScanGroupCommand());
 // Agent commands
 program.addCommand(createAgentCommand());
 
+// Skill commands (install / uninstall / list rafter-authored skills)
+program.addCommand(createSkillCommand());
+
 // CI commands
 program.addCommand(createCiCommand());
 
@@ -59,6 +64,9 @@ program.addCommand(createMcpCommand());
 
 // Policy commands
 program.addCommand(createPolicyCommand());
+
+// Docs — repo-specific security docs from .rafter.yml
+program.addCommand(createDocsCommand());
 
 // GitHub Issues integration
 program.addCommand(createIssuesCommand());
