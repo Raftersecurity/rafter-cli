@@ -35,6 +35,7 @@ export interface PolicyFile {
   audit?: {
     retentionDays?: number;
     logLevel?: string;
+    logPath?: string;
   };
   docs?: PolicyDocEntry[];
 }
@@ -123,6 +124,7 @@ function mapPolicy(raw: Record<string, any>): PolicyFile {
       policy.audit.retentionDays = Number(raw.audit.retention_days);
     }
     if (raw.audit.log_level) policy.audit.logLevel = raw.audit.log_level;
+    if (raw.audit.log_path) policy.audit.logPath = String(raw.audit.log_path);
   }
 
   if (Array.isArray(raw.docs)) {
@@ -280,6 +282,10 @@ function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFil
     if (policy.audit.logLevel !== undefined && !VALID_LOG_LEVELS.has(policy.audit.logLevel)) {
       console.error(`Warning: "audit.log_level" must be one of: debug, info, warn, error — ignoring.`);
       delete policy.audit.logLevel;
+    }
+    if (policy.audit.logPath !== undefined && typeof policy.audit.logPath !== "string") {
+      console.error(`Warning: "audit.log_path" must be a string — ignoring.`);
+      delete policy.audit.logPath;
     }
   }
 

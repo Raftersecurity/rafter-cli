@@ -1127,6 +1127,8 @@ def audit(
     event: str = typer.Option(None, "--event", help="Filter by event type"),
     agent_type: str = typer.Option(None, "--agent", help="Filter by agent type"),
     since: str = typer.Option(None, "--since", help="Show entries since date (YYYY-MM-DD)"),
+    repo: str = typer.Option(None, "--repo", help="Filter by git repo path (substring match)"),
+    cwd: str = typer.Option(None, "--cwd", help="Filter by working directory (substring match)"),
     share: bool = typer.Option(False, "--share", help="Generate a redacted excerpt for issue reports"),
 ):
     """View audit log entries."""
@@ -1149,6 +1151,8 @@ def audit(
         agent_type=agent_type,
         since=since_dt,
         limit=last,
+        cwd=cwd,
+        git_repo=repo,
     )
 
     if not entries:
@@ -1170,6 +1174,10 @@ def audit(
         print(f"{ind} [{ts}] {et}")
         if e.get("agentType") or e.get("agent_type"):
             print(f"   Agent: {e.get('agentType') or e['agent_type']}")
+        if e.get("gitRepo"):
+            print(f"   Repo: {e['gitRepo']}")
+        elif e.get("cwd"):
+            print(f"   Cwd: {e['cwd']}")
         action = e.get("action") or {}
         if action.get("command"):
             print(f"   Command: {action['command']}")

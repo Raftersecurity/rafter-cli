@@ -244,6 +244,8 @@ class ConfigManager:
                 config.agent.audit.retention_days = audit["retention_days"]
             if audit.get("log_level"):
                 config.agent.audit.log_level = audit["log_level"]
+            if audit.get("log_path"):
+                config.agent.audit.log_path = audit["log_path"]
 
         return config
 

@@ -76,9 +76,35 @@ def validate_webhook_url(raw_url: str) -> None:
             )
 
 
+def find_git_repo_root(start_dir: Path, max_depth: int = 20) -> str | None:
+    """Walk up from start_dir looking for a .git directory."""
+    d = start_dir.resolve()
+    for _ in range(max_depth):
+        try:
+            if (d / ".git").exists():
+                return str(d)
+        except OSError:
+            return None
+        if d.parent == d:
+            return None
+        d = d.parent
+    return None
+
+
 class AuditLogger:
     def __init__(self, log_path: Path | None = None):
-        self._path = log_path or get_audit_log_path()
+        if log_path is not None:
+            self._path = log_path
+        else:
+            # Project-local override from .rafter.yml beats global
+            policy_path = None
+            try:
+                from .config_manager import ConfigManager
+                merged = ConfigManager().load_with_policy()
+                policy_path = merged.agent.audit.log_path
+            except Exception:
+                pass
+            self._path = Path(policy_path).expanduser() if policy_path else get_audit_log_path()
         self._session_id = f"{int(time.time() * 1000)}-{random.randbytes(4).hex()}"
         self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
@@ -89,9 +115,16 @@ class AuditLogger:
         if not config.agent.audit.log_all_actions:
             return
 
+        cwd = entry.get("cwd") or os.getcwd()
+        git_repo = entry.get("gitRepo")
+        if git_repo is None:
+            git_repo = find_git_repo_root(Path(cwd))
+
         full = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "sessionId": self._session_id,
+            "cwd": cwd,
+            "gitRepo": git_repo,
             **entry,
         }
         fd = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
@@ -213,6 +246,8 @@ class AuditLogger:
         agent_type: str | None = None,
         since: datetime | None = None,
         limit: int | None = None,
+        cwd: str | None = None,
+        git_repo: str | None = None,
     ) -> list[dict]:
         if not self._path.exists():
             return []
@@ -233,6 +268,10 @@ class AuditLogger:
         if since:
             iso = since.isoformat()
             entries = [e for e in entries if e.get("timestamp", "") >= iso]
+        if cwd:
+            entries = [e for e in entries if cwd in (e.get("cwd") or "")]
+        if git_repo:
+            entries = [e for e in entries if git_repo in (e.get("gitRepo") or "")]
         if limit:
             entries = entries[-limit:]
         return entries

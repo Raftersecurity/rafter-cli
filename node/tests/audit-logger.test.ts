@@ -140,6 +140,30 @@ describe("AuditLogger", () => {
       const onDisk = fs.readFileSync(logPath, "utf-8");
       expect(onDisk).not.toContain(token);
     });
+
+    it("auto-populates cwd and gitRepo on every entry", () => {
+      const logger = new AuditLogger(logPath);
+      logger.logCommandIntercepted("ls", true, "allowed");
+      const entries = logger.read();
+      expect(entries[0].cwd).toBeDefined();
+      expect(entries[0].cwd).toBe(process.cwd());
+      // gitRepo is the rafter-cli root when tests run from crew/lucy
+      expect(entries[0].gitRepo).toBeDefined();
+    });
+
+    it("filters read() by gitRepo substring", () => {
+      const logger = new AuditLogger(logPath);
+      // forge entries with different repo paths
+      fs.writeFileSync(logPath, [
+        JSON.stringify({ timestamp: "2026-01-01T00:00:00Z", sessionId: "s1", eventType: "command_intercepted", gitRepo: "/home/alice/repo-a" }),
+        JSON.stringify({ timestamp: "2026-01-01T00:00:00Z", sessionId: "s2", eventType: "command_intercepted", gitRepo: "/home/alice/repo-b" }),
+        JSON.stringify({ timestamp: "2026-01-01T00:00:00Z", sessionId: "s3", eventType: "command_intercepted", gitRepo: "/home/bob/repo-a" }),
+      ].join("\n") + "\n");
+
+      expect(logger.read({ gitRepo: "repo-a" })).toHaveLength(2);
+      expect(logger.read({ gitRepo: "alice" })).toHaveLength(2);
+      expect(logger.read({ gitRepo: "nowhere" })).toHaveLength(0);
+    });
   });
 
   describe("read with filters", () => {
