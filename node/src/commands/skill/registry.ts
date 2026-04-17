@@ -17,6 +17,7 @@ export const KNOWN_SKILL_NAMES = [
   "rafter-agent-security",
   "rafter-secure-design",
   "rafter-code-review",
+  "rafter-skill-review",
 ] as const;
 
 export type SkillPlatform = "claude-code" | "codex" | "openclaw" | "cursor";

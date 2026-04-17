@@ -218,7 +218,7 @@ Persists `agent.components.<id>.enabled = false` in `~/.rafter/config.json`.
 
 ### rafter skill list [OPTIONS]
 
-List rafter-authored skills shipped with this CLI and their install state across every supported platform. A skill is a bundled `SKILL.md` file (e.g. `rafter`, `rafter-agent-security`, `rafter-secure-design`, `rafter-code-review`). A platform is one of `claude-code`, `codex`, `openclaw`, `cursor`.
+List rafter-authored skills shipped with this CLI and their install state across every supported platform. A skill is a bundled `SKILL.md` file (e.g. `rafter`, `rafter-agent-security`, `rafter-secure-design`, `rafter-code-review`, `rafter-skill-review`). A platform is one of `claude-code`, `codex`, `openclaw`, `cursor`.
 
 - `--json` — machine-readable output
 - `--installed` — only show `(skill, platform)` pairs where the skill is installed
@@ -353,9 +353,69 @@ Execute shell command with risk assessment and approval workflow.
 
 Risk tiers: critical (blocked), high (approval required), medium (approval on moderate+), low (allowed).
 
+### rafter skill review PATH_OR_URL [OPTIONS]
+
+Security review of a third-party skill, plugin, or agent extension before installing it. Operates on a local file, a local directory, or a git URL (https / ssh / `.git`). Emits a structured deterministic report: secrets, external URLs, high-risk shell patterns, obfuscation signals, binary/suspicious file inventory, and `SKILL.md` frontmatter (`name`, `version`, `allowed-tools`).
+
+- `PATH_OR_URL` — local path (file or directory) OR a git URL (shallow-cloned to a temp dir for the duration of the review; removed on exit)
+- `--json` — emit JSON to stdout (shortcut for `--format json`)
+- `--format text|json` — output format (default: `text`)
+
+JSON shape (`--json`):
+
+```json
+{
+  "target": {
+    "input": "./their-skill/",
+    "kind": "directory",
+    "resolvedPath": "/abs/path/to/their-skill"
+  },
+  "frontmatter": [
+    {
+      "file": "SKILL.md",
+      "name": "their-skill",
+      "version": "0.1.0",
+      "description": "...",
+      "allowedTools": ["Bash", "Read"]
+    }
+  ],
+  "secrets": [
+    { "pattern": "AWS Secret Access Key", "severity": "critical", "file": "SKILL.md", "line": 17, "redacted": "AWS_***EKEY" }
+  ],
+  "urls": ["https://example.com/install.sh"],
+  "highRiskCommands": [
+    { "command": "curl | sh", "file": "SKILL.md", "line": 11 }
+  ],
+  "obfuscation": [
+    { "kind": "bidi-override", "file": "SKILL.md", "line": 16, "sample": "U+202E" }
+  ],
+  "inventory": {
+    "textFiles": 8,
+    "binaryFiles": 1,
+    "suspiciousFiles": [ { "path": "helper.so", "bytes": 4, "kind": "binary" } ]
+  },
+  "summary": {
+    "severity": "critical",
+    "findings": 4,
+    "reasons": ["1 secret finding(s)", "1 high-risk command(s)", "1 hard obfuscation signal(s)"]
+  }
+}
+```
+
+**Obfuscation kinds**: `zero-width-char`, `bidi-override`, `base64-blob`, `hex-escape-rope`, `html-comment-imperative`.
+
+**Severity tiers** (in `summary.severity`): `clean`, `low`, `medium`, `high`, `critical`. A `bidi-override` or `html-comment-imperative` is always `critical`. High-risk commands escalate to at least `high`. Long base64 blobs / zero-width chars / binary-blob files escalate to at least `medium`.
+
+Exit codes:
+- `0` — `summary.severity == "clean"` (no findings)
+- `1` — one or more findings (any non-`clean` severity)
+- `2` — input path does not exist, or git clone failed
+
+Limits: directory walks skip `.git` / `node_modules` / `.venv`, cap at 2,000 files, and treat files larger than 2 MiB as suspicious binaries. Files containing null bytes in the first 4 KiB are treated as binary.
+
 ### rafter agent audit-skill SKILL_PATH [OPTIONS]
 
-Security audit of a skill/extension file before installation.
+**Deprecated** — use `rafter skill review <path-or-url>` instead. Still functional; emits a deprecation warning to stderr.
 
 - `SKILL_PATH` — path to skill file (.md)
 - `--skip-openclaw` — skip OpenClaw integration, show manual review prompt
