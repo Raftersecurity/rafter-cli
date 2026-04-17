@@ -1,8 +1,20 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { execFileSync } from "child_process";
+import { readFileSync, existsSync } from "fs";
 import path from "path";
 
 const CLI = path.resolve(__dirname, "../dist/index.js");
+const RAFTER_SKILL_DIR = path.resolve(
+  __dirname,
+  "../resources/skills/rafter",
+);
+const RAFTER_SUBDOCS = [
+  "cli-reference",
+  "guardrails",
+  "backend",
+  "shift-left",
+  "finding-triage",
+];
 
 function rafter(
   args: string | string[],
@@ -140,6 +152,66 @@ describe("brief command — setup guides", () => {
       expect(r.stdout.toLowerCase()).toContain(contains.toLowerCase());
     });
   }
+});
+
+describe("rafter skill — CYOA hierarchy", () => {
+  it("top-level SKILL.md parses and stays under 120 lines", () => {
+    const skillPath = path.join(RAFTER_SKILL_DIR, "SKILL.md");
+    const raw = readFileSync(skillPath, "utf-8");
+    expect(raw.startsWith("---")).toBe(true);
+    // frontmatter closes (two `---` markers)
+    expect(raw.match(/^---$/gm)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    const lines = raw.split("\n").length;
+    expect(lines, `SKILL.md is ${lines} lines; keep under 120`).toBeLessThan(
+      120,
+    );
+  });
+
+  it("SKILL.md references each sub-doc via docs/<slug>.md", () => {
+    const raw = readFileSync(
+      path.join(RAFTER_SKILL_DIR, "SKILL.md"),
+      "utf-8",
+    );
+    for (const slug of RAFTER_SUBDOCS) {
+      expect(raw, `SKILL.md missing pointer to docs/${slug}.md`).toContain(
+        `docs/${slug}.md`,
+      );
+    }
+  });
+
+  it("every referenced sub-doc path resolves and is non-empty", () => {
+    for (const slug of RAFTER_SUBDOCS) {
+      const p = path.join(RAFTER_SKILL_DIR, "docs", `${slug}.md`);
+      expect(existsSync(p), `missing sub-doc: ${p}`).toBe(true);
+      const content = readFileSync(p, "utf-8").trim();
+      expect(content.length, `empty sub-doc: ${p}`).toBeGreaterThan(100);
+    }
+  });
+
+  it("sub-docs are mirrored to node/.claude/skills/rafter/docs", () => {
+    const claudeDocs = path.resolve(
+      __dirname,
+      "../.claude/skills/rafter/docs",
+    );
+    for (const slug of RAFTER_SUBDOCS) {
+      expect(existsSync(path.join(claudeDocs, `${slug}.md`))).toBe(true);
+    }
+  });
+
+  for (const slug of RAFTER_SUBDOCS) {
+    it(`brief ${slug} renders the sub-doc`, () => {
+      const r = rafter(`brief ${slug}`);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout.length).toBeGreaterThan(100);
+    });
+  }
+
+  it("topic list advertises sub-doc topics", () => {
+    const r = rafter("brief");
+    for (const slug of RAFTER_SUBDOCS) {
+      expect(r.stdout).toContain(slug);
+    }
+  });
 });
 
 describe("brief command — error handling", () => {
