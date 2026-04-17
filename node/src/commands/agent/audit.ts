@@ -15,6 +15,8 @@ export function createAuditCommand(): Command {
     .option("--event <type>", "Filter by event type")
     .option("--agent <type>", "Filter by agent type (openclaw, claude-code)")
     .option("--since <date>", "Show entries since date (YYYY-MM-DD)")
+    .option("--repo <pattern>", "Filter by git repo path (substring match)")
+    .option("--cwd <pattern>", "Filter by working directory (substring match)")
     .option("--share", "Generate a redacted excerpt for issue reports")
     .action((opts) => {
       if (opts.share) {
@@ -40,6 +42,14 @@ export function createAuditCommand(): Command {
         filter.since = new Date(opts.since);
       }
 
+      if (opts.repo) {
+        filter.gitRepo = opts.repo;
+      }
+
+      if (opts.cwd) {
+        filter.cwd = opts.cwd;
+      }
+
       const entries = logger.read(filter);
 
       if (entries.length === 0) {
@@ -57,6 +67,12 @@ export function createAuditCommand(): Command {
 
         if (entry.agentType) {
           console.log(`   Agent: ${entry.agentType}`);
+        }
+
+        if (entry.gitRepo) {
+          console.log(`   Repo: ${entry.gitRepo}`);
+        } else if (entry.cwd) {
+          console.log(`   Cwd: ${entry.cwd}`);
         }
 
         if (entry.action?.command) {

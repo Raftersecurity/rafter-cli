@@ -61,3 +61,28 @@ def test_log_command_intercepted_preserves_risk_assessment(audit_path, enabled_c
     entry = json.loads(audit_path.read_text().strip())
     # Risk level must still be assessed on the real command
     assert entry["action"]["riskLevel"] in ("critical", "high")
+
+
+def test_log_auto_populates_cwd_and_git_repo(audit_path, enabled_config):
+    logger = AuditLogger(log_path=audit_path)
+    logger.log_command_intercepted("ls", passed=True, action_taken="allowed")
+    entry = json.loads(audit_path.read_text().strip())
+    import os
+    assert entry["cwd"] == os.getcwd()
+    # Running from inside the rafter-cli repo → gitRepo should be set
+    assert entry.get("gitRepo"), "gitRepo should be auto-populated when run inside a git repo"
+
+
+def test_read_filters_by_git_repo(audit_path, enabled_config):
+    # Forge entries with different repo paths
+    audit_path.write_text(
+        "\n".join([
+            json.dumps({"timestamp": "2026-01-01T00:00:00+00:00", "sessionId": "s1", "eventType": "command_intercepted", "gitRepo": "/home/alice/repo-a"}),
+            json.dumps({"timestamp": "2026-01-01T00:00:00+00:00", "sessionId": "s2", "eventType": "command_intercepted", "gitRepo": "/home/alice/repo-b"}),
+            json.dumps({"timestamp": "2026-01-01T00:00:00+00:00", "sessionId": "s3", "eventType": "command_intercepted", "gitRepo": "/home/bob/repo-a"}),
+        ]) + "\n"
+    )
+    logger = AuditLogger(log_path=audit_path)
+    assert len(logger.read(git_repo="repo-a")) == 2
+    assert len(logger.read(git_repo="alice")) == 2
+    assert len(logger.read(git_repo="nowhere")) == 0

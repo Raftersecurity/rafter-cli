@@ -116,6 +116,8 @@ export interface AuditLogEntry {
   sessionId: string;
   eventType: EventType;
   agentType?: AgentType;
+  cwd?: string;
+  gitRepo?: string;
   action?: {
     command?: string;
     tool?: string;
@@ -132,6 +134,28 @@ export interface AuditLogEntry {
   };
 }
 
+/**
+ * Walk up from startDir looking for a .git directory. Returns the repo root
+ * (the directory containing .git), or undefined if none found within maxDepth.
+ * Single-filesystem-hop lookup — no subprocess, no git binary required.
+ */
+export function findGitRepoRoot(startDir: string, maxDepth: number = 20): string | undefined {
+  let dir = startDir;
+  for (let i = 0; i < maxDepth; i++) {
+    try {
+      if (fs.existsSync(path.join(dir, ".git"))) {
+        return dir;
+      }
+    } catch {
+      return undefined;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+  return undefined;
+}
+
 export const RISK_SEVERITY: Record<string, number> = {
   low: 0,
   medium: 1,
@@ -146,10 +170,24 @@ export class AuditLogger {
   private scanner: RegexScanner;
 
   constructor(logPath?: string) {
-    this.logPath = logPath || getAuditLogPath();
-    this.sessionId = this.generateSessionId();
     this.configManager = new ConfigManager();
     this.scanner = new RegexScanner();
+    this.sessionId = this.generateSessionId();
+
+    if (logPath) {
+      this.logPath = logPath;
+    } else {
+      // Project-local override from .rafter.yml (via loadWithPolicy) beats global
+      let policyPath: string | undefined;
+      try {
+        policyPath = this.configManager.loadWithPolicy()?.agent?.audit?.logPath;
+      } catch {
+        // fall through to global
+      }
+      this.logPath = policyPath
+        ? path.resolve(policyPath)
+        : getAuditLogPath();
+    }
 
     // Ensure log directory exists
     const dir = path.dirname(this.logPath);
@@ -169,8 +207,13 @@ export class AuditLogger {
       return;
     }
 
+    const cwd = entry.cwd ?? process.cwd();
+    const gitRepo = entry.gitRepo ?? findGitRepoRoot(cwd);
+
     const fullEntry: AuditLogEntry = {
       ...entry,
+      cwd,
+      gitRepo,
       timestamp: new Date().toISOString(),
       sessionId: this.sessionId
     };
@@ -333,6 +376,8 @@ export class AuditLogger {
     agentType?: AgentType;
     since?: Date;
     limit?: number;
+    cwd?: string;
+    gitRepo?: string;
   }): AuditLogEntry[] {
     if (!fs.existsSync(this.logPath)) {
       return [];
@@ -362,6 +407,14 @@ export class AuditLogger {
       }
       if (filter.since) {
         entries = entries.filter(e => new Date(e.timestamp) >= filter.since!);
+      }
+      if (filter.cwd) {
+        const needle = filter.cwd;
+        entries = entries.filter(e => (e.cwd ?? "").includes(needle));
+      }
+      if (filter.gitRepo) {
+        const needle = filter.gitRepo;
+        entries = entries.filter(e => (e.gitRepo ?? "").includes(needle));
       }
       if (filter.limit) {
         entries = entries.slice(-filter.limit);
