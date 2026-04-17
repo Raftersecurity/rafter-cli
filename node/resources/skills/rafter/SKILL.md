@@ -42,9 +42,10 @@ Use this for: "Is `rm -rf $DIR` safe?", any destructive-looking shell the user t
 
 Use this for: installing an MCP server, adding a Claude skill, vetting an AI tool config.
 
-- Audit a directory: `rafter agent audit <path>`
-- Audit a skill file: `rafter agent audit --skill SKILL.md`
-- **Read `docs/cli-reference.md`** §`agent audit` for output shape and exit codes.
+- **Installing a new skill? → Read `rafter-skill-review/SKILL.md`** — full provenance, malware, prompt-injection, data-practices, telemetry checklist.
+- Run the deterministic pass: `rafter skill review <path-or-url>` (emits JSON).
+- Audit a directory: `rafter agent audit <path>` (still supported).
+- **Read `docs/cli-reference.md`** §`skill review` / §`agent audit` for output shape and exit codes.
 
 ### (d) I want to understand a finding I already have
 
@@ -95,8 +96,7 @@ rafter usage                 # check API quota
 - Exit `1` = findings detected OR error
 - Exit `2` = invalid input / scan not found
 
-Full CLI tree: **Read `docs/cli-reference.md`**.
-Full command digest for any agent: `rafter brief commands`.
+Full CLI tree: **Read `docs/cli-reference.md`**. Full digest: `rafter brief commands`.
 
 ## Configuration
 
