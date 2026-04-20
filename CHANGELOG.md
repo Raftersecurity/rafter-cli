@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-04-20
+
+### Added
+- **`rafter agent init --with-codex` writes AGENTS.md** (Node + Python, rf-djw): Codex adapter now installs a `<!-- rafter:start -->…<!-- rafter:end -->` instruction block to `~/.codex/AGENTS.md` (user scope) or `<cwd>/AGENTS.md` (project scope), pointing Codex at the installed rafter skills. Idempotent marker-block write preserves user content.
+- **`rafter agent init --with-gemini` writes GEMINI.md** (Node + Python, rf-xx9): Gemini adapter gets the same treatment — marker-block injection into `~/.gemini/GEMINI.md` or `<cwd>/GEMINI.md`.
+
+### Changed
+- **Consolidated `rafter-agent-security` skill** (Node + Python, rc-0ba): merged its content into the `rafter` router and `rafter-skill-review`; removed the standalone SKILL.md, registry entry, and brief topic. `AGENT_SKILLS` is now the canonical three: `rafter`, `rafter-secure-design`, `rafter-code-review`.
+
 ## [0.7.2] - 2026-04-17
 
 ### Changed
