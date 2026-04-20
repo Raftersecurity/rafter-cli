@@ -364,4 +364,64 @@ describe("Codex CLI Integration", () => {
       ).toBe(false);
     });
   });
+
+  // ── 7. AGENTS.md instruction file ────────────────────────────────
+
+  describe("Codex AGENTS.md instruction file", () => {
+    it("writes ~/.codex/AGENTS.md with the rafter marker block at user scope", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+
+      const result = runCli("agent init --with-codex", testHomeDir);
+      expect(result.exitCode).toBe(0);
+
+      const agentsPath = path.join(testHomeDir, ".codex", "AGENTS.md");
+      expect(fs.existsSync(agentsPath)).toBe(true);
+
+      const content = fs.readFileSync(agentsPath, "utf-8");
+      expect(content).toContain("<!-- rafter:start -->");
+      expect(content).toContain("<!-- rafter:end -->");
+    });
+
+    it("is idempotent on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+
+      runCli("agent init --with-codex", testHomeDir);
+      const first = fs.readFileSync(
+        path.join(testHomeDir, ".codex", "AGENTS.md"),
+        "utf-8"
+      );
+
+      runCli("agent init --with-codex", testHomeDir);
+      const second = fs.readFileSync(
+        path.join(testHomeDir, ".codex", "AGENTS.md"),
+        "utf-8"
+      );
+
+      expect(second).toBe(first);
+    });
+
+    it("preserves existing user content outside the marker block", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+      const agentsPath = path.join(testHomeDir, ".codex", "AGENTS.md");
+      fs.writeFileSync(agentsPath, "# My personal instructions\n\nDo the thing.\n");
+
+      runCli("agent init --with-codex", testHomeDir);
+
+      const content = fs.readFileSync(agentsPath, "utf-8");
+      expect(content).toContain("# My personal instructions");
+      expect(content).toContain("Do the thing.");
+      expect(content).toContain("<!-- rafter:start -->");
+    });
+
+    it("does NOT write AGENTS.md if --with-codex is not passed", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+      fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
+
+      runCli("agent init --with-claude-code", testHomeDir);
+
+      expect(
+        fs.existsSync(path.join(testHomeDir, ".codex", "AGENTS.md"))
+      ).toBe(false);
+    });
+  });
 });
