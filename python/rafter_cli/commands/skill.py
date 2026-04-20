@@ -48,7 +48,6 @@ skill_app = typer.Typer(
 # Rafter-authored skills shipped with this CLI.
 KNOWN_SKILL_NAMES: tuple[str, ...] = (
     "rafter",
-    "rafter-agent-security",
     "rafter-secure-design",
     "rafter-code-review",
     "rafter-skill-review",

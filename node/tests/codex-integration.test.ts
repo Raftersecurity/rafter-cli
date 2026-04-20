@@ -67,29 +67,28 @@ describe("Codex CLI Integration", () => {
   // ── 1. Skill installation ─────────────────────────────────────────
 
   describe("Skill installation (--with-codex)", () => {
-    it("should create both skill files in ~/.agents/skills/", () => {
+    it("should create all AGENT_SKILLS files in ~/.agents/skills/", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
 
       const result = runCli("agent init --with-codex", testHomeDir);
       expect(result.exitCode).toBe(0);
 
-      const backendSkill = path.join(
-        testHomeDir,
-        ".agents",
-        "skills",
+      // Must mirror AGENT_SKILLS in node/src/commands/agent/init.ts.
+      const expected = [
         "rafter",
-        "SKILL.md"
-      );
-      const securitySkill = path.join(
-        testHomeDir,
-        ".agents",
-        "skills",
-        "rafter-agent-security",
-        "SKILL.md"
-      );
-
-      expect(fs.existsSync(backendSkill)).toBe(true);
-      expect(fs.existsSync(securitySkill)).toBe(true);
+        "rafter-secure-design",
+        "rafter-code-review",
+      ];
+      for (const name of expected) {
+        const skillPath = path.join(
+          testHomeDir,
+          ".agents",
+          "skills",
+          name,
+          "SKILL.md"
+        );
+        expect(fs.existsSync(skillPath), `${name} should be installed`).toBe(true);
+      }
     });
 
     it("backend skill should contain valid frontmatter", () => {
@@ -113,7 +112,7 @@ describe("Codex CLI Integration", () => {
       expect(skillContent).toContain("allowed-tools:");
     });
 
-    it("agent security skill should contain valid frontmatter", () => {
+    it("secure-design skill should contain valid frontmatter", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
       runCli("agent init --with-codex", testHomeDir);
 
@@ -122,7 +121,7 @@ describe("Codex CLI Integration", () => {
           testHomeDir,
           ".agents",
           "skills",
-          "rafter-agent-security",
+          "rafter-secure-design",
           "SKILL.md"
         ),
         "utf-8"
@@ -267,7 +266,17 @@ describe("Codex CLI Integration", () => {
             testHomeDir,
             ".agents",
             "skills",
-            "rafter-agent-security"
+            "rafter-secure-design"
+          )
+        ).isDirectory()
+      ).toBe(true);
+      expect(
+        fs.statSync(
+          path.join(
+            testHomeDir,
+            ".agents",
+            "skills",
+            "rafter-code-review"
           )
         ).isDirectory()
       ).toBe(true);

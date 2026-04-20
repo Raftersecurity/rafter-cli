@@ -49,9 +49,9 @@ describe("rafter skill list", () => {
     expect(names).toEqual(
       expect.arrayContaining([
         "rafter",
-        "rafter-agent-security",
         "rafter-secure-design",
         "rafter-code-review",
+        "rafter-skill-review",
       ]),
     );
     // With a pristine fake HOME, nothing is installed.
@@ -154,9 +154,9 @@ describe("rafter skill install / uninstall", () => {
 
   it("openclaw uses flat-file naming (~/.openclaw/skills/<name>.md)", () => {
     fs.mkdirSync(path.join(home, ".openclaw"), { recursive: true });
-    const r = run("skill install rafter-agent-security --platform openclaw", home);
+    const r = run("skill install rafter-secure-design --platform openclaw", home);
     expect(r.code).toBe(0);
-    const expected = path.join(home, ".openclaw", "skills", "rafter-agent-security.md");
+    const expected = path.join(home, ".openclaw", "skills", "rafter-secure-design.md");
     expect(fs.existsSync(expected)).toBe(true);
   });
 

@@ -25,7 +25,6 @@ const __dirname = path.dirname(__filename);
  */
 const AGENT_SKILLS: { name: string; description: string }[] = [
   { name: "rafter", description: "Rafter Remote" },
-  { name: "rafter-agent-security", description: "Rafter Agent Security" },
   { name: "rafter-secure-design", description: "Rafter Secure Design" },
   { name: "rafter-code-review", description: "Rafter Code Review" },
 ];
