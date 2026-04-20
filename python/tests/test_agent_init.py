@@ -385,3 +385,143 @@ class TestInstallOpenClawSkill:
         assert ok
 
         assert (tmp_path / ".openclaw" / "skills").is_dir(), "Should create skills subdirectory"
+
+
+# ── Codex AGENTS.md instruction file tests ──────────────────────────
+
+
+class TestCodexAgentsInstructionFile:
+    """`rafter agent init --with-codex` should write AGENTS.md with the rafter marker block."""
+
+    def test_writes_user_scope_agents_md(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".codex").mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--with-codex"])
+        assert result.exit_code == 0, result.output
+
+        agents_path = tmp_path / ".codex" / "AGENTS.md"
+        assert agents_path.exists(), "~/.codex/AGENTS.md should be created"
+
+        content = agents_path.read_text()
+        assert "<!-- rafter:start -->" in content
+        assert "<!-- rafter:end -->" in content
+
+    def test_idempotent_on_repeat_install(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".codex").mkdir()
+
+        runner = CliRunner()
+        runner.invoke(app, ["agent", "init", "--with-codex"])
+        first = (tmp_path / ".codex" / "AGENTS.md").read_text()
+        runner.invoke(app, ["agent", "init", "--with-codex"])
+        second = (tmp_path / ".codex" / "AGENTS.md").read_text()
+
+        assert first == second
+
+    def test_preserves_existing_user_content(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".codex").mkdir()
+        agents_path = tmp_path / ".codex" / "AGENTS.md"
+        agents_path.write_text("# My personal instructions\n\nDo the thing.\n")
+
+        runner = CliRunner()
+        runner.invoke(app, ["agent", "init", "--with-codex"])
+
+        content = agents_path.read_text()
+        assert "# My personal instructions" in content
+        assert "Do the thing." in content
+        assert "<!-- rafter:start -->" in content
+
+    def test_skipped_without_with_codex(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".codex").mkdir()
+        (tmp_path / ".claude").mkdir()
+
+        runner = CliRunner()
+        runner.invoke(app, ["agent", "init", "--with-claude-code"])
+
+        assert not (tmp_path / ".codex" / "AGENTS.md").exists()
+
+
+# ── Gemini GEMINI.md instruction file tests ─────────────────────────
+
+
+class TestGeminiInstructionFile:
+    """`rafter agent init --with-gemini` should write GEMINI.md with the rafter marker block."""
+
+    def test_writes_user_scope_gemini_md(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".gemini").mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--with-gemini"])
+        assert result.exit_code == 0, result.output
+
+        gemini_path = tmp_path / ".gemini" / "GEMINI.md"
+        assert gemini_path.exists(), "~/.gemini/GEMINI.md should be created"
+
+        content = gemini_path.read_text()
+        assert "<!-- rafter:start -->" in content
+        assert "<!-- rafter:end -->" in content
+
+    def test_idempotent_on_repeat_install(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".gemini").mkdir()
+
+        runner = CliRunner()
+        runner.invoke(app, ["agent", "init", "--with-gemini"])
+        first = (tmp_path / ".gemini" / "GEMINI.md").read_text()
+        runner.invoke(app, ["agent", "init", "--with-gemini"])
+        second = (tmp_path / ".gemini" / "GEMINI.md").read_text()
+
+        assert first == second
+
+    def test_preserves_existing_user_content(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".gemini").mkdir()
+        gemini_path = tmp_path / ".gemini" / "GEMINI.md"
+        gemini_path.write_text("# My personal instructions\n\nDo the thing.\n")
+
+        runner = CliRunner()
+        runner.invoke(app, ["agent", "init", "--with-gemini"])
+
+        content = gemini_path.read_text()
+        assert "# My personal instructions" in content
+        assert "Do the thing." in content
+        assert "<!-- rafter:start -->" in content
+
+    def test_skipped_without_with_gemini(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".gemini").mkdir()
+        (tmp_path / ".claude").mkdir()
+
+        runner = CliRunner()
+        runner.invoke(app, ["agent", "init", "--with-claude-code"])
+
+        assert not (tmp_path / ".gemini" / "GEMINI.md").exists()
