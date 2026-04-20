@@ -24,7 +24,7 @@ rafter agent init --with-claude-code
 ```
 
 This installs:
-- Skills to `~/.claude/skills/rafter/` and `~/.claude/skills/rafter-agent-security/`
+- Skills to `~/.claude/skills/rafter/`, `~/.claude/skills/rafter-secure-design/`, and `~/.claude/skills/rafter-code-review/`
 - PreToolUse/PostToolUse hooks to `~/.claude/settings.json`
 
 ## What You Get
@@ -37,10 +37,9 @@ This installs:
 
 ## Manual Setup (if automated init isn't available)
 
-1. Run `rafter brief security` and save key concepts to your memory
-2. Run `rafter brief scanning` and save the command reference
-3. Before commits, run: `rafter scan local .`
-4. For remote analysis: `rafter run`""",
+1. Run `rafter brief scanning` and save the command reference
+2. Before commits, run: `rafter scan local .`
+3. For remote analysis: `rafter run`""",
 
     "codex": """\
 # Rafter Setup — Codex CLI
@@ -53,7 +52,7 @@ Codex CLI supports skill files in `~/.agents/skills/`.
 rafter agent init --with-codex
 ```
 
-This installs skills to `~/.agents/skills/rafter/` and `~/.agents/skills/rafter-agent-security/`.
+This installs skills to `~/.agents/skills/rafter/`, `~/.agents/skills/rafter-secure-design/`, and `~/.agents/skills/rafter-code-review/`.
 
 ## Manual Setup
 
@@ -61,7 +60,6 @@ This installs skills to `~/.agents/skills/rafter/` and `~/.agents/skills/rafter-
    ```bash
    mkdir -p ~/.agents/skills/rafter
    rafter brief scanning > ~/.agents/skills/rafter/SKILL.md
-   rafter brief security > ~/.agents/skills/rafter-agent-security/SKILL.md
    ```
 2. Or run `rafter brief all` and save to your agent's instructions""",
 
@@ -97,8 +95,8 @@ Add to your Gemini CLI MCP config:
 MCP gives you tool access, but not the full context of when/why to scan.
 Run these and save the output to your agent's context:
 ```bash
-rafter brief security
 rafter brief scanning
+rafter brief commands
 ```""",
 
     "cursor": """\
@@ -131,7 +129,7 @@ Add to `~/.cursor/mcp.json`:
 ## Supplementing with Brief
 
 ```bash
-rafter brief security   # save to your rules/instructions
+rafter brief scanning    # save to your rules/instructions
 rafter brief commands    # command reference
 ```""",
 
@@ -204,7 +202,7 @@ This installs the security skill to `~/.openclaw/skills/rafter-security.md`.
 
 ```bash
 mkdir -p ~/.openclaw/skills
-rafter brief security > ~/.openclaw/skills/rafter-security.md
+rafter brief scanning > ~/.openclaw/skills/rafter-security.md
 ```""",
 
     "continue": """\
@@ -241,8 +239,8 @@ For agents on platforms rafter doesn't have native integration with.
 Save rafter knowledge to your agent's persistent memory or system prompt:
 
 ```bash
-# Save security knowledge
-rafter brief security
+# Save scanning + guardrails knowledge
+rafter brief scanning
 # -> Copy the output into your agent's memory/instructions
 
 # Save command reference
@@ -264,7 +262,7 @@ Register rafter as an MCP server:
 
 Run `rafter brief` at the start of each session to load context:
 ```bash
-rafter brief security   # understand the security layer
+rafter brief scanning    # understand the security layer
 rafter brief commands    # know what commands are available
 ```
 
@@ -366,8 +364,7 @@ def _render_setup_guide() -> str:
         "",
         "# 2. If your platform doesn't have native integration,",
         "#    load knowledge manually:",
-        "rafter brief security    # understand the security layer",
-        "rafter brief scanning    # understand remote code analysis",
+        "rafter brief scanning    # scanning + guardrails briefing",
         "rafter brief commands    # full command reference",
         "```",
     ])
@@ -380,8 +377,7 @@ def _render_platform_setup(platform: str) -> str:
 # --- Topic registry ---
 
 TOPIC_DESCRIPTIONS: dict[str, str] = {
-    "security": "Local agent security — scanning, auditing, risk assessment",
-    "scanning": "Remote SAST/SCA code analysis via Rafter API",
+    "scanning": "Rafter scanning (local + remote SAST/SCA) + guardrails",
     "commands": "Condensed command reference for all rafter commands",
     "setup": "Setup instructions for all supported agent platforms",
     "setup/claude-code": "Setup instructions for Claude Code",
@@ -395,36 +391,25 @@ TOPIC_DESCRIPTIONS: dict[str, str] = {
     "setup/generic": "Setup instructions for unsupported / generic agents",
     "pricing": "What's free, what's paid, and the philosophy behind it",
     **{slug: desc for slug, desc in RAFTER_SUBDOCS},
-    "all": "Everything — full security + scanning + setup briefing",
+    "all": "Everything — full scanning + setup briefing",
 }
 
 
 def _render_topic(topic: str) -> str | None:
     """Render a topic. Returns None if unknown."""
-    if topic == "security":
-        return _load_skill("rafter-agent-security")
     if topic == "scanning":
         return _load_skill("rafter")
     if topic == "commands":
-        security = _load_skill("rafter-agent-security")
-        backend = _load_skill("rafter")
-        sec_cmds = _extract_sections(security, [
-            "Commands", "/rafter-scan", "/rafter-bash",
+        rafter = _load_skill("rafter")
+        cmds = _extract_sections(rafter, [
+            "Core Commands", "Commands", "Trigger", "Get Scan", "Check API",
+            "/rafter-scan", "/rafter-bash",
             "/rafter-audit-skill", "/rafter-audit",
-        ])
-        back_cmds = _extract_sections(backend, [
-            "Core Commands", "Trigger", "Get Scan", "Check API",
         ])
         return "\n".join([
             "# Rafter Command Reference",
             "",
-            "## Remote Code Analysis",
-            "",
-            back_cmds,
-            "",
-            "## Agent (Local Security)",
-            "",
-            sec_cmds,
+            cmds,
         ])
     if topic == "setup":
         return _render_setup_guide()
@@ -472,8 +457,6 @@ def _render_topic(topic: str) -> str | None:
         parts = [
             _render_topic("scanning"),
             "---",
-            _render_topic("security"),
-            "---",
             _render_topic("setup"),
         ]
         return "\n\n".join(p for p in parts if p)
@@ -489,8 +472,7 @@ def _render_topic_list() -> str:
         "Usage: rafter brief <topic>",
         "",
         "Examples:",
-        "  rafter brief security          # local security briefing",
-        "  rafter brief scanning          # remote code analysis briefing",
+        "  rafter brief scanning          # scanning + guardrails briefing",
         "  rafter brief commands          # full command reference",
         "  rafter brief setup/claude-code # Claude Code setup guide",
         "  rafter brief setup/generic     # setup for any agent",

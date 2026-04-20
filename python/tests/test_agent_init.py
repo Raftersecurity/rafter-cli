@@ -310,15 +310,11 @@ class TestInstallCodexSkills:
         assert ok, f"Expected success, got error: {error}"
         assert error == ""
 
-        # Backend skill
-        backend_skill = tmp_path / ".agents" / "skills" / "rafter" / "SKILL.md"
-        assert backend_skill.exists(), "Backend SKILL.md should be installed"
-        assert backend_skill.read_text().strip(), "Backend SKILL.md should not be empty"
-
-        # Agent security skill
-        agent_skill = tmp_path / ".agents" / "skills" / "rafter-agent-security" / "SKILL.md"
-        assert agent_skill.exists(), "Agent security SKILL.md should be installed"
-        assert agent_skill.read_text().strip(), "Agent security SKILL.md should not be empty"
+        # Must mirror _AGENT_SKILLS in python/rafter_cli/commands/agent.py.
+        for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
+            skill_path = tmp_path / ".agents" / "skills" / name / "SKILL.md"
+            assert skill_path.exists(), f"{name} SKILL.md should be installed"
+            assert skill_path.read_text().strip(), f"{name} SKILL.md should not be empty"
 
     def test_overwrites_existing_skills(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)

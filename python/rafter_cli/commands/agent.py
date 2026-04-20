@@ -114,7 +114,6 @@ def _resolve_rafter_path() -> str:
 # actually shipped under rafter_cli/resources/skills/.
 _AGENT_SKILLS: list[dict[str, str]] = [
     {"name": "rafter", "description": "Rafter Remote"},
-    {"name": "rafter-agent-security", "description": "Rafter Agent Security"},
     {"name": "rafter-secure-design", "description": "Rafter Secure Design"},
     {"name": "rafter-code-review", "description": "Rafter Code Review"},
 ]

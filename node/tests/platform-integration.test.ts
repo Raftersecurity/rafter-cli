@@ -1043,10 +1043,12 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(result.exitCode).toBe(0);
 
       const backendSkill = path.join(testHomeDir, ".claude", "skills", "rafter", "SKILL.md");
-      const securitySkill = path.join(testHomeDir, ".claude", "skills", "rafter-agent-security", "SKILL.md");
+      const secureDesignSkill = path.join(testHomeDir, ".claude", "skills", "rafter-secure-design", "SKILL.md");
+      const codeReviewSkill = path.join(testHomeDir, ".claude", "skills", "rafter-code-review", "SKILL.md");
 
       expect(fs.existsSync(backendSkill)).toBe(true);
-      expect(fs.existsSync(securitySkill)).toBe(true);
+      expect(fs.existsSync(secureDesignSkill)).toBe(true);
+      expect(fs.existsSync(codeReviewSkill)).toBe(true);
 
       // Validate skill content
       const backendContent = fs.readFileSync(backendSkill, "utf-8");

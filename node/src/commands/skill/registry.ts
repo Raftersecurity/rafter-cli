@@ -14,7 +14,6 @@ const __dirname = path.dirname(__filename);
  */
 export const KNOWN_SKILL_NAMES = [
   "rafter",
-  "rafter-agent-security",
   "rafter-secure-design",
   "rafter-code-review",
   "rafter-skill-review",
