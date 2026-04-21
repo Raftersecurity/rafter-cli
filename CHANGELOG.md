@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-04-21
+
+### Added
+- **`rafter agent init --with-gemini` now installs and registers skills** (Node + Python, rf-yit): Gemini adapter previously only wrote MCP config and GEMINI.md — gemini never saw rafter's SKILL.md files. Now mirrors the Codex installer: copies `rafter`, `rafter-secure-design`, and `rafter-code-review` SKILL.md files into `<root>/.agents/skills/` (shared with Codex), then calls `gemini skills link <abs-path>` for each so gemini registers them in its native skill system. Missing `gemini` binary, missing `skills` subcommand (needs gemini ≥ 0.35), or per-skill registration failures are warnings, not errors — on-disk install still succeeds.
+
 ## [0.7.3] - 2026-04-20
 
 ### Added
