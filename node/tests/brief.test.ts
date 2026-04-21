@@ -53,7 +53,6 @@ describe("brief command — topic listing", () => {
     const r = rafter("brief");
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("Available topics:");
-    expect(r.stdout).toContain("security");
     expect(r.stdout).toContain("scanning");
     expect(r.stdout).toContain("commands");
     expect(r.stdout).toContain("setup");
@@ -77,32 +76,22 @@ describe("brief command — topic listing", () => {
   it("shows usage examples", () => {
     const r = rafter("brief");
     expect(r.stdout).toContain("Usage: rafter brief <topic>");
-    expect(r.stdout).toContain("rafter brief security");
+    expect(r.stdout).toContain("rafter brief scanning");
     expect(r.stdout).toContain("rafter brief all");
   });
 });
 
 describe("brief command — topic rendering", () => {
-  it("renders security topic from skill file", () => {
-    const r = rafter("brief security");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout.length).toBeGreaterThan(100);
-    // Should contain agent security content
-    expect(r.stdout.toLowerCase()).toMatch(/secur|scan|audit/);
-  });
-
   it("renders scanning topic from skill file", () => {
     const r = rafter("brief scanning");
     expect(r.exitCode).toBe(0);
     expect(r.stdout.length).toBeGreaterThan(100);
   });
 
-  it("renders commands topic with both backend and agent sections", () => {
+  it("renders commands topic with the command reference heading", () => {
     const r = rafter("brief commands");
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("Rafter Command Reference");
-    expect(r.stdout).toContain("Remote Code Analysis");
-    expect(r.stdout).toContain("Agent (Local Security)");
   });
 
   it("renders pricing topic", () => {

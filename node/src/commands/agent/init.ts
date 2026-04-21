@@ -25,24 +25,37 @@ const __dirname = path.dirname(__filename);
  */
 const AGENT_SKILLS: { name: string; description: string }[] = [
   { name: "rafter", description: "Rafter Remote" },
-  { name: "rafter-agent-security", description: "Rafter Agent Security" },
   { name: "rafter-secure-design", description: "Rafter Secure Design" },
   { name: "rafter-code-review", description: "Rafter Code Review" },
 ];
 
 /**
- * Install global instruction files for platforms that support them.
+ * Install instruction files for platforms that support them, at either user
+ * or project scope.
  *
- * User scope: Claude Code (~/.claude/CLAUDE.md), Cursor (~/.cursor/rules/*.mdc).
- * Project scope: both platforms also honor <cwd>/.claude/CLAUDE.md and
- * <cwd>/.cursor/rules/*.mdc. Other platforms (Codex, Gemini, Windsurf,
- * Continue.dev, Aider) have project-only instruction file conventions
- * (AGENTS.md, GEMINI.md, etc.) handled by `rafter agent init-project`.
+ * Path layout:
+ *   Claude Code — user: ~/.claude/CLAUDE.md       project: <cwd>/.claude/CLAUDE.md
+ *   Codex CLI  — user: ~/.codex/AGENTS.md        project: <cwd>/AGENTS.md
+ *   Gemini CLI — user: ~/.gemini/GEMINI.md       project: <cwd>/GEMINI.md
+ *   Cursor     — user: ~/.cursor/rules/…mdc       project: <cwd>/.cursor/rules/…mdc
+ *
+ * Codex (AGENTS.md) and Gemini (GEMINI.md) each have the same filename at
+ * user and project scope — only the location differs — which is why scope
+ * is passed in explicitly.
+ *
+ * Windsurf, Continue.dev, and Aider are project-only and handled by
+ * `rafter agent init-project`.
  */
-function installGlobalInstructions(platforms: {
-  claudeCode?: boolean;
-  cursor?: boolean;
-}, root: string): void {
+function installGlobalInstructions(
+  platforms: {
+    claudeCode?: boolean;
+    codex?: boolean;
+    gemini?: boolean;
+    cursor?: boolean;
+  },
+  root: string,
+  scope: "user" | "project",
+): void {
   // Claude Code — <root>/.claude/CLAUDE.md
   if (platforms.claudeCode) {
     try {
@@ -51,6 +64,32 @@ function installGlobalInstructions(platforms: {
       console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
     } catch (e) {
       console.log(fmt.warning(`Failed to write Claude Code instructions: ${e}`));
+    }
+  }
+
+  // Codex — ~/.codex/AGENTS.md (user) or <cwd>/AGENTS.md (project)
+  if (platforms.codex) {
+    try {
+      const filePath = scope === "user"
+        ? path.join(root, ".codex", "AGENTS.md")
+        : path.join(root, "AGENTS.md");
+      injectInstructionFile(filePath);
+      console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
+    } catch (e) {
+      console.log(fmt.warning(`Failed to write Codex instructions: ${e}`));
+    }
+  }
+
+  // Gemini — ~/.gemini/GEMINI.md (user) or <cwd>/GEMINI.md (project)
+  if (platforms.gemini) {
+    try {
+      const filePath = scope === "user"
+        ? path.join(root, ".gemini", "GEMINI.md")
+        : path.join(root, "GEMINI.md");
+      injectInstructionFile(filePath);
+      console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
+    } catch (e) {
+      console.log(fmt.warning(`Failed to write Gemini instructions: ${e}`));
     }
   }
 
@@ -851,8 +890,10 @@ export function createInitCommand(): Command {
       // Install global instruction files for platforms that support them
       installGlobalInstructions({
         claudeCode: claudeCodeOk,
+        codex: codexOk,
+        gemini: geminiOk,
         cursor: cursorOk,
-      }, root);
+      }, root, scope);
 
       console.log();
       console.log(fmt.success("Agent security initialized!"));

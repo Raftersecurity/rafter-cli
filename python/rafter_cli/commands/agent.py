@@ -114,7 +114,6 @@ def _resolve_rafter_path() -> str:
 # actually shipped under rafter_cli/resources/skills/.
 _AGENT_SKILLS: list[dict[str, str]] = [
     {"name": "rafter", "description": "Rafter Remote"},
-    {"name": "rafter-agent-security", "description": "Rafter Agent Security"},
     {"name": "rafter-secure-design", "description": "Rafter Secure Design"},
     {"name": "rafter-code-review", "description": "Rafter Code Review"},
 ]
@@ -214,13 +213,22 @@ def _install_claude_code_skills(root: Path) -> None:
 
 def _install_global_instructions(
     claude_code: bool,
+    codex: bool,
+    gemini: bool,
     cursor: bool,
     root: Path,
+    scope: str,
 ) -> None:
     """Install Rafter instruction files for platforms that support them.
 
-    Claude Code: <root>/.claude/CLAUDE.md
-    Cursor: <root>/.cursor/rules/rafter-security.mdc
+    Path layout:
+        Claude Code — user: ~/.claude/CLAUDE.md     project: <cwd>/.claude/CLAUDE.md
+        Codex CLI   — user: ~/.codex/AGENTS.md      project: <cwd>/AGENTS.md
+        Gemini CLI  — user: ~/.gemini/GEMINI.md     project: <cwd>/GEMINI.md
+        Cursor      — user: ~/.cursor/rules/*.mdc   project: <cwd>/.cursor/rules/*.mdc
+
+    Codex (AGENTS.md) and Gemini (GEMINI.md) each have the same filename at
+    user and project scope — only the location differs — so scope is explicit.
     """
     if claude_code:
         try:
@@ -229,6 +237,22 @@ def _install_global_instructions(
             rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
         except Exception as e:
             rprint(fmt.warning(f"Failed to write Claude Code instructions: {e}"))
+
+    if codex:
+        try:
+            file_path = root / ".codex" / "AGENTS.md" if scope == "user" else root / "AGENTS.md"
+            _inject_instruction_file(file_path)
+            rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
+        except Exception as e:
+            rprint(fmt.warning(f"Failed to write Codex instructions: {e}"))
+
+    if gemini:
+        try:
+            file_path = root / ".gemini" / "GEMINI.md" if scope == "user" else root / "GEMINI.md"
+            _inject_instruction_file(file_path)
+            rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
+        except Exception as e:
+            rprint(fmt.warning(f"Failed to write Gemini instructions: {e}"))
 
     if cursor:
         try:
@@ -665,8 +689,11 @@ def init(
     # Install global instruction files for platforms that support them
     _install_global_instructions(
         claude_code=claude_code_ok,
+        codex=codex_ok,
+        gemini=gemini_ok,
         cursor=cursor_ok,
         root=root,
+        scope=scope,
     )
 
     rprint()

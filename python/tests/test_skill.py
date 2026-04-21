@@ -38,7 +38,7 @@ class TestSkillList:
         assert code == 0
         payload = json.loads(stdout)
         names = {s["name"] for s in payload["skills"]}
-        assert {"rafter", "rafter-agent-security", "rafter-secure-design", "rafter-code-review"} <= names
+        assert {"rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"} <= names
         # Nothing installed yet in the pristine fake HOME.
         assert all(not row["installed"] for row in payload["installations"])
 
@@ -122,9 +122,9 @@ class TestSkillInstallUninstall:
 
     def test_openclaw_flat_file_naming(self, home: Path):
         (home / ".openclaw").mkdir()
-        _, _, code = _run("skill install rafter-agent-security --platform openclaw", home)
+        _, _, code = _run("skill install rafter-secure-design --platform openclaw", home)
         assert code == 0
-        assert (home / ".openclaw" / "skills" / "rafter-agent-security.md").exists()
+        assert (home / ".openclaw" / "skills" / "rafter-secure-design.md").exists()
 
     def test_cursor_uses_mdc_extension(self, home: Path):
         (home / ".cursor").mkdir()

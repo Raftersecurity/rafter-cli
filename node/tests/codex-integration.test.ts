@@ -67,29 +67,28 @@ describe("Codex CLI Integration", () => {
   // ── 1. Skill installation ─────────────────────────────────────────
 
   describe("Skill installation (--with-codex)", () => {
-    it("should create both skill files in ~/.agents/skills/", () => {
+    it("should create all AGENT_SKILLS files in ~/.agents/skills/", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
 
       const result = runCli("agent init --with-codex", testHomeDir);
       expect(result.exitCode).toBe(0);
 
-      const backendSkill = path.join(
-        testHomeDir,
-        ".agents",
-        "skills",
+      // Must mirror AGENT_SKILLS in node/src/commands/agent/init.ts.
+      const expected = [
         "rafter",
-        "SKILL.md"
-      );
-      const securitySkill = path.join(
-        testHomeDir,
-        ".agents",
-        "skills",
-        "rafter-agent-security",
-        "SKILL.md"
-      );
-
-      expect(fs.existsSync(backendSkill)).toBe(true);
-      expect(fs.existsSync(securitySkill)).toBe(true);
+        "rafter-secure-design",
+        "rafter-code-review",
+      ];
+      for (const name of expected) {
+        const skillPath = path.join(
+          testHomeDir,
+          ".agents",
+          "skills",
+          name,
+          "SKILL.md"
+        );
+        expect(fs.existsSync(skillPath), `${name} should be installed`).toBe(true);
+      }
     });
 
     it("backend skill should contain valid frontmatter", () => {
@@ -113,7 +112,7 @@ describe("Codex CLI Integration", () => {
       expect(skillContent).toContain("allowed-tools:");
     });
 
-    it("agent security skill should contain valid frontmatter", () => {
+    it("secure-design skill should contain valid frontmatter", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
       runCli("agent init --with-codex", testHomeDir);
 
@@ -122,7 +121,7 @@ describe("Codex CLI Integration", () => {
           testHomeDir,
           ".agents",
           "skills",
-          "rafter-agent-security",
+          "rafter-secure-design",
           "SKILL.md"
         ),
         "utf-8"
@@ -267,7 +266,17 @@ describe("Codex CLI Integration", () => {
             testHomeDir,
             ".agents",
             "skills",
-            "rafter-agent-security"
+            "rafter-secure-design"
+          )
+        ).isDirectory()
+      ).toBe(true);
+      expect(
+        fs.statSync(
+          path.join(
+            testHomeDir,
+            ".agents",
+            "skills",
+            "rafter-code-review"
           )
         ).isDirectory()
       ).toBe(true);
@@ -361,6 +370,66 @@ describe("Codex CLI Integration", () => {
             "SKILL.md"
           )
         )
+      ).toBe(false);
+    });
+  });
+
+  // ── 7. AGENTS.md instruction file ────────────────────────────────
+
+  describe("Codex AGENTS.md instruction file", () => {
+    it("writes ~/.codex/AGENTS.md with the rafter marker block at user scope", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+
+      const result = runCli("agent init --with-codex", testHomeDir);
+      expect(result.exitCode).toBe(0);
+
+      const agentsPath = path.join(testHomeDir, ".codex", "AGENTS.md");
+      expect(fs.existsSync(agentsPath)).toBe(true);
+
+      const content = fs.readFileSync(agentsPath, "utf-8");
+      expect(content).toContain("<!-- rafter:start -->");
+      expect(content).toContain("<!-- rafter:end -->");
+    });
+
+    it("is idempotent on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+
+      runCli("agent init --with-codex", testHomeDir);
+      const first = fs.readFileSync(
+        path.join(testHomeDir, ".codex", "AGENTS.md"),
+        "utf-8"
+      );
+
+      runCli("agent init --with-codex", testHomeDir);
+      const second = fs.readFileSync(
+        path.join(testHomeDir, ".codex", "AGENTS.md"),
+        "utf-8"
+      );
+
+      expect(second).toBe(first);
+    });
+
+    it("preserves existing user content outside the marker block", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+      const agentsPath = path.join(testHomeDir, ".codex", "AGENTS.md");
+      fs.writeFileSync(agentsPath, "# My personal instructions\n\nDo the thing.\n");
+
+      runCli("agent init --with-codex", testHomeDir);
+
+      const content = fs.readFileSync(agentsPath, "utf-8");
+      expect(content).toContain("# My personal instructions");
+      expect(content).toContain("Do the thing.");
+      expect(content).toContain("<!-- rafter:start -->");
+    });
+
+    it("does NOT write AGENTS.md if --with-codex is not passed", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+      fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
+
+      runCli("agent init --with-claude-code", testHomeDir);
+
+      expect(
+        fs.existsSync(path.join(testHomeDir, ".codex", "AGENTS.md"))
       ).toBe(false);
     });
   });

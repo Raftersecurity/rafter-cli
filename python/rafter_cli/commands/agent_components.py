@@ -223,6 +223,17 @@ def _claude_code_instructions() -> ComponentSpec:
     )
 
 
+# Canonical rafter-authored skills installed by a per-platform "skills"
+# component. Mirrors node/src/commands/agent/components.ts. Keep in sync with
+# the SKILL.md files shipped under rafter_cli/resources/skills/.
+_COMPONENT_SKILL_NAMES: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
 def _skills_component(
     *,
     cid: str,
@@ -231,14 +242,16 @@ def _skills_component(
     detect_dir: Path,
     skills_base_dir: Path,
 ) -> ComponentSpec:
-    backend_path = skills_base_dir / "rafter" / "SKILL.md"
-    agent_path = skills_base_dir / "rafter-agent-security" / "SKILL.md"
+    dest_paths: list[Path] = [
+        skills_base_dir / name / "SKILL.md" for name in _COMPONENT_SKILL_NAMES
+    ]
 
     def is_installed() -> bool:
-        return backend_path.exists() or agent_path.exists()
+        return any(p.exists() for p in dest_paths)
 
     def install() -> None:
-        for name, dest in [("rafter", backend_path), ("rafter-agent-security", agent_path)]:
+        for name in _COMPONENT_SKILL_NAMES:
+            dest = skills_base_dir / name / "SKILL.md"
             content = _skill_text("skills", name, "SKILL.md")
             if content is None and name == "rafter":
                 # Legacy fallback — older python packages used rafter-security-skill.md
@@ -249,7 +262,7 @@ def _skills_component(
             dest.write_text(content, encoding="utf-8")
 
     def uninstall() -> None:
-        for p in (backend_path, agent_path):
+        for p in dest_paths:
             if p.exists():
                 p.unlink()
                 try:
@@ -276,7 +289,7 @@ def _claude_code_skills() -> ComponentSpec:
     return _skills_component(
         cid="claude-code.skills",
         platform="claude-code",
-        description="Claude Code skills (rafter + rafter-agent-security)",
+        description="Claude Code skills (rafter + rafter-secure-design + rafter-code-review + rafter-skill-review)",
         detect_dir=home / ".claude",
         skills_base_dir=home / ".claude" / "skills",
     )
