@@ -304,6 +304,72 @@ def _install_codex_skills(root: Path) -> tuple[bool, str]:
         return False, str(e)
 
 
+def _install_gemini_skills(root: Path) -> tuple[bool, str]:
+    """Install all Rafter skills to <root>/.agents/skills/ for Gemini CLI.
+
+    Gemini shares the same skills dir as Codex — overwrite is harmless.
+    """
+    try:
+        _install_skills_to(root / ".agents" / "skills")
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def _register_gemini_skills(skills_dir: Path) -> None:
+    """Register installed skills with Gemini CLI via `gemini skills link <abs>`.
+
+    Requires gemini CLI >= 0.35. Missing CLI / subcommand / per-skill failures
+    are non-fatal: warn and continue so the on-disk install still succeeds.
+    """
+    gemini = shutil.which("gemini")
+    if not gemini:
+        rprint(fmt.warning(
+            "gemini CLI not found on PATH — skipping skill registration. "
+            "Skills are installed to disk; re-run after installing gemini ≥ 0.35."
+        ))
+        return
+
+    # Probe `gemini skills` subcommand (added in 0.35).
+    try:
+        subprocess.run(
+            [gemini, "skills", "--help"],
+            check=True,
+            capture_output=True,
+            timeout=5,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        rprint(fmt.warning(
+            "gemini CLI does not support `skills` subcommand (needs ≥ 0.35). "
+            "Skipping registration — skills are still installed to disk."
+        ))
+        return
+
+    for skill in _AGENT_SKILLS:
+        abs_path = (skills_dir / skill["name"]).resolve()
+        if not abs_path.exists():
+            continue
+        try:
+            subprocess.run(
+                [gemini, "skills", "link", str(abs_path)],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+            rprint(fmt.success(f"Registered {skill['name']} with Gemini CLI"))
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+            first_line = ""
+            stderr = getattr(e, "stderr", None)
+            if stderr:
+                try:
+                    first_line = stderr.decode("utf-8", errors="replace").strip().split("\n", 1)[0]
+                except Exception:
+                    first_line = ""
+            rprint(fmt.warning(
+                f"Failed to register {skill['name']} with Gemini CLI: {first_line or 'unknown error'}"
+            ))
+
+
 # ── MCP server entry (shared across MCP-native clients) ──────────────
 
 _RAFTER_MCP_ENTRY = {
@@ -630,11 +696,16 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Codex CLI integration: {e}"))
 
-    # Install Gemini CLI MCP if opted in
+    # Install Gemini CLI MCP + skills if opted in
     gemini_ok = False
     if (has_gemini or (local and want_gemini)) and want_gemini:
         try:
             gemini_ok = _install_gemini_mcp(root)
+            skills_ok, skills_error = _install_gemini_skills(root)
+            if not skills_ok:
+                rprint(fmt.error(f"Failed to install Gemini CLI skills: {skills_error}"))
+            else:
+                _register_gemini_skills(root / ".agents" / "skills")
             if gemini_ok and scope == "user":
                 manager.set("agent.environments.gemini.enabled", True)
         except Exception as e:
