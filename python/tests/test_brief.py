@@ -27,7 +27,6 @@ class TestTopicListing:
         result = runner.invoke(app, ["brief"])
         assert result.exit_code == 0
         assert "Available topics:" in result.stdout
-        assert "security" in result.stdout
         assert "scanning" in result.stdout
         assert "commands" in result.stdout
         assert "setup" in result.stdout
@@ -49,27 +48,20 @@ class TestTopicListing:
     def test_shows_usage_examples(self):
         result = runner.invoke(app, ["brief"])
         assert "Usage: rafter brief <topic>" in result.stdout
-        assert "rafter brief security" in result.stdout
+        assert "rafter brief scanning" in result.stdout
         assert "rafter brief all" in result.stdout
 
 
 class TestTopicRendering:
-    def test_security_topic_loads_skill(self):
-        result = runner.invoke(app, ["brief", "security"])
-        assert result.exit_code == 0
-        assert len(result.stdout) > 100
-
     def test_scanning_topic_loads_skill(self):
         result = runner.invoke(app, ["brief", "scanning"])
         assert result.exit_code == 0
         assert len(result.stdout) > 100
 
-    def test_commands_topic_has_both_sections(self):
+    def test_commands_topic_has_reference_heading(self):
         result = runner.invoke(app, ["brief", "commands"])
         assert result.exit_code == 0
         assert "Rafter Command Reference" in result.stdout
-        assert "Remote Code Analysis" in result.stdout
-        assert "Agent (Local Security)" in result.stdout
 
     def test_pricing_topic(self):
         result = runner.invoke(app, ["brief", "pricing"])

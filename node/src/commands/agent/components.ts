@@ -213,6 +213,18 @@ function skillTemplatePath(name: string): string {
   return path.join(__dirname, "..", "..", "..", "resources", "skills", name, "SKILL.md");
 }
 
+/**
+ * Canonical rafter-authored skills that a per-platform "skills" component
+ * installs. Mirrors `python/rafter_cli/commands/agent_components.py`. Keep in
+ * sync with the SKILL.md files shipped under `node/resources/skills/`.
+ */
+const COMPONENT_SKILL_NAMES = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
 function skillsDirComponent(opts: {
   id: string;
   platform: string;
@@ -220,8 +232,9 @@ function skillsDirComponent(opts: {
   detectDir: string;
   skillsBaseDir: string;
 }): ComponentSpec {
-  const backendDest = path.join(opts.skillsBaseDir, "rafter", "SKILL.md");
-  const agentDest = path.join(opts.skillsBaseDir, "rafter-agent-security", "SKILL.md");
+  const destPaths = COMPONENT_SKILL_NAMES.map((name) =>
+    path.join(opts.skillsBaseDir, name, "SKILL.md"),
+  );
   return {
     id: opts.id,
     platform: opts.platform,
@@ -229,13 +242,11 @@ function skillsDirComponent(opts: {
     description: opts.description,
     detectDir: opts.detectDir,
     path: opts.skillsBaseDir,
-    isInstalled: () => fs.existsSync(backendDest) || fs.existsSync(agentDest),
+    isInstalled: () => destPaths.some((p) => fs.existsSync(p)),
     install: () => {
-      const pairs: Array<[string, string]> = [
-        [skillTemplatePath("rafter"), backendDest],
-        [skillTemplatePath("rafter-agent-security"), agentDest],
-      ];
-      for (const [src, dst] of pairs) {
+      for (const name of COMPONENT_SKILL_NAMES) {
+        const src = skillTemplatePath(name);
+        const dst = path.join(opts.skillsBaseDir, name, "SKILL.md");
         if (!fs.existsSync(src)) continue;
         const dir = path.dirname(dst);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -243,7 +254,7 @@ function skillsDirComponent(opts: {
       }
     },
     uninstall: () => {
-      for (const p of [backendDest, agentDest]) {
+      for (const p of destPaths) {
         if (fs.existsSync(p)) {
           fs.rmSync(p, { force: true });
           const dir = path.dirname(p);
@@ -265,7 +276,7 @@ function claudeCodeSkills(): ComponentSpec {
   return skillsDirComponent({
     id: "claude-code.skills",
     platform: "claude-code",
-    description: "Claude Code skills (rafter + rafter-agent-security)",
+    description: "Claude Code skills (rafter + rafter-secure-design + rafter-code-review + rafter-skill-review)",
     detectDir: path.join(home, ".claude"),
     skillsBaseDir: path.join(home, ".claude", "skills"),
   });

@@ -73,42 +73,29 @@ function extractSections(content: string, headings: string[]): string {
 
 function buildTopics(): Record<string, TopicEntry> {
   return {
-    security: {
-      description: "Local agent security — scanning, auditing, risk assessment",
-      render: () => loadSkill("rafter-agent-security"),
-    },
     scanning: {
-      description: "Remote SAST/SCA code analysis via Rafter API",
+      description: "Rafter scanning (local + remote SAST/SCA) + guardrails",
       render: () => loadSkill("rafter"),
     },
     commands: {
       description: "Condensed command reference for all rafter commands",
       render: () => {
-        const security = loadSkill("rafter-agent-security");
-        const backend = loadSkill("rafter");
-        const secCmds = extractSections(security, [
+        const rafter = loadSkill("rafter");
+        const cmds = extractSections(rafter, [
+          "Core Commands",
           "Commands",
+          "Trigger",
+          "Get Scan",
+          "Check API",
           "/rafter-scan",
           "/rafter-bash",
           "/rafter-audit-skill",
           "/rafter-audit",
         ]);
-        const backCmds = extractSections(backend, [
-          "Core Commands",
-          "Trigger",
-          "Get Scan",
-          "Check API",
-        ]);
         return [
           "# Rafter Command Reference",
           "",
-          "## Remote Code Analysis",
-          "",
-          backCmds,
-          "",
-          "## Agent (Local Security)",
-          "",
-          secCmds,
+          cmds,
         ].join("\n");
       },
     },
@@ -200,15 +187,11 @@ function buildTopics(): Record<string, TopicEntry> {
       ]),
     ),
     all: {
-      description: "Everything — full security + scanning + setup briefing",
+      description: "Everything — full scanning + setup briefing",
       render: () => {
         const topics = buildTopics();
         return [
           topics.scanning.render(),
-          "",
-          "---",
-          "",
-          topics.security.render(),
           "",
           "---",
           "",
@@ -231,7 +214,7 @@ rafter agent init --with-claude-code
 \`\`\`
 
 This installs:
-- Skills to \`~/.claude/skills/rafter/\` and \`~/.claude/skills/rafter-agent-security/\`
+- Skills to \`~/.claude/skills/rafter/\`, \`~/.claude/skills/rafter-secure-design/\`, and \`~/.claude/skills/rafter-code-review/\`
 - PreToolUse/PostToolUse hooks to \`~/.claude/settings.json\`
 
 ## What You Get
@@ -244,10 +227,9 @@ This installs:
 
 ## Manual Setup (if automated init isn't available)
 
-1. Run \`rafter brief security\` and save key concepts to your memory
-2. Run \`rafter brief scanning\` and save the command reference
-3. Before commits, run: \`rafter scan local .\`
-4. For remote analysis: \`rafter run\``,
+1. Run \`rafter brief scanning\` and save the command reference
+2. Before commits, run: \`rafter scan local .\`
+3. For remote analysis: \`rafter run\``,
 
   codex: `# Rafter Setup — Codex CLI
 
@@ -259,7 +241,7 @@ Codex CLI supports skill files in \`~/.agents/skills/\`.
 rafter agent init --with-codex
 \`\`\`
 
-This installs skills to \`~/.agents/skills/rafter/\` and \`~/.agents/skills/rafter-agent-security/\`.
+This installs skills to \`~/.agents/skills/rafter/\`, \`~/.agents/skills/rafter-secure-design/\`, and \`~/.agents/skills/rafter-code-review/\`.
 
 ## Manual Setup
 
@@ -267,7 +249,6 @@ This installs skills to \`~/.agents/skills/rafter/\` and \`~/.agents/skills/raft
    \`\`\`bash
    mkdir -p ~/.agents/skills/rafter
    rafter brief scanning > ~/.agents/skills/rafter/SKILL.md
-   rafter brief security > ~/.agents/skills/rafter-agent-security/SKILL.md
    \`\`\`
 2. Or run \`rafter brief all\` and save to your agent's instructions`,
 
@@ -302,8 +283,8 @@ Add to your Gemini CLI MCP config:
 MCP gives you tool access, but not the full context of when/why to scan.
 Run these and save the output to your agent's context:
 \`\`\`bash
-rafter brief security
 rafter brief scanning
+rafter brief commands
 \`\`\``,
 
   cursor: `# Rafter Setup — Cursor
@@ -335,7 +316,7 @@ Add to \`~/.cursor/mcp.json\`:
 ## Supplementing with Brief
 
 \`\`\`bash
-rafter brief security   # save to your rules/instructions
+rafter brief scanning    # save to your rules/instructions
 rafter brief commands    # command reference
 \`\`\``,
 
@@ -405,7 +386,7 @@ This installs the security skill to \`~/.openclaw/skills/rafter-security.md\`.
 
 \`\`\`bash
 mkdir -p ~/.openclaw/skills
-rafter brief security > ~/.openclaw/skills/rafter-security.md
+rafter brief scanning > ~/.openclaw/skills/rafter-security.md
 \`\`\``,
 
   continue: `# Rafter Setup — Continue.dev
@@ -440,8 +421,8 @@ For agents on platforms rafter doesn't have native integration with.
 Save rafter knowledge to your agent's persistent memory or system prompt:
 
 \`\`\`bash
-# Save security knowledge
-rafter brief security
+# Save scanning + guardrails knowledge
+rafter brief scanning
 # -> Copy the output into your agent's memory/instructions
 
 # Save command reference
@@ -463,7 +444,7 @@ Register rafter as an MCP server:
 
 Run \`rafter brief\` at the start of each session to load context:
 \`\`\`bash
-rafter brief security   # understand the security layer
+rafter brief scanning    # understand the security layer
 rafter brief commands    # know what commands are available
 \`\`\`
 
@@ -520,8 +501,7 @@ function renderSetupGuide(): string {
     "",
     "# 2. If your platform doesn't have native integration,",
     "#    load knowledge manually:",
-    "rafter brief security    # understand the security layer",
-    "rafter brief scanning    # understand remote code analysis",
+    "rafter brief scanning    # scanning + guardrails briefing",
     "rafter brief commands    # full command reference",
     "```",
   ];
@@ -544,8 +524,7 @@ function renderTopicList(topics: Record<string, TopicEntry>): string {
   lines.push("Usage: rafter brief <topic>");
   lines.push("");
   lines.push("Examples:");
-  lines.push("  rafter brief security          # local security briefing");
-  lines.push("  rafter brief scanning          # remote code analysis briefing");
+  lines.push("  rafter brief scanning          # scanning + guardrails briefing");
   lines.push("  rafter brief commands          # full command reference");
   lines.push("  rafter brief setup/claude-code # Claude Code setup guide");
   lines.push("  rafter brief setup/generic     # setup for any agent");

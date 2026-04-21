@@ -168,6 +168,66 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
+  // ── 2b-ii. Gemini GEMINI.md instruction file ────────────────────
+
+  describe("Gemini GEMINI.md instruction file", () => {
+    it("writes ~/.gemini/GEMINI.md with the rafter marker block at user scope", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+
+      const result = runCli("agent init --with-gemini", testHomeDir);
+      expect(result.exitCode).toBe(0);
+
+      const geminiPath = path.join(testHomeDir, ".gemini", "GEMINI.md");
+      expect(fs.existsSync(geminiPath)).toBe(true);
+
+      const content = fs.readFileSync(geminiPath, "utf-8");
+      expect(content).toContain("<!-- rafter:start -->");
+      expect(content).toContain("<!-- rafter:end -->");
+    });
+
+    it("is idempotent on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+
+      runCli("agent init --with-gemini", testHomeDir);
+      const first = fs.readFileSync(
+        path.join(testHomeDir, ".gemini", "GEMINI.md"),
+        "utf-8"
+      );
+
+      runCli("agent init --with-gemini", testHomeDir);
+      const second = fs.readFileSync(
+        path.join(testHomeDir, ".gemini", "GEMINI.md"),
+        "utf-8"
+      );
+
+      expect(second).toBe(first);
+    });
+
+    it("preserves existing user content outside the marker block", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+      const geminiPath = path.join(testHomeDir, ".gemini", "GEMINI.md");
+      fs.writeFileSync(geminiPath, "# My personal instructions\n\nDo the thing.\n");
+
+      runCli("agent init --with-gemini", testHomeDir);
+
+      const content = fs.readFileSync(geminiPath, "utf-8");
+      expect(content).toContain("# My personal instructions");
+      expect(content).toContain("Do the thing.");
+      expect(content).toContain("<!-- rafter:start -->");
+    });
+
+    it("does NOT write GEMINI.md if --with-gemini is not passed", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+      fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
+
+      runCli("agent init --with-claude-code", testHomeDir);
+
+      expect(
+        fs.existsSync(path.join(testHomeDir, ".gemini", "GEMINI.md"))
+      ).toBe(false);
+    });
+  });
+
   // ── 2c. Gemini environment detection ────────────────────────────
 
   describe("Gemini environment detection", () => {
@@ -983,10 +1043,12 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(result.exitCode).toBe(0);
 
       const backendSkill = path.join(testHomeDir, ".claude", "skills", "rafter", "SKILL.md");
-      const securitySkill = path.join(testHomeDir, ".claude", "skills", "rafter-agent-security", "SKILL.md");
+      const secureDesignSkill = path.join(testHomeDir, ".claude", "skills", "rafter-secure-design", "SKILL.md");
+      const codeReviewSkill = path.join(testHomeDir, ".claude", "skills", "rafter-code-review", "SKILL.md");
 
       expect(fs.existsSync(backendSkill)).toBe(true);
-      expect(fs.existsSync(securitySkill)).toBe(true);
+      expect(fs.existsSync(secureDesignSkill)).toBe(true);
+      expect(fs.existsSync(codeReviewSkill)).toBe(true);
 
       // Validate skill content
       const backendContent = fs.readFileSync(backendSkill, "utf-8");
