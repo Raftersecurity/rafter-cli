@@ -228,6 +228,65 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
+  // ── 2b-iii. Gemini skill install + registration ──────────────────
+
+  describe("Gemini skills install (--with-gemini)", () => {
+    it("installs rafter skills to <home>/.agents/skills/ (mirrors codex)", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+
+      const result = runCli("agent init --with-gemini", testHomeDir);
+      expect(result.exitCode).toBe(0);
+
+      // All three AGENT_SKILLS must land on disk regardless of whether the
+      // gemini CLI is available for registration.
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review"]) {
+        const skillPath = path.join(testHomeDir, ".agents", "skills", name, "SKILL.md");
+        expect(fs.existsSync(skillPath), `${name} SKILL.md should be installed`).toBe(true);
+      }
+    });
+
+    it("warns but succeeds when gemini CLI is not on PATH", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+
+      // Build a scrubbed PATH containing only a symlink to the node binary,
+      // so that `gemini` cannot be resolved even on dev machines where it's
+      // installed alongside node in the same nvm bin dir.
+      const isolatedBin = path.join(testHomeDir, "_bin");
+      fs.mkdirSync(isolatedBin, { recursive: true });
+      fs.symlinkSync(process.execPath, path.join(isolatedBin, "node"));
+
+      const result = spawnSync(process.execPath, [CLI_ENTRY, "agent", "init", "--with-gemini"], {
+        cwd: PROJECT_ROOT,
+        encoding: "utf-8",
+        timeout: 15_000,
+        env: {
+          HOME: testHomeDir,
+          XDG_CONFIG_HOME: path.join(testHomeDir, ".config"),
+          PATH: isolatedBin,
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      expect(result.status ?? 1, `stderr: ${result.stderr}`).toBe(0);
+      // Skills still written to disk
+      const skillPath = path.join(testHomeDir, ".agents", "skills", "rafter", "SKILL.md");
+      expect(fs.existsSync(skillPath)).toBe(true);
+      // Warning surfaces
+      expect(result.stdout).toMatch(/gemini CLI not found on PATH/i);
+    });
+
+    it("shares skill dir with codex when both flags are passed", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+
+      const result = runCli("agent init --with-gemini --with-codex", testHomeDir);
+      expect(result.exitCode).toBe(0);
+
+      const skillPath = path.join(testHomeDir, ".agents", "skills", "rafter", "SKILL.md");
+      expect(fs.existsSync(skillPath)).toBe(true);
+    });
+  });
+
   // ── 2c. Gemini environment detection ────────────────────────────
 
   describe("Gemini environment detection", () => {

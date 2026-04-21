@@ -561,6 +561,58 @@ function installCodexSkills(root: string): void {
   installSkillsTo(path.join(root, ".agents", "skills"));
 }
 
+function installGeminiSkills(root: string): void {
+  installSkillsTo(path.join(root, ".agents", "skills"));
+}
+
+/**
+ * Register installed skills with Gemini CLI via `gemini skills link <abs-path>`.
+ *
+ * Requires gemini CLI >= 0.35 (the version that added `gemini skills`).
+ * Missing CLI, missing subcommand, and per-skill registration failures are
+ * non-fatal: we warn and continue so the on-disk install still succeeds.
+ */
+function registerGeminiSkills(skillsDir: string): void {
+  // Probe for the `gemini` binary. Absence is expected on CI / fresh machines.
+  try {
+    execSync("gemini --version", { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
+  } catch {
+    console.log(fmt.warning(
+      "gemini CLI not found on PATH — skipping skill registration. " +
+      "Skills are installed to disk; re-run after installing gemini ≥ 0.35.",
+    ));
+    return;
+  }
+
+  // Probe `gemini skills` subcommand (added in 0.35).
+  try {
+    execSync("gemini skills --help", { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
+  } catch {
+    console.log(fmt.warning(
+      "gemini CLI does not support `skills` subcommand (needs ≥ 0.35). " +
+      "Skipping registration — skills are still installed to disk.",
+    ));
+    return;
+  }
+
+  for (const skill of AGENT_SKILLS) {
+    const absPath = path.resolve(skillsDir, skill.name);
+    if (!fs.existsSync(absPath)) continue;
+    try {
+      execSync(`gemini skills link ${JSON.stringify(absPath)}`, {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 10000,
+      });
+      console.log(fmt.success(`Registered ${skill.name} with Gemini CLI`));
+    } catch (e: any) {
+      const msg = (e?.stderr?.toString?.() || e?.message || "").trim();
+      console.log(fmt.warning(
+        `Failed to register ${skill.name} with Gemini CLI: ${msg.split("\n")[0] || "unknown error"}`,
+      ));
+    }
+  }
+}
+
 async function askYesNo(question: string, defaultYes = true): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   const suffix = defaultYes ? "[Y/n]" : "[y/N]";
@@ -822,11 +874,13 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install Gemini CLI MCP + hooks if opted in
+      // Install Gemini CLI MCP + skills + hooks if opted in
       let geminiOk = false;
       if ((hasGemini || (opts.local && wantGemini)) && wantGemini) {
         try {
           geminiOk = installGeminiMcp(root);
+          installGeminiSkills(root);
+          registerGeminiSkills(path.join(root, ".agents", "skills"));
           installGeminiHooks(root);
           if (geminiOk && scope === "user") manager.set("agent.environments.gemini.enabled", true);
         } catch (e) {
