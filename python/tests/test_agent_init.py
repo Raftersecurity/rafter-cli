@@ -331,6 +331,85 @@ class TestInstallCodexSkills:
         assert content != "old content", "Skill should be updated on reinstall"
 
 
+# ── Gemini skill installation tests ──────────────────────────────────
+
+from rafter_cli.commands.agent import _install_gemini_skills, _register_gemini_skills
+
+
+class TestInstallGeminiSkills:
+    def test_creates_skills_from_scratch(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        ok, error = _install_gemini_skills(tmp_path)
+        assert ok, f"Expected success, got error: {error}"
+        assert error == ""
+
+        # Mirrors _AGENT_SKILLS — same list as codex.
+        for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
+            skill_path = tmp_path / ".agents" / "skills" / name / "SKILL.md"
+            assert skill_path.exists(), f"{name} SKILL.md should be installed"
+            assert skill_path.read_text().strip(), f"{name} SKILL.md should not be empty"
+
+    def test_shares_dir_with_codex(self, tmp_path, monkeypatch):
+        """Gemini + Codex both write to <root>/.agents/skills/ — reinstall is idempotent."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        from rafter_cli.commands.agent import _install_codex_skills
+
+        _install_codex_skills(tmp_path)
+        first = (tmp_path / ".agents" / "skills" / "rafter" / "SKILL.md").read_text()
+        _install_gemini_skills(tmp_path)
+        second = (tmp_path / ".agents" / "skills" / "rafter" / "SKILL.md").read_text()
+        assert first == second
+
+
+class TestRegisterGeminiSkills:
+    def test_skips_when_gemini_not_on_path(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr("rafter_cli.commands.agent.shutil.which", lambda name: None)
+        # Should not raise, should just warn
+        _register_gemini_skills(tmp_path / ".agents" / "skills")
+
+    def test_calls_gemini_skills_link_for_each_skill(self, tmp_path, monkeypatch):
+        # Install skill dirs
+        skills_dir = tmp_path / ".agents" / "skills"
+        for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
+            (skills_dir / name).mkdir(parents=True)
+            (skills_dir / name / "SKILL.md").write_text("---\nname: x\n---\n")
+
+        monkeypatch.setattr("rafter_cli.commands.agent.shutil.which", lambda name: "/fake/gemini")
+
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, check=True, capture_output=True, timeout=None, **kw):
+            calls.append(list(cmd))
+            import subprocess as _sp
+            return _sp.CompletedProcess(args=cmd, returncode=0, stdout=b"", stderr=b"")
+
+        monkeypatch.setattr("rafter_cli.commands.agent.subprocess.run", fake_run)
+
+        _register_gemini_skills(skills_dir)
+
+        # First call: `gemini skills --help` probe
+        assert calls[0][1:] == ["skills", "--help"]
+        # Following calls: one `skills link <abs>` per skill
+        link_calls = [c for c in calls if c[1:3] == ["skills", "link"]]
+        assert len(link_calls) == 3
+        linked_paths = {c[3] for c in link_calls}
+        for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
+            assert str((skills_dir / name).resolve()) in linked_paths
+
+    def test_skips_when_skills_subcommand_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("rafter_cli.commands.agent.shutil.which", lambda name: "/fake/gemini")
+
+        import subprocess as _sp
+
+        def fake_run(cmd, check=True, capture_output=True, timeout=None, **kw):
+            raise _sp.CalledProcessError(1, cmd)
+
+        monkeypatch.setattr("rafter_cli.commands.agent.subprocess.run", fake_run)
+
+        # Should not raise
+        _register_gemini_skills(tmp_path / ".agents" / "skills")
+
+
 # ── OpenClaw skill installation tests ────────────────────────────────
 
 from rafter_cli.commands.agent import _install_openclaw_skill
@@ -521,3 +600,52 @@ class TestGeminiInstructionFile:
         runner.invoke(app, ["agent", "init", "--with-claude-code"])
 
         assert not (tmp_path / ".gemini" / "GEMINI.md").exists()
+
+
+class TestGeminiWithSkillsEndToEnd:
+    """`rafter agent init --with-gemini` must install skills to .agents/skills/
+    AND attempt gemini CLI registration."""
+
+    def test_installs_skills_to_agents_dir(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".gemini").mkdir()
+        # gemini not on PATH — registration is a warning, install still runs
+        monkeypatch.setattr("rafter_cli.commands.agent.shutil.which", lambda name: None if name == "gemini" else "/usr/bin/" + name)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--with-gemini"])
+        assert result.exit_code == 0, result.output
+
+        for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
+            skill = tmp_path / ".agents" / "skills" / name / "SKILL.md"
+            assert skill.exists(), f"{name} SKILL.md should be installed via --with-gemini"
+
+    def test_calls_gemini_skills_link_when_gemini_available(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".gemini").mkdir()
+
+        monkeypatch.setattr("rafter_cli.commands.agent.shutil.which", lambda name: "/fake/" + name if name == "gemini" else None)
+
+        link_calls: list[list[str]] = []
+
+        import subprocess as _sp
+
+        def fake_run(cmd, check=True, capture_output=True, timeout=None, **kw):
+            link_calls.append(list(cmd))
+            return _sp.CompletedProcess(args=cmd, returncode=0, stdout=b"", stderr=b"")
+
+        monkeypatch.setattr("rafter_cli.commands.agent.subprocess.run", fake_run)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--with-gemini"])
+        assert result.exit_code == 0, result.output
+
+        # One probe + one link per skill (3 skills)
+        link_only = [c for c in link_calls if c[1:3] == ["skills", "link"]]
+        assert len(link_only) == 3
