@@ -171,15 +171,27 @@ def _claude_code_hooks() -> ComponentSpec:
         hooks = s["hooks"]
         hooks.setdefault("PreToolUse", [])
         hooks.setdefault("PostToolUse", [])
+        hooks.setdefault("SessionStart", [])
+        hooks.setdefault("Stop", [])
         pre = {"type": "command", "command": "rafter hook pretool"}
         post = {"type": "command", "command": "rafter hook posttool"}
+        session_start = {"type": "command", "command": "rafter hook session-start"}
+        stop = {"type": "command", "command": "rafter hook stop"}
         hooks["PreToolUse"] = _filter_hooks(hooks["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         hooks["PostToolUse"] = _filter_hooks(hooks["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
+        hooks["SessionStart"] = _filter_hooks(hooks["SessionStart"], lambda e: _hook_entry_has_rafter(e, "rafter hook session-start"))
+        hooks["Stop"] = _filter_hooks(hooks["Stop"], lambda e: _hook_entry_has_rafter(e, "rafter hook stop"))
         hooks["PreToolUse"].extend([
             {"matcher": "Bash", "hooks": [pre]},
             {"matcher": "Write|Edit", "hooks": [pre]},
         ])
         hooks["PostToolUse"].append({"matcher": ".*", "hooks": [post]})
+        hooks["SessionStart"].extend([
+            {"matcher": "startup", "hooks": [session_start]},
+            {"matcher": "resume", "hooks": [session_start]},
+            {"matcher": "clear", "hooks": [session_start]},
+        ])
+        hooks["Stop"].append({"hooks": [stop]})
         _write_json(settings_path, s)
 
     def uninstall() -> None:
@@ -191,13 +203,17 @@ def _claude_code_hooks() -> ComponentSpec:
             hooks["PreToolUse"] = _filter_hooks(hooks["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         if "PostToolUse" in hooks:
             hooks["PostToolUse"] = _filter_hooks(hooks["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
+        if "SessionStart" in hooks:
+            hooks["SessionStart"] = _filter_hooks(hooks["SessionStart"], lambda e: _hook_entry_has_rafter(e, "rafter hook session-start"))
+        if "Stop" in hooks:
+            hooks["Stop"] = _filter_hooks(hooks["Stop"], lambda e: _hook_entry_has_rafter(e, "rafter hook stop"))
         _write_json(settings_path, s)
 
     return ComponentSpec(
         id="claude-code.hooks",
         platform="claude-code",
         kind="hooks",
-        description="Claude Code PreToolUse + PostToolUse hooks",
+        description="Claude Code PreToolUse + PostToolUse + SessionStart + Stop hooks",
         detect_dir=detect_dir,
         path=settings_path,
         is_installed=is_installed,
