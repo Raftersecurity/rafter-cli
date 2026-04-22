@@ -143,13 +143,21 @@ def _install_claude_code_hooks(root: Path) -> None:
     rafter_bin = _resolve_rafter_path()
     pre_command = f"{rafter_bin} hook pretool"
     post_command = f"{rafter_bin} hook posttool"
+    session_start_command = f"{rafter_bin} hook session-start"
+    stop_command = f"{rafter_bin} hook stop"
 
     # Also match old bare "rafter" commands for dedup cleanup
     _old_pre = "rafter hook pretool"
     _old_post = "rafter hook posttool"
+    _old_session_start = "rafter hook session-start"
+    _old_stop = "rafter hook stop"
 
     if "PostToolUse" not in settings["hooks"]:
         settings["hooks"]["PostToolUse"] = []
+    if "SessionStart" not in settings["hooks"]:
+        settings["hooks"]["SessionStart"] = []
+    if "Stop" not in settings["hooks"]:
+        settings["hooks"]["Stop"] = []
 
     # Remove any existing Rafter hooks (old or new format) to avoid duplicates
     settings["hooks"]["PreToolUse"] = [
@@ -168,10 +176,28 @@ def _install_claude_code_hooks(root: Path) -> None:
             for h in (entry.get("hooks") or [])
         )
     ]
+    settings["hooks"]["SessionStart"] = [
+        entry for entry in settings["hooks"]["SessionStart"]
+        if not any(
+            h.get("command", "") in (session_start_command, _old_session_start)
+            or "rafter hook session-start" in h.get("command", "")
+            for h in (entry.get("hooks") or [])
+        )
+    ]
+    settings["hooks"]["Stop"] = [
+        entry for entry in settings["hooks"]["Stop"]
+        if not any(
+            h.get("command", "") in (stop_command, _old_stop)
+            or "rafter hook stop" in h.get("command", "")
+            for h in (entry.get("hooks") or [])
+        )
+    ]
 
     # Add Rafter hooks
     pre_hook = {"type": "command", "command": pre_command}
     post_hook = {"type": "command", "command": post_command}
+    session_start_hook = {"type": "command", "command": session_start_command}
+    stop_hook = {"type": "command", "command": stop_command}
     settings["hooks"]["PreToolUse"].extend([
         {"matcher": "Bash", "hooks": [pre_hook]},
         {"matcher": "Write|Edit", "hooks": [pre_hook]},
@@ -179,10 +205,23 @@ def _install_claude_code_hooks(root: Path) -> None:
     settings["hooks"]["PostToolUse"].extend([
         {"matcher": ".*", "hooks": [post_hook]},
     ])
+    # SessionStart emits additionalContext once per session to steer the agent
+    # toward rafter skills + scan without bloating CLAUDE.md. Registered for
+    # startup/resume/clear so every new model turn-window picks it up.
+    settings["hooks"]["SessionStart"].extend([
+        {"matcher": "startup", "hooks": [session_start_hook]},
+        {"matcher": "resume", "hooks": [session_start_hook]},
+        {"matcher": "clear", "hooks": [session_start_hook]},
+    ])
+    # Stop enforces at least one rafter scan/skill per session. Blocks at most
+    # once (stop_hook_active guard inside the command).
+    settings["hooks"]["Stop"].append({"hooks": [stop_hook]})
 
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
     rprint(fmt.success(f"Installed PreToolUse hooks to {settings_path}"))
     rprint(fmt.success(f"Installed PostToolUse hooks to {settings_path}"))
+    rprint(fmt.success(f"Installed SessionStart hook to {settings_path}"))
+    rprint(fmt.success(f"Installed Stop hook to {settings_path}"))
     if rafter_bin != "rafter":
         rprint(fmt.info(f"Using resolved path: {rafter_bin}"))
 
