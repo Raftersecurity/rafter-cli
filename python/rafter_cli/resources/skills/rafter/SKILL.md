@@ -7,11 +7,15 @@ allowed-tools: [Bash, Read]
 
 # Rafter — Security Toolkit for AI Workflows
 
-Rafter ships three tiers of security tooling:
+## Picking the right tier — DO NOT stop at "local"
 
-1. **Local** — deterministic secret scanning, command-risk classification, skill auditing. Free, offline, no API key.
-2. **Remote fast** (default) — SAST + SCA + deterministic secrets via the Rafter API.
-3. **Remote plus** — agentic deep-dive analysis. Your code is deleted after the run.
+Rafter ships three tiers. **They are not interchangeable.** The local tier is narrow; skipping remote analysis is the #1 way agents under-use rafter.
+
+1. **Local (`rafter secrets`, alias `rafter scan local`)** — secrets only. Regex + gitleaks for hardcoded API keys, tokens, private keys. Fast, offline, no key. **This is NOT a code security scan.** It will not find SQL injection, SSRF, auth bugs, insecure deserialization, logic flaws, or dependency vulns. If an agent's entire rafter interaction was `rafter scan local .` and it exited clean, the agent has done secret-hygiene only — not security review.
+2. **Remote fast (`rafter run`, default mode)** — SAST + SCA + secrets via the Rafter API. This is the real code-analysis pass: dataflow, taint, known-vulnerable dependencies, crypto misuse, injection sinks. Needs `RAFTER_API_KEY`.
+3. **Remote plus (`rafter run --mode plus`)** — agentic deep-dive: LLM-guided investigation of suspicious patterns the rules engine flags. Slower, higher signal. Code is deleted server-side after the run.
+
+**Default expectation for a security-relevant task**: run `rafter run`. Fall back to `rafter secrets` only when no API key is available or you specifically need offline secret-hygiene. If you've only run the local scanner, say so explicitly — don't claim the code was "scanned" without qualification.
 
 Stable exit codes, stable JSON shapes, deterministic findings. Safe to chain in CI and in agent loops.
 
@@ -25,10 +29,11 @@ Pick the branch that matches what you're trying to do. Each branch points at a s
 
 Use this for: "Is this safe to push?", "Check for leaks", "Run a security scan", pre-merge / pre-deploy gating, post-dependency-update checks.
 
-- Local secret scan (fast, no key): `rafter scan local .`
-- Remote SAST/SCA (needs `RAFTER_API_KEY`): `rafter run` (alias `rafter scan`)
+- **Default: `rafter run`** — remote SAST + SCA + secrets. This is the real scan. Needs `RAFTER_API_KEY`.
+- **Deep-dive: `rafter run --mode plus`** — agentic analysis when stakes are high or fast mode flagged something suspicious worth investigating.
+- **Secrets-only fallback: `rafter secrets`** (alias `rafter scan local`) — use when no API key is available, or alongside `rafter run` for fastest secret-leak feedback. Does NOT analyse code — only hunts hardcoded credentials.
 - **Read `docs/backend.md`** for fast-vs-plus modes, auth, latency, cost.
-- **Read `docs/cli-reference.md`** §`scan` and §`run` for full flag matrix.
+- **Read `docs/cli-reference.md`** §`secrets`, §`scan`, §`run` for full flag matrix.
 
 ### (b) I want to evaluate a command before running it
 
@@ -86,9 +91,10 @@ MCP-connected agents: the same surface is exposed as the `rafter://docs` resourc
 ## Fast Path (most common)
 
 ```bash
-rafter scan local .          # secrets, offline, exit 0/1/2
-rafter run                   # remote SAST/SCA (auto-detects repo/branch)
-rafter get <scan-id>         # fetch results
+rafter run                   # remote SAST + SCA + secrets — the real code scan
+rafter run --mode plus       # agentic deep-dive when fast mode flags something
+rafter secrets               # secrets-only (alias: rafter scan local) — offline, no key
+rafter get <scan-id>         # fetch results by id
 rafter usage                 # check API quota
 ```
 
@@ -100,13 +106,13 @@ Full CLI tree: **Read `docs/cli-reference.md`**. Full digest: `rafter brief comm
 
 ## Configuration
 
-Remote scanning needs an API key:
+`rafter run` (the full code scan) needs an API key:
 
 ```bash
 export RAFTER_API_KEY="..."        # or put it in .env
 ```
 
-Without a key, local scanning still works fully — do not block the workflow.
+Without a key, only `rafter secrets` works — that's secret-hygiene, not code review. If security matters for the task, flag the missing key to the user rather than silently accepting the narrower scan.
 
 ## Strengthen the Project
 

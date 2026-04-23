@@ -10,20 +10,13 @@ export const RAFTER_INSTRUCTION_BLOCK = `${RAFTER_MARKER_START}
 
 Rafter is installed here — security, policy, and agent-governance tooling for AI workflows. Four skills ship with this install: \`rafter\`, \`rafter-secure-design\`, \`rafter-code-review\`, \`rafter-skill-review\`.
 
-**Run rafter when:**
-- Designing a feature that touches auth, payments, credentials, tokens, sessions, file upload, user data, or data deletion → skill \`rafter-secure-design\` (BEFORE you write the code)
-- You just wrote code handling user input, SQL, shell, credentials, file paths, or serialization → skill \`rafter-code-review\` (BEFORE declaring the feature done)
-- Asked to install a third-party SKILL.md, MCP server, Cursor rule, or agent config → skill \`rafter-skill-review\` (BEFORE copying it anywhere)
-- Security-adjacent task but the angle isn't obvious → skill \`rafter\`
+**Invoke a rafter skill when:**
+- Designing a feature that touches auth, payments, credentials, tokens, sessions, file upload, user data, or data deletion → \`rafter-secure-design\` (BEFORE you write the code)
+- You just wrote code handling user input, SQL, shell, credentials, file paths, or serialization → \`rafter-code-review\` (BEFORE declaring the feature done)
+- Asked to install a third-party SKILL.md, MCP server, Cursor rule, or agent config → \`rafter-skill-review\` (BEFORE copying it anywhere)
+- You need scanning, audit, policy, or command-risk evaluation, or you're security-adjacent and the angle isn't obvious → \`rafter\`
 
-**CLI** (access a powerful toolkit — see the \`rafter\` skill for details):
-- \`rafter scan local .\` / \`--staged\` — deterministic secret scan, no API key
-- \`rafter run\` — remote SAST + SCA + secrets (\`RAFTER_API_KEY\`; \`--mode plus\` for deep-dive)
-- \`rafter skill review <path-or-url>\` — audit a skill or plugin before install
-- \`rafter agent audit --last 5\` — recent policy/security events
-- \`rafter brief commands\` — full CLI reference
-
-Add the RAFTER_API_KEY to unlock powerful cloud scanning. But local features still work without it — use them!
+The \`rafter\` skill is the entry point for all CLI usage (secret scanning, remote SAST + SCA, deep-dive analysis, audit, policy, command-risk). Invoke it rather than shelling out to \`rafter <command>\` blind — it picks the right mode for your task (the quick local scanner catches secrets only; the remote engine does the real code analysis). Set \`RAFTER_API_KEY\` to unlock the remote analysis engine; local features work without it.
 ${RAFTER_MARKER_END}`;
 
 /**

@@ -1127,7 +1127,8 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       const content = fs.readFileSync(instructionPath, "utf-8");
       expect(content).toContain("<!-- rafter:start -->");
       expect(content).toContain("<!-- rafter:end -->");
-      expect(content).toContain("rafter scan local");
+      expect(content).toContain("rafter-secure-design");
+      expect(content).toContain("rafter-code-review");
     });
 
     it("should preserve existing CLAUDE.md content when adding instructions", () => {
@@ -1324,7 +1325,8 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       const content = fs.readFileSync(instructionPath, "utf-8");
       expect(content).toContain("<!-- rafter:start -->");
       expect(content).toContain("<!-- rafter:end -->");
-      expect(content).toContain("rafter scan local");
+      expect(content).toContain("rafter-secure-design");
+      expect(content).toContain("rafter-code-review");
     });
 
     it("should deduplicate hooks on repeated installs", () => {

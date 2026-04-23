@@ -155,6 +155,20 @@ export function createScanCommand(): Command {
 }
 
 /**
+ * `rafter secrets` — top-level alias for the secret scanner. Same engine
+ * and flags as `rafter scan local`; the name makes the scope (secrets only,
+ * not full code analysis) explicit to agents and humans.
+ */
+export function createSecretsCommand(): Command {
+  const cmd = createScanCommand();
+  cmd.name("secrets");
+  cmd.description(
+    "Scan files/directories for hardcoded secrets (regex + gitleaks). Secrets only — not a code analysis. For full SAST/SCA, use 'rafter run'.",
+  );
+  return cmd;
+}
+
+/**
  * Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration
  */
 function outputSarif(results: ScanResult[]): void {

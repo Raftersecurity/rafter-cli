@@ -15,7 +15,7 @@ from .commands.mcp_server import mcp_app
 from .commands.notify import notify_app
 from .commands.policy import policy_app
 from .commands.report import report_main
-from .commands.scan import scan_app
+from .commands.scan import scan_app, secrets_app
 from .commands.skill import skill_app
 from .utils.formatter import set_agent_mode
 
@@ -96,6 +96,9 @@ register_backend_commands(app)
 
 # Scan command group (default: remote scan; subcommands: local, remote)
 app.add_typer(scan_app)
+
+# Secrets — top-level alias for local secret scanning (explicit-scope name)
+app.add_typer(secrets_app)
 
 # Sub-apps
 app.add_typer(agent_app)
