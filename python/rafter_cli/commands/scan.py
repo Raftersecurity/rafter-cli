@@ -224,3 +224,45 @@ def scan_local(
 
     filtered = _apply_baseline(results, baseline_entries)
     _output_scan_results(filtered, json_output, quiet, format=format)
+
+
+# ── rafter secrets — top-level alias for local secret scanning ────────
+
+secrets_app = typer.Typer(
+    name="secrets",
+    help=(
+        "Scan files/directories for hardcoded secrets (regex + gitleaks). "
+        "Secrets only — not a code analysis. For full SAST/SCA, use 'rafter run'."
+    ),
+    invoke_without_command=True,
+    no_args_is_help=False,
+    context_settings={"allow_interspersed_args": True},
+)
+
+
+@secrets_app.callback(invoke_without_command=True)
+def secrets(
+    path: str = typer.Argument(".", help="File or directory to scan"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Only output if secrets found"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
+    staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
+    diff: Optional[str] = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
+    engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
+    baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
+    watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
+    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires gitleaks engine)"),
+):
+    """Scan files/directories for hardcoded secrets. Alias for 'rafter scan local'."""
+    return scan_local(
+        path=path,
+        quiet=quiet,
+        json_output=json_output,
+        format=format,
+        staged=staged,
+        diff=diff,
+        engine=engine,
+        baseline=baseline,
+        watch=watch,
+        history=history,
+    )

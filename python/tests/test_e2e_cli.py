@@ -206,6 +206,34 @@ class TestLocalScanning:
 
 
 # ---------------------------------------------------------------------------
+# rafter secrets — top-level alias for local secret scanning
+# ---------------------------------------------------------------------------
+
+
+class TestRafterSecrets:
+    def test_help_advertises_secrets_only_scope(self):
+        stdout, _, rc = rafter("secrets --help")
+        assert rc == 0
+        assert "secrets only" in stdout.lower()
+        assert "rafter run" in stdout.lower()
+
+    def test_detects_secrets_same_as_scan_local(self, tmp_path):
+        f = tmp_path / "secrets.txt"
+        f.write_text("AKIAIOSFODNN7EXAMPLE\n")
+        a_stdout, _, a_rc = rafter(f"secrets {f} --engine patterns --json")
+        b_stdout, _, b_rc = rafter(f"scan local {f} --engine patterns --json")
+        assert a_rc == 1
+        assert b_rc == 1
+        assert json.loads(a_stdout) == json.loads(b_stdout)
+
+    def test_exits_0_for_clean_file(self, tmp_path):
+        f = tmp_path / "clean.txt"
+        f.write_text("no secrets here\n")
+        _, _, rc = rafter(f"secrets {f} --engine patterns --quiet")
+        assert rc == 0
+
+
+# ---------------------------------------------------------------------------
 # Command risk assessment
 # ---------------------------------------------------------------------------
 

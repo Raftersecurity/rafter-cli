@@ -175,6 +175,42 @@ describe("CLI e2e — local secret scanning", () => {
   }, 30000);
 });
 
+describe("CLI e2e — rafter secrets (alias for scan local)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-secrets-e2e-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("--help advertises secrets-only scope", () => {
+    const r = rafter("secrets --help");
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toMatch(/secrets only/i);
+    expect(r.stdout).toMatch(/rafter run/);
+  }, 30000);
+
+  it("detects secrets with same exit/output as scan local", () => {
+    const f = path.join(tmpDir, "secrets.txt");
+    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    const a = rafter(`secrets ${f} --engine patterns --json`);
+    const b = rafter(`scan local ${f} --engine patterns --json`);
+    expect(a.exitCode).toBe(1);
+    expect(b.exitCode).toBe(1);
+    expect(JSON.parse(a.stdout)).toEqual(JSON.parse(b.stdout));
+  }, 30000);
+
+  it("exits 0 for clean file", () => {
+    const f = path.join(tmpDir, "clean.txt");
+    fs.writeFileSync(f, "nothing to see\n");
+    const r = rafter(`secrets ${f} --engine patterns --quiet`);
+    expect(r.exitCode).toBe(0);
+  }, 30000);
+});
+
 describe("CLI e2e — command risk assessment", () => {
 
   it("agent exec blocks critical commands", () => {
