@@ -126,7 +126,7 @@ function claudeCodeHooks(): ComponentSpec {
     id: "claude-code.hooks",
     platform: "claude-code",
     kind: "hooks",
-    description: "Claude Code PreToolUse + PostToolUse + SessionStart + Stop hooks",
+    description: "Claude Code PreToolUse + PostToolUse + SessionStart hooks",
     detectDir: path.join(home, ".claude"),
     path: settingsPath,
     isInstalled: () => {
@@ -149,12 +149,10 @@ function claudeCodeHooks(): ComponentSpec {
       settings.hooks.PreToolUse ??= [];
       settings.hooks.PostToolUse ??= [];
       settings.hooks.SessionStart ??= [];
-      settings.hooks.Stop ??= [];
 
       const pre = { type: "command", command: "rafter hook pretool" };
       const post = { type: "command", command: "rafter hook posttool" };
       const sessionStart = { type: "command", command: "rafter hook session-start" };
-      const stop = { type: "command", command: "rafter hook stop" };
 
       settings.hooks.PreToolUse = filterOutRafter(
         settings.hooks.PreToolUse,
@@ -168,10 +166,6 @@ function claudeCodeHooks(): ComponentSpec {
         settings.hooks.SessionStart,
         (e) => hookEntryMatchesRafter(e, "rafter hook session-start"),
       );
-      settings.hooks.Stop = filterOutRafter(
-        settings.hooks.Stop,
-        (e) => hookEntryMatchesRafter(e, "rafter hook stop"),
-      );
 
       settings.hooks.PreToolUse.push(
         { matcher: "Bash", hooks: [pre] },
@@ -183,7 +177,6 @@ function claudeCodeHooks(): ComponentSpec {
         { matcher: "resume", hooks: [sessionStart] },
         { matcher: "clear", hooks: [sessionStart] },
       );
-      settings.hooks.Stop.push({ hooks: [stop] });
 
       writeJson(settingsPath, settings);
     },
@@ -206,12 +199,6 @@ function claudeCodeHooks(): ComponentSpec {
         settings.hooks.SessionStart = filterOutRafter(
           settings.hooks.SessionStart,
           (e) => hookEntryMatchesRafter(e, "rafter hook session-start"),
-        );
-      }
-      if (settings.hooks?.Stop) {
-        settings.hooks.Stop = filterOutRafter(
-          settings.hooks.Stop,
-          (e) => hookEntryMatchesRafter(e, "rafter hook stop"),
         );
       }
       writeJson(settingsPath, settings);

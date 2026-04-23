@@ -1,6 +1,6 @@
 ---
 name: rafter-skill-review
-description: "Security review of a skill, plugin, or agent extension before you install it. Router skill: pick (a) installing a brand-new skill, (b) updating an already-installed skill, or (c) investigating one that looks suspicious, and Read the matching sub-doc. Pairs with `rafter skill review <path-or-url>` which emits a deterministic JSON report (secrets, URLs, high-risk shell, obfuscation signals). Run this BEFORE copying any third-party SKILL.md, MCP server manifest, Cursor rule, or agent config into your machine. No installation is safe until it has passed."
+description: "Use BEFORE copying any third-party SKILL.md, MCP server manifest, Cursor rule, or agent config into your machine. Skills are executable context — installing one grants Read/Bash/network with your identity. Vets the source for secrets, URLs, high-risk shell, and obfuscation. No installation is safe until it passes."
 version: 0.1.0
 allowed-tools: [Bash, Read, Grep, Glob, WebFetch]
 ---
