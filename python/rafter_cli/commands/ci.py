@@ -47,7 +47,7 @@ jobs:
         run: pip install rafter-cli
 
       - name: Scan for secrets
-        run: rafter scan local . --quiet
+        run: rafter secrets . --quiet
 """
     if with_backend:
         yaml += """
@@ -78,7 +78,7 @@ secret-scan:
   image: python:3.12
   script:
     - pip install rafter-cli
-    - rafter scan local . --quiet
+    - rafter secrets . --quiet
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -116,7 +116,7 @@ jobs:
           command: pip install rafter-cli
       - run:
           name: Scan for secrets
-          command: rafter scan local . --quiet
+          command: rafter secrets . --quiet
 """
     if with_backend:
         yaml += """

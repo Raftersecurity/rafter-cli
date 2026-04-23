@@ -13,15 +13,6 @@ from ..scanners.regex_scanner import RegexScanner
 
 hook_app = typer.Typer(name="hook", help="Hook handlers for agent platform integration", no_args_is_help=True)
 
-# Directive injected once per session via Claude Code SessionStart hook. Keep it short —
-# this lands in model context every session, so every word costs tokens. Goal: steer
-# the agent toward rafter skills + scan without relying on a verbose CLAUDE.md block.
-SESSION_START_DIRECTIVE = (
-    "Rafter is active in this project. Before `git commit` or signalling a task is done, "
-    "run `rafter scan local .` to catch secrets. When working on auth, payments, credentials, "
-    "file upload, or data deletion, invoke the `rafter-secure-design` skill before writing code."
-)
-
 _RISK_LABELS = {
     "critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW",
 }
@@ -231,7 +222,7 @@ def _evaluate_bash(command: str) -> dict:
             return {
                 "decision": "deny",
                 "reason": f"{result['count']} secret(s) detected in {result['files']} staged file(s). "
-                          "Run 'rafter scan local --staged' for details.",
+                          "Run 'rafter secrets --staged' for details.",
             }
 
     audit.log_command_intercepted(command, True, "allowed")
@@ -293,28 +284,6 @@ def pretool(
     except Exception:
         # Any unexpected error -> fail open
         _write_pretool_decision({"decision": "allow"}, format)
-
-
-@hook_app.command("session-start")
-def session_start(
-    format: str = typer.Option("claude", "--format", help="Output format: claude (default)"),
-):
-    """SessionStart hook handler. Emits additionalContext to steer the agent toward rafter skills + scan."""
-    try:
-        # Drain stdin (best-effort) — some agents send a JSON payload we ignore.
-        _read_stdin()
-        output = {
-            "hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext": SESSION_START_DIRECTIVE,
-            },
-        }
-        sys.stdout.write(json.dumps(output) + "\n")
-        sys.stdout.flush()
-    except Exception:
-        # Fail soft — don't block session startup.
-        sys.stdout.write("{}\n")
-        sys.stdout.flush()
 
 
 @hook_app.command("posttool")

@@ -75,7 +75,7 @@ describe("CLI e2e — version and help", () => {
   it("scan --help shows scan subcommands", () => {
     const r = rafter("scan --help");
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("local");
+    expect(r.stdout).toContain("remote");
     expect(r.stdout).toContain("remote");
   }, 30000);
 
@@ -301,7 +301,7 @@ describe("CLI e2e — agent scan deprecation", () => {
       fs.writeFileSync(f, "no secrets\n");
       const r = rafter(`agent scan ${f} --engine patterns`);
       expect(r.stderr).toContain("deprecated");
-      expect(r.stderr).toContain("rafter scan local");
+      expect(r.stderr).toContain("rafter secrets");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

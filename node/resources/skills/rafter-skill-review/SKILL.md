@@ -24,7 +24,7 @@ rafter skill review <path> --format text         # human-readable summary
 
 The command:
 - pulls the skill (if a URL, does a shallow clone into a temp dir),
-- runs `rafter scan local` over the tree,
+- runs `rafter secrets` over the tree,
 - extracts URLs, high-risk shell patterns, obfuscation signals,
 - reads `SKILL.md` frontmatter (`allowed-tools`, `version`, etc.),
 - prints a structured JSON report — see `shared-docs/CLI_SPEC.md` §`rafter skill review`.

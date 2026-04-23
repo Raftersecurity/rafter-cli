@@ -113,7 +113,7 @@ jobs:
         run: npm install -g @rafter-security/cli
 
       - name: Scan for secrets
-        run: rafter scan local . --quiet
+        run: rafter secrets . --quiet
 `;
 
   if (withBackend) {
@@ -147,7 +147,7 @@ secret-scan:
   image: node:20
   script:
     - npm install -g @rafter-security/cli
-    - rafter scan local . --quiet
+    - rafter secrets . --quiet
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -188,7 +188,7 @@ jobs:
           command: npm install -g @rafter-security/cli
       - run:
           name: Scan for secrets
-          command: rafter scan local . --quiet
+          command: rafter secrets . --quiet
 `;
 
   if (withBackend) {

@@ -39,7 +39,7 @@ export function createReportCommand(): Command {
       } else {
         console.error(
           "Error: No input provided. Pipe scan results or provide a file path.\n" +
-          "  Example: rafter scan local --json . | rafter report -o report.html\n" +
+          "  Example: rafter secrets --json . | rafter report -o report.html\n" +
           "  Example: rafter report scan-results.json -o report.html"
         );
         process.exit(2);

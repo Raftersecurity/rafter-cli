@@ -128,11 +128,9 @@ function installClaudeCodeHooks(root: string): void {
   if (!settings.hooks) settings.hooks = {};
   if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
   if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
-  if (!settings.hooks.SessionStart) settings.hooks.SessionStart = [];
 
   const preHook = { type: "command", command: "rafter hook pretool" };
   const postHook = { type: "command", command: "rafter hook posttool" };
-  const sessionStartHook = { type: "command", command: "rafter hook session-start" };
 
   // Remove any existing Rafter hooks to avoid duplicates
   settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
@@ -147,12 +145,16 @@ function installClaudeCodeHooks(root: string): void {
       return !hooks.some((h: any) => h.command === "rafter hook posttool");
     }
   );
-  settings.hooks.SessionStart = settings.hooks.SessionStart.filter(
-    (entry: any) => {
-      const hooks = entry.hooks || [];
-      return !hooks.some((h: any) => h.command === "rafter hook session-start");
-    }
-  );
+  // Strip legacy SessionStart entry left over from <=0.7.4 installs.
+  if (Array.isArray(settings.hooks.SessionStart)) {
+    settings.hooks.SessionStart = settings.hooks.SessionStart.filter(
+      (entry: any) => {
+        const hooks = entry.hooks || [];
+        return !hooks.some((h: any) => h.command === "rafter hook session-start");
+      }
+    );
+    if (settings.hooks.SessionStart.length === 0) delete settings.hooks.SessionStart;
+  }
 
   // Add Rafter hooks
   settings.hooks.PreToolUse.push(
@@ -162,18 +164,10 @@ function installClaudeCodeHooks(root: string): void {
   settings.hooks.PostToolUse.push(
     { matcher: ".*", hooks: [postHook] },
   );
-  // SessionStart emits additionalContext once per session to steer the agent
-  // toward rafter skills / scan without bloating CLAUDE.md.
-  settings.hooks.SessionStart.push(
-    { matcher: "startup", hooks: [sessionStartHook] },
-    { matcher: "resume", hooks: [sessionStartHook] },
-    { matcher: "clear", hooks: [sessionStartHook] },
-  );
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
   console.log(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
   console.log(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
-  console.log(fmt.success(`Installed SessionStart hook to ${settingsPath}`));
 }
 
 function installCodexHooks(root: string): void {
@@ -1002,7 +996,7 @@ export function createInitCommand(): Command {
         console.log("No agent environments detected. Install an agent tool and re-run with --with-<tool>.");
       }
       console.log();
-      console.log("  - Run: rafter scan local . (test secret scanning)");
+      console.log("  - Run: rafter secrets . (test secret scanning)");
       console.log("  - Configure: rafter agent config show");
       console.log();
 
