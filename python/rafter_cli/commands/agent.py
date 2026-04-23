@@ -389,6 +389,29 @@ _RAFTER_MCP_ENTRY = {
 }
 
 
+def _install_claude_code_mcp(root: Path) -> bool:
+    """Install MCP server config for Claude Code (<root>/.mcp.json).
+
+    Project-scope MCP config that Claude Code auto-loads on startup.
+    """
+    mcp_path = root / ".mcp.json"
+
+    config: dict[str, Any] = {}
+    if mcp_path.exists():
+        try:
+            config = json.loads(mcp_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing .mcp.json was unreadable, creating new one"))
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = {}
+    config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    mcp_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
+    return True
+
+
 def _install_gemini_mcp(root: Path) -> bool:
     """Install MCP server config for Gemini CLI (<root>/.gemini/settings.json)."""
     gemini_dir = root / ".gemini"
@@ -688,6 +711,8 @@ def init(
         try:
             _install_claude_code_skills(root)
             _install_claude_code_hooks(root)
+            if scope == "project":
+                _install_claude_code_mcp(root)
             if scope == "user":
                 manager.set("agent.environments.claude_code.enabled", True)
             claude_code_ok = True
