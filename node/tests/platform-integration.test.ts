@@ -1196,6 +1196,76 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
+  // ── 11b. Claude Code project-scope MCP install (--local --with-claude-code) ──
+
+  describe("Claude Code MCP install (--local --with-claude-code)", () => {
+    function runCliInCwd(args: string, cwd: string, homeDir: string) {
+      const result = spawnSync(`node ${CLI_ENTRY} ${args}`, {
+        cwd,
+        encoding: "utf-8",
+        timeout: 15_000,
+        shell: true,
+        env: {
+          ...process.env,
+          HOME: homeDir,
+          XDG_CONFIG_HOME: path.join(homeDir, ".config"),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      return {
+        stdout: result.stdout || "",
+        stderr: result.stderr || "",
+        exitCode: result.status ?? 1,
+      };
+    }
+
+    it("writes .mcp.json at project root with rafter mcpServers entry", () => {
+      const r = runCliInCwd("agent init --local --with-claude-code", testHomeDir, testHomeDir);
+      expect(r.exitCode, `exit ${r.exitCode}; stderr: ${r.stderr}`).toBe(0);
+
+      const mcpPath = path.join(testHomeDir, ".mcp.json");
+      expect(fs.existsSync(mcpPath)).toBe(true);
+
+      const config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
+      expect(config.mcpServers).toBeDefined();
+      expect(config.mcpServers.rafter).toBeDefined();
+      expect(config.mcpServers.rafter.command).toBe("rafter");
+      expect(config.mcpServers.rafter.args).toEqual(["mcp", "serve"]);
+    });
+
+    it("is idempotent on repeated installs", () => {
+      runCliInCwd("agent init --local --with-claude-code", testHomeDir, testHomeDir);
+      runCliInCwd("agent init --local --with-claude-code", testHomeDir, testHomeDir);
+
+      const config = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".mcp.json"), "utf-8")
+      );
+      expect(Object.keys(config.mcpServers)).toEqual(["rafter"]);
+    });
+
+    it("preserves existing non-rafter MCP servers", () => {
+      fs.writeFileSync(
+        path.join(testHomeDir, ".mcp.json"),
+        JSON.stringify({ mcpServers: { other: { command: "other", args: [] } } }, null, 2)
+      );
+
+      runCliInCwd("agent init --local --with-claude-code", testHomeDir, testHomeDir);
+
+      const config = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".mcp.json"), "utf-8")
+      );
+      expect(config.mcpServers.other).toBeDefined();
+      expect(config.mcpServers.rafter).toBeDefined();
+    });
+
+    it("does NOT write .mcp.json in user scope (without --local)", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
+      runCli("agent init --with-claude-code", testHomeDir);
+
+      expect(fs.existsSync(path.join(testHomeDir, ".mcp.json"))).toBe(false);
+    });
+  });
+
   // ── 12. Codex CLI hooks + skills via CLI ──────────────────────────
 
   describe("Codex CLI hooks (--with-codex)", () => {

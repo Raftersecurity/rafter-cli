@@ -390,6 +390,30 @@ const RAFTER_MCP_ENTRY = {
 };
 
 /**
+ * Install MCP server config for Claude Code (<root>/.mcp.json).
+ * Project-scope MCP config that Claude Code auto-loads on startup.
+ */
+function installClaudeCodeMcp(root: string): boolean {
+  const mcpPath = path.join(root, ".mcp.json");
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(mcpPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing .mcp.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!config.mcpServers) config.mcpServers = {};
+  config.mcpServers.rafter = { ...RAFTER_MCP_ENTRY };
+
+  fs.writeFileSync(mcpPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log(fmt.success(`Installed Rafter MCP server to ${mcpPath}`));
+  return true;
+}
+
+/**
  * Install MCP server config for Gemini CLI (~/.gemini/settings.json)
  */
 function installGeminiMcp(root: string): boolean {
@@ -864,6 +888,7 @@ export function createInitCommand(): Command {
         try {
           await installClaudeCodeSkills(root);
           installClaudeCodeHooks(root);
+          if (scope === "project") installClaudeCodeMcp(root);
           if (scope === "user") manager.set("agent.environments.claudeCode.enabled", true);
           claudeCodeOk = true;
         } catch (e) {
