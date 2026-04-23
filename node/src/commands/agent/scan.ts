@@ -95,7 +95,7 @@ export function createScanCommand(): Command {
         argv.indexOf("agent") < argv.indexOf("scan");
       if (isAgentScan) {
         process.stderr.write(
-          "Warning: rafter agent scan is deprecated and will be removed in a future major version. Use rafter scan local instead.\n"
+          "Warning: rafter agent scan is deprecated and will be removed in a future major version. Use rafter secrets instead.\n"
         );
       }
       // Load policy-merged config for excludePaths/customPatterns

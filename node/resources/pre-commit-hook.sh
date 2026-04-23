@@ -27,7 +27,7 @@ fi
 echo "🔍 Rafter: Scanning staged files for secrets..."
 
 # Scan staged files
-rafter scan local --staged --quiet
+rafter secrets --staged --quiet
 
 EXIT_CODE=$?
 

@@ -93,7 +93,7 @@ describe("ci init — explicit platform", () => {
     );
     expect(content).toContain("actions/checkout@v4");
     expect(content).toContain("npm install -g @rafter-security/cli");
-    expect(content).toContain("rafter scan local . --quiet");
+    expect(content).toContain("rafter secrets . --quiet");
     expect(content).not.toContain("security-audit");
   });
 
@@ -164,7 +164,7 @@ describe("ci init — --output", () => {
     expect(r.exitCode).toBe(0);
     expect(fs.existsSync(customPath)).toBe(true);
     const content = fs.readFileSync(customPath, "utf-8");
-    expect(content).toContain("rafter scan local");
+    expect(content).toContain("rafter secrets");
   });
 });
 
@@ -194,7 +194,7 @@ describe("ci init — generated workflow YAML validation", () => {
       expect(steps).toHaveLength(3);
       expect(steps[0].uses).toBe("actions/checkout@v4");
       expect(steps[1].run).toContain("@rafter-security/cli");
-      expect(steps[2].run).toBe("rafter scan local . --quiet");
+      expect(steps[2].run).toBe("rafter secrets . --quiet");
     });
 
     it("--with-backend adds security-audit job with correct dependency", () => {
@@ -231,7 +231,7 @@ describe("ci init — generated workflow YAML validation", () => {
       const doc = readAndParse(path.join(tmpDir, ".gitlab-ci-rafter.yml"));
       const job = doc["secret-scan"];
       expect(job.script).toBeInstanceOf(Array);
-      expect(job.script).toContain("rafter scan local . --quiet");
+      expect(job.script).toContain("rafter secrets . --quiet");
       expect(job.rules).toBeInstanceOf(Array);
       expect(job.rules.length).toBeGreaterThanOrEqual(2);
     });
@@ -262,7 +262,7 @@ describe("ci init — generated workflow YAML validation", () => {
       const steps = doc.jobs["secret-scan"].steps;
       expect(steps[0]).toBe("checkout");
       expect(steps[1].run.command).toContain("@rafter-security/cli");
-      expect(steps[2].run.command).toBe("rafter scan local . --quiet");
+      expect(steps[2].run.command).toBe("rafter secrets . --quiet");
     });
 
     it("--with-backend adds security-audit with requires in workflow", () => {

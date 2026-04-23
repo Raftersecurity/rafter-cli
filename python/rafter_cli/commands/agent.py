@@ -143,17 +143,13 @@ def _install_claude_code_hooks(root: Path) -> None:
     rafter_bin = _resolve_rafter_path()
     pre_command = f"{rafter_bin} hook pretool"
     post_command = f"{rafter_bin} hook posttool"
-    session_start_command = f"{rafter_bin} hook session-start"
 
     # Also match old bare "rafter" commands for dedup cleanup
     _old_pre = "rafter hook pretool"
     _old_post = "rafter hook posttool"
-    _old_session_start = "rafter hook session-start"
 
     if "PostToolUse" not in settings["hooks"]:
         settings["hooks"]["PostToolUse"] = []
-    if "SessionStart" not in settings["hooks"]:
-        settings["hooks"]["SessionStart"] = []
 
     # Remove any existing Rafter hooks (old or new format) to avoid duplicates
     settings["hooks"]["PreToolUse"] = [
@@ -172,19 +168,21 @@ def _install_claude_code_hooks(root: Path) -> None:
             for h in (entry.get("hooks") or [])
         )
     ]
-    settings["hooks"]["SessionStart"] = [
-        entry for entry in settings["hooks"]["SessionStart"]
-        if not any(
-            h.get("command", "") in (session_start_command, _old_session_start)
-            or "rafter hook session-start" in h.get("command", "")
-            for h in (entry.get("hooks") or [])
-        )
-    ]
+    # Strip legacy SessionStart entry from <=0.7.4 installs.
+    if isinstance(settings["hooks"].get("SessionStart"), list):
+        settings["hooks"]["SessionStart"] = [
+            entry for entry in settings["hooks"]["SessionStart"]
+            if not any(
+                "rafter hook session-start" in h.get("command", "")
+                for h in (entry.get("hooks") or [])
+            )
+        ]
+        if not settings["hooks"]["SessionStart"]:
+            del settings["hooks"]["SessionStart"]
 
     # Add Rafter hooks
     pre_hook = {"type": "command", "command": pre_command}
     post_hook = {"type": "command", "command": post_command}
-    session_start_hook = {"type": "command", "command": session_start_command}
     settings["hooks"]["PreToolUse"].extend([
         {"matcher": "Bash", "hooks": [pre_hook]},
         {"matcher": "Write|Edit", "hooks": [pre_hook]},
@@ -192,19 +190,10 @@ def _install_claude_code_hooks(root: Path) -> None:
     settings["hooks"]["PostToolUse"].extend([
         {"matcher": ".*", "hooks": [post_hook]},
     ])
-    # SessionStart emits additionalContext once per session to steer the agent
-    # toward rafter skills + scan without bloating CLAUDE.md. Registered for
-    # startup/resume/clear so every new model turn-window picks it up.
-    settings["hooks"]["SessionStart"].extend([
-        {"matcher": "startup", "hooks": [session_start_hook]},
-        {"matcher": "resume", "hooks": [session_start_hook]},
-        {"matcher": "clear", "hooks": [session_start_hook]},
-    ])
 
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
     rprint(fmt.success(f"Installed PreToolUse hooks to {settings_path}"))
     rprint(fmt.success(f"Installed PostToolUse hooks to {settings_path}"))
-    rprint(fmt.success(f"Installed SessionStart hook to {settings_path}"))
     if rafter_bin != "rafter":
         rprint(fmt.info(f"Using resolved path: {rafter_bin}"))
 
@@ -842,7 +831,7 @@ def init(
         rprint("No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
 
     rprint()
-    rprint("  - Run: rafter scan local . (test secret scanning)")
+    rprint("  - Run: rafter secrets . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
     rprint()
 
@@ -1118,10 +1107,10 @@ def scan(
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires gitleaks engine)"),
 ):
-    """Scan files or directories for secrets. [deprecated: use 'rafter scan local' instead]"""
+    """Scan files or directories for secrets. [deprecated: use 'rafter secrets' instead]"""
     print(
         "Warning: rafter agent scan is deprecated and will be removed in a future major version. "
-        "Use rafter scan local instead.",
+        "Use rafter secrets instead.",
         file=sys.stderr,
     )
     manager = ConfigManager()
@@ -1444,7 +1433,7 @@ def exec_cmd(
                 if results:
                     rprint(f"\n{fmt.warning('Secrets detected in staged files!')}\n")
                     print(f"Found {total} secret(s) in {len(results)} file(s)", file=sys.stderr)
-                    rprint(f"\nRun 'rafter scan local' for details.\n")
+                    rprint(f"\nRun 'rafter secrets' for details.\n")
                     interceptor.log_evaluation(evaluation, "blocked")
                     raise typer.Exit(code=1)
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -1816,7 +1805,7 @@ def _display_quick_scan(scan: QuickScanResults, skill_name: str) -> None:
     else:
         print(f"\u26a0\ufe0f  Secrets: {scan.secrets} found")
         print("   \u2192 API keys, tokens, or credentials detected")
-        print("   \u2192 Run: rafter scan local <path> for details")
+        print("   \u2192 Run: rafter secrets <path> for details")
 
     # URLs
     if not scan.urls:

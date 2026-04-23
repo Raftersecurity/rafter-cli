@@ -158,23 +158,20 @@ def _claude_code_hooks() -> ComponentSpec:
         hooks = s["hooks"]
         hooks.setdefault("PreToolUse", [])
         hooks.setdefault("PostToolUse", [])
-        hooks.setdefault("SessionStart", [])
         pre = {"type": "command", "command": "rafter hook pretool"}
         post = {"type": "command", "command": "rafter hook posttool"}
-        session_start = {"type": "command", "command": "rafter hook session-start"}
         hooks["PreToolUse"] = _filter_hooks(hooks["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         hooks["PostToolUse"] = _filter_hooks(hooks["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
-        hooks["SessionStart"] = _filter_hooks(hooks["SessionStart"], lambda e: _hook_entry_has_rafter(e, "rafter hook session-start"))
+        # Strip legacy SessionStart entry from <=0.7.4 installs.
+        if isinstance(hooks.get("SessionStart"), list):
+            hooks["SessionStart"] = _filter_hooks(hooks["SessionStart"], lambda e: _hook_entry_has_rafter(e, "rafter hook session-start"))
+            if not hooks["SessionStart"]:
+                del hooks["SessionStart"]
         hooks["PreToolUse"].extend([
             {"matcher": "Bash", "hooks": [pre]},
             {"matcher": "Write|Edit", "hooks": [pre]},
         ])
         hooks["PostToolUse"].append({"matcher": ".*", "hooks": [post]})
-        hooks["SessionStart"].extend([
-            {"matcher": "startup", "hooks": [session_start]},
-            {"matcher": "resume", "hooks": [session_start]},
-            {"matcher": "clear", "hooks": [session_start]},
-        ])
         _write_json(settings_path, s)
 
     def uninstall() -> None:
@@ -186,15 +183,17 @@ def _claude_code_hooks() -> ComponentSpec:
             hooks["PreToolUse"] = _filter_hooks(hooks["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         if "PostToolUse" in hooks:
             hooks["PostToolUse"] = _filter_hooks(hooks["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
-        if "SessionStart" in hooks:
+        if isinstance(hooks.get("SessionStart"), list):
             hooks["SessionStart"] = _filter_hooks(hooks["SessionStart"], lambda e: _hook_entry_has_rafter(e, "rafter hook session-start"))
+            if not hooks["SessionStart"]:
+                del hooks["SessionStart"]
         _write_json(settings_path, s)
 
     return ComponentSpec(
         id="claude-code.hooks",
         platform="claude-code",
         kind="hooks",
-        description="Claude Code PreToolUse + PostToolUse + SessionStart hooks",
+        description="Claude Code PreToolUse + PostToolUse hooks",
         detect_dir=detect_dir,
         path=settings_path,
         is_installed=is_installed,

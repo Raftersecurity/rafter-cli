@@ -2,7 +2,8 @@
 
 Default (no subcommand): remote scan (same as `rafter run`)
 rafter scan remote:       explicit alias for remote scan
-rafter scan local [path]: local secret scanner (formerly `rafter agent scan`)
+rafter scan local [path]: hidden back-compat alias for `rafter secrets`
+                          (was `rafter agent scan` before 0.7.4).
 """
 from __future__ import annotations
 
@@ -18,18 +19,16 @@ from rich import print as rprint
 
 scan_app = typer.Typer(
     name="scan",
-    help=(
-        "Scan for security issues. Default: remote scan. "
-        "Use 'scan local' for local secret scanning."
-    ),
+    help="Trigger a remote security scan (requires RAFTER_API_KEY).",
     invoke_without_command=True,
     no_args_is_help=False,
 )
 
 local_app = typer.Typer(
     name="local",
-    help="Scan files or directories for secrets (local)",
+    help="(deprecated alias for 'rafter secrets')",
     context_settings={"allow_interspersed_args": True},
+    hidden=True,
 )
 scan_app.add_typer(local_app)
 
@@ -98,7 +97,7 @@ def scan_local(
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires gitleaks engine)"),
 ):
-    """Scan files or directories for secrets (local). Formerly 'rafter agent scan'."""
+    """(deprecated alias for 'rafter secrets')."""
     from .agent import (
         _select_engine,
         _scan_file,
@@ -253,7 +252,7 @@ def secrets(
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires gitleaks engine)"),
 ):
-    """Scan files/directories for hardcoded secrets. Alias for 'rafter scan local'."""
+    """Scan files/directories for hardcoded secrets."""
     return scan_local(
         path=path,
         quiet=quiet,

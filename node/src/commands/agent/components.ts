@@ -126,7 +126,7 @@ function claudeCodeHooks(): ComponentSpec {
     id: "claude-code.hooks",
     platform: "claude-code",
     kind: "hooks",
-    description: "Claude Code PreToolUse + PostToolUse + SessionStart hooks",
+    description: "Claude Code PreToolUse + PostToolUse hooks",
     detectDir: path.join(home, ".claude"),
     path: settingsPath,
     isInstalled: () => {
@@ -148,11 +148,9 @@ function claudeCodeHooks(): ComponentSpec {
       settings.hooks ??= {};
       settings.hooks.PreToolUse ??= [];
       settings.hooks.PostToolUse ??= [];
-      settings.hooks.SessionStart ??= [];
 
       const pre = { type: "command", command: "rafter hook pretool" };
       const post = { type: "command", command: "rafter hook posttool" };
-      const sessionStart = { type: "command", command: "rafter hook session-start" };
 
       settings.hooks.PreToolUse = filterOutRafter(
         settings.hooks.PreToolUse,
@@ -162,21 +160,20 @@ function claudeCodeHooks(): ComponentSpec {
         settings.hooks.PostToolUse,
         (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
       );
-      settings.hooks.SessionStart = filterOutRafter(
-        settings.hooks.SessionStart,
-        (e) => hookEntryMatchesRafter(e, "rafter hook session-start"),
-      );
+      // Strip legacy SessionStart entry from <=0.7.4 installs.
+      if (Array.isArray(settings.hooks.SessionStart)) {
+        settings.hooks.SessionStart = filterOutRafter(
+          settings.hooks.SessionStart,
+          (e) => hookEntryMatchesRafter(e, "rafter hook session-start"),
+        );
+        if (settings.hooks.SessionStart.length === 0) delete settings.hooks.SessionStart;
+      }
 
       settings.hooks.PreToolUse.push(
         { matcher: "Bash", hooks: [pre] },
         { matcher: "Write|Edit", hooks: [pre] },
       );
       settings.hooks.PostToolUse.push({ matcher: ".*", hooks: [post] });
-      settings.hooks.SessionStart.push(
-        { matcher: "startup", hooks: [sessionStart] },
-        { matcher: "resume", hooks: [sessionStart] },
-        { matcher: "clear", hooks: [sessionStart] },
-      );
 
       writeJson(settingsPath, settings);
     },
@@ -195,11 +192,12 @@ function claudeCodeHooks(): ComponentSpec {
           (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
         );
       }
-      if (settings.hooks?.SessionStart) {
+      if (Array.isArray(settings.hooks?.SessionStart)) {
         settings.hooks.SessionStart = filterOutRafter(
           settings.hooks.SessionStart,
           (e) => hookEntryMatchesRafter(e, "rafter hook session-start"),
         );
+        if (settings.hooks.SessionStart.length === 0) delete settings.hooks.SessionStart;
       }
       writeJson(settingsPath, settings);
     },

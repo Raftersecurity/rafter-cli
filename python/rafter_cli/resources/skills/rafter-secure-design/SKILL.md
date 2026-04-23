@@ -98,6 +98,6 @@ If you're revisiting an existing design (refactor, migration), same flow: treat 
 ## Tie-backs
 
 - Ready to review the code that implements the design? → `rafter-code-review`.
-- Implementation landed, need automated checks? → `rafter` skill, `rafter run` / `rafter scan local`.
+- Implementation landed, need automated checks? → `rafter` skill, `rafter run` / `rafter secrets`.
 - Risky command came up mid-design (spike, data migration)? → `rafter` skill, `docs/guardrails.md`.
 - Have a specific finding from a scan? → `rafter` skill, `docs/finding-triage.md`.

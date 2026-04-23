@@ -85,7 +85,7 @@ class TestVersionAndHelp:
     def test_scan_help_shows_subcommands(self):
         stdout, _, rc = rafter("scan --help")
         assert rc == 0
-        assert "local" in stdout
+        assert "remote" in stdout
 
     def test_policy_help_shows_subcommands(self):
         stdout, _, rc = rafter("policy --help")
@@ -274,7 +274,7 @@ class TestAgentScanDeprecation:
         f.write_text("no secrets\n")
         _, stderr, _ = rafter(f"agent scan {f} --engine patterns")
         assert "deprecated" in stderr.lower()
-        assert "rafter scan local" in stderr
+        assert "rafter secrets" in stderr
 
     def test_scan_local_does_not_emit_deprecation(self, tmp_path):
         f = tmp_path / "clean.txt"
