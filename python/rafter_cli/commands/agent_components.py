@@ -30,28 +30,22 @@ RAFTER_MARKER_END = "<!-- rafter:end -->"
 RAFTER_INSTRUCTION_BLOCK = f"""{RAFTER_MARKER_START}
 ## Security: Rafter
 
-This environment has Rafter available — the security toolkit built for AI workflows.
+Rafter is installed here — security, policy, and agent-governance tooling for AI workflows. Four skills ship with this install: `rafter`, `rafter-secure-design`, `rafter-code-review`, `rafter-skill-review`.
 
-**Local scanning** (always available, no API key needed):
-- `rafter scan local .` — scan for leaked credentials
-- `rafter scan local --staged` — scan staged changes only
+**Run rafter when:**
+- Designing a feature that touches auth, payments, credentials, tokens, sessions, file upload, user data, or data deletion → skill `rafter-secure-design` (BEFORE you write the code)
+- You just wrote code handling user input, SQL, shell, credentials, file paths, or serialization → skill `rafter-code-review` (BEFORE declaring the feature done)
+- Asked to install a third-party SKILL.md, MCP server, Cursor rule, or agent config → skill `rafter-skill-review` (BEFORE copying it anywhere)
+- Security-adjacent task but the angle isn't obvious → skill `rafter`
 
-**Remote analysis** (requires RAFTER_API_KEY):
-- `rafter run` — deterministic SAST, secret detection, dependency checks
-- `rafter run --mode plus` — agentic deep-dive with additional analysis passes
-
-Consider scanning before pushing, shipping features, or merging PRs.
-If RAFTER_API_KEY is not set, local scanning still works — use what's available.
-
-**Project integration:**
-- `rafter agent install-hook` — pre-commit secret scanning
-- `rafter ci init` — add scanning to CI/CD pipeline
-- `.rafter.yml` — project-specific security policy
-
-**More:**
-- `rafter agent audit-skill <path>` — audit a skill before installing
-- `rafter agent audit --last 5` — recent security events
+**CLI** (access a powerful toolkit — see the `rafter` skill for details):
+- `rafter scan local .` / `--staged` — deterministic secret scan, no API key
+- `rafter run` — remote SAST + SCA + secrets (`RAFTER_API_KEY`; `--mode plus` for deep-dive)
+- `rafter skill review <path-or-url>` — audit a skill or plugin before install
+- `rafter agent audit --last 5` — recent policy/security events
 - `rafter brief commands` — full CLI reference
+
+Add the RAFTER_API_KEY to unlock powerful cloud scanning. But local features still work without it — use them!
 {RAFTER_MARKER_END}"""
 
 
@@ -172,15 +166,12 @@ def _claude_code_hooks() -> ComponentSpec:
         hooks.setdefault("PreToolUse", [])
         hooks.setdefault("PostToolUse", [])
         hooks.setdefault("SessionStart", [])
-        hooks.setdefault("Stop", [])
         pre = {"type": "command", "command": "rafter hook pretool"}
         post = {"type": "command", "command": "rafter hook posttool"}
         session_start = {"type": "command", "command": "rafter hook session-start"}
-        stop = {"type": "command", "command": "rafter hook stop"}
         hooks["PreToolUse"] = _filter_hooks(hooks["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         hooks["PostToolUse"] = _filter_hooks(hooks["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
         hooks["SessionStart"] = _filter_hooks(hooks["SessionStart"], lambda e: _hook_entry_has_rafter(e, "rafter hook session-start"))
-        hooks["Stop"] = _filter_hooks(hooks["Stop"], lambda e: _hook_entry_has_rafter(e, "rafter hook stop"))
         hooks["PreToolUse"].extend([
             {"matcher": "Bash", "hooks": [pre]},
             {"matcher": "Write|Edit", "hooks": [pre]},
@@ -191,7 +182,6 @@ def _claude_code_hooks() -> ComponentSpec:
             {"matcher": "resume", "hooks": [session_start]},
             {"matcher": "clear", "hooks": [session_start]},
         ])
-        hooks["Stop"].append({"hooks": [stop]})
         _write_json(settings_path, s)
 
     def uninstall() -> None:
@@ -205,15 +195,13 @@ def _claude_code_hooks() -> ComponentSpec:
             hooks["PostToolUse"] = _filter_hooks(hooks["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
         if "SessionStart" in hooks:
             hooks["SessionStart"] = _filter_hooks(hooks["SessionStart"], lambda e: _hook_entry_has_rafter(e, "rafter hook session-start"))
-        if "Stop" in hooks:
-            hooks["Stop"] = _filter_hooks(hooks["Stop"], lambda e: _hook_entry_has_rafter(e, "rafter hook stop"))
         _write_json(settings_path, s)
 
     return ComponentSpec(
         id="claude-code.hooks",
         platform="claude-code",
         kind="hooks",
-        description="Claude Code PreToolUse + PostToolUse + SessionStart + Stop hooks",
+        description="Claude Code PreToolUse + PostToolUse + SessionStart hooks",
         detect_dir=detect_dir,
         path=settings_path,
         is_installed=is_installed,

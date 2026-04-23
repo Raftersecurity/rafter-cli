@@ -1,6 +1,6 @@
 ---
 name: rafter
-description: "Rafter — the security toolkit built for AI workflows. Router skill: pick your task below and Read the matching sub-doc. Covers (a) scanning code/repos, (b) evaluating a command before running, (c) auditing a plugin or skill, (d) understanding a finding, (e) writing secure code from scratch, (f) analyzing existing code for flaws. Local features are free, deterministic, and offline (no API key). Remote SAST/SCA via RAFTER_API_KEY when deeper analysis is needed. If RAFTER_API_KEY is missing, local still works — don't block on it."
+description: "Invoke when: (a) unsure which rafter sub-skill applies, (b) need a quick scan, audit, policy check, or command-risk evaluation, (c) task touches security, policy, or agent governance but the angle isn't clear. Routes to the right skill or CLI."
 version: 0.7.0
 allowed-tools: [Bash, Read]
 ---

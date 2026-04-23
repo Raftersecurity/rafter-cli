@@ -1,6 +1,6 @@
 ---
 name: rafter-secure-design
-description: "Shift-left, design-phase security — walk design decisions as a Choose-Your-Own-Adventure *before* the code exists. Router skill: pick what you're designing (auth, data storage, API surface, ingestion, deployment, dependencies) and Read the matching sub-doc. Each sub-doc is a set of questions a security engineer would ask at kickoff — what primitive to pick, what to refuse, what to threat-model. Pair with `rafter-code-review` (mid-lifecycle review) and the `rafter` skill (detection). Use at feature kickoff, architecture review, or whenever you're choosing between primitives."
+description: "Use when designing a feature that touches auth, payments, credentials, tokens, sessions, file upload, user data, or data deletion. Walks the security design decision as questions a security engineer would ask at kickoff. Run BEFORE writing the code, not after."
 version: 0.1.0
 allowed-tools: [Read, Glob, Grep]
 ---

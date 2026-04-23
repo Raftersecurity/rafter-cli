@@ -129,12 +129,10 @@ function installClaudeCodeHooks(root: string): void {
   if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
   if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
   if (!settings.hooks.SessionStart) settings.hooks.SessionStart = [];
-  if (!settings.hooks.Stop) settings.hooks.Stop = [];
 
   const preHook = { type: "command", command: "rafter hook pretool" };
   const postHook = { type: "command", command: "rafter hook posttool" };
   const sessionStartHook = { type: "command", command: "rafter hook session-start" };
-  const stopHook = { type: "command", command: "rafter hook stop" };
 
   // Remove any existing Rafter hooks to avoid duplicates
   settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
@@ -155,12 +153,6 @@ function installClaudeCodeHooks(root: string): void {
       return !hooks.some((h: any) => h.command === "rafter hook session-start");
     }
   );
-  settings.hooks.Stop = settings.hooks.Stop.filter(
-    (entry: any) => {
-      const hooks = entry.hooks || [];
-      return !hooks.some((h: any) => h.command === "rafter hook stop");
-    }
-  );
 
   // Add Rafter hooks
   settings.hooks.PreToolUse.push(
@@ -177,15 +169,11 @@ function installClaudeCodeHooks(root: string): void {
     { matcher: "resume", hooks: [sessionStartHook] },
     { matcher: "clear", hooks: [sessionStartHook] },
   );
-  // Stop enforces at least one rafter scan / skill invocation per session.
-  // Blocks at most once (stop_hook_active guard inside the command).
-  settings.hooks.Stop.push({ hooks: [stopHook] });
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
   console.log(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
   console.log(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
   console.log(fmt.success(`Installed SessionStart hook to ${settingsPath}`));
-  console.log(fmt.success(`Installed Stop hook to ${settingsPath}`));
 }
 
 function installCodexHooks(root: string): void {

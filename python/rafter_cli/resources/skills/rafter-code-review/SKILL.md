@@ -1,6 +1,6 @@
 ---
 name: rafter-code-review
-description: "Structured security code review — OWASP / MITRE / ASVS walkthroughs as questions, not audits. Router skill: pick what kind of code you're reviewing (web app, REST/GraphQL API, LLM-integrated, CLI/library/IaC) and Read the matching sub-doc. Designed to pair with `rafter scan` / `rafter run` — the scanner finds known-bad patterns, this skill asks the questions that patterns miss. Use during PR review, refactoring risky modules, or pre-release hardening."
+description: "Use after writing code that handles user input, SQL, shell commands, auth, credentials, file paths, or serialization. Walks OWASP/ASVS/MITRE questions against the new code — what to grep for, what to trace, what to refuse to sign off. Pair with `rafter scan` to catch both known-bad patterns and design-level flaws."
 version: 0.7.0
 allowed-tools: [Bash, Read, Glob, Grep]
 ---

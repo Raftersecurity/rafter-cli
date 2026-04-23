@@ -22,14 +22,6 @@ SESSION_START_DIRECTIVE = (
     "file upload, or data deletion, invoke the `rafter-secure-design` skill before writing code."
 )
 
-# Emitted by the Stop hook when the session ends without touching rafter. Blocks at
-# most once (stop_hook_active guard) so we never loop the agent.
-STOP_DIRECTIVE = (
-    "Before finishing: run `rafter scan local .` to catch secrets in the work you just did. "
-    "If you touched auth, payments, credentials, file upload, or data deletion, also invoke "
-    "the `rafter-secure-design` skill to review the design."
-)
-
 _RISK_LABELS = {
     "critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW",
 }
@@ -321,122 +313,6 @@ def session_start(
         sys.stdout.flush()
     except Exception:
         # Fail soft — don't block session startup.
-        sys.stdout.write("{}\n")
-        sys.stdout.flush()
-
-
-_RAFTER_BASH_RE = None
-
-
-def _scan_single_transcript(path_str: str) -> bool:
-    """Scan one JSONL for a rafter CLI or rafter-* Skill invocation."""
-    import re
-    global _RAFTER_BASH_RE
-    if _RAFTER_BASH_RE is None:
-        _RAFTER_BASH_RE = re.compile(r"\brafter\s+(scan|mcp|skill|agent\s+scan|agent\s+audit)\b")
-
-    try:
-        with open(path_str, "r", encoding="utf-8") as fh:
-            text = fh.read()
-    except OSError:
-        return False
-
-    for line in text.split("\n"):
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue
-
-        message = entry.get("message") or {}
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, list):
-            continue
-
-        for block in content:
-            if not isinstance(block, dict) or block.get("type") != "tool_use":
-                continue
-            name = block.get("name") or ""
-            block_input = block.get("input") or {}
-
-            if name == "Bash":
-                cmd = str(block_input.get("command", "")) if isinstance(block_input, dict) else ""
-                if _RAFTER_BASH_RE.search(cmd):
-                    return True
-
-            if name == "Skill":
-                skill = ""
-                if isinstance(block_input, dict):
-                    skill = str(block_input.get("skill") or block_input.get("name") or "")
-                if skill.startswith("rafter-") or skill.startswith("rafter:"):
-                    return True
-    return False
-
-
-def _transcript_touched_rafter(transcript_path: str) -> bool:
-    """Check main transcript + any subagent transcripts for rafter engagement.
-
-    Claude Code writes subagent transcripts under
-    ``<dir>/<main_basename_without_.jsonl>/subagents/*.jsonl`` — delegated work
-    counts toward engagement.
-    """
-    import os
-    if _scan_single_transcript(transcript_path):
-        return True
-
-    parent = os.path.dirname(transcript_path)
-    base = os.path.basename(transcript_path)
-    if base.endswith(".jsonl"):
-        base = base[:-len(".jsonl")]
-    sub_dir = os.path.join(parent, base, "subagents")
-    if not os.path.isdir(sub_dir):
-        return False
-    try:
-        entries = os.listdir(sub_dir)
-    except OSError:
-        return False
-    for f in entries:
-        if not f.endswith(".jsonl"):
-            continue
-        if _scan_single_transcript(os.path.join(sub_dir, f)):
-            return True
-    return False
-
-
-@hook_app.command("stop")
-def stop(
-    format: str = typer.Option("claude", "--format", help="Output format: claude (default)"),
-):
-    """Stop hook handler. Blocks completion (once) until rafter scan or rafter skill has run."""
-    try:
-        raw = _read_stdin()
-        try:
-            payload = json.loads(raw) if raw else {}
-        except (json.JSONDecodeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-
-        # Prevent infinite loops — we block at most once per session.
-        if payload.get("stop_hook_active"):
-            sys.stdout.write("{}\n")
-            sys.stdout.flush()
-            return
-
-        transcript = payload.get("transcript_path")
-        if not transcript or not _transcript_touched_rafter(str(transcript)):
-            sys.stdout.write(json.dumps({
-                "decision": "block",
-                "reason": STOP_DIRECTIVE,
-            }) + "\n")
-            sys.stdout.flush()
-            return
-
-        sys.stdout.write("{}\n")
-        sys.stdout.flush()
-    except Exception:
-        # Fail open — never trap the agent if the hook itself breaks.
         sys.stdout.write("{}\n")
         sys.stdout.flush()
 
