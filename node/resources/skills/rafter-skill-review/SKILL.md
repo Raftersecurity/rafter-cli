@@ -1,6 +1,6 @@
 ---
 name: rafter-skill-review
-description: "Use BEFORE copying any third-party SKILL.md, MCP server manifest, Cursor rule, or agent config into your machine. Skills are executable context — installing one grants Read/Bash/network with your identity. Vets the source for secrets, URLs, high-risk shell, and obfuscation. No installation is safe until it passes."
+description: "REQUIRED before copying any third-party SKILL.md, MCP manifest, Cursor rule, or agent config into this machine or forwarding one to a user. Installing a skill grants Read/Bash/network under your identity — this is `curl | sh` in a different costume. Do not install, load, recommend, or forward any third-party agent asset until this skill has vetted it. Bypassing this turns the agent into a delivery vector."
 version: 0.1.0
 allowed-tools: [Bash, Read, Grep, Glob, WebFetch]
 ---
