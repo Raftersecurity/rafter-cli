@@ -367,6 +367,56 @@ def _codex_hooks() -> ComponentSpec:
     )
 
 
+def _claude_code_mcp() -> ComponentSpec:
+    """Project-scope Claude Code MCP config (<cwd>/.mcp.json).
+
+    Unlike other claude-code components which touch ~/.claude, this writes
+    at the project root — Claude Code auto-loads it on startup and exposes
+    ``mcp__rafter__*`` tools to the agent.
+    """
+    home = Path.home()
+    detect_dir = home / ".claude"
+    mcp_path = Path.cwd() / ".mcp.json"
+
+    def is_installed() -> bool:
+        if not mcp_path.exists():
+            return False
+        return bool(_read_json(mcp_path).get("mcpServers", {}).get("rafter"))
+
+    def install() -> None:
+        cfg = _read_json(mcp_path) if mcp_path.exists() else {}
+        cfg.setdefault("mcpServers", {})
+        cfg["mcpServers"]["rafter"] = dict(RAFTER_MCP_ENTRY)
+        _write_json(mcp_path, cfg)
+
+    def uninstall() -> None:
+        if not mcp_path.exists():
+            return
+        cfg = _read_json(mcp_path)
+        servers = cfg.get("mcpServers")
+        if not (isinstance(servers, dict) and "rafter" in servers):
+            return
+        del servers["rafter"]
+        if not servers:
+            cfg.pop("mcpServers", None)
+        if not cfg:
+            mcp_path.unlink()
+        else:
+            _write_json(mcp_path, cfg)
+
+    return ComponentSpec(
+        id="claude-code.mcp",
+        platform="claude-code",
+        kind="mcp",
+        description="Claude Code project-scope MCP server (<project>/.mcp.json)",
+        detect_dir=detect_dir,
+        path=mcp_path,
+        is_installed=is_installed,
+        install=install,
+        uninstall=uninstall,
+    )
+
+
 def _cursor_hooks() -> ComponentSpec:
     home = Path.home()
     detect_dir = home / ".cursor"
@@ -859,6 +909,7 @@ def get_registry() -> list[ComponentSpec]:
             _claude_code_hooks(),
             _claude_code_instructions(),
             _claude_code_skills(),
+            _claude_code_mcp(),
             _codex_hooks(),
             _codex_skills(),
             _cursor_hooks(),

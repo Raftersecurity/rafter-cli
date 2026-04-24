@@ -367,6 +367,49 @@ function codexHooks(): ComponentSpec {
   };
 }
 
+/**
+ * Project-scope Claude Code MCP config (<cwd>/.mcp.json). Unlike other
+ * claude-code components which touch ~/.claude, this one writes at the
+ * project root — Claude Code auto-loads it on startup and exposes
+ * `mcp__rafter__*` tools to the agent.
+ */
+function claudeCodeMcp(): ComponentSpec {
+  const home = os.homedir();
+  const mcpPath = path.join(process.cwd(), ".mcp.json");
+  return {
+    id: "claude-code.mcp",
+    platform: "claude-code",
+    kind: "mcp",
+    description: "Claude Code project-scope MCP server (<project>/.mcp.json)",
+    detectDir: path.join(home, ".claude"),
+    path: mcpPath,
+    isInstalled: () => {
+      if (!fs.existsSync(mcpPath)) return false;
+      const cfg = readJson(mcpPath);
+      return !!cfg.mcpServers?.rafter;
+    },
+    install: () => {
+      const cfg: Record<string, any> = fs.existsSync(mcpPath) ? readJson(mcpPath) : {};
+      cfg.mcpServers ??= {};
+      cfg.mcpServers.rafter = { ...RAFTER_MCP_ENTRY };
+      writeJson(mcpPath, cfg);
+    },
+    uninstall: () => {
+      if (!fs.existsSync(mcpPath)) return;
+      const cfg = readJson(mcpPath);
+      if (!removeKey(cfg.mcpServers, "rafter")) return;
+      if (cfg.mcpServers && Object.keys(cfg.mcpServers).length === 0) {
+        delete cfg.mcpServers;
+      }
+      if (Object.keys(cfg).length === 0) {
+        fs.unlinkSync(mcpPath);
+      } else {
+        writeJson(mcpPath, cfg);
+      }
+    },
+  };
+}
+
 function cursorHooks(): ComponentSpec {
   const home = os.homedir();
   const hooksPath = path.join(home, ".cursor", "hooks.json");
@@ -839,6 +882,7 @@ export function getComponentRegistry(): ComponentSpec[] {
       claudeCodeHooks(),
       claudeCodeInstructions(),
       claudeCodeSkills(),
+      claudeCodeMcp(),
       codexHooks(),
       codexSkills(),
       cursorHooks(),
