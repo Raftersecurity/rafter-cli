@@ -14,16 +14,34 @@ from pathlib import Path
 
 import pytest
 
+import rafter_cli as _rafter_cli_mod
+import typer as _typer_mod
+
+# The subprocess we spawn uses a fake HOME, so Python's user-site (which is
+# derived from HOME) won't be discovered even though rafter_cli + its deps
+# may have been pip-install --user'd by the developer. Pin the real paths
+# onto PYTHONPATH explicitly.
+_RAFTER_CLI_PARENT = str(Path(_rafter_cli_mod.__file__).resolve().parent.parent)
+_USER_SITE = str(Path(_typer_mod.__file__).resolve().parent.parent)
+_EXTRA_PYTHONPATH = os.pathsep.join([_RAFTER_CLI_PARENT, _USER_SITE])
+
 
 def _run_cli(args: str, home: Path) -> tuple[str, str, int]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["XDG_CONFIG_HOME"] = str(home / ".config")
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{_EXTRA_PYTHONPATH}{os.pathsep}{existing}" if existing else _EXTRA_PYTHONPATH
+    )
+    # cwd=home so project-scope components (e.g. claude-code.mcp writes to
+    # <cwd>/.mcp.json) are isolated inside the fake HOME.
     result = subprocess.run(
         [sys.executable, "-m", "rafter_cli", *args.split()],
         capture_output=True,
         text=True,
         env=env,
+        cwd=str(home),
         timeout=30,
     )
     return result.stdout, result.stderr, result.returncode
@@ -36,8 +54,8 @@ def home(tmp_path: Path) -> Path:
 
 class TestAgentList:
     def test_json_has_expected_shape(self, home: Path):
-        stdout, _, code = _run_cli("agent list --json", home)
-        assert code == 0
+        stdout, stderr, code = _run_cli("agent list --json", home)
+        assert code == 0, f"stderr={stderr!r} stdout={stdout!r}"
         payload = json.loads(stdout)
         assert isinstance(payload["components"], list)
         by_id = {c["id"]: c for c in payload["components"]}
@@ -45,6 +63,7 @@ class TestAgentList:
             "claude-code.hooks",
             "claude-code.instructions",
             "claude-code.skills",
+            "claude-code.mcp",
             "cursor.hooks",
             "cursor.mcp",
             "gemini.hooks",
@@ -119,6 +138,36 @@ class TestAgentEnableDisable:
         cfg = json.loads((home / ".cursor" / "mcp.json").read_text())
         assert "rafter" not in cfg["mcpServers"]
         assert "keep" in cfg["mcpServers"]
+
+    def test_claude_code_mcp_round_trip_preserves_unrelated_entries(self, home: Path):
+        (home / ".claude").mkdir()
+        mcp_path = home / ".mcp.json"
+        mcp_path.write_text(
+            json.dumps({"mcpServers": {"keep": {"command": "keep"}}}, indent=2)
+        )
+
+        _, _, code = _run_cli("agent enable claude-code.mcp", home)
+        assert code == 0
+        cfg = json.loads(mcp_path.read_text())
+        assert "rafter" in cfg["mcpServers"]
+        assert "keep" in cfg["mcpServers"]
+
+        _, _, code = _run_cli("agent disable claude-code.mcp", home)
+        assert code == 0
+        cfg = json.loads(mcp_path.read_text())
+        assert "rafter" not in cfg["mcpServers"]
+        assert "keep" in cfg["mcpServers"]
+
+    def test_claude_code_mcp_disable_deletes_empty_file(self, home: Path):
+        (home / ".claude").mkdir()
+        _, _, code = _run_cli("agent enable claude-code.mcp", home)
+        assert code == 0
+        mcp_path = home / ".mcp.json"
+        assert mcp_path.exists()
+
+        _, _, code = _run_cli("agent disable claude-code.mcp", home)
+        assert code == 0
+        assert not mcp_path.exists()
 
     def test_claude_code_hooks_install_preserves_and_is_idempotent(self, home: Path):
         (home / ".claude").mkdir()

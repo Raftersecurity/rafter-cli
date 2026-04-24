@@ -712,7 +712,17 @@ def init(
             _install_claude_code_skills(root)
             _install_claude_code_hooks(root)
             if scope == "project":
-                _install_claude_code_mcp(root)
+                components = manager.get("agent.components") or {}
+                if components.get("claude-code.mcp", {}).get("enabled") is False:
+                    rprint(fmt.info("Skipped .mcp.json (claude-code.mcp disabled; re-enable with 'rafter agent enable claude-code.mcp')"))
+                else:
+                    _install_claude_code_mcp(root)
+                    from datetime import datetime, timezone
+                    components["claude-code.mcp"] = {
+                        "enabled": True,
+                        "updatedAt": datetime.now(timezone.utc).isoformat(),
+                    }
+                    manager.set("agent.components", components)
             if scope == "user":
                 manager.set("agent.environments.claude_code.enabled", True)
             claude_code_ok = True

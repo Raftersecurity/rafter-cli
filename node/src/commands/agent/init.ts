@@ -888,7 +888,16 @@ export function createInitCommand(): Command {
         try {
           await installClaudeCodeSkills(root);
           installClaudeCodeHooks(root);
-          if (scope === "project") installClaudeCodeMcp(root);
+          if (scope === "project") {
+            const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
+            if (components["claude-code.mcp"]?.enabled === false) {
+              console.log(fmt.info("Skipped .mcp.json (claude-code.mcp disabled; re-enable with `rafter agent enable claude-code.mcp`)"));
+            } else {
+              installClaudeCodeMcp(root);
+              components["claude-code.mcp"] = { enabled: true, updatedAt: new Date().toISOString() };
+              manager.set("agent.components", components);
+            }
+          }
           if (scope === "user") manager.set("agent.environments.claudeCode.enabled", true);
           claudeCodeOk = true;
         } catch (e) {

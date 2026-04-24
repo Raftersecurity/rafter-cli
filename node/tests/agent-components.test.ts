@@ -26,8 +26,10 @@ function makeHome(): string {
 }
 
 function runCli(args: string, home: string): { stdout: string; stderr: string; code: number } {
+  // cwd=home so project-scope components (e.g. claude-code.mcp writes to
+  // <cwd>/.mcp.json) are isolated inside the fake HOME.
   const r = spawnSync(`node ${CLI_ENTRY} ${args}`, {
-    cwd: PROJECT_ROOT,
+    cwd: home,
     encoding: "utf-8",
     timeout: 15_000,
     shell: true,
@@ -59,6 +61,7 @@ describe("rafter agent list", () => {
       "claude-code.hooks",
       "claude-code.instructions",
       "claude-code.skills",
+      "claude-code.mcp",
       "cursor.hooks",
       "cursor.mcp",
       "gemini.hooks",
@@ -157,6 +160,40 @@ describe("rafter agent enable / disable", () => {
     expect(cfg.mcpServers.rafter).toBeUndefined();
     // non-rafter entry preserved
     expect(cfg.mcpServers.keep).toBeDefined();
+  });
+
+  it("claude-code.mcp round-trips (install → disable leaves unrelated entries intact)", () => {
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    const mcpPath = path.join(home, ".mcp.json");
+    fs.writeFileSync(
+      mcpPath,
+      JSON.stringify({ mcpServers: { keep: { command: "keep" } } }, null, 2),
+    );
+
+    const enable = runCli("agent enable claude-code.mcp", home);
+    expect(enable.code).toBe(0);
+    let cfg = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
+    expect(cfg.mcpServers.rafter).toBeDefined();
+    expect(cfg.mcpServers.keep).toBeDefined();
+
+    const disable = runCli("agent disable claude-code.mcp", home);
+    expect(disable.code).toBe(0);
+    cfg = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
+    expect(cfg.mcpServers.rafter).toBeUndefined();
+    expect(cfg.mcpServers.keep).toBeDefined();
+  });
+
+  it("claude-code.mcp disable deletes the file when it becomes empty", () => {
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    const mcpPath = path.join(home, ".mcp.json");
+
+    const enable = runCli("agent enable claude-code.mcp", home);
+    expect(enable.code).toBe(0);
+    expect(fs.existsSync(mcpPath)).toBe(true);
+
+    const disable = runCli("agent disable claude-code.mcp", home);
+    expect(disable.code).toBe(0);
+    expect(fs.existsSync(mcpPath)).toBe(false);
   });
 
   it("claude-code.hooks install preserves non-rafter hook entries and is idempotent", () => {
