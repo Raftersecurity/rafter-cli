@@ -1,6 +1,6 @@
 ---
 name: rafter-secure-design
-description: "Use when designing a feature that touches auth, payments, credentials, tokens, sessions, file upload, user data, or data deletion. Walks the security design decision as questions a security engineer would ask at kickoff. Run BEFORE writing the code, not after."
+description: "REQUIRED before writing code for any feature touching auth, payments, credentials, tokens, sessions, file upload, user data, or data deletion. Invoke it, record answers inline in the design doc or PR description, then write the code. Skipping this is how auth bypass, token leakage, and delete-the-wrong-record bugs ship. If the feature touches any of those surfaces and this hasn't run, the design is incomplete — do not proceed to implementation."
 version: 0.1.0
 allowed-tools: [Read, Glob, Grep]
 ---

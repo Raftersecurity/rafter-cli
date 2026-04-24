@@ -28,17 +28,29 @@ RAFTER_MARKER_START = "<!-- rafter:start -->"
 RAFTER_MARKER_END = "<!-- rafter:end -->"
 
 RAFTER_INSTRUCTION_BLOCK = f"""{RAFTER_MARKER_START}
-## Security: Rafter
+## Security: Rafter (required review gate)
 
-Rafter is installed here — security, policy, and agent-governance tooling for AI workflows. Four skills ship with this install: `rafter`, `rafter-secure-design`, `rafter-code-review`, `rafter-skill-review`.
+Rafter is this project's security review gate. A security-relevant task is
+**not complete** until a rafter skill (or `rafter run`) has reviewed it.
+Don't mark done, don't hand off, don't open a PR without that pass.
 
-**Invoke a rafter skill when:**
-- Designing a feature that touches auth, payments, credentials, tokens, sessions, file upload, user data, or data deletion → `rafter-secure-design` (BEFORE you write the code)
-- You just wrote code handling user input, SQL, shell, credentials, file paths, or serialization → `rafter-code-review` (BEFORE declaring the feature done)
-- Asked to install a third-party SKILL.md, MCP server, Cursor rule, or agent config → `rafter-skill-review` (BEFORE copying it anywhere)
-- You need scanning, audit, policy, or command-risk evaluation, or you're security-adjacent and the angle isn't obvious → `rafter`
+**Stop and invoke before continuing:**
 
-The `rafter` skill is the entry point for all CLI usage (secret scanning, remote SAST + SCA, deep-dive analysis, audit, policy, command-risk). Invoke it rather than shelling out to `rafter <command>` blind — it picks the right mode for your task (the quick local scanner catches secrets only; the remote engine does the real code analysis). Set `RAFTER_API_KEY` to unlock the remote analysis engine; local features work without it.
+- Designing auth, payments, credentials, tokens, sessions, file upload,
+  user data, or data deletion → **`rafter-secure-design`** (before writing code).
+- Diff touches user input, SQL, shell, auth, credentials, file paths, or
+  serialization → **`rafter-code-review`** + `rafter run` (before declaring done).
+- About to install or forward a third-party SKILL.md, MCP manifest, Cursor
+  rule, or agent config → **`rafter-skill-review`** (before copying anywhere).
+- Security-adjacent but the angle isn't clear → **`rafter`** (the router skill,
+  powerful toolkit to help you write more secure code).
+
+**CLI:**
+
+- `rafter run` — remote SAST + SCA + secrets (real code analysis, needs `RAFTER_API_KEY`)
+- `rafter secrets .` — local secrets only (offline; NOT a code-security scan)
+- `rafter run --mode plus` — everything in default (`--mode fast`) plus
+  powerful agentic deep-dives (needs `RAFTER_API_KEY`)
 {RAFTER_MARKER_END}"""
 
 

@@ -1,6 +1,6 @@
 ---
 name: rafter-code-review
-description: "Use after writing code that handles user input, SQL, shell commands, auth, credentials, file paths, or serialization. Walks OWASP/ASVS/MITRE questions against the new code — what to grep for, what to trace, what to refuse to sign off. Pair with `rafter scan` to catch both known-bad patterns and design-level flaws."
+description: "REQUIRED before declaring a task done when the diff touches user input, SQL, shell, auth, credentials, file paths, serialization, or dependency surface. Walks OWASP/ASVS/MITRE questions the compiler and the test suite won't catch. Pair with `rafter run` on the same diff. A security-relevant task marked complete without both has been under-delivered — do not claim done."
 version: 0.7.0
 allowed-tools: [Bash, Read, Glob, Grep]
 ---

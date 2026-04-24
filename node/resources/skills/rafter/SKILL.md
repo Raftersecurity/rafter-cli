@@ -1,6 +1,6 @@
 ---
 name: rafter
-description: "Invoke when: (a) unsure which rafter sub-skill applies, (b) need a quick scan, audit, policy check, or command-risk evaluation, (c) task touches security, policy, or agent governance but the angle isn't clear. Routes to the right skill or CLI."
+description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter audit`, policy checks, or command-risk evaluation. If a task is security-relevant and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on security-relevant work is not done."
 version: 0.7.0
 allowed-tools: [Bash, Read]
 ---
