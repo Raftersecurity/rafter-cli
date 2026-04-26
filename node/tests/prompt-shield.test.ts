@@ -242,3 +242,109 @@ e2e("user-prompt-submit hook (e2e)", () => {
     expect(json?.decision).toBeUndefined();
   });
 });
+
+/* ---------------- installer probe regression (rc-txf) ---------------- */
+
+const installerE2E = haveBuild ? describe : describe.skip;
+
+installerE2E("agent init UserPromptSubmit installer (rc-txf regression)", () => {
+  it("skips installing the hook when rafter on PATH lacks the subcommand", () => {
+    // Build a scrubbed PATH containing only `node` and a fake `rafter` that
+    // exits non-zero for `hook user-prompt-submit --help`. This simulates a
+    // user with the published rafter older than this dev branch.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-installer-probe-"));
+    const isolatedBin = path.join(home, "_bin");
+    fs.mkdirSync(isolatedBin, { recursive: true });
+    fs.symlinkSync(process.execPath, path.join(isolatedBin, "node"));
+    // Fake rafter: returns 0 for any subcommand EXCEPT user-prompt-submit
+    const fakeRafter = path.join(isolatedBin, "rafter");
+    fs.writeFileSync(
+      fakeRafter,
+      `#!/bin/sh\nfor a in "$@"; do [ "$a" = "user-prompt-submit" ] && exit 1; done\nexit 0\n`,
+      { mode: 0o755 }
+    );
+
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+
+    const result = spawnSync(
+      process.execPath,
+      [CLI_ENTRY, "agent", "init", "--with-claude-code"],
+      {
+        cwd: home,
+        encoding: "utf-8",
+        timeout: 30000,
+        env: { ...process.env, HOME: home, PATH: isolatedBin },
+      }
+    );
+
+    expect(result.status, `installer should not crash: ${result.stderr}`).toBe(0);
+
+    const settingsPath = path.join(home, ".claude", "settings.json");
+    expect(fs.existsSync(settingsPath)).toBe(true);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    // The installer should NOT have wired UserPromptSubmit to a command the
+    // resolved rafter can't run. Either the key is absent, or it has no
+    // rafter entry.
+    const ups = settings.hooks?.UserPromptSubmit ?? [];
+    const rafterEntries = ups.filter((entry: any) =>
+      (entry.hooks || []).some((h: any) =>
+        typeof h.command === "string" && h.command.includes("rafter hook user-prompt-submit")
+      )
+    );
+    expect(rafterEntries.length).toBe(0);
+
+    // And the user-facing output should warn so the user knows they need to upgrade.
+    expect(result.stdout + result.stderr).toMatch(/Skipped UserPromptSubmit hook/i);
+
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("when rafter on PATH supports the subcommand, the installed command actually runs", () => {
+    // PATH includes the dev rafter (this dist), which DOES support the subcommand.
+    // Round-trip: install → read settings → execute the exact command string.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-installer-roundtrip-"));
+    const isolatedBin = path.join(home, "_bin");
+    fs.mkdirSync(isolatedBin, { recursive: true });
+    fs.symlinkSync(process.execPath, path.join(isolatedBin, "node"));
+    // Real rafter shim: invokes our dist via node.
+    const realRafter = path.join(isolatedBin, "rafter");
+    fs.writeFileSync(
+      realRafter,
+      `#!/bin/sh\nexec ${process.execPath} ${CLI_ENTRY} "$@"\n`,
+      { mode: 0o755 }
+    );
+
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+
+    const installResult = spawnSync(
+      process.execPath,
+      [CLI_ENTRY, "agent", "init", "--with-claude-code"],
+      {
+        cwd: home,
+        encoding: "utf-8",
+        timeout: 30000,
+        env: { ...process.env, HOME: home, PATH: isolatedBin },
+      }
+    );
+    expect(installResult.status).toBe(0);
+
+    const settings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf-8"));
+    const ups = settings.hooks?.UserPromptSubmit ?? [];
+    const cmd = ups[0]?.hooks?.[0]?.command as string | undefined;
+    expect(cmd, "installer should write a UserPromptSubmit hook command").toBeTruthy();
+
+    // Execute the exact command string the installer wrote — it MUST succeed.
+    const execResult = spawnSync(cmd!, {
+      input: '{"prompt":"hello world","cwd":"' + home + '"}',
+      encoding: "utf-8",
+      timeout: 10000,
+      shell: true,
+      env: { ...process.env, HOME: home, PATH: isolatedBin },
+    });
+    expect(execResult.status, `hook must execute successfully: stderr=${execResult.stderr}`).toBe(0);
+    const out = parseHookOutput(execResult.stdout);
+    expect(out?.hookSpecificOutput?.hookEventName).toBe("UserPromptSubmit");
+
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+});
