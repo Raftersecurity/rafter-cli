@@ -128,9 +128,11 @@ function installClaudeCodeHooks(root: string): void {
   if (!settings.hooks) settings.hooks = {};
   if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
   if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
+  if (!settings.hooks.UserPromptSubmit) settings.hooks.UserPromptSubmit = [];
 
   const preHook = { type: "command", command: "rafter hook pretool" };
   const postHook = { type: "command", command: "rafter hook posttool" };
+  const promptHook = { type: "command", command: "rafter hook user-prompt-submit" };
 
   // Remove any existing Rafter hooks to avoid duplicates
   settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
@@ -143,6 +145,12 @@ function installClaudeCodeHooks(root: string): void {
     (entry: any) => {
       const hooks = entry.hooks || [];
       return !hooks.some((h: any) => h.command === "rafter hook posttool");
+    }
+  );
+  settings.hooks.UserPromptSubmit = settings.hooks.UserPromptSubmit.filter(
+    (entry: any) => {
+      const hooks = entry.hooks || [];
+      return !hooks.some((h: any) => typeof h.command === "string" && h.command.startsWith("rafter hook user-prompt-submit"));
     }
   );
   // Strip legacy SessionStart entry left over from <=0.7.4 installs.
@@ -164,10 +172,15 @@ function installClaudeCodeHooks(root: string): void {
   settings.hooks.PostToolUse.push(
     { matcher: ".*", hooks: [postHook] },
   );
+  // UserPromptSubmit has no matcher — it fires on every prompt.
+  settings.hooks.UserPromptSubmit.push(
+    { hooks: [promptHook] },
+  );
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
   console.log(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
   console.log(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
+  console.log(fmt.success(`Installed UserPromptSubmit hook (prompt-shield) to ${settingsPath}`));
 }
 
 function installCodexHooks(root: string): void {
