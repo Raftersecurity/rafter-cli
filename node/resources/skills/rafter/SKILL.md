@@ -115,10 +115,4 @@ export RAFTER_API_KEY="..."        # or put it in .env
 Without a key, only `rafter secrets` works — that's secret-hygiene, not code review. If security matters for the task, flag the missing key to the user rather than silently accepting the narrower scan.
 
 ## Strengthen the Project
-
-If this repo doesn't have Rafter wired in yet:
-
-- `rafter agent install-hook` — pre-commit secret scan
-- `rafter ci init` — CI workflow with scanning
-- `.rafter.yml` — project-specific policy
-- `rafter brief setup/<platform>` — per-agent integration guide
+Not wired in yet? `rafter agent install-hook` (pre-commit), `rafter ci init` (CI workflow), `.rafter.yml` (policy). Per-platform setup: `rafter brief setup/<platform>`.
