@@ -8,32 +8,23 @@ from __future__ import annotations
 
 import json
 import os
+import site
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-import rafter_cli as _rafter_cli_mod
-import typer as _typer_mod
-
-# The subprocess we spawn uses a fake HOME, so Python's user-site (which is
-# derived from HOME) won't be discovered even though rafter_cli + its deps
-# may have been pip-install --user'd by the developer. Pin the real paths
-# onto PYTHONPATH explicitly.
-_RAFTER_CLI_PARENT = str(Path(_rafter_cli_mod.__file__).resolve().parent.parent)
-_USER_SITE = str(Path(_typer_mod.__file__).resolve().parent.parent)
-_EXTRA_PYTHONPATH = os.pathsep.join([_RAFTER_CLI_PARENT, _USER_SITE])
+# Captured under the real HOME so user-site packages (e.g. typer) remain
+# importable in subprocesses launched with HOME overridden to tmp_path.
+_USER_BASE = site.getuserbase()
 
 
 def _run_cli(args: str, home: Path) -> tuple[str, str, int]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["XDG_CONFIG_HOME"] = str(home / ".config")
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        f"{_EXTRA_PYTHONPATH}{os.pathsep}{existing}" if existing else _EXTRA_PYTHONPATH
-    )
+    env["PYTHONUSERBASE"] = _USER_BASE
     # cwd=home so project-scope components (e.g. claude-code.mcp writes to
     # <cwd>/.mcp.json) are isolated inside the fake HOME.
     result = subprocess.run(
