@@ -143,13 +143,17 @@ def _install_claude_code_hooks(root: Path) -> None:
     rafter_bin = _resolve_rafter_path()
     pre_command = f"{rafter_bin} hook pretool"
     post_command = f"{rafter_bin} hook posttool"
+    prompt_command = f"{rafter_bin} hook user-prompt-submit"
 
     # Also match old bare "rafter" commands for dedup cleanup
     _old_pre = "rafter hook pretool"
     _old_post = "rafter hook posttool"
+    _old_prompt = "rafter hook user-prompt-submit"
 
     if "PostToolUse" not in settings["hooks"]:
         settings["hooks"]["PostToolUse"] = []
+    if "UserPromptSubmit" not in settings["hooks"]:
+        settings["hooks"]["UserPromptSubmit"] = []
 
     # Remove any existing Rafter hooks (old or new format) to avoid duplicates
     settings["hooks"]["PreToolUse"] = [
@@ -168,6 +172,14 @@ def _install_claude_code_hooks(root: Path) -> None:
             for h in (entry.get("hooks") or [])
         )
     ]
+    settings["hooks"]["UserPromptSubmit"] = [
+        entry for entry in settings["hooks"]["UserPromptSubmit"]
+        if not any(
+            h.get("command", "") in (prompt_command, _old_prompt)
+            or "rafter hook user-prompt-submit" in h.get("command", "")
+            for h in (entry.get("hooks") or [])
+        )
+    ]
     # Strip legacy SessionStart entry from <=0.7.4 installs.
     if isinstance(settings["hooks"].get("SessionStart"), list):
         settings["hooks"]["SessionStart"] = [
@@ -183,6 +195,7 @@ def _install_claude_code_hooks(root: Path) -> None:
     # Add Rafter hooks
     pre_hook = {"type": "command", "command": pre_command}
     post_hook = {"type": "command", "command": post_command}
+    prompt_hook = {"type": "command", "command": prompt_command}
     settings["hooks"]["PreToolUse"].extend([
         {"matcher": "Bash", "hooks": [pre_hook]},
         {"matcher": "Write|Edit", "hooks": [pre_hook]},
@@ -190,10 +203,15 @@ def _install_claude_code_hooks(root: Path) -> None:
     settings["hooks"]["PostToolUse"].extend([
         {"matcher": ".*", "hooks": [post_hook]},
     ])
+    # UserPromptSubmit has no matcher — fires on every prompt.
+    settings["hooks"]["UserPromptSubmit"].extend([
+        {"hooks": [prompt_hook]},
+    ])
 
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
     rprint(fmt.success(f"Installed PreToolUse hooks to {settings_path}"))
     rprint(fmt.success(f"Installed PostToolUse hooks to {settings_path}"))
+    rprint(fmt.success(f"Installed UserPromptSubmit hook (prompt-shield) to {settings_path}"))
     if rafter_bin != "rafter":
         rprint(fmt.info(f"Using resolved path: {rafter_bin}"))
 
