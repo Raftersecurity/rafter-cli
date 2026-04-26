@@ -6,17 +6,23 @@ from __future__ import annotations
 
 import json
 import os
+import site
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+# Captured under the real HOME so user-site packages (e.g. typer) remain
+# importable in subprocesses launched with HOME overridden to tmp_path.
+_USER_BASE = site.getuserbase()
+
 
 def _run(args: str, home: Path) -> tuple[str, str, int]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["XDG_CONFIG_HOME"] = str(home / ".config")
+    env["PYTHONUSERBASE"] = _USER_BASE
     result = subprocess.run(
         [sys.executable, "-m", "rafter_cli", *args.split()],
         capture_output=True,
