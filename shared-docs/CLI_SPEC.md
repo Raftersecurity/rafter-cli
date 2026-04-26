@@ -285,11 +285,13 @@ Exit codes:
 
 Persists `skillInstallations.<platform>.<name>.enabled = false` in `~/.rafter/config.json`.
 
-### rafter scan local [PATH] [OPTIONS]
+### rafter secrets [PATH] [OPTIONS]
 
-Alias: `rafter agent scan` (deprecated — use `rafter scan local`)
+Aliases: `rafter scan local`, `rafter agent scan` (both still supported for backward compatibility)
 
-Scan files or directories for secrets (21+ patterns).
+Scan files or directories for **hardcoded secrets** (21+ patterns + gitleaks). **Secrets only — not a full code-security scan.** For SAST + SCA, use `rafter run`.
+
+The `secrets` spelling is preferred because it makes the scope explicit; `scan local` reads as "the full scan, locally" which it is not.
 
 - `[PATH]` — file or directory (default: `.`)
 - `-q, --quiet` — only output if secrets found

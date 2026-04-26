@@ -6,6 +6,7 @@ from pathlib import Path
 
 from rafter_cli.commands.agent import (
     _install_claude_code_hooks,
+    _install_claude_code_mcp,
     _install_gemini_mcp,
     _install_cursor_mcp,
     _install_windsurf_mcp,
@@ -649,3 +650,41 @@ class TestGeminiWithSkillsEndToEnd:
         # One probe + one link per skill (3 skills)
         link_only = [c for c in link_calls if c[1:3] == ["skills", "link"]]
         assert len(link_only) == 3
+
+
+class TestInstallClaudeCodeMcp:
+    def test_creates_mcp_json_from_scratch(self, tmp_path):
+        _install_claude_code_mcp(tmp_path)
+
+        mcp_path = tmp_path / ".mcp.json"
+        assert mcp_path.exists()
+
+        config = json.loads(mcp_path.read_text())
+        assert "mcpServers" in config
+        assert "rafter" in config["mcpServers"]
+        assert config["mcpServers"]["rafter"]["command"] == "rafter"
+        assert config["mcpServers"]["rafter"]["args"] == ["mcp", "serve"]
+
+    def test_idempotent(self, tmp_path):
+        _install_claude_code_mcp(tmp_path)
+        _install_claude_code_mcp(tmp_path)
+
+        config = json.loads((tmp_path / ".mcp.json").read_text())
+        assert list(config["mcpServers"].keys()) == ["rafter"]
+
+    def test_preserves_existing_non_rafter_servers(self, tmp_path):
+        existing = {"mcpServers": {"other": {"command": "other", "args": []}}}
+        (tmp_path / ".mcp.json").write_text(json.dumps(existing))
+
+        _install_claude_code_mcp(tmp_path)
+
+        config = json.loads((tmp_path / ".mcp.json").read_text())
+        assert "other" in config["mcpServers"]
+        assert "rafter" in config["mcpServers"]
+
+    def test_recovers_from_unreadable_mcp_json(self, tmp_path):
+        (tmp_path / ".mcp.json").write_text("{ not json")
+        _install_claude_code_mcp(tmp_path)
+
+        config = json.loads((tmp_path / ".mcp.json").read_text())
+        assert config["mcpServers"]["rafter"]["command"] == "rafter"

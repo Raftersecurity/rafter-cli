@@ -179,15 +179,17 @@ class TestInternalFunctions:
 class TestRafterSkillCYOA:
     """Top-level rafter skill is a CYOA router; sub-docs live in docs/."""
 
-    def test_skill_md_parses_and_is_under_120_lines(self):
+    def test_skill_md_parses_and_is_under_130_lines(self):
         skill_path = RESOURCES_DIR / "rafter" / "SKILL.md"
         raw = skill_path.read_text()
         assert raw.startswith("---"), "SKILL.md must start with YAML frontmatter"
         # frontmatter closes
         assert raw.count("---") >= 2
-        # under the 120-line budget
-        assert len(raw.splitlines()) < 120, \
-            f"top-level SKILL.md grew to {len(raw.splitlines())} lines; keep <120"
+        # under the 130-line budget (bumped from 120 to accommodate the
+        # scanner-scope section that steers agents away from the misleading
+        # "scan local" one-shot toward rafter run)
+        assert len(raw.splitlines()) < 130, \
+            f"top-level SKILL.md grew to {len(raw.splitlines())} lines; keep <130"
 
     def test_skill_md_references_each_subdoc(self):
         body = _load_skill("rafter")

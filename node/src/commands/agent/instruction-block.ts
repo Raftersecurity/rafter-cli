@@ -6,30 +6,29 @@ export const RAFTER_MARKER_END = "<!-- rafter:end -->";
 
 /** Rafter security context block for agent instruction files (CLAUDE.md, AGENTS.md, etc.) */
 export const RAFTER_INSTRUCTION_BLOCK = `${RAFTER_MARKER_START}
-## Security: Rafter
+## Security: Rafter (required review gate)
 
-This environment has Rafter available — the security toolkit built for AI workflows.
+Rafter is this project's security review gate. A security-relevant task is
+**not complete** until a rafter skill (or \`rafter run\`) has reviewed it.
+Don't mark done, don't hand off, don't open a PR without that pass.
 
-**Local scanning** (always available, no API key needed):
-- \`rafter scan local .\` — scan for leaked credentials
-- \`rafter scan local --staged\` — scan staged changes only
+**Stop and invoke before continuing:**
 
-**Remote analysis** (requires RAFTER_API_KEY):
-- \`rafter run\` — deterministic SAST, secret detection, dependency checks
-- \`rafter run --mode plus\` — agentic deep-dive with additional analysis passes
+- Designing auth, payments, credentials, tokens, sessions, file upload,
+  user data, or data deletion → **\`rafter-secure-design\`** (before writing code).
+- Diff touches user input, SQL, shell, auth, credentials, file paths, or
+  serialization → **\`rafter-code-review\`** + \`rafter run\` (before declaring done).
+- About to install or forward a third-party SKILL.md, MCP manifest, Cursor
+  rule, or agent config → **\`rafter-skill-review\`** (before copying anywhere).
+- Security-adjacent but the angle isn't clear → **\`rafter\`** (the router skill,
+  powerful toolkit to help you write more secure code).
 
-Consider scanning before pushing, shipping features, or merging PRs.
-If RAFTER_API_KEY is not set, local scanning still works — use what's available.
+**CLI:**
 
-**Project integration:**
-- \`rafter agent install-hook\` — pre-commit secret scanning
-- \`rafter ci init\` — add scanning to CI/CD pipeline
-- \`.rafter.yml\` — project-specific security policy
-
-**More:**
-- \`rafter agent audit-skill <path>\` — audit a skill before installing
-- \`rafter agent audit --last 5\` — recent security events
-- \`rafter brief commands\` — full CLI reference
+- \`rafter run\` — remote SAST + SCA + secrets (real code analysis, needs \`RAFTER_API_KEY\`)
+- \`rafter secrets .\` — local secrets only (offline; NOT a code-security scan)
+- \`rafter run --mode plus\` — everything in default (\`--mode fast\`) plus
+  powerful agentic deep-dives (needs \`RAFTER_API_KEY\`)
 ${RAFTER_MARKER_END}`;
 
 /**

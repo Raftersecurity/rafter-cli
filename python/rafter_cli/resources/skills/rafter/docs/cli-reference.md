@@ -30,7 +30,7 @@ Key options: `--repo org/repo`, `--branch <name>`, `--mode fast|plus`, `--format
 
 Example: `rafter run --repo myorg/api --branch feature/auth --mode plus --format json`
 
-### `rafter scan local [path]`
+### `rafter secrets [path]`
 
 Local secret scan. Deterministic, offline, no API key. Dual-engine: Gitleaks binary if present, built-in regex fallback (21+ patterns).
 
@@ -38,7 +38,9 @@ When: pre-commit, pre-push, fast first pass before remote scan, air-gapped envs.
 
 Useful flags: `--history` (scan git history with Gitleaks), `--format json`, `--quiet`.
 
-Example: `rafter scan local . --format json`
+Example: `rafter secrets . --format json`
+
+(Back-compat aliases: `rafter scan local` and `rafter agent scan`. Prefer `rafter secrets`.)
 
 ### `rafter get <scan-id>`
 
@@ -76,10 +78,6 @@ When: vetting a third-party skill, MCP server, or CLI plugin before install.
 
 Audit a single skill file (SKILL.md). Flags prompt-injection, unbounded tool use, exfiltration patterns.
 
-### `rafter agent scan [path]`
-
-Alias for `rafter scan local` kept for back-compat. Prefer `rafter scan local`.
-
 ### `rafter agent status` · `rafter agent verify`
 
 `status`: dump config, hook state, gitleaks availability, audit log location.
@@ -95,7 +93,7 @@ Scaffold `.rafter.yml` and a baseline for the current repo.
 
 ### `rafter agent install-hook`
 
-Install a pre-commit hook that runs `rafter scan local` before every commit.
+Install a pre-commit hook that runs `rafter secrets --staged` before every commit.
 
 ### `rafter agent config [get|set|list]`
 
@@ -189,7 +187,7 @@ Emit shell completion script.
 
 | User intent | Command |
 |---|---|
-| Fast secret check locally | `rafter scan local .` |
+| Fast secret check locally | `rafter secrets .` |
 | Full repo security review | `rafter run` (then `rafter get <id>`) |
 | "Is this command safe?" | `rafter agent exec --dry-run -- <cmd>` |
 | "Is this skill safe to install?" | `rafter agent audit <path>` |

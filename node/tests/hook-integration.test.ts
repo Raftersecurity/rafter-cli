@@ -105,7 +105,7 @@ function evaluateBashWithGit(
     if (scanResult.secretsFound) {
       return {
         decision: "deny",
-        reason: `${scanResult.count} secret(s) detected in ${scanResult.files} staged file(s). Run 'rafter scan local --staged' for details.`,
+        reason: `${scanResult.count} secret(s) detected in ${scanResult.files} staged file(s). Run 'rafter secrets --staged' for details.`,
       };
     }
   }
@@ -403,7 +403,7 @@ describe("Hook Integration — Real Git Repos", () => {
       expect(fs.existsSync(hookPath)).toBe(true);
       const installed = fs.readFileSync(hookPath, "utf-8");
       expect(installed).toContain("Rafter Security Pre-Commit Hook");
-      expect(installed).toContain("rafter scan local");
+      expect(installed).toContain("rafter secrets");
 
       // Verify executable
       const stat = fs.statSync(hookPath);
@@ -434,7 +434,7 @@ describe("Hook Integration — Real Git Repos", () => {
       expect(fs.existsSync(hookPath)).toBe(true);
       const installed = fs.readFileSync(hookPath, "utf-8");
       expect(installed).toContain("Rafter Security Pre-Push Hook");
-      expect(installed).toContain("rafter scan local");
+      expect(installed).toContain("rafter secrets");
     });
 
     it("backs up existing non-rafter hook", () => {

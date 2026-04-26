@@ -55,9 +55,9 @@ Two skills are installed to `~/.claude/skills/`:
 | `rafter/` | Auto-invoked | Remote security audits (read-only API calls) |
 | `rafter-agent-security/` | `/rafter-scan`, `/rafter-bash`, `/rafter-audit-skill`, `/rafter-audit` | Local secret scanning, command validation, skill auditing |
 
-### 4. MCP server (alternative)
+### 4. MCP server
 
-Expose Rafter tools to Claude Code via MCP instead of skills:
+`rafter agent init --local --with-claude-code` writes this to `<project>/.mcp.json` automatically:
 
 ```json
 {
@@ -70,7 +70,13 @@ Expose Rafter tools to Claude Code via MCP instead of skills:
 }
 ```
 
-Add to `.claude/settings.json`. Provides `scan_secrets`, `evaluate_command`, `read_audit_log`, and `get_config` tools.
+Claude Code auto-loads project-scope `.mcp.json` and prompts you to approve the server on first interactive run. Exposes `scan_secrets`, `evaluate_command`, `read_audit_log`, `get_config`, `get_doc`, and `list_docs` tools as `mcp__rafter__*`.
+
+**Headless (`claude -p`) note:** project-scope `.mcp.json` is gated behind per-project approval stored in `~/.claude.json` under `projects[<path>].enabledMcpjsonServers`. Fresh workdirs have no approval entry, so `-p` — even with `--dangerously-skip-permissions` — skips the server. Pass `--mcp-config .mcp.json` explicitly to load it:
+
+```sh
+claude --dangerously-skip-permissions --mcp-config .mcp.json -p "..."
+```
 
 ## Verify
 
