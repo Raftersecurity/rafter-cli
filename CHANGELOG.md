@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`rafter agent init --with-claude-code` installs a first-class `.claude/agents/rafter.md` sub-agent** (Node + Python, rf-q7j): alongside the existing skills install, drops a Claude Code sub-agent definition that the calling agent can invoke via `Agent(subagent_type="rafter")`. Sub-agents appear in the main agent's tool list (skills only surface in the activation prompt), making delegation the natural motion for "is this safe / secure / production worthy?" questions. Sub-agent body documents the tier hierarchy — `rafter run` (default, SAST+SCA, needs `RAFTER_API_KEY`), `rafter run --mode plus` (agentic deep-dive), `rafter secrets` (offline secrets-only fallback) — and is hard-restricted to `Bash`, `Read`, `Grep` (no code modification, no commits, no non-rafter scanners).
+
 ## [0.7.4] - 2026-04-21
 
 ### Added

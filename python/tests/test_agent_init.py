@@ -688,3 +688,63 @@ class TestInstallClaudeCodeMcp:
 
         config = json.loads((tmp_path / ".mcp.json").read_text())
         assert config["mcpServers"]["rafter"]["command"] == "rafter"
+
+
+# ── Claude Code rafter sub-agent install ─────────────────────────────
+
+from rafter_cli.commands.agent import _install_claude_code_subagents
+
+
+class TestInstallClaudeCodeSubAgents:
+    def test_creates_subagent_from_scratch(self, tmp_path):
+        _install_claude_code_subagents(tmp_path)
+
+        subagent_path = tmp_path / ".claude" / "agents" / "rafter.md"
+        assert subagent_path.exists(), "rafter.md sub-agent should be installed"
+
+    def test_subagent_has_required_frontmatter(self, tmp_path):
+        _install_claude_code_subagents(tmp_path)
+        content = (tmp_path / ".claude" / "agents" / "rafter.md").read_text()
+
+        # Frontmatter delimited
+        assert content.startswith("---\n"), "must start with YAML frontmatter"
+        closing = content.find("\n---\n", 4)
+        assert closing > 0, "must have closing frontmatter delimiter"
+
+        frontmatter = content[4:closing]
+        assert "name: rafter" in frontmatter
+        assert "description:" in frontmatter
+        assert "tools:" in frontmatter and "Bash" in frontmatter
+
+    def test_subagent_body_references_tier_hierarchy(self, tmp_path):
+        _install_claude_code_subagents(tmp_path)
+        content = (tmp_path / ".claude" / "agents" / "rafter.md").read_text()
+
+        # Trigger phrasing
+        assert "safe / secure / production worthy" in content
+        # Tier hierarchy
+        assert "rafter run" in content
+        assert "--mode plus" in content
+        assert "rafter secrets" in content
+        # Honest about scope of secrets
+        assert "NOT a code security scan" in content
+
+    def test_idempotent_on_reinstall(self, tmp_path):
+        _install_claude_code_subagents(tmp_path)
+        first = (tmp_path / ".claude" / "agents" / "rafter.md").read_text()
+
+        _install_claude_code_subagents(tmp_path)
+        second = (tmp_path / ".claude" / "agents" / "rafter.md").read_text()
+
+        assert first == second
+
+    def test_overwrites_stale_subagent_content(self, tmp_path):
+        agents_dir = tmp_path / ".claude" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "rafter.md").write_text("stale content from previous version")
+
+        _install_claude_code_subagents(tmp_path)
+
+        content = (agents_dir / "rafter.md").read_text()
+        assert content != "stale content from previous version"
+        assert "name: rafter" in content

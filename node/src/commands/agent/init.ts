@@ -591,6 +591,39 @@ async function installClaudeCodeSkills(root: string): Promise<void> {
   installSkillsTo(path.join(root, ".claude", "skills"));
 }
 
+/**
+ * Sub-agents shipped by `rafter agent init --with-claude-code`.
+ *
+ * These land in <root>/.claude/agents/<name>.md and become first-class
+ * delegation targets (Agent(subagent_type='<name>')) in the calling Claude
+ * Code session — distinct from skills, which only surface in the activation
+ * prompt. Source files live in `resources/agents/<name>.md`.
+ *
+ * Keep this list in sync with the Python installer.
+ */
+const CLAUDE_CODE_SUBAGENTS: { name: string; description: string }[] = [
+  { name: "rafter", description: "Rafter Security" },
+];
+
+function installClaudeCodeSubAgents(root: string): void {
+  const agentsDir = path.join(root, ".claude", "agents");
+  if (!fs.existsSync(agentsDir)) {
+    fs.mkdirSync(agentsDir, { recursive: true });
+  }
+  for (const sub of CLAUDE_CODE_SUBAGENTS) {
+    const destPath = path.join(agentsDir, `${sub.name}.md`);
+    const srcPath = path.join(
+      __dirname, "..", "..", "..", "resources", "agents", `${sub.name}.md`,
+    );
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, destPath);
+      console.log(fmt.success(`Installed ${sub.description} sub-agent to ${destPath}`));
+    } else {
+      console.log(fmt.warning(`${sub.description} sub-agent template not found at ${srcPath}`));
+    }
+  }
+}
+
 function installCodexSkills(root: string): void {
   installSkillsTo(path.join(root, ".agents", "skills"));
 }
@@ -887,6 +920,7 @@ export function createInitCommand(): Command {
       if ((hasClaudeCode || opts.withClaudeCode || (opts.local && wantClaudeCode)) && wantClaudeCode) {
         try {
           await installClaudeCodeSkills(root);
+          installClaudeCodeSubAgents(root);
           installClaudeCodeHooks(root);
           if (scope === "project") {
             const components = (manager.get("agent.components") ?? {}) as Record<string, any>;

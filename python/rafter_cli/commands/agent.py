@@ -222,6 +222,31 @@ def _install_claude_code_skills(root: Path) -> None:
     _install_skills_to(root / ".claude" / "skills")
 
 
+# Sub-agents shipped by `rafter agent init --with-claude-code`. These land in
+# <root>/.claude/agents/<name>.md and become first-class delegation targets
+# (Agent(subagent_type='<name>')) in the calling Claude Code session — distinct
+# from skills, which only surface in the activation prompt. Source files live
+# in `rafter_cli/resources/agents/<name>.md`. Keep in sync with the Node installer.
+_CLAUDE_CODE_SUBAGENTS: list[dict[str, str]] = [
+    {"name": "rafter", "description": "Rafter Security"},
+]
+
+
+def _install_claude_code_subagents(root: Path) -> None:
+    """Copy sub-agent definitions into <root>/.claude/agents/<name>.md."""
+    agents_dir = root / ".claude" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    res = importlib.resources.files("rafter_cli.resources")
+    for sub in _CLAUDE_CODE_SUBAGENTS:
+        dest_path = agents_dir / f"{sub['name']}.md"
+        try:
+            content = res.joinpath("agents", f"{sub['name']}.md").read_text(encoding="utf-8")
+            dest_path.write_text(content, encoding="utf-8")
+            rprint(fmt.success(f"Installed {sub['description']} sub-agent to {dest_path}"))
+        except Exception:
+            rprint(fmt.warning(f"{sub['description']} sub-agent template not found in package resources"))
+
+
 def _install_global_instructions(
     claude_code: bool,
     codex: bool,
@@ -710,6 +735,7 @@ def init(
     if (has_claude_code or with_claude_code or (local and want_claude_code)) and want_claude_code:
         try:
             _install_claude_code_skills(root)
+            _install_claude_code_subagents(root)
             _install_claude_code_hooks(root)
             if scope == "project":
                 components = manager.get("agent.components") or {}
