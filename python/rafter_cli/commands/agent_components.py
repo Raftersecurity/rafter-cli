@@ -28,30 +28,29 @@ RAFTER_MARKER_START = "<!-- rafter:start -->"
 RAFTER_MARKER_END = "<!-- rafter:end -->"
 
 RAFTER_INSTRUCTION_BLOCK = f"""{RAFTER_MARKER_START}
-## Security: Rafter
+## Security: Rafter (required review gate)
 
-This environment has Rafter available — the security toolkit built for AI workflows.
+Rafter is this project's security review gate. A security-relevant task is
+**not complete** until a rafter skill (or `rafter run`) has reviewed it.
+Don't mark done, don't hand off, don't open a PR without that pass.
 
-**Local scanning** (always available, no API key needed):
-- `rafter scan local .` — scan for leaked credentials
-- `rafter scan local --staged` — scan staged changes only
+**Stop and invoke before continuing:**
 
-**Remote analysis** (requires RAFTER_API_KEY):
-- `rafter run` — deterministic SAST, secret detection, dependency checks
-- `rafter run --mode plus` — agentic deep-dive with additional analysis passes
+- Designing auth, payments, credentials, tokens, sessions, file upload,
+  user data, or data deletion → **`rafter-secure-design`** (before writing code).
+- Diff touches user input, SQL, shell, auth, credentials, file paths, or
+  serialization → **`rafter-code-review`** + `rafter run` (before declaring done).
+- About to install or forward a third-party SKILL.md, MCP manifest, Cursor
+  rule, or agent config → **`rafter-skill-review`** (before copying anywhere).
+- Security-adjacent but the angle isn't clear → **`rafter`** (the router skill,
+  powerful toolkit to help you write more secure code).
 
-Consider scanning before pushing, shipping features, or merging PRs.
-If RAFTER_API_KEY is not set, local scanning still works — use what's available.
+**CLI:**
 
-**Project integration:**
-- `rafter agent install-hook` — pre-commit secret scanning
-- `rafter ci init` — add scanning to CI/CD pipeline
-- `.rafter.yml` — project-specific security policy
-
-**More:**
-- `rafter agent audit-skill <path>` — audit a skill before installing
-- `rafter agent audit --last 5` — recent security events
-- `rafter brief commands` — full CLI reference
+- `rafter run` — remote SAST + SCA + secrets (real code analysis, needs `RAFTER_API_KEY`)
+- `rafter secrets .` — local secrets only (offline; NOT a code-security scan)
+- `rafter run --mode plus` — everything in default (`--mode fast`) plus
+  powerful agentic deep-dives (needs `RAFTER_API_KEY`)
 {RAFTER_MARKER_END}"""
 
 
@@ -175,6 +174,11 @@ def _claude_code_hooks() -> ComponentSpec:
         post = {"type": "command", "command": "rafter hook posttool"}
         hooks["PreToolUse"] = _filter_hooks(hooks["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         hooks["PostToolUse"] = _filter_hooks(hooks["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
+        # Strip legacy SessionStart entry from <=0.7.4 installs.
+        if isinstance(hooks.get("SessionStart"), list):
+            hooks["SessionStart"] = _filter_hooks(hooks["SessionStart"], lambda e: _hook_entry_has_rafter(e, "rafter hook session-start"))
+            if not hooks["SessionStart"]:
+                del hooks["SessionStart"]
         hooks["PreToolUse"].extend([
             {"matcher": "Bash", "hooks": [pre]},
             {"matcher": "Write|Edit", "hooks": [pre]},
@@ -191,6 +195,10 @@ def _claude_code_hooks() -> ComponentSpec:
             hooks["PreToolUse"] = _filter_hooks(hooks["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         if "PostToolUse" in hooks:
             hooks["PostToolUse"] = _filter_hooks(hooks["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
+        if isinstance(hooks.get("SessionStart"), list):
+            hooks["SessionStart"] = _filter_hooks(hooks["SessionStart"], lambda e: _hook_entry_has_rafter(e, "rafter hook session-start"))
+            if not hooks["SessionStart"]:
+                del hooks["SessionStart"]
         _write_json(settings_path, s)
 
     return ComponentSpec(
@@ -353,6 +361,56 @@ def _codex_hooks() -> ComponentSpec:
         description="Codex CLI hooks (~/.codex/hooks.json)",
         detect_dir=detect_dir,
         path=hooks_path,
+        is_installed=is_installed,
+        install=install,
+        uninstall=uninstall,
+    )
+
+
+def _claude_code_mcp() -> ComponentSpec:
+    """Project-scope Claude Code MCP config (<cwd>/.mcp.json).
+
+    Unlike other claude-code components which touch ~/.claude, this writes
+    at the project root — Claude Code auto-loads it on startup and exposes
+    ``mcp__rafter__*`` tools to the agent.
+    """
+    home = Path.home()
+    detect_dir = home / ".claude"
+    mcp_path = Path.cwd() / ".mcp.json"
+
+    def is_installed() -> bool:
+        if not mcp_path.exists():
+            return False
+        return bool(_read_json(mcp_path).get("mcpServers", {}).get("rafter"))
+
+    def install() -> None:
+        cfg = _read_json(mcp_path) if mcp_path.exists() else {}
+        cfg.setdefault("mcpServers", {})
+        cfg["mcpServers"]["rafter"] = dict(RAFTER_MCP_ENTRY)
+        _write_json(mcp_path, cfg)
+
+    def uninstall() -> None:
+        if not mcp_path.exists():
+            return
+        cfg = _read_json(mcp_path)
+        servers = cfg.get("mcpServers")
+        if not (isinstance(servers, dict) and "rafter" in servers):
+            return
+        del servers["rafter"]
+        if not servers:
+            cfg.pop("mcpServers", None)
+        if not cfg:
+            mcp_path.unlink()
+        else:
+            _write_json(mcp_path, cfg)
+
+    return ComponentSpec(
+        id="claude-code.mcp",
+        platform="claude-code",
+        kind="mcp",
+        description="Claude Code project-scope MCP server (<project>/.mcp.json)",
+        detect_dir=detect_dir,
+        path=mcp_path,
         is_installed=is_installed,
         install=install,
         uninstall=uninstall,
@@ -851,6 +909,7 @@ def get_registry() -> list[ComponentSpec]:
             _claude_code_hooks(),
             _claude_code_instructions(),
             _claude_code_skills(),
+            _claude_code_mcp(),
             _codex_hooks(),
             _codex_skills(),
             _cursor_hooks(),

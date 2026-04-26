@@ -50,7 +50,7 @@ Pair with `rafter run --mode plus` when you want both a human-style walkthrough 
 
 - Designing a new service → **secure-design**.
 - Reviewing a teammate's PR by eye → **code-review**.
-- CI gate / pre-push / scheduled scan → **rafter** (this skill), `rafter run` / `rafter scan local`.
+- CI gate / pre-push / scheduled scan → **rafter** (this skill), `rafter run` / `rafter secrets`.
 - "I have a finding, now what?" → **rafter**, `docs/finding-triage.md`.
 - "I have a risky command, is it safe?" → **rafter**, `docs/guardrails.md`.
 

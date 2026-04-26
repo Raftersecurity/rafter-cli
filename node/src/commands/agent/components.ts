@@ -160,6 +160,14 @@ function claudeCodeHooks(): ComponentSpec {
         settings.hooks.PostToolUse,
         (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
       );
+      // Strip legacy SessionStart entry from <=0.7.4 installs.
+      if (Array.isArray(settings.hooks.SessionStart)) {
+        settings.hooks.SessionStart = filterOutRafter(
+          settings.hooks.SessionStart,
+          (e) => hookEntryMatchesRafter(e, "rafter hook session-start"),
+        );
+        if (settings.hooks.SessionStart.length === 0) delete settings.hooks.SessionStart;
+      }
 
       settings.hooks.PreToolUse.push(
         { matcher: "Bash", hooks: [pre] },
@@ -183,6 +191,13 @@ function claudeCodeHooks(): ComponentSpec {
           settings.hooks.PostToolUse,
           (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
         );
+      }
+      if (Array.isArray(settings.hooks?.SessionStart)) {
+        settings.hooks.SessionStart = filterOutRafter(
+          settings.hooks.SessionStart,
+          (e) => hookEntryMatchesRafter(e, "rafter hook session-start"),
+        );
+        if (settings.hooks.SessionStart.length === 0) delete settings.hooks.SessionStart;
       }
       writeJson(settingsPath, settings);
     },
@@ -348,6 +363,49 @@ function codexHooks(): ComponentSpec {
         );
       }
       writeJson(hooksPath, cfg);
+    },
+  };
+}
+
+/**
+ * Project-scope Claude Code MCP config (<cwd>/.mcp.json). Unlike other
+ * claude-code components which touch ~/.claude, this one writes at the
+ * project root — Claude Code auto-loads it on startup and exposes
+ * `mcp__rafter__*` tools to the agent.
+ */
+function claudeCodeMcp(): ComponentSpec {
+  const home = os.homedir();
+  const mcpPath = path.join(process.cwd(), ".mcp.json");
+  return {
+    id: "claude-code.mcp",
+    platform: "claude-code",
+    kind: "mcp",
+    description: "Claude Code project-scope MCP server (<project>/.mcp.json)",
+    detectDir: path.join(home, ".claude"),
+    path: mcpPath,
+    isInstalled: () => {
+      if (!fs.existsSync(mcpPath)) return false;
+      const cfg = readJson(mcpPath);
+      return !!cfg.mcpServers?.rafter;
+    },
+    install: () => {
+      const cfg: Record<string, any> = fs.existsSync(mcpPath) ? readJson(mcpPath) : {};
+      cfg.mcpServers ??= {};
+      cfg.mcpServers.rafter = { ...RAFTER_MCP_ENTRY };
+      writeJson(mcpPath, cfg);
+    },
+    uninstall: () => {
+      if (!fs.existsSync(mcpPath)) return;
+      const cfg = readJson(mcpPath);
+      if (!removeKey(cfg.mcpServers, "rafter")) return;
+      if (cfg.mcpServers && Object.keys(cfg.mcpServers).length === 0) {
+        delete cfg.mcpServers;
+      }
+      if (Object.keys(cfg).length === 0) {
+        fs.unlinkSync(mcpPath);
+      } else {
+        writeJson(mcpPath, cfg);
+      }
     },
   };
 }
@@ -824,6 +882,7 @@ export function getComponentRegistry(): ComponentSpec[] {
       claudeCodeHooks(),
       claudeCodeInstructions(),
       claudeCodeSkills(),
+      claudeCodeMcp(),
       codexHooks(),
       codexSkills(),
       cursorHooks(),

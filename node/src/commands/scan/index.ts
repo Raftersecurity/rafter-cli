@@ -3,17 +3,18 @@
  *
  * Default (no subcommand): remote scan (same as `rafter run`)
  * rafter scan remote:       explicit alias for remote scan
- * rafter scan local [path]: local secret scanner (was `rafter agent scan`)
+ * rafter scan local [path]: hidden back-compat alias for `rafter secrets`
+ *                           (was `rafter agent scan` before 0.7.4).
  */
 import { Command } from "commander";
 import { runRemoteScan } from "../backend/run.js";
 import { createScanCommand as createLocalScanCommand } from "../agent/scan.js";
 
 export function createScanGroupCommand(): Command {
-  // "local" subcommand — reuses agent/scan.ts logic, renamed
+  // "local" subcommand — back-compat alias for `rafter secrets`. Hidden from help.
   const localCmd = createLocalScanCommand();
   localCmd.name("local");
-  localCmd.description("Scan files or directories for secrets (local)");
+  localCmd.description("(deprecated alias for 'rafter secrets')");
 
   // "remote" subcommand — same handler as `rafter run`
   const remoteCmd = new Command("remote")
@@ -32,9 +33,7 @@ export function createScanGroupCommand(): Command {
 
   // Root scan group — default action is remote scan
   const scanGroup = new Command("scan")
-    .description(
-      "Scan for security issues. Default: remote scan. Use 'scan local' for local secret scanning."
-    )
+    .description("Trigger a remote security scan (requires RAFTER_API_KEY).")
     .enablePositionalOptions()
     .option("-r, --repo <repo>", "org/repo (default: current)")
     .option("-b, --branch <branch>", "branch (default: current else main)")
@@ -45,7 +44,7 @@ export function createScanGroupCommand(): Command {
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages");
 
-  scanGroup.addCommand(localCmd);
+  scanGroup.addCommand(localCmd, { hidden: true });
   scanGroup.addCommand(remoteCmd);
 
   // When invoked with no subcommand, run remote scan

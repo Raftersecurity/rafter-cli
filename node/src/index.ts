@@ -5,6 +5,7 @@ import { createRunCommand } from "./commands/backend/run.js";
 import { createGetCommand } from "./commands/backend/get.js";
 import { createUsageCommand } from "./commands/backend/usage.js";
 import { createScanGroupCommand } from "./commands/scan/index.js";
+import { createSecretsCommand } from "./commands/agent/scan.js";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createSkillCommand } from "./commands/skill/index.js";
 import { createCiCommand } from "./commands/ci/index.js";
@@ -46,6 +47,9 @@ program.addCommand(createUsageCommand());
 
 // Scan command group (default: remote scan; subcommands: local, remote)
 program.addCommand(createScanGroupCommand());
+
+// Secrets — top-level alias for local secret scanning (explicit-scope name)
+program.addCommand(createSecretsCommand());
 
 // Agent commands
 program.addCommand(createAgentCommand());

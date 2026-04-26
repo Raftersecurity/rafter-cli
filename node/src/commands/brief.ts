@@ -228,7 +228,7 @@ This installs:
 ## Manual Setup (if automated init isn't available)
 
 1. Run \`rafter brief scanning\` and save the command reference
-2. Before commits, run: \`rafter scan local .\`
+2. Before commits, run: \`rafter secrets .\`
 3. For remote analysis: \`rafter run\``,
 
   codex: `# Rafter Setup — Codex CLI
@@ -450,7 +450,7 @@ rafter brief commands    # know what commands are available
 
 ## Key Commands to Know
 
-- \`rafter scan local .\` — scan for secrets locally (no API key needed)
+- \`rafter secrets .\` — scan for hardcoded secrets locally (no API key needed)
 - \`rafter run\` — trigger remote SAST/SCA analysis (needs API key)
 - \`rafter get <id>\` — retrieve scan results
 - \`rafter agent audit\` — review security event log

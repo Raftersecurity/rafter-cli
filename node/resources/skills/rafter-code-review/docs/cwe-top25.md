@@ -15,7 +15,7 @@ MITRE's CWE Top 25 is weakness-level, not risk-level. Use this for CLI tools, li
 - **CWE-22 Path Traversal** — any `open(path)`, `fs.readFile(path)`, `os.path.join(base, user_input)`. Canonicalize (`realpath` / `filepath.Abs`) and verify the result stays under an allow-root.
 - **CWE-352 CSRF** — state-changing endpoints: is there a token check? SameSite cookies are necessary but not sufficient for cross-site POSTs in older browsers / API clients.
 - **CWE-287 Improper Authentication / CWE-862 Missing Authorization** — covered in web-app.md / api.md.
-- **CWE-798 Hardcoded Credentials** — `rafter scan local .` catches literal secrets; manually check env-var defaults (`API_KEY = os.environ.get("KEY", "dev-fallback-abc123")` ships the fallback).
+- **CWE-798 Hardcoded Credentials** — `rafter secrets .` catches literal secrets; manually check env-var defaults (`API_KEY = os.environ.get("KEY", "dev-fallback-abc123")` ships the fallback).
 - **CWE-918 SSRF** — any user-supplied URL fetched server-side. See web-app.md A10.
 
 ---

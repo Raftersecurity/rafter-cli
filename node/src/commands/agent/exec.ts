@@ -34,7 +34,7 @@ export function createExecCommand(): Command {
         if (scanResult.secretsFound) {
           console.error(`\n${fmt.warning("Secrets detected in staged files!")}\n`);
           console.error(`Found ${scanResult.count} secret(s) in ${scanResult.files} file(s)`);
-          console.error(`\nRun 'rafter scan local' for details.\n`);
+          console.error(`\nRun 'rafter secrets' for details.\n`);
 
           interceptor.logEvaluation(evaluation, "blocked");
           process.exit(1);

@@ -85,7 +85,7 @@ class TestVersionAndHelp:
     def test_scan_help_shows_subcommands(self):
         stdout, _, rc = rafter("scan --help")
         assert rc == 0
-        assert "local" in stdout
+        assert "remote" in stdout
 
     def test_policy_help_shows_subcommands(self):
         stdout, _, rc = rafter("policy --help")
@@ -206,6 +206,34 @@ class TestLocalScanning:
 
 
 # ---------------------------------------------------------------------------
+# rafter secrets — top-level alias for local secret scanning
+# ---------------------------------------------------------------------------
+
+
+class TestRafterSecrets:
+    def test_help_advertises_secrets_only_scope(self):
+        stdout, _, rc = rafter("secrets --help")
+        assert rc == 0
+        assert "secrets only" in stdout.lower()
+        assert "rafter run" in stdout.lower()
+
+    def test_detects_secrets_same_as_scan_local(self, tmp_path):
+        f = tmp_path / "secrets.txt"
+        f.write_text("AKIAIOSFODNN7EXAMPLE\n")
+        a_stdout, _, a_rc = rafter(f"secrets {f} --engine patterns --json")
+        b_stdout, _, b_rc = rafter(f"scan local {f} --engine patterns --json")
+        assert a_rc == 1
+        assert b_rc == 1
+        assert json.loads(a_stdout) == json.loads(b_stdout)
+
+    def test_exits_0_for_clean_file(self, tmp_path):
+        f = tmp_path / "clean.txt"
+        f.write_text("no secrets here\n")
+        _, _, rc = rafter(f"secrets {f} --engine patterns --quiet")
+        assert rc == 0
+
+
+# ---------------------------------------------------------------------------
 # Command risk assessment
 # ---------------------------------------------------------------------------
 
@@ -246,7 +274,7 @@ class TestAgentScanDeprecation:
         f.write_text("no secrets\n")
         _, stderr, _ = rafter(f"agent scan {f} --engine patterns")
         assert "deprecated" in stderr.lower()
-        assert "rafter scan local" in stderr
+        assert "rafter secrets" in stderr
 
     def test_scan_local_does_not_emit_deprecation(self, tmp_path):
         f = tmp_path / "clean.txt"

@@ -1,6 +1,6 @@
 ---
 name: rafter-code-review
-description: "Structured security code review — OWASP / MITRE / ASVS walkthroughs as questions, not audits. Router skill: pick what kind of code you're reviewing (web app, REST/GraphQL API, LLM-integrated, CLI/library/IaC) and Read the matching sub-doc. Designed to pair with `rafter scan` / `rafter run` — the scanner finds known-bad patterns, this skill asks the questions that patterns miss. Use during PR review, refactoring risky modules, or pre-release hardening."
+description: "REQUIRED before declaring a task done when the diff touches user input, SQL, shell, auth, credentials, file paths, serialization, or dependency surface. Walks OWASP/ASVS/MITRE questions the compiler and the test suite won't catch. Pair with `rafter run` on the same diff. A security-relevant task marked complete without both has been under-delivered — do not claim done."
 version: 0.7.0
 allowed-tools: [Bash, Read, Glob, Grep]
 ---
@@ -64,7 +64,7 @@ For: single-finding follow-up, tracing a suspicious call, "is this input reachab
 ## What this skill will NOT do
 
 - It will not generate a monolithic "security audit report". If you need a report, run `rafter run --mode plus` — the backend is better at that.
-- It will not replace automated scanning. Always pair with `rafter scan local .` (secrets) and `rafter run` (SAST/SCA) before review.
+- It will not replace automated scanning. Always pair with `rafter secrets .` (secrets) and `rafter run` (SAST/SCA) before review.
 - It will not produce recommendations without evidence. Every question expects a file:line answer before moving on.
 
 ---
@@ -73,7 +73,7 @@ For: single-finding follow-up, tracing a suspicious call, "is this input reachab
 
 ```bash
 # 1. Run deterministic checks first — cheap, catches the obvious
-rafter scan local .
+rafter secrets .
 rafter run                    # remote SAST/SCA, if RAFTER_API_KEY set
 
 # 2. Then pick the category and walk the questions

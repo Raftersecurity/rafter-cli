@@ -16,7 +16,7 @@ The #1 risk. Every authenticated route must answer: "who is allowed?"
 
 - What algorithms appear? Grep for `md5`, `sha1`, `des`, `rc4`, `ecb`. Any hit on user data, session tokens, or passwords is a finding.
 - How are passwords hashed? Look for `bcrypt`, `scrypt`, `argon2`, `pbkdf2`. Absence is the finding. `sha256(password + salt)` is not password hashing.
-- Are secrets in source? Run `rafter scan local .` first — but also grep for `private_key`, `api_key`, `BEGIN RSA`, `.pem`, `.p12`.
+- Are secrets in source? Run `rafter secrets .` first — but also grep for `private_key`, `api_key`, `BEGIN RSA`, `.pem`, `.p12`.
 - Is TLS enforced? Look for redirect middleware, HSTS headers, cookie `Secure` flag. Cookies without `Secure` + `HttpOnly` + `SameSite` — ask why.
 - Is randomness from `Math.random()` / `rand()` used for tokens, session ids, password resets? Must be `crypto.randomBytes` / `secrets.token_*` / `crypto/rand`.
 
