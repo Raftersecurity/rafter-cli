@@ -235,3 +235,75 @@ class TestE2E:
         assert proc.returncode == 0
         out = json.loads(proc.stdout.strip())
         assert out == {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit"}}
+
+
+# ────────────────────── installer probe regression (rc-txf) ──────────────────────
+
+class TestInstallerProbe:
+    def test_skips_hook_when_rafter_lacks_subcommand(self, tmp_path: Path):
+        """If the resolved rafter on PATH does NOT support 'hook user-prompt-submit',
+        the installer must SKIP wiring the UserPromptSubmit hook — otherwise
+        every prompt-submit in Claude Code would error. Reproduces incident rc-txf."""
+        import os
+        # Build a scrubbed PATH with a fake rafter that fails ONLY for user-prompt-submit
+        bin_dir = tmp_path / "_bin"
+        bin_dir.mkdir()
+        fake_rafter = bin_dir / "rafter"
+        fake_rafter.write_text(
+            "#!/bin/sh\n"
+            'for a in "$@"; do [ "$a" = "user-prompt-submit" ] && exit 1; done\n'
+            "exit 0\n"
+        )
+        fake_rafter.chmod(0o755)
+
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".claude").mkdir()
+
+        # Prepend bin_dir to PATH so the fake rafter shadows any real one.
+        # Override HOME so the installer writes to our temp .claude. Capture
+        # parent's full sys.path into PYTHONPATH so 3rd-party deps like typer
+        # remain importable under the new HOME (user-site lookup uses HOME).
+        import site
+        sys_path_for_child = [p for p in sys.path if p and Path(p).exists()]
+        repo_python = str(Path(__file__).resolve().parent.parent)
+        if repo_python not in sys_path_for_child:
+            sys_path_for_child.insert(0, repo_python)
+        env = {
+            **os.environ,
+            "HOME": str(home),
+            "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+            "PYTHONPATH": os.pathsep.join(sys_path_for_child),
+        }
+        _ = site  # imported only to make linters happy if unused above
+        result = subprocess.run(
+            [sys.executable, "-m", "rafter_cli", "agent", "init", "--with-claude-code"],
+            cwd=str(home),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        # Installer must not crash even when the probe says "no"
+        assert result.returncode == 0, f"installer crashed: {result.stderr}"
+
+        settings_path = home / ".claude" / "settings.json"
+        assert settings_path.exists(), "installer should still write settings.json"
+        settings = json.loads(settings_path.read_text())
+
+        # UserPromptSubmit either absent or has zero rafter entries.
+        ups = settings.get("hooks", {}).get("UserPromptSubmit", [])
+        rafter_entries = [
+            e for e in ups
+            if any("rafter hook user-prompt-submit" in (h.get("command", "") or "")
+                   for h in (e.get("hooks") or []))
+        ]
+        assert len(rafter_entries) == 0, (
+            f"installer wrote a UserPromptSubmit hook even though rafter on PATH "
+            f"doesn't support it: {rafter_entries}"
+        )
+        # And the user must be told why it was skipped.
+        combined = result.stdout + result.stderr
+        assert "Skipped UserPromptSubmit hook" in combined, (
+            f"installer should warn user. got: {combined}"
+        )

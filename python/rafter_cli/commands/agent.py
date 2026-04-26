@@ -80,6 +80,31 @@ agent_app.add_typer(config_app)
 # ── init helpers ─────────────────────────────────────────────────────
 
 
+def _rafter_supports_subcommand(rafter_bin: str, subcommand: list[str]) -> bool:
+    """Probe whether the resolved rafter binary supports a given subcommand.
+
+    Runs `<rafter_bin> <subcommand...> --help` with a short timeout. Returns
+    True iff exit code is 0. Used to avoid wiring hook entries pointing at
+    commands the installed rafter doesn't actually expose (incident rc-txf).
+    """
+    import shlex
+    import subprocess
+
+    try:
+        # rafter_bin may already be a full path or a bare command. Split if
+        # someone passed "node /path/to/index.js" style strings.
+        parts = shlex.split(rafter_bin) if " " in rafter_bin else [rafter_bin]
+        result = subprocess.run(
+            [*parts, *subcommand, "--help"],
+            capture_output=True,
+            timeout=5,
+            text=True,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def _resolve_rafter_path() -> str:
     """Find the absolute path to the rafter binary for reliable hook invocation.
 
@@ -145,6 +170,11 @@ def _install_claude_code_hooks(root: Path) -> None:
     post_command = f"{rafter_bin} hook posttool"
     prompt_command = f"{rafter_bin} hook user-prompt-submit"
 
+    # Probe whether the resolved rafter actually supports user-prompt-submit
+    # BEFORE writing the hook entry. If we wire a hook command that doesn't
+    # exist, every Claude Code prompt errors out — see incident bead rc-txf.
+    prompt_supported = _rafter_supports_subcommand(rafter_bin, ["hook", "user-prompt-submit"])
+
     # Also match old bare "rafter" commands for dedup cleanup
     _old_pre = "rafter hook pretool"
     _old_post = "rafter hook posttool"
@@ -204,14 +234,27 @@ def _install_claude_code_hooks(root: Path) -> None:
         {"matcher": ".*", "hooks": [post_hook]},
     ])
     # UserPromptSubmit has no matcher — fires on every prompt.
-    settings["hooks"]["UserPromptSubmit"].extend([
-        {"hooks": [prompt_hook]},
-    ])
+    # Only install if the resolved rafter actually exposes the subcommand;
+    # otherwise every prompt-submit would error.
+    if prompt_supported:
+        settings["hooks"]["UserPromptSubmit"].extend([
+            {"hooks": [prompt_hook]},
+        ])
+    # If the array is now empty, drop the key entirely so we don't leave an
+    # empty UserPromptSubmit entry behind.
+    if not settings["hooks"]["UserPromptSubmit"]:
+        del settings["hooks"]["UserPromptSubmit"]
 
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
     rprint(fmt.success(f"Installed PreToolUse hooks to {settings_path}"))
     rprint(fmt.success(f"Installed PostToolUse hooks to {settings_path}"))
-    rprint(fmt.success(f"Installed UserPromptSubmit hook (prompt-shield) to {settings_path}"))
+    if prompt_supported:
+        rprint(fmt.success(f"Installed UserPromptSubmit hook (prompt-shield) to {settings_path}"))
+    else:
+        rprint(fmt.warning(
+            f"Skipped UserPromptSubmit hook: '{rafter_bin} hook user-prompt-submit' is not available. "
+            "Upgrade rafter (pip install -U rafter-cli OR npm i -g @rafter-security/cli) and re-run agent init to enable prompt-shield."
+        ))
     if rafter_bin != "rafter":
         rprint(fmt.info(f"Using resolved path: {rafter_bin}"))
 

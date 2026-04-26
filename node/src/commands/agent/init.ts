@@ -6,12 +6,33 @@ import { SkillManager } from "../../utils/skill-manager.js";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import { createInterface } from "readline";
 import { fmt } from "../../utils/formatter.js";
 import { injectInstructionFile } from "./instruction-block.js";
+
+/**
+ * Probe whether the resolved rafter binary supports a given subcommand.
+ *
+ * Runs `rafter <subcommand...> --help` with a 5s timeout. Returns true iff
+ * exit code is 0. Used to avoid wiring hook entries that point at
+ * subcommands the installed rafter doesn't actually expose — the published
+ * rafter on the user's PATH may lag behind the source tree (incident rc-txf).
+ */
+function rafterSupportsSubcommand(subcommand: string[]): boolean {
+  try {
+    const result = spawnSync("rafter", [...subcommand, "--help"], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -172,15 +193,34 @@ function installClaudeCodeHooks(root: string): void {
   settings.hooks.PostToolUse.push(
     { matcher: ".*", hooks: [postHook] },
   );
-  // UserPromptSubmit has no matcher — it fires on every prompt.
-  settings.hooks.UserPromptSubmit.push(
-    { hooks: [promptHook] },
-  );
+
+  // Probe BEFORE writing the UserPromptSubmit hook entry. The published
+  // rafter on the user's PATH may not yet expose `hook user-prompt-submit`,
+  // and wiring a non-existent command would error every prompt-submit. See
+  // incident bead rc-txf — this guard is what prevents that recurring.
+  const promptShieldSupported = rafterSupportsSubcommand(["hook", "user-prompt-submit"]);
+  if (promptShieldSupported) {
+    // UserPromptSubmit has no matcher — it fires on every prompt.
+    settings.hooks.UserPromptSubmit.push(
+      { hooks: [promptHook] },
+    );
+  }
+  // Drop the empty key entirely if we didn't add anything.
+  if (settings.hooks.UserPromptSubmit.length === 0) {
+    delete settings.hooks.UserPromptSubmit;
+  }
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
   console.log(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
   console.log(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
-  console.log(fmt.success(`Installed UserPromptSubmit hook (prompt-shield) to ${settingsPath}`));
+  if (promptShieldSupported) {
+    console.log(fmt.success(`Installed UserPromptSubmit hook (prompt-shield) to ${settingsPath}`));
+  } else {
+    console.log(fmt.warning(
+      `Skipped UserPromptSubmit hook: 'rafter hook user-prompt-submit' is not available on this system. ` +
+      `Upgrade rafter (npm i -g @rafter-security/cli OR pip install -U rafter-cli) and re-run 'rafter agent init' to enable prompt-shield.`
+    ));
+  }
 }
 
 function installCodexHooks(root: string): void {
