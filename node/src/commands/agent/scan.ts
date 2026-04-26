@@ -95,7 +95,7 @@ export function createScanCommand(): Command {
         argv.indexOf("agent") < argv.indexOf("scan");
       if (isAgentScan) {
         process.stderr.write(
-          "Warning: rafter agent scan is deprecated and will be removed in a future major version. Use rafter scan local instead.\n"
+          "Warning: rafter agent scan is deprecated and will be removed in a future major version. Use rafter secrets instead.\n"
         );
       }
       // Load policy-merged config for excludePaths/customPatterns
@@ -152,6 +152,20 @@ export function createScanCommand(): Command {
 
       outputScanResults(applyBaseline(results, baselineEntries), opts);
     });
+}
+
+/**
+ * `rafter secrets` — top-level alias for the secret scanner. Same engine
+ * and flags as `rafter scan local`; the name makes the scope (secrets only,
+ * not full code analysis) explicit to agents and humans.
+ */
+export function createSecretsCommand(): Command {
+  const cmd = createScanCommand();
+  cmd.name("secrets");
+  cmd.description(
+    "Scan files/directories for hardcoded secrets (regex + gitleaks). Secrets only — not a code analysis. For full SAST/SCA, use 'rafter run'.",
+  );
+  return cmd;
 }
 
 /**

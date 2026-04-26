@@ -172,7 +172,7 @@ function displayQuickScan(scan: QuickScanResults, skillName: string): void {
   } else {
     console.log(fmt.warning(`Secrets: ${scan.secrets} found`));
     console.log("   → API keys, tokens, or credentials detected");
-    console.log("   → Run: rafter scan local <path> for details");
+    console.log("   → Run: rafter secrets <path> for details");
   }
 
   // URLs

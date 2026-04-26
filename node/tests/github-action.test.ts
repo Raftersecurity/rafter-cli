@@ -130,7 +130,7 @@ describe("action.yml — structure", () => {
   it("scan step has id 'scan'", () => {
     const scanStep = action.runs.steps.find((s: any) => s.id === "scan");
     expect(scanStep).toBeDefined();
-    expect(scanStep.run).toContain("rafter scan local");
+    expect(scanStep.run).toContain("rafter secrets");
   });
 });
 
@@ -171,8 +171,8 @@ describe("action.yml — scan script logic", () => {
     expect(scanScript).toContain("exit ${EXIT_CODE}");
   });
 
-  it("invokes rafter scan local with inputs", () => {
-    expect(scanScript).toContain("rafter scan local");
+  it("invokes rafter secrets with inputs", () => {
+    expect(scanScript).toContain("rafter secrets");
     expect(scanScript).toContain("inputs.scan-path");
     expect(scanScript).toContain("inputs.format");
   });
