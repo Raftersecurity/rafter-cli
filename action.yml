@@ -26,7 +26,7 @@ inputs:
     required: false
     default: '.'
   args:
-    description: Additional arguments passed to `rafter scan local`
+    description: Additional arguments passed to `rafter secrets`
     required: false
     default: '--quiet'
   version:
@@ -83,7 +83,7 @@ runs:
         set +e
         # Capture stdout (scan results) and stderr (status messages) separately
         STDERR_FILE=$(mktemp)
-        OUTPUT=$(rafter scan local ${{ inputs.scan-path }} ${{ inputs.args }} --format ${{ inputs.format }} 2>"$STDERR_FILE")
+        OUTPUT=$(rafter secrets ${{ inputs.scan-path }} ${{ inputs.args }} --format ${{ inputs.format }} 2>"$STDERR_FILE")
         EXIT_CODE=$?
         STDERR_OUTPUT=$(cat "$STDERR_FILE")
         rm -f "$STDERR_FILE"

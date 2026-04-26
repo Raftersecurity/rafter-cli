@@ -168,6 +168,17 @@ def _install_claude_code_hooks(root: Path) -> None:
             for h in (entry.get("hooks") or [])
         )
     ]
+    # Strip legacy SessionStart entry from <=0.7.4 installs.
+    if isinstance(settings["hooks"].get("SessionStart"), list):
+        settings["hooks"]["SessionStart"] = [
+            entry for entry in settings["hooks"]["SessionStart"]
+            if not any(
+                "rafter hook session-start" in h.get("command", "")
+                for h in (entry.get("hooks") or [])
+            )
+        ]
+        if not settings["hooks"]["SessionStart"]:
+            del settings["hooks"]["SessionStart"]
 
     # Add Rafter hooks
     pre_hook = {"type": "command", "command": pre_command}
@@ -376,6 +387,29 @@ _RAFTER_MCP_ENTRY = {
     "command": "rafter",
     "args": ["mcp", "serve"],
 }
+
+
+def _install_claude_code_mcp(root: Path) -> bool:
+    """Install MCP server config for Claude Code (<root>/.mcp.json).
+
+    Project-scope MCP config that Claude Code auto-loads on startup.
+    """
+    mcp_path = root / ".mcp.json"
+
+    config: dict[str, Any] = {}
+    if mcp_path.exists():
+        try:
+            config = json.loads(mcp_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing .mcp.json was unreadable, creating new one"))
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = {}
+    config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    mcp_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
+    return True
 
 
 def _install_gemini_mcp(root: Path) -> bool:
@@ -677,6 +711,18 @@ def init(
         try:
             _install_claude_code_skills(root)
             _install_claude_code_hooks(root)
+            if scope == "project":
+                components = manager.get("agent.components") or {}
+                if components.get("claude-code.mcp", {}).get("enabled") is False:
+                    rprint(fmt.info("Skipped .mcp.json (claude-code.mcp disabled; re-enable with 'rafter agent enable claude-code.mcp')"))
+                else:
+                    _install_claude_code_mcp(root)
+                    from datetime import datetime, timezone
+                    components["claude-code.mcp"] = {
+                        "enabled": True,
+                        "updatedAt": datetime.now(timezone.utc).isoformat(),
+                    }
+                    manager.set("agent.components", components)
             if scope == "user":
                 manager.set("agent.environments.claude_code.enabled", True)
             claude_code_ok = True
@@ -820,7 +866,7 @@ def init(
         rprint("No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
 
     rprint()
-    rprint("  - Run: rafter scan local . (test secret scanning)")
+    rprint("  - Run: rafter secrets . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
     rprint()
 
@@ -1096,10 +1142,10 @@ def scan(
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires gitleaks engine)"),
 ):
-    """Scan files or directories for secrets. [deprecated: use 'rafter scan local' instead]"""
+    """Scan files or directories for secrets. [deprecated: use 'rafter secrets' instead]"""
     print(
         "Warning: rafter agent scan is deprecated and will be removed in a future major version. "
-        "Use rafter scan local instead.",
+        "Use rafter secrets instead.",
         file=sys.stderr,
     )
     manager = ConfigManager()
@@ -1422,7 +1468,7 @@ def exec_cmd(
                 if results:
                     rprint(f"\n{fmt.warning('Secrets detected in staged files!')}\n")
                     print(f"Found {total} secret(s) in {len(results)} file(s)", file=sys.stderr)
-                    rprint(f"\nRun 'rafter scan local' for details.\n")
+                    rprint(f"\nRun 'rafter secrets' for details.\n")
                     interceptor.log_evaluation(evaluation, "blocked")
                     raise typer.Exit(code=1)
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -1794,7 +1840,7 @@ def _display_quick_scan(scan: QuickScanResults, skill_name: str) -> None:
     else:
         print(f"\u26a0\ufe0f  Secrets: {scan.secrets} found")
         print("   \u2192 API keys, tokens, or credentials detected")
-        print("   \u2192 Run: rafter scan local <path> for details")
+        print("   \u2192 Run: rafter secrets <path> for details")
 
     # URLs
     if not scan.urls:

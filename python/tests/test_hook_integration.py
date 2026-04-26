@@ -305,7 +305,7 @@ class TestInstallHookRealRepo:
         assert hook_path.exists()
         installed = hook_path.read_text()
         assert "Rafter Security Pre-Commit Hook" in installed
-        assert "rafter scan local" in installed
+        assert "rafter secrets" in installed
         assert hook_path.stat().st_mode & stat.S_IXUSR
 
     def test_creates_pre_push_hook(self, git_repo):
@@ -324,7 +324,7 @@ class TestInstallHookRealRepo:
         assert hook_path.exists()
         installed = hook_path.read_text()
         assert "Rafter Security Pre-Push Hook" in installed
-        assert "rafter scan local" in installed
+        assert "rafter secrets" in installed
 
     def test_backs_up_existing_non_rafter_hook(self, git_repo):
         hooks_dir = git_repo / ".git" / "hooks"

@@ -43,7 +43,7 @@ class TestTemplates:
         content = _github_template(with_backend=False)
         assert "actions/checkout@v4" in content
         assert "pip install rafter-cli" in content
-        assert "rafter scan local . --quiet" in content
+        assert "rafter secrets . --quiet" in content
         assert "security-audit" not in content
 
     def test_github_template_with_backend(self):
@@ -86,7 +86,7 @@ class TestCiInitCommand:
         assert result.exit_code == 0
         generated = tmp_path / ".github" / "workflows" / "rafter-security.yml"
         assert generated.exists()
-        assert "rafter scan local" in generated.read_text()
+        assert "rafter secrets" in generated.read_text()
 
     def test_explicit_gitlab(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -133,4 +133,4 @@ class TestCiInitCommand:
         result = runner.invoke(app, ["ci", "init", "--platform", "github", "--output", str(custom)])
         assert result.exit_code == 0
         assert custom.exists()
-        assert "rafter scan local" in custom.read_text()
+        assert "rafter secrets" in custom.read_text()

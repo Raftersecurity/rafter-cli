@@ -145,6 +145,16 @@ function installClaudeCodeHooks(root: string): void {
       return !hooks.some((h: any) => h.command === "rafter hook posttool");
     }
   );
+  // Strip legacy SessionStart entry left over from <=0.7.4 installs.
+  if (Array.isArray(settings.hooks.SessionStart)) {
+    settings.hooks.SessionStart = settings.hooks.SessionStart.filter(
+      (entry: any) => {
+        const hooks = entry.hooks || [];
+        return !hooks.some((h: any) => h.command === "rafter hook session-start");
+      }
+    );
+    if (settings.hooks.SessionStart.length === 0) delete settings.hooks.SessionStart;
+  }
 
   // Add Rafter hooks
   settings.hooks.PreToolUse.push(
@@ -378,6 +388,30 @@ const RAFTER_MCP_ENTRY = {
   command: "rafter",
   args: ["mcp", "serve"],
 };
+
+/**
+ * Install MCP server config for Claude Code (<root>/.mcp.json).
+ * Project-scope MCP config that Claude Code auto-loads on startup.
+ */
+function installClaudeCodeMcp(root: string): boolean {
+  const mcpPath = path.join(root, ".mcp.json");
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(mcpPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing .mcp.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!config.mcpServers) config.mcpServers = {};
+  config.mcpServers.rafter = { ...RAFTER_MCP_ENTRY };
+
+  fs.writeFileSync(mcpPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log(fmt.success(`Installed Rafter MCP server to ${mcpPath}`));
+  return true;
+}
 
 /**
  * Install MCP server config for Gemini CLI (~/.gemini/settings.json)
@@ -854,6 +888,16 @@ export function createInitCommand(): Command {
         try {
           await installClaudeCodeSkills(root);
           installClaudeCodeHooks(root);
+          if (scope === "project") {
+            const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
+            if (components["claude-code.mcp"]?.enabled === false) {
+              console.log(fmt.info("Skipped .mcp.json (claude-code.mcp disabled; re-enable with `rafter agent enable claude-code.mcp`)"));
+            } else {
+              installClaudeCodeMcp(root);
+              components["claude-code.mcp"] = { enabled: true, updatedAt: new Date().toISOString() };
+              manager.set("agent.components", components);
+            }
+          }
           if (scope === "user") manager.set("agent.environments.claudeCode.enabled", true);
           claudeCodeOk = true;
         } catch (e) {
@@ -986,7 +1030,7 @@ export function createInitCommand(): Command {
         console.log("No agent environments detected. Install an agent tool and re-run with --with-<tool>.");
       }
       console.log();
-      console.log("  - Run: rafter scan local . (test secret scanning)");
+      console.log("  - Run: rafter secrets . (test secret scanning)");
       console.log("  - Configure: rafter agent config show");
       console.log();
 
