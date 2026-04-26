@@ -5,11 +5,16 @@ import json
 import os
 import pathlib
 import re
+import site
 import subprocess
 import sys
 import tempfile
 
 import pytest
+
+# Captured under the real HOME so user-site packages (e.g. typer) remain
+# importable in subprocesses launched with HOME overridden via env_override.
+_USER_BASE = site.getuserbase()
 
 
 def rafter(args, *, cwd=None, env_override=None):
@@ -17,6 +22,7 @@ def rafter(args, *, cwd=None, env_override=None):
     if isinstance(args, str):
         args = args.split()
     env = os.environ.copy()
+    env["PYTHONUSERBASE"] = _USER_BASE
     if env_override:
         env.update(env_override)
     result = subprocess.run(
