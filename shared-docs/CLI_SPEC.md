@@ -1082,3 +1082,65 @@ rafter agent config set agent.riskLevel aggressive
 - All scan data to stdout, all status messages to stderr
 - `--quiet` suppresses stderr; stdout is unaffected
 - Agent commands are available in both Node and Python implementations
+
+---
+
+## Experimental Commands
+
+These commands are exposed but **hidden from `--help`** until their parallel
+APPROVE bead closes. Output contracts are not yet stable. Do not depend on
+them in production.
+
+### `rafter scan injection <path>` — prompt-injection detection
+
+Pattern-based detector for prompt-injection markers in arbitrary text.
+Designed for spot-checks of tool responses (webpage content, issue bodies,
+documents) before passing them to an agent. See
+`docs/research/prompt-injection-detector.md` for design and limitations.
+
+```
+rafter scan injection <path>          # path or - for stdin
+  --min-severity <level>              # low | medium | high | critical (default low)
+  --fail-on <level>                   # exit 1 when finding ≥ this (default medium)
+  --json                              # JSON output instead of human-readable
+  --quiet                             # suppress non-essential output
+```
+
+**Exit codes**:
+- `0` — clean, or all findings below `--fail-on`
+- `1` — finding ≥ `--fail-on` severity
+- `2` — read error
+
+**JSON shape**:
+```json
+{
+  "findings": [
+    {
+      "category": "role_override",
+      "severity": "high",
+      "pattern": "ignore_previous_instructions",
+      "evidence": "windowed snippet of the match",
+      "offset": 7,
+      "description": "..."
+    }
+  ],
+  "score": 35,
+  "verdict": "suspicious"
+}
+```
+
+`verdict` ∈ `clean | suspicious | likely_injection`. `score` is 0–100.
+
+**Known limitations**: pattern-based, English-only, trivially bypassable by
+paraphrase. Pair with a model-based judge for production use.
+
+### `rafter hook posttool --experimental-prompt-injection`
+
+When set, the PostToolUse hook scans `tool_response.output` and
+`tool_response.content` for prompt-injection markers and writes a warning
+to stderr. **Does not modify the response.** Off by default.
+
+```
+--experimental-prompt-injection             # enable detector
+--prompt-injection-min-severity <level>     # default high
+```
