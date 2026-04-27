@@ -61,7 +61,7 @@ rafter usage
 rafter agent init
 
 # Scan files for secrets
-rafter agent scan .
+rafter scan local .
 
 # Execute commands safely
 rafter agent exec "git commit -m 'Add feature'"
@@ -179,7 +179,7 @@ rafter agent init --with-claude-code   # Install Claude Code integration only
 rafter agent init --risk-level aggressive
 ```
 
-### `rafter agent scan [path] [options]`
+### `rafter scan local [path] [options]`
 
 Scan files or directories for secrets.
 
@@ -201,20 +201,20 @@ Scan files or directories for secrets.
 **Examples:**
 ```bash
 # Scan current directory
-rafter agent scan
+rafter scan local
 
 # Scan specific file
-rafter agent scan ./config.js
+rafter scan local ./config.js
 
 # Scan files changed since a ref
-rafter agent scan --diff HEAD~1
-rafter agent scan --diff main
+rafter scan local --diff HEAD~1
+rafter scan local --diff main
 
 # Scan for CI (quiet mode)
-rafter agent scan --quiet
+rafter scan local --quiet
 
 # JSON output for processing
-rafter agent scan --json
+rafter scan local --json
 ```
 
 **Detected patterns:**
@@ -368,7 +368,7 @@ git commit -m "Update config"
 🔍 Rafter: Scanning staged files for secrets...
 ❌ Commit blocked: Secrets detected in staged files
 
-   Run: rafter agent scan --staged
+   Run: rafter scan local --staged
    To see details and remediate.
 ```
 
@@ -601,7 +601,7 @@ When OpenClaw is detected, `rafter agent init` automatically installs a skill to
 ```bash
 # In OpenClaw, use Rafter commands naturally:
 "Scan this directory for secrets"
-# OpenClaw will call: rafter agent scan .
+# OpenClaw will call: rafter scan local .
 
 "Audit this skill for security issues"
 # OpenClaw will call: /rafter-audit-skill <path>
