@@ -109,6 +109,7 @@ def scan_local(
         _load_baseline_entries,
     )
     from ..core.config_manager import ConfigManager
+    from ..core.custom_patterns import load_suppressions, policy_ignore_to_suppressions
 
     manager = ConfigManager()
     cfg = manager.load_with_policy()
@@ -118,6 +119,10 @@ def scan_local(
         [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns]
         if scan_cfg.custom_patterns else None
     )
+
+    # Combine policy-derived ignore rules with .rafterignore. Policy first so
+    # an explicit reason wins over a bare .rafterignore line.
+    suppressions = policy_ignore_to_suppressions(scan_cfg.ignore) + load_suppressions()
 
     baseline_entries = _load_baseline_entries() if baseline else []
 
@@ -159,7 +164,7 @@ def scan_local(
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
         filtered = _apply_baseline(all_results, baseline_entries)
-        _output_scan_results(filtered, json_output, quiet, f"files changed since {diff}", format=format)
+        _output_scan_results(filtered, json_output, quiet, f"files changed since {diff}", format=format, suppressions=suppressions)
         return
 
     # --staged
@@ -196,7 +201,7 @@ def scan_local(
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
         filtered = _apply_baseline(all_results, baseline_entries)
-        _output_scan_results(filtered, json_output, quiet, "staged files", format=format)
+        _output_scan_results(filtered, json_output, quiet, "staged files", format=format, suppressions=suppressions)
         return
 
     # Default: scan path
@@ -207,7 +212,7 @@ def scan_local(
 
     # --watch
     if watch:
-        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg)
+        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions)
         return
 
     eng = _select_engine(engine, quiet)
@@ -222,7 +227,7 @@ def scan_local(
         results = _scan_file(resolved_path, eng, custom_patterns)
 
     filtered = _apply_baseline(results, baseline_entries)
-    _output_scan_results(filtered, json_output, quiet, format=format)
+    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions)
 
 
 # ── rafter secrets — top-level alias for local secret scanning ────────

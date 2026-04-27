@@ -363,6 +363,38 @@ The raw secret value is never included in JSON output.
 
 **Why `_note`?** Local scans are pattern-only — they cannot tell whether a finding is in a public-facing file, whether the key is still valid, or whether it ever shipped. Backend scans (`rafter run`) apply agentic context. The `_note` exists so agents and reviewers don't treat local findings as final verdicts — they should investigate each, but the absence of agentic triage is *not* an excuse to dismiss findings.
 
+##### Suppression-aware output shape
+
+When `.rafter.yml` `ignore:` rules (or `.rafterignore`) hide one or more findings, an `_suppressed` field is added to the wrapper so the consumer can see what was suppressed and why. The field is omitted when no findings are hidden.
+
+```json
+{
+  "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. ...",
+  "scan_mode": "local",
+  "triage_applied": false,
+  "results": [ /* same shape as without suppression */ ],
+  "_suppressed": [
+    {
+      "file": "/abs/path/tests/fixtures/fake.env",
+      "line": 3,
+      "column": 7,
+      "rule": "AWS Access Key",
+      "severity": "critical",
+      "reason": "test fixtures with fake AWS keys",
+      "source": ".rafter.yml"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `_suppressed` | array (optional) | Each hidden finding, with file/line/column, rule name, severity, reason, and source. Absent when no suppression occurred. |
+| `_suppressed[].source` | string | `".rafter.yml"` for policy ignore rules, `".rafterignore"` for the legacy file |
+| `_suppressed[].reason` | string\|null | The `reason:` from the matching ignore rule, or `null` for `.rafterignore` lines |
+
+Exit code is unaffected by suppression — exit `1` is returned only when at least one *non-suppressed* finding remains.
+
 ### rafter agent exec COMMAND [OPTIONS]
 
 Execute shell command with risk assessment and approval workflow.
@@ -973,6 +1005,12 @@ scan:
     - name: "Internal API Key"
       regex: "INTERNAL_[A-Z0-9]{32}"
       severity: critical
+ignore:
+  - paths: ["tests/fixtures/**", "*.example.env"]
+    rules: ["AWS Access Key", "Generic API Key"]
+    reason: "test fixtures with fake credentials"
+  - paths: ["docs/**"]
+    reason: "documentation examples"
 audit:
   retention_days: 90
   log_level: info
@@ -999,6 +1037,8 @@ Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not a
 - Unknown keys per-entry are ignored with a warning.
 
 **URL caching:** URL-backed docs are cached at `~/.rafter/docs-cache/` keyed by `sha256(url)[:32]`. Default TTL is 86400 seconds. On network failure, a stale cached copy is served and a warning is printed. `docs list` never fetches; `docs show` fetches on miss/expired or when `--refresh` is set.
+
+**Ignore rules (`ignore:`):** suppress findings without removing them from the audit trail. Each entry needs `paths:` (a non-empty list of globs); `rules:` is optional (omitting it suppresses every rule on the matched paths) and `reason:` is surfaced verbatim in the JSON `_suppressed` output. Path globs are matched anywhere along absolute scan paths — `tests/fixtures/**` matches `/abs/project/tests/fixtures/foo`. Rule-name matching is case-insensitive; non-existent rule names are harmless (they just never match). First entry that matches wins, so put more specific entries earlier.
 
 ---
 
