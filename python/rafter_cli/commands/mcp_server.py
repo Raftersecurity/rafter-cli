@@ -41,8 +41,11 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
                             {
                                 "pattern": m.pattern.name,
                                 "severity": m.pattern.severity,
+                                "confidence": getattr(m.pattern, "confidence", None) or "high",
                                 "line": m.line,
                                 "redacted": m.redacted or m.match[:4] + "****",
+                                "fingerprint": getattr(m, "fingerprint", "") or None,
+                                "remediation": getattr(m.pattern, "remediation", "") or None,
                             }
                             for m in r.matches
                         ],
@@ -72,8 +75,11 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
                 {
                     "pattern": m.pattern.name,
                     "severity": m.pattern.severity,
+                    "confidence": getattr(m.pattern, "confidence", None) or "high",
                     "line": m.line,
                     "redacted": m.redacted or m.match[:4] + "****",
+                    "fingerprint": getattr(m, "fingerprint", "") or None,
+                    "remediation": getattr(m.pattern, "remediation", "") or None,
                 }
                 for m in r.matches
             ],

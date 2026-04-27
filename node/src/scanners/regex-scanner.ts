@@ -34,9 +34,9 @@ export class RegexScanner {
   scanFile(filePath: string): ScanResult {
     try {
       const content = fs.readFileSync(filePath, "utf-8");
-      const raw = this.engine.scanWithPosition(content);
+      const raw = this.engine.scanWithPosition(content, filePath);
       const matches = raw.filter(
-        (m) => !isSuppressed(filePath, m.pattern.name, this.suppressions)
+        (m) => !isSuppressed(filePath, m.pattern.name, this.suppressions, m.fingerprint)
       );
       return { file: filePath, matches };
     } catch (e) {

@@ -81,7 +81,10 @@ def _load_json(path: Path) -> list[Pattern]:
                 name=entry.get("name", f"Custom ({path.stem})"),
                 regex=entry["pattern"],
                 severity=severity,
-                description=entry.get("description"),
+                description=entry.get("description") or "",
+                confidence=entry.get("confidence", "high"),
+                remediation=entry.get("remediation", "") or "",
+                min_entropy=entry.get("min_entropy"),
             ))
         return patterns
     except (OSError, json.JSONDecodeError, KeyError):
@@ -96,6 +99,10 @@ def _load_json(path: Path) -> list[Pattern]:
 class Suppression:
     path_glob: str
     pattern_name: Optional[str] = None
+    fingerprint: Optional[str] = None
+
+
+_FINGERPRINT_HEX = re.compile(r"^[0-9a-f]{16}$", re.IGNORECASE)
 
 
 def load_suppressions(project_root: str | Path | None = None) -> list[Suppression]:
@@ -104,6 +111,7 @@ def load_suppressions(project_root: str | Path | None = None) -> list[Suppressio
     Format — one entry per line:
         path/glob                 → suppress all findings in matching files
         path/glob:pattern-name    → suppress specific pattern in matching files
+        fingerprint:<16hex>       → suppress by stable hash, regardless of path
 
     Lines starting with # are comments.
     """
@@ -118,6 +126,11 @@ def load_suppressions(project_root: str | Path | None = None) -> list[Suppressio
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
+            if line.lower().startswith("fingerprint:"):
+                fp = line[len("fingerprint:"):].strip()
+                if _FINGERPRINT_HEX.match(fp):
+                    suppressions.append(Suppression(path_glob="**", fingerprint=fp.lower()))
+                continue
             colon = line.find(":")
             if colon == -1:
                 suppressions.append(Suppression(path_glob=line))
@@ -131,9 +144,18 @@ def load_suppressions(project_root: str | Path | None = None) -> list[Suppressio
     return suppressions
 
 
-def is_suppressed(file_path: str, pattern_name: str, suppressions: list[Suppression]) -> bool:
+def is_suppressed(
+    file_path: str,
+    pattern_name: str,
+    suppressions: list[Suppression],
+    fingerprint: str | None = None,
+) -> bool:
     """Return True if this finding should be suppressed."""
     for s in suppressions:
+        if s.fingerprint:
+            if fingerprint and s.fingerprint.lower() == fingerprint.lower():
+                return True
+            continue
         if _match_glob(s.path_glob, file_path):
             if s.pattern_name is None or s.pattern_name.lower() == pattern_name.lower():
                 return True

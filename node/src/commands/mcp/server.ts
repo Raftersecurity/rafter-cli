@@ -23,8 +23,11 @@ interface ScanResultOutput {
   matches: Array<{
     pattern: string;
     severity: string;
+    confidence: string;
     line: number | undefined;
     redacted: string;
+    fingerprint: string | null;
+    remediation: string | null;
   }>;
 }
 
@@ -34,8 +37,11 @@ function formatScanResults(results: Array<{ file: string; matches: any[] }>): Sc
     matches: r.matches.map(m => ({
       pattern: m.pattern.name,
       severity: m.pattern.severity,
+      confidence: m.pattern.confidence ?? "high",
       line: m.line,
       redacted: m.redacted || m.match.slice(0, 4) + "****",
+      fingerprint: m.fingerprint ?? null,
+      remediation: m.pattern.remediation ?? null,
     })),
   }));
 }

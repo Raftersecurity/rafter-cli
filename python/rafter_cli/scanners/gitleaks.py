@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
-from ..core.pattern_engine import Pattern, PatternMatch
+from ..core.pattern_engine import Pattern, PatternMatch, fingerprint_for
 from ..utils.binary_manager import BinaryManager
 
 
@@ -154,19 +154,31 @@ class GitleaksScanner:
     @staticmethod
     def _convert(result: dict) -> PatternMatch:
         rule_id = result.get("RuleID", result.get("Description", "unknown"))
-        severity = GitleaksScanner._get_severity(rule_id, result.get("Tags", []))
+        tags = result.get("Tags", []) or []
+        entropy = float(result.get("Entropy", 0.0) or 0.0)
+        severity = GitleaksScanner._get_severity(rule_id, tags)
+        confidence = GitleaksScanner._get_confidence(rule_id, entropy)
+        remediation = GitleaksScanner._get_remediation(rule_id, tags)
         secret = result.get("Secret", result.get("Match", ""))
+        redacted = GitleaksScanner._redact(secret)
+        # Always compute our own stable hash; Gitleaks's Fingerprint format is
+        # `<file>:<rule>:<line>` which leaks path data and isn't a hash.
+        fingerprint = fingerprint_for(result.get("File", "") or "", rule_id, redacted)
         return PatternMatch(
             pattern=Pattern(
                 name=rule_id,
                 regex="",
                 severity=severity,
                 description=result.get("Description", ""),
+                confidence=confidence,
+                remediation=remediation,
             ),
             match=secret,
             line=result.get("StartLine"),
             column=result.get("StartColumn"),
-            redacted=GitleaksScanner._redact(secret),
+            redacted=redacted,
+            fingerprint=fingerprint,
+            entropy=entropy,
         )
 
     @staticmethod
@@ -179,6 +191,32 @@ class GitleaksScanner:
         if "generic" in lower:
             return "medium"
         return "high"
+
+    @staticmethod
+    def _get_confidence(rule_id: str, entropy: float) -> str:
+        lower = (rule_id or "").lower()
+        if "generic" in lower or lower.startswith("token-"):
+            return "medium" if entropy >= 4.5 else "low"
+        return "high"
+
+    @staticmethod
+    def _get_remediation(rule_id: str, tags: list) -> str:
+        lower = (rule_id or "").lower()
+        t = [x.lower() for x in tags]
+        if "private-key" in lower or "private-key" in t:
+            return ("Generate a new keypair, deploy the new public key, and revoke the old one. "
+                    "Never commit private keys; use ssh-agent or a KMS for storage.")
+        if any(k in lower for k in ("aws", "gcp", "azure")):
+            return ("Rotate the credential in the provider's console immediately. Reference via env var "
+                    "or a secret manager. Git history retains the secret — rotation is mandatory.")
+        if any(k in lower for k in ("database", "postgres", "mysql", "mongo")):
+            return ("Rotate database credentials immediately. Reference via env var or a secret manager. "
+                    "Audit access logs for unauthorized use.")
+        if "jwt" in lower:
+            return ("If real, rotate the JWT signing key — every token signed with the old key is now "
+                    "untrusted. If example/test data, move to a fixture not committed to git.")
+        return ("Revoke the credential at the issuer, generate a new one, and reference via env var or "
+                "secret manager. Git history retains the secret — rotation is mandatory.")
 
     @staticmethod
     def _redact(match: str) -> str:
