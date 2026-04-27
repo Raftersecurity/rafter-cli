@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { PatternEngine, PatternMatch, Pattern } from "../core/pattern-engine.js";
 import { DEFAULT_SECRET_PATTERNS } from "./secret-patterns.js";
-import { loadCustomPatterns, loadSuppressions, isSuppressed, Suppression } from "../core/custom-patterns.js";
+import { loadCustomPatterns } from "../core/custom-patterns.js";
 
 export interface ScanResult {
   file: string;
@@ -11,7 +11,6 @@ export interface ScanResult {
 
 export class RegexScanner {
   private engine: PatternEngine;
-  private suppressions: Suppression[];
 
   constructor(customPatterns?: Array<{ name: string; regex: string; severity: string }>) {
     const patterns: Pattern[] = [...DEFAULT_SECRET_PATTERNS, ...loadCustomPatterns()];
@@ -25,19 +24,16 @@ export class RegexScanner {
       }
     }
     this.engine = new PatternEngine(patterns);
-    this.suppressions = loadSuppressions();
   }
 
   /**
-   * Scan a single file for secrets
+   * Scan a single file for secrets. Suppression is applied at the scan
+   * command boundary (engine-agnostic), not here.
    */
   scanFile(filePath: string): ScanResult {
     try {
       const content = fs.readFileSync(filePath, "utf-8");
-      const raw = this.engine.scanWithPosition(content);
-      const matches = raw.filter(
-        (m) => !isSuppressed(filePath, m.pattern.name, this.suppressions)
-      );
+      const matches = this.engine.scanWithPosition(content);
       return { file: filePath, matches };
     } catch (e) {
       return { file: filePath, matches: [] };

@@ -8,6 +8,12 @@ export interface ScanCustomPattern {
   severity: 'low' | 'medium' | 'high' | 'critical';
 }
 
+export interface ScanIgnoreRule {
+  paths: string[];
+  rules?: string[];
+  reason?: string;
+}
+
 export interface RafterConfig {
   version: string;
   initialized: string;
@@ -84,6 +90,7 @@ export interface RafterConfig {
     scan?: {
       excludePaths?: string[];
       customPatterns?: ScanCustomPattern[];
+      ignore?: ScanIgnoreRule[];
     };
     /**
      * Fine-grained per-component install state. Keys are component IDs like
