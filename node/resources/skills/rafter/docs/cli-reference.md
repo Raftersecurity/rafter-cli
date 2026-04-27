@@ -40,6 +40,16 @@ Useful flags: `--history` (scan git history with Gitleaks), `--format json`, `--
 
 Example: `rafter secrets . --format json`
 
+Each finding includes:
+
+- `pattern.severity` — blast radius if exploited (`low|medium|high|critical`).
+- `pattern.confidence` — how sure we are it's a real secret (`low|medium|high`). Independent of severity.
+- `redacted` — first/last 4 chars only. **Never log or echo the raw value.**
+- `fingerprint` — 16-hex sha256 of `(file + rule + redacted)`. Use this in `.rafterignore` to suppress one specific finding without depending on line numbers.
+- `remediation` — rotation/storage guidance for that pattern category.
+
+**Hard rule for agents:** never print, paste, or transmit a raw matched secret. The CLI never emits raw values; if you've extracted one some other way (e.g. by reading the file directly), redact it before mentioning it in a PR description, issue, log, or chat. Even `redacted` previews should not be quoted in user-facing artifacts unless necessary.
+
 (Back-compat aliases: `rafter scan local` and `rafter agent scan`. Prefer `rafter secrets`.)
 
 ### `rafter get <scan-id>`

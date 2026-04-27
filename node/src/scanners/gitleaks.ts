@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { randomBytes } from "crypto";
 import { BinaryManager } from "../utils/binary-manager.js";
-import { PatternMatch } from "../core/pattern-engine.js";
+import { PatternMatch, fingerprintFor } from "../core/pattern-engine.js";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -201,19 +201,62 @@ export class GitleaksScanner {
   private convertToPatternMatch(result: GitleaksResult): PatternMatch {
     // Map Gitleaks severity to our levels
     const severity = this.getSeverity(result.RuleID, result.Tags);
+    const confidence = this.getConfidence(result.RuleID, result.Entropy);
+    const remediation = this.getRemediation(result.RuleID, result.Tags);
+    const secret = result.Secret || result.Match;
+    const redacted = this.redact(secret);
 
     return {
       pattern: {
         name: result.RuleID || result.Description,
         regex: "", // Gitleaks doesn't expose the regex
         severity,
-        description: result.Description
+        confidence,
+        description: result.Description,
+        remediation,
       },
-      match: result.Secret || result.Match,
+      match: secret,
       line: result.StartLine,
       column: result.StartColumn,
-      redacted: this.redact(result.Secret || result.Match)
+      redacted,
+      entropy: result.Entropy,
+      // Always compute our own stable hash; Gitleaks's Fingerprint format is
+      // `<file>:<rule>:<line>` which leaks path data and isn't a hash.
+      fingerprint: fingerprintFor(result.File || "", result.RuleID || result.Description, redacted),
     };
+  }
+
+  /**
+   * Confidence tier based on Gitleaks rule ID + entropy
+   */
+  private getConfidence(ruleID: string, entropy: number): "low" | "medium" | "high" {
+    const id = (ruleID || "").toLowerCase();
+    if (id.includes("generic") || id.startsWith("token-")) {
+      if (entropy >= 4.5) return "medium";
+      return "low";
+    }
+    return "high";
+  }
+
+  /**
+   * Remediation suggestion based on Gitleaks rule ID + tags
+   */
+  private getRemediation(ruleID: string, tags: string[]): string {
+    const id = (ruleID || "").toLowerCase();
+    const t = tags.map(x => x.toLowerCase());
+    if (id.includes("private-key") || t.includes("private-key")) {
+      return "Generate a new keypair, deploy the new public key, and revoke the old one. Never commit private keys; use ssh-agent or a KMS for storage.";
+    }
+    if (id.includes("aws") || id.includes("gcp") || id.includes("azure")) {
+      return "Rotate the credential in the provider's console immediately. Reference via env var or a secret manager. Git history retains the secret — rotation is mandatory.";
+    }
+    if (id.includes("database") || id.includes("postgres") || id.includes("mysql") || id.includes("mongo")) {
+      return "Rotate database credentials immediately. Reference via env var or a secret manager. Audit access logs for unauthorized use.";
+    }
+    if (id.includes("jwt")) {
+      return "If real, rotate the JWT signing key — every token signed with the old key is now untrusted. If example/test data, move to a fixture not committed to git.";
+    }
+    return "Revoke the credential at the issuer, generate a new one, and reference via env var or secret manager. Git history retains the secret — rotation is mandatory.";
   }
 
   /**

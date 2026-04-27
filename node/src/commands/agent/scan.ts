@@ -172,18 +172,32 @@ export function createSecretsCommand(): Command {
  * Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration
  */
 function outputSarif(results: ScanResult[]): void {
-  const rules = new Map<string, { id: string; name: string; shortDescription: string }>();
+  interface SarifRule {
+    id: string;
+    name: string;
+    shortDescription: { text: string };
+    help?: { text: string };
+    properties?: { confidence?: string };
+  }
+  const rules = new Map<string, SarifRule>();
   const sarifResults: object[] = [];
 
   for (const r of results) {
     for (const m of r.matches) {
       const ruleId = m.pattern.name.toLowerCase().replace(/\s+/g, "-");
       if (!rules.has(ruleId)) {
-        rules.set(ruleId, {
+        const rule: SarifRule = {
           id: ruleId,
           name: m.pattern.name,
-          shortDescription: m.pattern.description || m.pattern.name,
-        });
+          shortDescription: { text: m.pattern.description || m.pattern.name },
+        };
+        if (m.pattern.remediation) {
+          rule.help = { text: m.pattern.remediation };
+        }
+        if (m.pattern.confidence) {
+          rule.properties = { confidence: m.pattern.confidence };
+        }
+        rules.set(ruleId, rule);
       }
       sarifResults.push({
         ruleId,
@@ -197,6 +211,10 @@ function outputSarif(results: ScanResult[]): void {
             },
           },
         ],
+        properties: {
+          confidence: m.pattern.confidence ?? "high",
+          fingerprint: m.fingerprint,
+        },
       });
     }
   }
@@ -248,10 +266,17 @@ function outputScanResults(
     const resultsOut = results.map((r) => ({
       file: r.file,
       matches: r.matches.map((m) => ({
-        pattern: { name: m.pattern.name, severity: m.pattern.severity, description: m.pattern.description || "" },
+        pattern: {
+          name: m.pattern.name,
+          severity: m.pattern.severity,
+          confidence: m.pattern.confidence ?? "high",
+          description: m.pattern.description || "",
+        },
         line: m.line ?? null,
         column: m.column ?? null,
         redacted: m.redacted || "",
+        fingerprint: m.fingerprint ?? null,
+        remediation: m.pattern.remediation ?? null,
       })),
     }));
     const out = {
@@ -288,11 +313,18 @@ function outputScanResults(
       totalMatches++;
       const location = match.line ? `Line ${match.line}` : "Unknown location";
       const sev = fmt.severity(match.pattern.severity);
+      const conf = match.pattern.confidence ?? "high";
 
-      console.log(`  ${sev} ${match.pattern.name}`);
+      console.log(`  ${sev} ${match.pattern.name} (confidence: ${conf})`);
       console.log(`     Location: ${location}`);
       console.log(`     Pattern: ${match.pattern.description || match.pattern.regex}`);
       console.log(`     Redacted: ${match.redacted}`);
+      if (match.fingerprint) {
+        console.log(`     Fingerprint: ${match.fingerprint}`);
+      }
+      if (match.pattern.remediation) {
+        console.log(`     Remediation: ${match.pattern.remediation}`);
+      }
       console.log();
     }
   }

@@ -1,8 +1,15 @@
+import { createHash } from "crypto";
+
+export type Confidence = "low" | "medium" | "high";
+
 export interface Pattern {
   name: string;
   regex: string;
   severity: "low" | "medium" | "high" | "critical";
   description?: string;
+  confidence?: Confidence;
+  remediation?: string;
+  minEntropy?: number;
 }
 
 export interface PatternMatch {
@@ -11,12 +18,46 @@ export interface PatternMatch {
   line?: number;
   column?: number;
   redacted?: string;
+  fingerprint?: string;
+  entropy?: number;
 }
 
 const GENERIC_PATTERN_NAMES = new Set(["Generic API Key", "Generic Secret"]);
 const VARIABLE_NAME_RE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
 const LOWERCASE_IDENT_RE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
 const QUOTED_VALUE_RE = /['"]([^'"]+)['"]/;
+
+/**
+ * Shannon entropy of a string (log base 2).
+ * Used to filter low-entropy false-positives on generic patterns.
+ */
+export function shannonEntropy(s: string): number {
+  if (!s) return 0;
+  const freq: Record<string, number> = {};
+  for (const ch of s) freq[ch] = (freq[ch] || 0) + 1;
+  let h = 0;
+  const len = s.length;
+  for (const k in freq) {
+    const p = freq[k] / len;
+    h -= p * Math.log2(p);
+  }
+  return h;
+}
+
+/**
+ * Stable fingerprint for suppression. Hashes (file + rule + redacted) so the
+ * fingerprint survives line moves but changes if the secret value changes.
+ * Never includes the raw secret value.
+ */
+export function fingerprintFor(filePath: string, ruleName: string, redacted: string): string {
+  const h = createHash("sha256");
+  h.update(filePath);
+  h.update("\0");
+  h.update(ruleName);
+  h.update("\0");
+  h.update(redacted);
+  return h.digest("hex").substring(0, 16);
+}
 
 export class PatternEngine {
   private patterns: Pattern[];
@@ -28,7 +69,7 @@ export class PatternEngine {
   /**
    * Scan text for pattern matches
    */
-  scan(text: string): PatternMatch[] {
+  scan(text: string, filePath: string = ""): PatternMatch[] {
     const matches: PatternMatch[] = [];
 
     for (const pattern of this.patterns) {
@@ -37,10 +78,15 @@ export class PatternEngine {
 
       while ((match = regex.exec(text)) !== null) {
         if (this.isFalsePositive(pattern, match[0])) continue;
+        const entropy = shannonEntropy(match[0]);
+        if (pattern.minEntropy !== undefined && entropy < pattern.minEntropy) continue;
+        const redacted = this.redact(match[0]);
         matches.push({
           pattern,
           match: match[0],
-          redacted: this.redact(match[0])
+          redacted,
+          entropy,
+          fingerprint: fingerprintFor(filePath, pattern.name, redacted),
         });
       }
     }
@@ -51,7 +97,7 @@ export class PatternEngine {
   /**
    * Scan text with line/column information
    */
-  scanWithPosition(text: string): PatternMatch[] {
+  scanWithPosition(text: string, filePath: string = ""): PatternMatch[] {
     const matches: PatternMatch[] = [];
     const lines = text.split("\n");
 
@@ -64,12 +110,17 @@ export class PatternEngine {
 
         while ((match = regex.exec(line)) !== null) {
           if (this.isFalsePositive(pattern, match[0])) continue;
+          const entropy = shannonEntropy(match[0]);
+          if (pattern.minEntropy !== undefined && entropy < pattern.minEntropy) continue;
+          const redacted = this.redact(match[0]);
           matches.push({
             pattern,
             match: match[0],
             line: lineNum + 1,
             column: match.index + 1,
-            redacted: this.redact(match[0])
+            redacted,
+            entropy,
+            fingerprint: fingerprintFor(filePath, pattern.name, redacted),
           });
         }
       }

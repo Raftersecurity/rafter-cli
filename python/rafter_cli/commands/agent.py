@@ -1224,8 +1224,19 @@ def _output_scan_results(
     if json_output or format == "json":
         results_out = [
             {"file": r.file, "matches": [
-                {"pattern": {"name": m.pattern.name, "severity": m.pattern.severity, "description": m.pattern.description or ""},
-                 "line": m.line, "column": m.column, "redacted": m.redacted}
+                {
+                    "pattern": {
+                        "name": m.pattern.name,
+                        "severity": m.pattern.severity,
+                        "confidence": getattr(m.pattern, "confidence", None) or "high",
+                        "description": m.pattern.description or "",
+                    },
+                    "line": m.line,
+                    "column": m.column,
+                    "redacted": m.redacted,
+                    "fingerprint": getattr(m, "fingerprint", "") or None,
+                    "remediation": getattr(m.pattern, "remediation", "") or None,
+                }
                 for m in r.matches
             ]}
             for r in results
@@ -1262,10 +1273,17 @@ def _output_scan_results(
         for m in r.matches:
             total += 1
             loc = f"Line {m.line}" if m.line else "Unknown location"
-            rprint(f"  {fmt.severity(m.pattern.severity)} {m.pattern.name}")
+            conf = getattr(m.pattern, "confidence", None) or "high"
+            rprint(f"  {fmt.severity(m.pattern.severity)} {m.pattern.name} (confidence: {conf})")
             rprint(f"     Location: {loc}")
             rprint(f"     Pattern: {m.pattern.description or m.pattern.regex}")
             rprint(f"     Redacted: {m.redacted}")
+            fp = getattr(m, "fingerprint", "")
+            if fp:
+                rprint(f"     Fingerprint: {fp}")
+            rem = getattr(m.pattern, "remediation", "")
+            if rem:
+                rprint(f"     Remediation: {rem}")
             rprint()
 
     rprint(f"\n{fmt.warning(f'Total: {total} secret(s) detected in {len(results)} file(s)')}\n")
@@ -1380,11 +1398,18 @@ def _output_sarif(results: list[ScanResult]) -> None:
         for m in r.matches:
             rule_id = re.sub(r"\s+", "-", m.pattern.name.lower())
             if rule_id not in rules:
-                rules[rule_id] = {
+                rule: dict[str, Any] = {
                     "id": rule_id,
                     "name": m.pattern.name,
                     "shortDescription": {"text": m.pattern.description or m.pattern.name},
                 }
+                rem = getattr(m.pattern, "remediation", "")
+                if rem:
+                    rule["help"] = {"text": rem}
+                conf_attr = getattr(m.pattern, "confidence", None)
+                if conf_attr:
+                    rule["properties"] = {"confidence": conf_attr}
+                rules[rule_id] = rule
             level = "error" if m.pattern.severity in ("critical", "high") else "warning"
             location: dict[str, Any] = {
                 "artifactLocation": {"uri": r.file.replace("\\", "/"), "uriBaseId": "%SRCROOT%"},
@@ -1396,6 +1421,10 @@ def _output_sarif(results: list[ScanResult]) -> None:
                 "level": level,
                 "message": {"text": f"{m.pattern.name} detected"},
                 "locations": [{"physicalLocation": location}],
+                "properties": {
+                    "confidence": getattr(m.pattern, "confidence", None) or "high",
+                    "fingerprint": getattr(m, "fingerprint", "") or None,
+                },
             })
     sarif = {
         "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",

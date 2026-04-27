@@ -323,13 +323,16 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
       "matches": [
         {
           "pattern": {
-            "name": "AWS Access Key",
+            "name": "AWS Access Key ID",
             "severity": "critical",
-            "description": "Detects AWS access key IDs"
+            "confidence": "high",
+            "description": "AWS Access Key ID detected"
           },
           "line": 42,
           "column": 7,
-          "redacted": "AKIA************MPLE"
+          "redacted": "AKIA************MPLE",
+          "fingerprint": "9a8b7c6d5e4f3a2b",
+          "remediation": "Rotate the credential in the provider's console immediately. Reference via env var or a secret manager. Even after removing this from your working tree, git history still contains the secret — rotation is mandatory."
         }
       ]
     }
@@ -353,13 +356,29 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
 | `results[].file` | string | Absolute path to the scanned file |
 | `results[].matches` | array | List of secret matches in this file |
 | `results[].matches[].pattern.name` | string | Human-readable pattern name |
-| `results[].matches[].pattern.severity` | string | `"low"`, `"medium"`, `"high"`, or `"critical"` |
+| `results[].matches[].pattern.severity` | string | `"low"`, `"medium"`, `"high"`, or `"critical"` — blast radius if exploited |
+| `results[].matches[].pattern.confidence` | string | `"low"`, `"medium"`, or `"high"` — how sure we are this is a real secret (vs. a false positive) |
 | `results[].matches[].pattern.description` | string | Pattern description (may be empty) |
 | `results[].matches[].line` | number\|null | 1-based line number, null if unknown |
 | `results[].matches[].column` | number\|null | 1-based column number, null if unknown |
 | `results[].matches[].redacted` | string | Redacted secret value (first/last 4 chars visible for values >8 chars, fully masked otherwise) |
+| `results[].matches[].fingerprint` | string\|null | 16-char hex sha256 of `(file + ruleName + redacted)` — stable across line moves; use to suppress this exact finding via `.rafterignore` |
+| `results[].matches[].remediation` | string\|null | Suggested rotation/storage guidance (e.g. "rotate at provider, move to env var") |
 
-The raw secret value is never included in JSON output.
+**The raw secret value is never included in any output surface** (text, JSON, SARIF, audit log, MCP tool responses). Confidence and severity are independent: `confidence` answers "is this a real leak?" and `severity` answers "how bad if it is?". Treat `confidence: low` findings as candidates worth verification, not noise — entropy filters drop most of the obvious noise before they surface.
+
+#### Suppressions (`.rafterignore`)
+
+In addition to glob/pattern-name suppressions, `.rafterignore` accepts fingerprint-based suppression:
+
+```
+# Suppress one specific finding (survives line-number drift)
+fingerprint:9a8b7c6d5e4f3a2b
+
+# Glob-based (existing forms)
+tests/fixtures/**
+config/example.env:Generic Secret
+```
 
 **Why `_note`?** Local scans are pattern-only — they cannot tell whether a finding is in a public-facing file, whether the key is still valid, or whether it ever shipped. Backend scans (`rafter run`) apply agentic context. The `_note` exists so agents and reviewers don't treat local findings as final verdicts — they should investigate each, but the absence of agentic triage is *not* an excuse to dismiss findings.
 
