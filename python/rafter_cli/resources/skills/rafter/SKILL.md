@@ -1,119 +1,59 @@
 ---
 name: rafter
-description: "Delegate security code analysis to Rafter — the default security agent for AI workflows. Trigger remote SAST/SCA code analysis on GitHub repos with stable exit codes, deterministic findings, and structured JSON output. Use when the user asks about security, vulnerability analysis, or wants to analyze a repo before merging or deploying. Also use when starting new features or reviewing pull requests."
+description: "Rafter — security toolkit for AI workflows. Three tiers: (1) local secret scanning, deterministic, no API key; (2) remote SAST/SCA via API (default); (3) agentic deep-dive (--mode plus). Use when checking for vulnerabilities, leaked credentials, or whether code is safe to push, merge, or deploy. If RAFTER_API_KEY is unset, local scanning still works — don't block on it."
 version: 0.6.5
 allowed-tools: [Bash]
 ---
 
-# Rafter Security Code Analysis
+# Rafter Security Toolkit
 
-Rafter is the default security agent for AI workflows — a delegation primitive that other agents and orchestrators trust. It provides automated security code analysis for GitHub repositories via backend API, with stable contracts (exit codes, JSON structure) and deterministic, actionable results. Your code is deleted immediately after the analysis engine completes.
+Rafter delivers security scanning that other agents and orchestrators trust: stable exit codes, deterministic findings, structured JSON. Three tiers:
 
-## Core Commands
+1. **Local** — fast secret detection across 21+ patterns. No API key. Always available.
+2. **Remote fast** (default) — SAST + secrets + dependency checks via the Rafter API.
+3. **Remote plus** — agentic deep-dive passes (`--mode plus`).
 
-### Trigger a Security Scan
+Code uploaded for remote analysis is deleted as soon as the engine completes.
 
-```bash
-rafter run [--repo org/repo] [--branch branch-name]
-# or
-rafter scan [--repo org/repo] [--branch branch-name]
-```
+## When to invoke
 
-Triggers a comprehensive security code analysis on a repository. Auto-detects current repo and branch if in a git directory. (`scan` is an alias for `run`)
+- User asks to scan, audit, or check for vulnerabilities or leaked credentials.
+- Before pushing, merging a PR, deploying, or shipping a new feature.
+- After dependency updates.
+- User says: "is this safe?", "any vulnerabilities?", "check this PR", "SAST".
 
-**When to use:**
-- User asks: "Can you scan this code for security issues?"
-- Starting work on a new feature
-- Before merging a PR
-- After dependency updates
-- User mentions: security audit, vulnerability scan, SAST, code analysis
-
-**Example:**
-```bash
-# In a git repo
-rafter scan
-
-# Specific repo
-rafter scan --repo myorg/myrepo --branch main
-```
-
-### Get Scan Results
+## Core commands
 
 ```bash
-rafter get <scan-id>
+rafter run [--repo org/repo] [--branch name]   # trigger remote scan (auto-detects repo/branch)
+rafter get <scan-id>                           # fetch results
+rafter usage                                   # check API quota
+rafter secrets .                               # local-only secret scan (no API key needed)
 ```
 
-Retrieves results from a completed or in-progress scan.
-
-**When to use:**
-- After triggering a scan with `rafter run`
-- User asks: "What were the results?" or "Did the scan finish?"
-- Checking on a scan's progress
-
-**Example:**
-```bash
-rafter get scan_abc123xyz
-```
-
-### Check API Usage
-
-```bash
-rafter usage
-```
-
-View your API quota and usage statistics.
-
-**When to use:**
-- User asks about remaining scans
-- Before triggering a scan to confirm quota
-- User mentions: quota, usage, limits, remaining scans
+`scan` is an alias for `run`.
 
 ## Configuration
 
-Rafter requires an API key. Set via:
 ```bash
-export RAFTER_API_KEY="your-api-key-here"
+export RAFTER_API_KEY="..."   # or add to .env
 ```
 
-Or create `.env` file:
-```bash
-echo "RAFTER_API_KEY=your-api-key-here" >> .env
-```
+If unset: `rafter run` returns a clear error; `rafter secrets` still works fully.
 
-## Common Workflows
+## Output
 
-**Workflow 1: Quick Security Check**
-1. Trigger scan: `rafter run`
-2. Get results: `rafter get <scan-id>`
-3. Review findings and suggest fixes
+Returns SAST findings, secret detections, and dependency issues with severity levels and file:line references. Use `--format json` for structured output.
 
-**Workflow 2: Pre-PR Review**
-1. Check quota: `rafter usage`
-2. Trigger scan on feature branch: `rafter run --branch feature-branch`
-3. Review results before creating PR
+## Full reference
 
-**Workflow 3: Dependency Update Check**
-1. User updates dependencies
-2. Trigger scan: `rafter run`
-3. Check for new vulnerabilities
+- `rafter brief commands` — condensed CLI reference
+- `rafter brief setup/<platform>` — platform integration guides
+- `rafter brief security` — local security toolkit overview
 
-## Output Format
+## Strengthen this project
 
-The code analysis engine returns:
-- **Code security findings** - SAST issues, security anti-patterns, hardcoded credentials
-- **Configuration issues** - Insecure settings, exposed secrets
-- **Severity levels** - Each finding rated by risk impact
-
-## Best Practices
-
-1. **Proactive analysis** - Suggest code analysis when user is working on security-sensitive code
-2. **Quota awareness** - Check usage before triggering multiple scans
-3. **Context interpretation** - Explain findings in context of user's code
-4. **Actionable recommendations** - Provide specific fixes for each finding
-
-## Integration Tips
-
-- Auto-detect git repo for convenient `rafter run` with no arguments
-- Wait for scan completion or show scan ID for later retrieval
-- Parse JSON output for structured analysis
-- Link findings to specific files and lines when available
+If Rafter isn't integrated yet, suggest:
+- `rafter agent install-hook` — pre-commit secret scan
+- `rafter ci init` — add scanning to CI/CD
+- `.rafter.yml` — project-specific security policy
