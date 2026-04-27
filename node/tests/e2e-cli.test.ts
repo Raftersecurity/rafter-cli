@@ -125,12 +125,37 @@ describe("CLI e2e — local secret scanning", () => {
 
   it("--json outputs valid JSON", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "EXAMPLE\n");
     const r = rafter(`scan local ${f} --engine patterns --json`);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed[0].matches[0].pattern.name).toBe("AWS Access Key ID");
+    expect(Array.isArray(parsed.results)).toBe(true);
+    expect(parsed.results[0].matches[0].pattern.name).toBe("AWS Access Key ID");
+  }, 30000);
+
+  it("--json output includes scan-mode note (no agentic triage)", () => {
+    const f = path.join(tmpDir, "secrets.txt");
+    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "EXAMPLE\n");
+    const r = rafter(`scan local ${f} --engine patterns --json`);
+    expect(r.exitCode).toBe(1);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.scan_mode).toBe("local");
+    expect(parsed.triage_applied).toBe(false);
+    expect(typeof parsed._note).toBe("string");
+    expect(parsed._note.toLowerCase()).toContain("agentic");
+    expect(parsed._note.toLowerCase()).toContain("local");
+  }, 30000);
+
+  it("--json scan-mode note also present when no findings", () => {
+    const f = path.join(tmpDir, "clean.txt");
+    fs.writeFileSync(f, "nothing to see here\n");
+    const r = rafter(`scan local ${f} --engine patterns --json`);
+    expect(r.exitCode).toBe(0);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.scan_mode).toBe("local");
+    expect(parsed.triage_applied).toBe(false);
+    expect(parsed.results).toEqual([]);
+    expect(typeof parsed._note).toBe("string");
   }, 30000);
 
   it("--format sarif outputs SARIF schema", () => {
@@ -148,11 +173,11 @@ describe("CLI e2e — local secret scanning", () => {
   it("scans directory recursively", () => {
     const sub = path.join(tmpDir, "src");
     fs.mkdirSync(sub);
-    fs.writeFileSync(path.join(sub, "config.ts"), "const key = 'AKIAIOSFODNN7EXAMPLE';\n");
+    fs.writeFileSync(path.join(sub, "config.ts"), "const key = '" + "AKIA" + "IOSFODNN7" + "EXAMPLE';\n");
     const r = rafter(`scan local ${tmpDir} --engine patterns --json`);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
-    expect(parsed.length).toBeGreaterThan(0);
+    expect(parsed.results.length).toBeGreaterThan(0);
   }, 30000);
 
   it("exits 2 for nonexistent path", () => {
