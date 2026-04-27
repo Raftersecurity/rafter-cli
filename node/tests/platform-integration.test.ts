@@ -941,4 +941,484 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(windsurf.mcpServers.rafter).toEqual(expected);
     });
   });
+
+  // ── 11. Claude Code hooks + skills + instructions ─────────────────
+
+  describe("Claude Code full integration (--with-claude-code)", () => {
+    it("should install hooks to ~/.claude/settings.json", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
+
+      const result = runCli("agent init --with-claude-code", testHomeDir);
+      expect(result.exitCode).toBe(0);
+
+      const settingsPath = path.join(testHomeDir, ".claude", "settings.json");
+      expect(fs.existsSync(settingsPath)).toBe(true);
+
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      expect(settings.hooks).toBeDefined();
+      expect(settings.hooks.PreToolUse).toBeDefined();
+      expect(settings.hooks.PostToolUse).toBeDefined();
+
+      // Verify PreToolUse hook matchers
+      const preMatchers = settings.hooks.PreToolUse.map((e: any) => e.matcher);
+      expect(preMatchers).toContain("Bash");
+      expect(preMatchers).toContain("Write|Edit");
+
+      // Verify hook commands
+      const preCommands = settings.hooks.PreToolUse.flatMap(
+        (e: any) => (e.hooks || []).map((h: any) => h.command)
+      );
+      expect(preCommands).toContain("rafter hook pretool");
+
+      const postCommands = settings.hooks.PostToolUse.flatMap(
+        (e: any) => (e.hooks || []).map((h: any) => h.command)
+      );
+      expect(postCommands).toContain("rafter hook posttool");
+
+      // PostToolUse should have catch-all matcher
+      const postMatchers = settings.hooks.PostToolUse.map((e: any) => e.matcher);
+      expect(postMatchers).toContain(".*");
+    });
+
+    it("should install skills to ~/.claude/skills/", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
+
+      const result = runCli("agent init --with-claude-code", testHomeDir);
+      expect(result.exitCode).toBe(0);
+
+      const backendSkill = path.join(testHomeDir, ".claude", "skills", "rafter", "SKILL.md");
+      const securitySkill = path.join(testHomeDir, ".claude", "skills", "rafter-agent-security", "SKILL.md");
+
+      expect(fs.existsSync(backendSkill)).toBe(true);
+      expect(fs.existsSync(securitySkill)).toBe(true);
+
+      // Validate skill content
+      const backendContent = fs.readFileSync(backendSkill, "utf-8");
+      expect(backendContent).toMatch(/^---\n/);
+      expect(backendContent).toContain("rafter");
+    });
+
+    it("should install global instruction file to ~/.claude/CLAUDE.md", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
+
+      const result = runCli("agent init --with-claude-code", testHomeDir);
+      expect(result.exitCode).toBe(0);
+
+      const instructionPath = path.join(testHomeDir, ".claude", "CLAUDE.md");
+      expect(fs.existsSync(instructionPath)).toBe(true);
+
+      const content = fs.readFileSync(instructionPath, "utf-8");
+      expect(content).toContain("<!-- rafter:start -->");
+      expect(content).toContain("<!-- rafter:end -->");
+      expect(content).toContain("rafter scan local");
+    });
+
+    it("should preserve existing CLAUDE.md content when adding instructions", () => {
+      const claudeDir = path.join(testHomeDir, ".claude");
+      fs.mkdirSync(claudeDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(claudeDir, "CLAUDE.md"),
+        "# My Project\n\nExisting instructions here.\n"
+      );
+
+      runCli("agent init --with-claude-code", testHomeDir);
+
+      const content = fs.readFileSync(path.join(claudeDir, "CLAUDE.md"), "utf-8");
+      expect(content).toContain("# My Project");
+      expect(content).toContain("Existing instructions here.");
+      expect(content).toContain("<!-- rafter:start -->");
+    });
+
+    it("should deduplicate hooks on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
+
+      runCli("agent init --with-claude-code", testHomeDir);
+      runCli("agent init --with-claude-code", testHomeDir);
+
+      const settings = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".claude", "settings.json"), "utf-8")
+      );
+
+      // Should have exactly 2 PreToolUse entries (Bash + Write|Edit), not 4
+      const rafterPreHooks = settings.hooks.PreToolUse.filter(
+        (e: any) => (e.hooks || []).some((h: any) => h.command === "rafter hook pretool")
+      );
+      expect(rafterPreHooks).toHaveLength(2);
+
+      // Exactly 1 PostToolUse entry
+      const rafterPostHooks = settings.hooks.PostToolUse.filter(
+        (e: any) => (e.hooks || []).some((h: any) => h.command === "rafter hook posttool")
+      );
+      expect(rafterPostHooks).toHaveLength(1);
+    });
+
+    it("should preserve non-rafter hooks in settings.json", () => {
+      const claudeDir = path.join(testHomeDir, ".claude");
+      fs.mkdirSync(claudeDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(claudeDir, "settings.json"),
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              { matcher: "Bash", hooks: [{ type: "command", command: "other-tool check" }] },
+            ],
+          },
+        }, null, 2)
+      );
+
+      runCli("agent init --with-claude-code", testHomeDir);
+
+      const settings = JSON.parse(
+        fs.readFileSync(path.join(claudeDir, "settings.json"), "utf-8")
+      );
+      const otherHook = settings.hooks.PreToolUse.find(
+        (e: any) => (e.hooks || []).some((h: any) => h.command === "other-tool check")
+      );
+      expect(otherHook).toBeDefined();
+    });
+  });
+
+  // ── 12. Codex CLI hooks + skills via CLI ──────────────────────────
+
+  describe("Codex CLI hooks (--with-codex)", () => {
+    it("should install hooks to ~/.codex/hooks.json", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+
+      const result = runCli("agent init --with-codex", testHomeDir);
+      expect(result.exitCode).toBe(0);
+
+      const hooksPath = path.join(testHomeDir, ".codex", "hooks.json");
+      expect(fs.existsSync(hooksPath)).toBe(true);
+
+      const config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
+      expect(config.hooks).toBeDefined();
+      expect(config.hooks.PreToolUse).toBeDefined();
+      expect(config.hooks.PostToolUse).toBeDefined();
+
+      // Codex has Bash matcher for PreToolUse
+      const preMatchers = config.hooks.PreToolUse.map((e: any) => e.matcher);
+      expect(preMatchers).toContain("Bash");
+
+      // PostToolUse has catch-all
+      const postMatchers = config.hooks.PostToolUse.map((e: any) => e.matcher);
+      expect(postMatchers).toContain(".*");
+    });
+
+    it("should deduplicate hooks on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+
+      runCli("agent init --with-codex", testHomeDir);
+      runCli("agent init --with-codex", testHomeDir);
+
+      const config = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".codex", "hooks.json"), "utf-8")
+      );
+      const rafterPre = config.hooks.PreToolUse.filter(
+        (e: any) => (e.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
+      );
+      expect(rafterPre).toHaveLength(1);
+    });
+  });
+
+  // ── 13. Gemini hooks ──────────────────────────────────────────────
+
+  describe("Gemini hooks (--with-gemini)", () => {
+    it("should install BeforeTool/AfterTool hooks to settings.json", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+
+      runCli("agent init --with-gemini", testHomeDir);
+
+      const settings = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".gemini", "settings.json"), "utf-8")
+      );
+
+      // Should have both MCP and hooks
+      expect(settings.mcpServers.rafter).toBeDefined();
+      expect(settings.hooks).toBeDefined();
+      expect(settings.hooks.BeforeTool).toBeDefined();
+      expect(settings.hooks.AfterTool).toBeDefined();
+
+      // BeforeTool matcher targets shell and write_file
+      const beforeMatchers = settings.hooks.BeforeTool.map((e: any) => e.matcher);
+      expect(beforeMatchers).toContain("shell|write_file");
+
+      // Commands use --format gemini
+      const beforeCommands = settings.hooks.BeforeTool.flatMap(
+        (e: any) => (e.hooks || []).map((h: any) => h.command)
+      );
+      expect(beforeCommands.some((c: string) => c.includes("--format gemini"))).toBe(true);
+
+      // AfterTool has catch-all
+      const afterMatchers = settings.hooks.AfterTool.map((e: any) => e.matcher);
+      expect(afterMatchers).toContain(".*");
+    });
+
+    it("should deduplicate hooks on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+
+      runCli("agent init --with-gemini", testHomeDir);
+      runCli("agent init --with-gemini", testHomeDir);
+
+      const settings = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".gemini", "settings.json"), "utf-8")
+      );
+      expect(settings.hooks.BeforeTool).toHaveLength(1);
+      expect(settings.hooks.AfterTool).toHaveLength(1);
+    });
+  });
+
+  // ── 14. Cursor hooks + instructions ───────────────────────────────
+
+  describe("Cursor hooks + instructions (--with-cursor)", () => {
+    it("should install beforeShellExecution hooks to ~/.cursor/hooks.json", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
+
+      runCli("agent init --with-cursor", testHomeDir);
+
+      const hooksPath = path.join(testHomeDir, ".cursor", "hooks.json");
+      expect(fs.existsSync(hooksPath)).toBe(true);
+
+      const config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
+      expect(config.version).toBe(1);
+      expect(config.hooks).toBeDefined();
+      expect(config.hooks.beforeShellExecution).toBeDefined();
+      expect(config.hooks.beforeShellExecution.length).toBeGreaterThan(0);
+
+      // Verify hook uses --format cursor
+      const hook = config.hooks.beforeShellExecution.find(
+        (e: any) => e.command?.includes("rafter")
+      );
+      expect(hook).toBeDefined();
+      expect(hook.command).toContain("--format cursor");
+      expect(hook.type).toBe("command");
+      expect(hook.timeout).toBe(5000);
+    });
+
+    it("should install global instruction file to ~/.cursor/rules/rafter-security.mdc", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
+
+      runCli("agent init --with-cursor", testHomeDir);
+
+      const instructionPath = path.join(
+        testHomeDir, ".cursor", "rules", "rafter-security.mdc"
+      );
+      expect(fs.existsSync(instructionPath)).toBe(true);
+
+      const content = fs.readFileSync(instructionPath, "utf-8");
+      expect(content).toContain("<!-- rafter:start -->");
+      expect(content).toContain("<!-- rafter:end -->");
+      expect(content).toContain("rafter scan local");
+    });
+
+    it("should deduplicate hooks on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
+
+      runCli("agent init --with-cursor", testHomeDir);
+      runCli("agent init --with-cursor", testHomeDir);
+
+      const config = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".cursor", "hooks.json"), "utf-8")
+      );
+      const rafterHooks = config.hooks.beforeShellExecution.filter(
+        (e: any) => e.command?.includes("rafter")
+      );
+      expect(rafterHooks).toHaveLength(1);
+    });
+  });
+
+  // ── 15. Windsurf hooks ────────────────────────────────────────────
+
+  describe("Windsurf hooks (--with-windsurf)", () => {
+    it("should install pre_run_command/pre_write_code hooks to ~/.windsurf/hooks.json", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
+
+      runCli("agent init --with-windsurf", testHomeDir);
+
+      const hooksPath = path.join(testHomeDir, ".windsurf", "hooks.json");
+      expect(fs.existsSync(hooksPath)).toBe(true);
+
+      const config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
+      expect(config.hooks).toBeDefined();
+      expect(config.hooks.pre_run_command).toBeDefined();
+      expect(config.hooks.pre_write_code).toBeDefined();
+
+      // Both hook arrays should have rafter entries
+      const runCmd = config.hooks.pre_run_command.find(
+        (e: any) => e.command?.includes("rafter")
+      );
+      expect(runCmd).toBeDefined();
+      expect(runCmd.command).toContain("--format windsurf");
+      expect(runCmd.show_output).toBe(true);
+
+      const writeCmd = config.hooks.pre_write_code.find(
+        (e: any) => e.command?.includes("rafter")
+      );
+      expect(writeCmd).toBeDefined();
+      expect(writeCmd.command).toContain("--format windsurf");
+    });
+
+    it("should deduplicate hooks on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
+
+      runCli("agent init --with-windsurf", testHomeDir);
+      runCli("agent init --with-windsurf", testHomeDir);
+
+      const config = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".windsurf", "hooks.json"), "utf-8")
+      );
+      const rafterRun = config.hooks.pre_run_command.filter(
+        (e: any) => e.command?.includes("rafter")
+      );
+      expect(rafterRun).toHaveLength(1);
+      const rafterWrite = config.hooks.pre_write_code.filter(
+        (e: any) => e.command?.includes("rafter")
+      );
+      expect(rafterWrite).toHaveLength(1);
+    });
+  });
+
+  // ── 16. Continue.dev hooks ────────────────────────────────────────
+
+  describe("Continue.dev hooks (--with-continue)", () => {
+    it("should install PreToolUse/PostToolUse hooks to ~/.continue/settings.json", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
+
+      runCli("agent init --with-continue", testHomeDir);
+
+      const settingsPath = path.join(testHomeDir, ".continue", "settings.json");
+      expect(fs.existsSync(settingsPath)).toBe(true);
+
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      expect(settings.hooks).toBeDefined();
+      expect(settings.hooks.PreToolUse).toBeDefined();
+      expect(settings.hooks.PostToolUse).toBeDefined();
+
+      // PreToolUse should have Bash and Write|Edit matchers
+      const preMatchers = settings.hooks.PreToolUse.map((e: any) => e.matcher);
+      expect(preMatchers).toContain("Bash");
+      expect(preMatchers).toContain("Write|Edit");
+
+      // PostToolUse should have catch-all
+      const postMatchers = settings.hooks.PostToolUse.map((e: any) => e.matcher);
+      expect(postMatchers).toContain(".*");
+    });
+
+    it("should deduplicate hooks on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
+
+      runCli("agent init --with-continue", testHomeDir);
+      runCli("agent init --with-continue", testHomeDir);
+
+      const settings = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".continue", "settings.json"), "utf-8")
+      );
+      const rafterPre = settings.hooks.PreToolUse.filter(
+        (e: any) => (e.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
+      );
+      expect(rafterPre).toHaveLength(2); // Bash + Write|Edit
+      const rafterPost = settings.hooks.PostToolUse.filter(
+        (e: any) => (e.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
+      );
+      expect(rafterPost).toHaveLength(1);
+    });
+  });
+
+  // ── 17. Instruction file idempotency ──────────────────────────────
+
+  describe("Instruction file idempotency", () => {
+    it("should not duplicate rafter block in CLAUDE.md on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
+
+      runCli("agent init --with-claude-code", testHomeDir);
+      runCli("agent init --with-claude-code", testHomeDir);
+
+      const content = fs.readFileSync(
+        path.join(testHomeDir, ".claude", "CLAUDE.md"), "utf-8"
+      );
+      const starts = (content.match(/<!-- rafter:start -->/g) || []).length;
+      expect(starts).toBe(1);
+    });
+
+    it("should not duplicate rafter block in Cursor rules on repeated installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
+
+      runCli("agent init --with-cursor", testHomeDir);
+      runCli("agent init --with-cursor", testHomeDir);
+
+      const content = fs.readFileSync(
+        path.join(testHomeDir, ".cursor", "rules", "rafter-security.mdc"), "utf-8"
+      );
+      const starts = (content.match(/<!-- rafter:start -->/g) || []).length;
+      expect(starts).toBe(1);
+    });
+  });
+
+  // ── 18. All 8 platforms together ──────────────────────────────────
+
+  describe("All 8 platforms config validation", { timeout: 120_000 }, () => {
+    it("should generate correct config files for every platform", () => {
+      // Set up all platform directories
+      fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
+      fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
+      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
+      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+      fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
+      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
+      fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
+      fs.writeFileSync(path.join(testHomeDir, ".aider.conf.yml"), "# config\n");
+
+      const result = runCli("agent init --all", testHomeDir, 90_000);
+      expect(result.exitCode).toBe(0);
+
+      // ── OpenClaw: skill file ──
+      const openclawSkill = path.join(testHomeDir, ".openclaw", "skills", "rafter-security.md");
+      expect(fs.existsSync(openclawSkill)).toBe(true);
+      expect(fs.readFileSync(openclawSkill, "utf-8")).toContain("rafter");
+
+      // ── Claude Code: hooks + skills + instructions ──
+      const claudeSettings = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".claude", "settings.json"), "utf-8")
+      );
+      expect(claudeSettings.hooks.PreToolUse.length).toBeGreaterThanOrEqual(2);
+      expect(claudeSettings.hooks.PostToolUse.length).toBeGreaterThanOrEqual(1);
+      expect(fs.existsSync(path.join(testHomeDir, ".claude", "skills", "rafter", "SKILL.md"))).toBe(true);
+      expect(fs.existsSync(path.join(testHomeDir, ".claude", "CLAUDE.md"))).toBe(true);
+
+      // ── Codex: hooks + skills ──
+      expect(fs.existsSync(path.join(testHomeDir, ".codex", "hooks.json"))).toBe(true);
+      const codexHooks = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".codex", "hooks.json"), "utf-8")
+      );
+      expect(codexHooks.hooks.PreToolUse).toBeDefined();
+      expect(fs.existsSync(path.join(testHomeDir, ".agents", "skills", "rafter", "SKILL.md"))).toBe(true);
+
+      // ── Gemini: MCP + hooks ──
+      const geminiSettings = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".gemini", "settings.json"), "utf-8")
+      );
+      expect(geminiSettings.mcpServers.rafter).toBeDefined();
+      expect(geminiSettings.hooks.BeforeTool).toBeDefined();
+      expect(geminiSettings.hooks.AfterTool).toBeDefined();
+
+      // ── Cursor: MCP + hooks + instructions ──
+      expect(fs.existsSync(path.join(testHomeDir, ".cursor", "mcp.json"))).toBe(true);
+      expect(fs.existsSync(path.join(testHomeDir, ".cursor", "hooks.json"))).toBe(true);
+      const cursorInstructions = path.join(testHomeDir, ".cursor", "rules", "rafter-security.mdc");
+      expect(fs.existsSync(cursorInstructions)).toBe(true);
+
+      // ── Windsurf: MCP + hooks ──
+      expect(fs.existsSync(path.join(testHomeDir, ".codeium", "windsurf", "mcp_config.json"))).toBe(true);
+      expect(fs.existsSync(path.join(testHomeDir, ".windsurf", "hooks.json"))).toBe(true);
+
+      // ── Continue.dev: MCP + hooks ──
+      expect(fs.existsSync(path.join(testHomeDir, ".continue", "config.json"))).toBe(true);
+      expect(fs.existsSync(path.join(testHomeDir, ".continue", "settings.json"))).toBe(true);
+
+      // ── Aider: YAML config ──
+      const aiderContent = fs.readFileSync(
+        path.join(testHomeDir, ".aider.conf.yml"), "utf-8"
+      );
+      expect(aiderContent).toContain("rafter mcp serve");
+    });
+  });
 });
