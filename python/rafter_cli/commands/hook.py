@@ -11,6 +11,11 @@ import typer
 from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
 from ..core.env_writer import SecretToPersist, persist_secrets
+from ..core.prompt_shield import (
+    DetectedSecret as _SharedDetected,
+    detect_secrets as _shared_detect_secrets,
+    replace_secrets_with_refs,
+)
 from ..scanners.prompt_shield_patterns import (
     CREDENTIAL_KEYWORD_RE,
     DEFAULT_PATTERN_ENV_NAMES,
@@ -395,6 +400,218 @@ def _build_context_note(detected: list[dict], result, written) -> str:
         "  - Reference them via the env var names above (e.g., os.environ['DB_PASSWORD'], process.env.DB_PASSWORD)."
     )
     return "\n".join(lines)
+
+
+def _emit_before_model_noop() -> None:
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "BeforeModel"}}) + "\n")
+    sys.stdout.flush()
+
+
+def _emit_before_model_override(messages: list) -> None:
+    sys.stdout.write(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "BeforeModel",
+            "llm_request": {"messages": messages},
+        },
+    }) + "\n")
+    sys.stdout.flush()
+
+
+def _extract_text(content) -> str:
+    """Extract concatenated text from a Gemini message content (string or
+    list of {type, text, ...} parts)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict) and isinstance(p.get("text"), str):
+                parts.append(p["text"])
+        return "".join(parts)
+    return ""
+
+
+def _rewrite_user_message(msg: dict, detected: list[_SharedDetected], value_to_name: dict[str, str]) -> dict:
+    if not isinstance(msg, dict):
+        return msg
+    content = msg.get("content")
+    if isinstance(content, str):
+        new = dict(msg)
+        new["content"] = replace_secrets_with_refs(content, detected, value_to_name)
+        return new
+    if isinstance(content, list):
+        new_parts = []
+        for part in content:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                new_part = dict(part)
+                new_part["text"] = replace_secrets_with_refs(part["text"], detected, value_to_name)
+                new_parts.append(new_part)
+            else:
+                new_parts.append(part)
+        new = dict(msg)
+        new["content"] = new_parts
+        return new
+    return msg
+
+
+def _emit_gateway_allow() -> None:
+    sys.stdout.write(json.dumps({"action": "allow"}) + "\n")
+    sys.stdout.flush()
+
+
+def _emit_gateway_rewrite(text: str) -> None:
+    sys.stdout.write(json.dumps({"action": "rewrite", "text": text}) + "\n")
+    sys.stdout.flush()
+
+
+def _emit_gateway_skip(reason: str) -> None:
+    sys.stdout.write(json.dumps({"action": "skip", "reason": reason}) + "\n")
+    sys.stdout.flush()
+
+
+@hook_app.command("gateway-dispatch")
+def gateway_dispatch():
+    """Hermes pre_gateway_dispatch handler (stdio adapter).
+
+    Hermes hooks are normally in-process Python plugins. We ship a small
+    plugin shim (resources/integrations/hermes_rafter_plugin.py) that
+    registers pre_gateway_dispatch and shells out to this command.
+
+    Stdio contract:
+      stdin:  {"event": {"text": str, "channel"?, "sender_id"?, ...}, "cwd"?: str}
+      stdout: {"action": "allow"} | {"action": "rewrite", "text": str} | {"action": "skip", "reason": str}
+    """
+    if os.environ.get("RAFTER_PROMPT_SHIELD") == "0":
+        _emit_gateway_allow()
+        return
+
+    try:
+        raw = _read_stdin()
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            _emit_gateway_allow()
+            return
+
+        if not isinstance(payload, dict):
+            _emit_gateway_allow()
+            return
+        event = payload.get("event")
+        if not isinstance(event, dict):
+            _emit_gateway_allow()
+            return
+        text = event.get("text")
+        if not isinstance(text, str) or not text:
+            _emit_gateway_allow()
+            return
+
+        detected = _shared_detect_secrets(text)
+        if not detected:
+            _emit_gateway_allow()
+            return
+
+        cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else os.getcwd()
+        to_persist = [SecretToPersist(base_name=d.env_base_name, value=d.value) for d in detected]
+
+        try:
+            result = persist_secrets(to_persist, cwd)
+        except Exception:
+            # Fail closed to skip rather than allow the literal through.
+            _emit_gateway_skip("Rafter detected a secret but could not write .env; dropping rather than leaking.")
+            return
+
+        value_to_name = {w.value: w.name for w in result.written}
+        rewritten = replace_secrets_with_refs(text, detected, value_to_name)
+
+        try:
+            audit = AuditLogger()
+            channel = event.get("channel") or "unknown"
+            audit.log_content_sanitized(f"Hermes gateway message ({channel})", len(detected))
+        except Exception:
+            pass
+
+        _emit_gateway_rewrite(rewritten)
+    except Exception:
+        _emit_gateway_allow()
+
+
+@hook_app.command("before-model")
+def before_model():
+    """Gemini BeforeModel hook handler.
+
+    Unlike Claude Code's UserPromptSubmit (additionalContext-only), Gemini's
+    BeforeModel hook can REWRITE the outgoing request. Substitutes $VAR refs
+    for secret literals in user-role messages so the model never sees them.
+    """
+    if os.environ.get("RAFTER_PROMPT_SHIELD") == "0":
+        _emit_before_model_noop()
+        return
+
+    try:
+        raw = _read_stdin()
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            _emit_before_model_noop()
+            return
+
+        if not isinstance(payload, dict):
+            _emit_before_model_noop()
+            return
+        llm_request = payload.get("llm_request")
+        if not isinstance(llm_request, dict):
+            _emit_before_model_noop()
+            return
+        messages = llm_request.get("messages")
+        if not isinstance(messages, list):
+            _emit_before_model_noop()
+            return
+
+        all_detected: list[_SharedDetected] = []
+        user_indices: list[int] = []
+        for i, msg in enumerate(messages):
+            if not isinstance(msg, dict) or msg.get("role") != "user":
+                continue
+            text = _extract_text(msg.get("content"))
+            if not text:
+                continue
+            user_indices.append(i)
+            for d in _shared_detect_secrets(text):
+                if not any(existing.value == d.value for existing in all_detected):
+                    all_detected.append(d)
+
+        if not all_detected:
+            _emit_before_model_noop()
+            return
+
+        cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else os.getcwd()
+        to_persist = [SecretToPersist(base_name=d.env_base_name, value=d.value) for d in all_detected]
+
+        try:
+            result = persist_secrets(to_persist, cwd)
+        except Exception:
+            # .env write failed — fail closed (no override) rather than leak.
+            _emit_before_model_noop()
+            return
+
+        value_to_name = {w.value: w.name for w in result.written}
+
+        new_messages = [
+            _rewrite_user_message(msg, all_detected, value_to_name) if i in user_indices else msg
+            for i, msg in enumerate(messages)
+        ]
+
+        try:
+            audit = AuditLogger()
+            audit.log_content_sanitized("Gemini llm_request user messages", len(all_detected))
+        except Exception:
+            pass
+
+        _emit_before_model_override(new_messages)
+    except Exception:
+        _emit_before_model_noop()
 
 
 @hook_app.command("user-prompt-submit")

@@ -223,6 +223,62 @@ function installClaudeCodeHooks(root: string): void {
   }
 }
 
+/**
+ * Install the Hermes prompt-shield plugin to <root>/.hermes/plugins/.
+ *
+ * Hermes hooks are in-process Python plugins. We ship a small adapter
+ * (resources/integrations/hermes_rafter_plugin.py) that registers the
+ * pre_gateway_dispatch hook and shells out to `rafter hook gateway-dispatch`
+ * for the actual security logic.
+ */
+function installHermesPlugin(root: string): void {
+  const pluginsDir = path.join(root, ".hermes", "plugins");
+  fs.mkdirSync(pluginsDir, { recursive: true });
+
+  // Probe before copying — if rafter on PATH lacks gateway-dispatch, the
+  // installed plugin would be a no-op at best, broken at worst (rc-txf).
+  const supported = rafterSupportsSubcommand(["hook", "gateway-dispatch"]);
+  if (!supported) {
+    console.log(fmt.warning(
+      `Skipped Hermes plugin: 'rafter hook gateway-dispatch' is not available. ` +
+      `Upgrade rafter and re-run 'rafter agent init --with-hermes' to enable it.`
+    ));
+    return;
+  }
+
+  // Locate the bundled plugin source. After tsc build, dist/ sits beside
+  // resources/ in the package; in dev they're both at the package root.
+  const pluginSrc = locatePluginResource("hermes_rafter_plugin.py");
+  if (!pluginSrc) {
+    console.log(fmt.warning(
+      "Could not locate hermes_rafter_plugin.py in package resources. " +
+      "Reinstall rafter or report the issue."
+    ));
+    return;
+  }
+
+  const dest = path.join(pluginsDir, "hermes_rafter_plugin.py");
+  fs.copyFileSync(pluginSrc, dest);
+  console.log(fmt.success(`Installed Hermes prompt-shield plugin to ${dest}`));
+}
+
+/**
+ * Walk up from the running script to find the package's resources/integrations
+ * directory. Handles both `dist/commands/agent/init.js` (built) and the source
+ * tree layout.
+ */
+function locatePluginResource(filename: string): string | undefined {
+  let dir = __dirname;
+  for (let i = 0; i < 6; i++) {
+    const candidate = path.join(dir, "resources", "integrations", filename);
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
+
 function installCodexHooks(root: string): void {
   const codexDir = path.join(root, ".codex");
 
@@ -244,10 +300,12 @@ function installCodexHooks(root: string): void {
   if (!config.hooks) config.hooks = {};
   if (!config.hooks.PreToolUse) config.hooks.PreToolUse = [];
   if (!config.hooks.PostToolUse) config.hooks.PostToolUse = [];
+  if (!config.hooks.UserPromptSubmit) config.hooks.UserPromptSubmit = [];
 
   // Codex uses the same hookSpecificOutput protocol as Claude Code (format=claude)
   const preHook = { type: "command", command: "rafter hook pretool" };
   const postHook = { type: "command", command: "rafter hook posttool" };
+  const promptHook = { type: "command", command: "rafter hook user-prompt-submit" };
 
   // Remove existing rafter hooks
   config.hooks.PreToolUse = config.hooks.PreToolUse.filter(
@@ -255,6 +313,10 @@ function installCodexHooks(root: string): void {
   );
   config.hooks.PostToolUse = config.hooks.PostToolUse.filter(
     (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
+  );
+  config.hooks.UserPromptSubmit = config.hooks.UserPromptSubmit.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) =>
+      typeof h.command === "string" && h.command.startsWith("rafter hook user-prompt-submit"))
   );
 
   config.hooks.PreToolUse.push(
@@ -264,8 +326,26 @@ function installCodexHooks(root: string): void {
     { matcher: ".*", hooks: [postHook] },
   );
 
+  // Codex's UserPromptSubmit uses the same envelope as Claude Code's. Probe
+  // before wiring — see rc-txf incident.
+  const promptShieldSupported = rafterSupportsSubcommand(["hook", "user-prompt-submit"]);
+  if (promptShieldSupported) {
+    config.hooks.UserPromptSubmit.push({ hooks: [promptHook] });
+  }
+  if (config.hooks.UserPromptSubmit.length === 0) {
+    delete config.hooks.UserPromptSubmit;
+  }
+
   fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
   console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+  if (promptShieldSupported) {
+    console.log(fmt.success(`Installed UserPromptSubmit hook (prompt-shield) to ${hooksPath}`));
+  } else {
+    console.log(fmt.warning(
+      `Skipped UserPromptSubmit hook for Codex: 'rafter hook user-prompt-submit' is not available. ` +
+      `Upgrade rafter and re-run 'rafter agent init --with-codex' to enable prompt-shield.`
+    ));
+  }
 }
 
 function installCursorHooks(root: string): void {
@@ -326,6 +406,7 @@ function installGeminiHooks(root: string): void {
   if (!settings.hooks) settings.hooks = {};
   if (!settings.hooks.BeforeTool) settings.hooks.BeforeTool = [];
   if (!settings.hooks.AfterTool) settings.hooks.AfterTool = [];
+  if (!settings.hooks.BeforeModel) settings.hooks.BeforeModel = [];
 
   // Remove existing rafter hooks
   settings.hooks.BeforeTool = settings.hooks.BeforeTool.filter(
@@ -333,6 +414,10 @@ function installGeminiHooks(root: string): void {
   );
   settings.hooks.AfterTool = settings.hooks.AfterTool.filter(
     (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.includes("rafter hook posttool"))
+  );
+  settings.hooks.BeforeModel = settings.hooks.BeforeModel.filter(
+    (entry: any) => !(entry.hooks || []).some((h: any) =>
+      typeof h.command === "string" && h.command.includes("rafter hook before-model"))
   );
 
   settings.hooks.BeforeTool.push({
@@ -344,8 +429,30 @@ function installGeminiHooks(root: string): void {
     hooks: [{ type: "command", command: "rafter hook posttool --format gemini", timeout: 5000 }],
   });
 
+  // BeforeModel — the Gemini-only surface that allows actual prompt-body
+  // redaction (vs. UserPromptSubmit's additionalContext-only). Probe before
+  // wiring (rc-txf safety).
+  const beforeModelSupported = rafterSupportsSubcommand(["hook", "before-model"]);
+  if (beforeModelSupported) {
+    settings.hooks.BeforeModel.push({
+      matcher: ".*",
+      hooks: [{ type: "command", command: "rafter hook before-model", timeout: 5000 }],
+    });
+  }
+  if (settings.hooks.BeforeModel.length === 0) {
+    delete settings.hooks.BeforeModel;
+  }
+
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
   console.log(fmt.success(`Installed hooks to ${settingsPath}`));
+  if (beforeModelSupported) {
+    console.log(fmt.success(`Installed BeforeModel hook (prompt-shield, full-redaction) to ${settingsPath}`));
+  } else {
+    console.log(fmt.warning(
+      `Skipped BeforeModel hook for Gemini: 'rafter hook before-model' is not available. ` +
+      `Upgrade rafter and re-run 'rafter agent init --with-gemini' to enable full prompt-body redaction.`
+    ));
+  }
 }
 
 function installWindsurfHooks(root: string): void {
@@ -725,6 +832,7 @@ export function createInitCommand(): Command {
     .option("--with-cursor", "Install Cursor integration")
     .option("--with-windsurf", "Install Windsurf integration")
     .option("--with-continue", "Install Continue.dev integration")
+    .option("--with-hermes", "Install Hermes-agent prompt-shield plugin")
     .option("--with-gitleaks", "Download and install Gitleaks binary")
     .option("--all", "Install all detected integrations and download Gitleaks")
     .option("-i, --interactive", "Guided setup — prompts for each detected integration")
@@ -772,6 +880,7 @@ export function createInitCommand(): Command {
       let wantWindsurf = opts.withWindsurf || (opts.all && !opts.local);
       let wantContinue = opts.withContinue || (opts.all && !opts.local);
       let wantAider = opts.withAider || (opts.all && !opts.local);
+      let wantHermes = opts.withHermes || (opts.all && !opts.local);
       let wantGitleaks = opts.withGitleaks || (opts.all && !opts.local);
 
       // Interactive mode: prompt for each detected integration
@@ -955,6 +1064,20 @@ export function createInitCommand(): Command {
           claudeCodeOk = true;
         } catch (e) {
           console.error(fmt.error(`Failed to install Claude Code integration: ${e}`));
+        }
+      }
+
+      // Install Hermes prompt-shield plugin if opted in (user scope only —
+      // Hermes plugins live at ~/.hermes/plugins/, no project-local story).
+      if (wantHermes) {
+        if (opts.local) {
+          localUnsupported("Hermes");
+        } else {
+          try {
+            installHermesPlugin(root);
+          } catch (e) {
+            console.error(fmt.error(`Failed to install Hermes plugin: ${e}`));
+          }
         }
       }
 
