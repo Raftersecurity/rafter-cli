@@ -126,6 +126,95 @@ Gaps:
 
 OpenClaw skill is installed, no other surface. Verify whether OpenClaw is still actively maintained / has users before investing more here.
 
+## Cross-cutting findings (2026-04-28 — deep dive into each platform's docs)
+
+Two surprises that change the plan substantially:
+
+### 1. `.claude/agents/` is multi-platform
+
+Cursor reads `.cursor/agents/` AND `.claude/agents/` for sub-agent definitions. The rf-q7j sub-agent we just shipped (`<root>/.claude/agents/rafter.md`) is already half-supported on Cursor for free — any user who has both Claude Code and Cursor on the same project gets the rafter sub-agent in Cursor too. We should ship a Cursor-targeted equivalent so users with Cursor only also get it, and document the cross-platform nature.
+
+Format (Cursor): same as Claude Code — markdown with `name`, `description`, `model: inherit`, optional `readonly: true`, optional `is_background: true`. Cursor's frontmatter doesn't have a granular `tools:` field; tools are inherited from parent agent (no per-subagent restriction). The toolset constraint we put on the rf-q7j sub-agent body still applies — Cursor doesn't enforce tool restrictions structurally.
+
+### 2. `AGENTS.md` is multi-platform
+
+Windsurf reads `AGENTS.md` natively (any directory in workspace). Our rf-djw Codex install already writes `AGENTS.md` and is therefore quietly helping Windsurf users too — we just never documented it. We should:
+- Recognize AGENTS.md as the rafter cross-platform context standard
+- Write it for any platform that reads it (currently Codex AND Windsurf)
+- Update recipes to surface this
+
+### Per-platform reality check
+
+**Cursor** has full hook + rule + sub-agent + MCP support:
+- Hooks at `~/.cursor/hooks.json` or `<project>/.cursor/hooks.json`. Events: `preToolUse`, `postToolUse`, `beforeShellExecution`, `beforeMCPExecution`, `afterFileEdit`, `subagentStart`/`subagentStop`, etc. Schema: `{ version: 1, hooks: { event: [{ command, timeout, matcher, loop_limit }] } }`. Stdin JSON includes `hook_event_name`. Exit code `2` blocks. **Stable.** Our `beforeShellExecution` install is correct schema, but we only cover one event when we could cover the full PreToolUse/PostToolUse pair.
+- Rules at `.cursor/rules/*.mdc` (or .md). Four types: `alwaysApply: true`, agent-decides via `description`, `globs`-matched, manual `@rule`. Per-rule files supported. **Maps perfectly to our 4 skills.**
+- Sub-agents at `.cursor/agents/<name>.md` (or `.claude/agents/`). Frontmatter: `name`, `description`, `model`, `readonly`, `is_background`. Auto-delegation by description, explicit `/name` syntax, or natural language.
+
+**Windsurf** has rich rules + MCP, but NO hooks:
+- Confirmed NO pre-tool-use hook surface in current Windsurf. Our `.windsurf/hooks.json` install with `pre_run_command`/`pre_write_code` is silently a no-op (same shape as the Continue.dev problem).
+- Rules at `.windsurf/rules/*.md` (workspace, 12KB/file cap) + `~/.codeium/windsurf/memories/global_rules.md` (global, 6KB cap total). YAML frontmatter with `trigger: [always_on|model_decision|glob|manual]`. Per-rule files.
+- Reads `AGENTS.md` natively — files in any workspace directory.
+- MCP at `~/.codeium/windsurf/mcp_config.json` (current path; we have this right).
+
+**Aider** has neither hooks nor a skill primitive, but does have persistent context:
+- NO hook surface. Aider doesn't intercept tool calls.
+- `--read FILE` flag, settable in `.aider.conf.yml` as `read: [PATH, ...]`. CONVENTIONS.md is the community pattern — we should adopt the same for `RAFTER.md`.
+- **MCP support unconfirmed by docs.** Our `.aider.conf.yml` append of `mcp-server-command: rafter mcp serve` is suspect — Aider docs don't list this as a real config field. Likely another silent no-op. Needs verification.
+
+**Continue.dev** (phase b done) — confirmed NO hooks, has per-rule files:
+- Rules at `.continue/rules/*.md` (workspace) + `~/.continue/rules/*.md` (global). YAML frontmatter with `name`, `globs`, `regex`, `description`, `alwaysApply`. Per-rule files in lexicographic load order.
+- MCP at `.continue/config.json`.
+
+**OpenClaw** — investigate whether actively maintained before investing.
+
+## Revised per-platform deep-support plan (replaces earlier plan)
+
+### Cursor — currently MCP only; can be full parity with Claude Code
+
+| Surface | Today | Goal |
+|---|---|---|
+| Hooks | `beforeShellExecution` only | Add `preToolUse` + `postToolUse` for full coverage |
+| Rules | one consolidated `.cursor/rules/rafter-security.mdc` | 4 per-skill `.cursor/rules/<skill>.mdc` files with description-based activation |
+| Sub-agent | none | `.cursor/agents/rafter.md` (rf-q7j content reuse — Cursor will also read existing `.claude/agents/`) |
+| MCP | yes | yes (no change) |
+
+### Windsurf — currently MCP + broken hooks; can be rules + AGENTS.md
+
+| Surface | Today | Goal |
+|---|---|---|
+| Hooks | broken silent install (no Windsurf hook surface) | DROP — same prune pattern as Continue.dev |
+| Rules | none | One per-skill rule in `.windsurf/rules/*.md` + a global rule pointer at `~/.codeium/windsurf/memories/global_rules.md` |
+| AGENTS.md | none for Windsurf-only users | Write at root project level (Windsurf reads it natively) |
+| MCP | yes | yes (no change) |
+
+### Aider — currently broken MCP append; can be RAFTER.md context
+
+| Surface | Today | Goal |
+|---|---|---|
+| Hooks | n/a (no surface) | n/a |
+| Rules | none | n/a (no skill primitive) |
+| Persistent context | none usable | Write `RAFTER.md` + add `read: [RAFTER.md]` to `.aider.conf.yml` |
+| MCP | suspect YAML append | VERIFY first; drop if Aider doesn't actually read it |
+
+### Continue.dev — phase b done; rules next
+
+| Surface | Today | Goal |
+|---|---|---|
+| Hooks | none (pruned in phase b) | n/a |
+| Rules | none | 4 per-skill rules in `.continue/rules/*.md` |
+| MCP | yes | yes (no change) |
+
+### Codex — already at parity (skills + hooks + AGENTS.md)
+No further work.
+
+### Gemini — re-verify rf-yit end-to-end
+1. Hooks: schema match against current Gemini docs (last unverified).
+2. Skills surface: confirm `gemini skills link` registration shows in session.
+3. GEMINI.md: confirm picked up at session start.
+
+### OpenClaw — investigate before investing
+Verify activity / user count before more work.
+
 ## Cross-cutting gaps
 
 1. **`rafter agent verify` is structurally weak.** It checks file presence, never runtime behavior. It doesn't check Continue.dev or Aider. It doesn't cross-check hook fire. Bring it to: (a) cover all 8 platforms, (b) check hook + skill + MCP per-platform where applicable, (c) optionally probe by invoking a known-dangerous test command and asserting `~/.rafter/audit.jsonl` got the expected `command_intercepted` entry.
