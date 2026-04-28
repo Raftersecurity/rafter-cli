@@ -1466,49 +1466,53 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
-  // ── 16. Continue.dev hooks ────────────────────────────────────────
+  // ── 16. Continue.dev hooks (PRUNED in rf-cia phase b) ─────────────
+  //
+  // Continue.dev does NOT read ~/.continue/settings.json and has no
+  // hooks.PreToolUse / PostToolUse field in its config schema. Earlier
+  // versions of rafter wrote that file silently; the install was a no-op
+  // at runtime. These tests pin the new behavior: NO hook file is written
+  // for --with-continue. MCP install (.continue/config.json) is unchanged.
 
-  describe("Continue.dev hooks (--with-continue)", () => {
-    it("should install PreToolUse/PostToolUse hooks to ~/.continue/settings.json", () => {
+  describe("Continue.dev hooks pruned (--with-continue)", () => {
+    it("does NOT write ~/.continue/settings.json (Continue.dev doesn't read it)", () => {
       fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
 
-      runCli("agent init --with-continue", testHomeDir);
+      const result = runCli("agent init --with-continue", testHomeDir);
+      expect(result.exitCode).toBe(0);
 
       const settingsPath = path.join(testHomeDir, ".continue", "settings.json");
-      expect(fs.existsSync(settingsPath)).toBe(true);
-
-      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-      expect(settings.hooks).toBeDefined();
-      expect(settings.hooks.PreToolUse).toBeDefined();
-      expect(settings.hooks.PostToolUse).toBeDefined();
-
-      // PreToolUse should have Bash and Write|Edit matchers
-      const preMatchers = settings.hooks.PreToolUse.map((e: any) => e.matcher);
-      expect(preMatchers).toContain("Bash");
-      expect(preMatchers).toContain("Write|Edit");
-
-      // PostToolUse should have catch-all
-      const postMatchers = settings.hooks.PostToolUse.map((e: any) => e.matcher);
-      expect(postMatchers).toContain(".*");
+      expect(fs.existsSync(settingsPath)).toBe(false);
     });
 
-    it("should deduplicate hooks on repeated installs", () => {
+    it("does NOT touch a pre-existing .continue/settings.json", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
+      const settingsPath = path.join(testHomeDir, ".continue", "settings.json");
+      const userContent = '{"theme":"dark"}';
+      fs.writeFileSync(settingsPath, userContent, "utf-8");
+
+      runCli("agent init --with-continue", testHomeDir);
+
+      expect(fs.readFileSync(settingsPath, "utf-8")).toBe(userContent);
+    });
+
+    it("still installs MCP server to .continue/config.json", () => {
       fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
 
       runCli("agent init --with-continue", testHomeDir);
-      runCli("agent init --with-continue", testHomeDir);
 
-      const settings = JSON.parse(
-        fs.readFileSync(path.join(testHomeDir, ".continue", "settings.json"), "utf-8")
-      );
-      const rafterPre = settings.hooks.PreToolUse.filter(
-        (e: any) => (e.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
-      );
-      expect(rafterPre).toHaveLength(2); // Bash + Write|Edit
-      const rafterPost = settings.hooks.PostToolUse.filter(
-        (e: any) => (e.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
-      );
-      expect(rafterPost).toHaveLength(1);
+      const configPath = path.join(testHomeDir, ".continue", "config.json");
+      expect(fs.existsSync(configPath)).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      const servers = Array.isArray(config.mcpServers)
+        ? config.mcpServers
+        : Object.values(config.mcpServers || {}).concat(
+            Object.entries(config.mcpServers || {}).map(([k, v]: [string, any]) => ({ name: k, ...v }))
+          );
+      const hasRafter = Array.isArray(config.mcpServers)
+        ? config.mcpServers.some((s: any) => s.name === "rafter")
+        : !!(config.mcpServers && config.mcpServers.rafter);
+      expect(hasRafter).toBe(true);
     });
   });
 
@@ -1599,9 +1603,9 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(fs.existsSync(path.join(testHomeDir, ".codeium", "windsurf", "mcp_config.json"))).toBe(true);
       expect(fs.existsSync(path.join(testHomeDir, ".windsurf", "hooks.json"))).toBe(true);
 
-      // ── Continue.dev: MCP + hooks ──
+      // ── Continue.dev: MCP only (hooks pruned in rf-cia phase b) ──
       expect(fs.existsSync(path.join(testHomeDir, ".continue", "config.json"))).toBe(true);
-      expect(fs.existsSync(path.join(testHomeDir, ".continue", "settings.json"))).toBe(true);
+      expect(fs.existsSync(path.join(testHomeDir, ".continue", "settings.json"))).toBe(false);
 
       // ── Aider: YAML config ──
       const aiderContent = fs.readFileSync(

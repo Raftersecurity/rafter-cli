@@ -688,3 +688,49 @@ class TestInstallClaudeCodeMcp:
 
         config = json.loads((tmp_path / ".mcp.json").read_text())
         assert config["mcpServers"]["rafter"]["command"] == "rafter"
+
+
+# ── Continue.dev hooks pruned (rf-cia phase b) ─────────────────────────
+#
+# Continue.dev does not read ~/.continue/settings.json and has no
+# hooks.PreToolUse / PostToolUse field in its config schema (config.yaml
+# in current versions, config.json in legacy). The hook installer was a
+# silent no-op at runtime. These tests pin the new behavior.
+
+
+class TestContinueDevHooksPruned:
+    def test_install_does_not_write_continue_settings_json(self, tmp_path):
+        # MCP install is the only Continue.dev install path and must not
+        # produce a settings.json file.
+        _install_continue_dev_mcp(tmp_path)
+
+        settings_path = tmp_path / ".continue" / "settings.json"
+        assert not settings_path.exists(), \
+            "Continue.dev does not read settings.json — rafter must not write it"
+
+    def test_install_preserves_existing_continue_settings_json(self, tmp_path):
+        # If the user has their own Continue.dev settings.json, rafter
+        # must leave it alone (older rafter versions stomped it with a
+        # hooks block Continue.dev couldn't parse).
+        continue_dir = tmp_path / ".continue"
+        continue_dir.mkdir(parents=True)
+        settings_path = continue_dir / "settings.json"
+        user_content = '{"theme":"dark"}'
+        settings_path.write_text(user_content, encoding="utf-8")
+
+        _install_continue_dev_mcp(tmp_path)
+
+        assert settings_path.read_text(encoding="utf-8") == user_content
+
+    def test_install_still_writes_mcp_config(self, tmp_path):
+        # Pruning hooks must not regress MCP install.
+        _install_continue_dev_mcp(tmp_path)
+
+        config_path = tmp_path / ".continue" / "config.json"
+        assert config_path.exists()
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        servers = cfg.get("mcpServers")
+        if isinstance(servers, list):
+            assert any(s.get("name") == "rafter" for s in servers)
+        else:
+            assert "rafter" in (servers or {})
