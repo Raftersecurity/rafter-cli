@@ -1,13 +1,7 @@
 import { Command } from "commander";
-import { RegexScanner } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { persistSecrets, EnvWriteResult, SecretToPersist } from "../../core/env-writer.js";
-import {
-  PROMPT_SHIELD_PATTERNS,
-  PromptShieldPattern,
-  DEFAULT_PATTERN_ENV_NAMES,
-  CREDENTIAL_KEYWORD_RE,
-} from "../../scanners/prompt-shield-patterns.js";
+import { detectSecrets, DetectedSecret } from "../../core/prompt-shield.js";
 
 type Mode = "warn" | "block";
 
@@ -15,15 +9,6 @@ interface PromptHookInput {
   session_id?: string;
   prompt?: string;
   cwd?: string;
-}
-
-interface DetectedSecret {
-  /** Pattern name for audit / display. */
-  patternName: string;
-  /** Suggested env var basename. */
-  envBaseName: string;
-  /** The actual secret value to persist. */
-  value: string;
 }
 
 const STDIN_TIMEOUT_MS = 5000;
@@ -105,95 +90,6 @@ export function createHookUserPromptSubmitCommand(): Command {
         emitNoop();
       }
     });
-}
-
-/**
- * Run all prompt-shield + default-secret patterns against `text`, returning
- * one DetectedSecret per match. Deduplicates on (patternName, value) so we
- * don't double-count a value matched by two overlapping patterns.
- */
-function detectSecrets(text: string): DetectedSecret[] {
-  const seen = new Set<string>();
-  const out: DetectedSecret[] = [];
-
-  // 1. Prompt-shield patterns (capture-group aware)
-  for (const p of PROMPT_SHIELD_PATTERNS) {
-    const re = freshRegex(p.regex);
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null) {
-      const value = m[p.valueGroup];
-      if (!value || isLikelyPlaceholder(value)) continue;
-      // For the assignment pattern, gate on the LHS identifier containing a
-      // credential keyword — we matched a broad identifier shape, so skip
-      // assignments like "size=200" or "user=alice".
-      if (p.name === "Inline credential assignment") {
-        const lhs = m[1] || "";
-        if (!CREDENTIAL_KEYWORD_RE.test(lhs)) continue;
-      }
-      const key = `${p.name}\x00${value}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({
-        patternName: p.name,
-        envBaseName: deriveEnvName(p, m),
-        value,
-      });
-      if (re.lastIndex === m.index) re.lastIndex++; // guard against zero-width
-    }
-  }
-
-  // 2. Default secret patterns (full match = value)
-  const scanner = new RegexScanner();
-  const matches = scanner.scanText(text);
-  for (const match of matches) {
-    const value = match.match;
-    if (!value || isLikelyPlaceholder(value)) continue;
-    const baseName = DEFAULT_PATTERN_ENV_NAMES[match.pattern.name] || "RAFTER_SECRET";
-    const key = `${match.pattern.name}\x00${value}`;
-    if (seen.has(key)) continue;
-    // Also dedupe across pattern types: if this value was already captured by a
-    // prompt-shield pattern, skip — the more-specific provider name wins.
-    let dupValue = false;
-    for (const prior of out) {
-      if (prior.value === value) { dupValue = true; break; }
-    }
-    if (dupValue) continue;
-    seen.add(key);
-    out.push({
-      patternName: match.pattern.name,
-      envBaseName: baseName,
-      value,
-    });
-  }
-
-  return out;
-}
-
-/**
- * Pick a meaningful env basename from a prompt-shield match. For assignment-
- * style patterns the keyword group (e.g. "DB_PASSWORD" in "DB_PASSWORD=foo")
- * is a much better name than the generic envBaseName fallback.
- */
-function deriveEnvName(p: PromptShieldPattern, m: RegExpExecArray): string {
-  // For assignment-style matches, the captured LHS identifier (e.g. DB_PASSWORD)
-  // is a much better env var name than the generic fallback.
-  if (p.name === "Inline credential assignment" && m[1]) return m[1];
-  return p.envBaseName;
-}
-
-/**
- * Reject obvious documentation placeholders so we don't write
- * "RAFTER_SECRET=your-api-key-here" to .env.
- */
-function isLikelyPlaceholder(value: string): boolean {
-  const lower = value.toLowerCase();
-  if (lower.includes("xxx") && lower.length < 16) return true;
-  if (lower === "your-secret" || lower === "your_secret") return true;
-  if (lower === "changeme" || lower === "change-me") return true;
-  if (/^<.+>$/.test(value)) return true;        // <your-key>
-  if (/^\$\{?[A-Z_][A-Z0-9_]*\}?$/.test(value)) return true; // already a $VAR
-  if (/^example/.test(lower)) return true;
-  return false;
 }
 
 function buildContextNote(
@@ -280,11 +176,3 @@ function emitBlock(note: string): void {
   );
 }
 
-/**
- * Construct a fresh RegExp with the same source/flags, so each call starts
- * with lastIndex=0 (the source PROMPT_SHIELD_PATTERNS hold global regexes
- * which would otherwise carry state between calls).
- */
-function freshRegex(re: RegExp): RegExp {
-  return new RegExp(re.source, re.flags);
-}

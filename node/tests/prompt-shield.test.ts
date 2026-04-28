@@ -348,3 +348,96 @@ installerE2E("agent init UserPromptSubmit installer (rc-txf regression)", () => 
     fs.rmSync(home, { recursive: true, force: true });
   });
 });
+
+/* ---------------- Codex installer (UserPromptSubmit) ---------------- */
+
+const codexE2E = haveBuild ? describe : describe.skip;
+
+codexE2E("agent init --with-codex installs UserPromptSubmit", () => {
+  function setupRealRafterEnv(): { home: string; bin: string } {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-codex-install-"));
+    const bin = path.join(home, "_bin");
+    fs.mkdirSync(bin, { recursive: true });
+    fs.symlinkSync(process.execPath, path.join(bin, "node"));
+    fs.writeFileSync(
+      path.join(bin, "rafter"),
+      `#!/bin/sh\nexec ${process.execPath} ${CLI_ENTRY} "$@"\n`,
+      { mode: 0o755 }
+    );
+    return { home, bin };
+  }
+
+  it("wires user-prompt-submit into ~/.codex/hooks.json when supported", () => {
+    const { home, bin } = setupRealRafterEnv();
+    fs.mkdirSync(path.join(home, ".codex"), { recursive: true });
+
+    const result = spawnSync(
+      process.execPath,
+      [CLI_ENTRY, "agent", "init", "--with-codex"],
+      {
+        cwd: home,
+        encoding: "utf-8",
+        timeout: 30000,
+        env: { ...process.env, HOME: home, PATH: bin },
+      }
+    );
+    expect(result.status, `installer crashed: ${result.stderr}`).toBe(0);
+
+    const config = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf-8"));
+    const ups = config.hooks?.UserPromptSubmit ?? [];
+    expect(ups.length).toBeGreaterThan(0);
+    const cmd = ups[0]?.hooks?.[0]?.command as string | undefined;
+    expect(cmd).toMatch(/rafter hook user-prompt-submit/);
+
+    // Round-trip: the wired command must actually execute end-to-end.
+    const execResult = spawnSync(cmd!, {
+      input: JSON.stringify({ prompt: "no secrets here", cwd: home }),
+      encoding: "utf-8",
+      timeout: 10000,
+      shell: true,
+      env: { ...process.env, HOME: home, PATH: bin },
+    });
+    expect(execResult.status, `hook must execute: ${execResult.stderr}`).toBe(0);
+    const out = parseHookOutput(execResult.stdout);
+    expect(out?.hookSpecificOutput?.hookEventName).toBe("UserPromptSubmit");
+
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("skips UserPromptSubmit when rafter on PATH lacks the subcommand", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-codex-install-skip-"));
+    const bin = path.join(home, "_bin");
+    fs.mkdirSync(bin, { recursive: true });
+    fs.symlinkSync(process.execPath, path.join(bin, "node"));
+    // Fake rafter: fails for user-prompt-submit, succeeds for everything else.
+    fs.writeFileSync(
+      path.join(bin, "rafter"),
+      `#!/bin/sh\nfor a in "$@"; do [ "$a" = "user-prompt-submit" ] && exit 1; done\nexit 0\n`,
+      { mode: 0o755 }
+    );
+    fs.mkdirSync(path.join(home, ".codex"), { recursive: true });
+
+    const result = spawnSync(
+      process.execPath,
+      [CLI_ENTRY, "agent", "init", "--with-codex"],
+      {
+        cwd: home,
+        encoding: "utf-8",
+        timeout: 30000,
+        env: { ...process.env, HOME: home, PATH: bin },
+      }
+    );
+    expect(result.status).toBe(0);
+
+    const config = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf-8"));
+    const ups = config.hooks?.UserPromptSubmit ?? [];
+    const rafterEntries = ups.filter((entry: any) =>
+      (entry.hooks || []).some((h: any) =>
+        typeof h.command === "string" && h.command.includes("rafter hook user-prompt-submit")
+      )
+    );
+    expect(rafterEntries.length).toBe(0);
+
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+});

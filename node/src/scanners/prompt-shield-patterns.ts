@@ -29,7 +29,7 @@ export interface PromptShieldPattern {
  * Identifiers whose name (lowercased, underscores collapsed) contains one of
  * these substrings count as credentials for the inline-assignment pattern.
  */
-export const CREDENTIAL_KEYWORD_RE = /(password|passwd|pwd|secret|apikey|access[\s_-]?key|authtoken|token|credential)/i;
+export const CREDENTIAL_KEYWORD_RE = /(password|passwd|pwd|secret|api[\s_-]?key|access[\s_-]?key|auth[\s_-]?token|token|credential)/i;
 
 export const PROMPT_SHIELD_PATTERNS: PromptShieldPattern[] = [
   {

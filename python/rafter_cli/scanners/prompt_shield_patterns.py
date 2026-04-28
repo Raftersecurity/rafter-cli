@@ -23,7 +23,7 @@ class PromptShieldPattern:
 # Identifiers whose name (lowercased) contains one of these substrings count
 # as credentials for the inline-assignment pattern.
 CREDENTIAL_KEYWORD_RE = re.compile(
-    r"(password|passwd|pwd|secret|apikey|access[\s_-]?key|authtoken|token|credential)",
+    r"(password|passwd|pwd|secret|api[\s_-]?key|access[\s_-]?key|auth[\s_-]?token|token|credential)",
     re.IGNORECASE,
 )
 
