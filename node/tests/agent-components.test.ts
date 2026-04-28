@@ -262,6 +262,48 @@ describe("rafter agent enable / disable", () => {
     expect(settings.hooks?.PreToolUse?.length).toBeGreaterThan(0);
   });
 
+  it("claude-code.skills installs SKILL.md plus sibling docs/ folder, removes both on disable", () => {
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    const enable = runCli("agent enable claude-code.skills", home);
+    expect(enable.code).toBe(0);
+
+    // Each skill that has a docs/ folder in source must mirror it on install,
+    // because SKILL.md tells the agent to read sibling docs/<x>.md by relative
+    // path. Without this, those references resolve to nothing.
+    const skillsDir = path.join(home, ".claude", "skills");
+    for (const name of [
+      "rafter",
+      "rafter-secure-design",
+      "rafter-code-review",
+      "rafter-skill-review",
+    ]) {
+      const skillDir = path.join(skillsDir, name);
+      expect(fs.existsSync(path.join(skillDir, "SKILL.md")), `missing SKILL.md for ${name}`).toBe(true);
+      const docsDir = path.join(skillDir, "docs");
+      expect(fs.existsSync(docsDir), `missing docs/ for ${name}`).toBe(true);
+      expect(fs.readdirSync(docsDir).length, `empty docs/ for ${name}`).toBeGreaterThan(0);
+    }
+
+    // SKILL.md sub-doc references must resolve on disk
+    const rafterSkill = fs.readFileSync(path.join(skillsDir, "rafter", "SKILL.md"), "utf-8");
+    const refs = [...rafterSkill.matchAll(/`docs\/([\w-]+\.md)`/g)].map((m) => m[1]);
+    expect(refs.length, "expected SKILL.md to reference docs/").toBeGreaterThan(0);
+    for (const ref of refs) {
+      expect(
+        fs.existsSync(path.join(skillsDir, "rafter", "docs", ref)),
+        `SKILL.md references docs/${ref} but it was not installed`,
+      ).toBe(true);
+    }
+
+    const disable = runCli("agent disable claude-code.skills", home);
+    expect(disable.code).toBe(0);
+    for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+      const skillDir = path.join(skillsDir, name);
+      expect(fs.existsSync(path.join(skillDir, "SKILL.md")), `${name}/SKILL.md not removed`).toBe(false);
+      expect(fs.existsSync(path.join(skillDir, "docs")), `${name}/docs not removed`).toBe(false);
+    }
+  });
+
   it("claude-code.instructions strip leaves surrounding content intact", () => {
     fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
     const filePath = path.join(home, ".claude", "CLAUDE.md");

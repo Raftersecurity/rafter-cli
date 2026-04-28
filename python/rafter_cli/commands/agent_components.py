@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -130,6 +131,39 @@ def _skill_text(*segments: str) -> str | None:
         return ref.read_text(encoding="utf-8")
     except Exception:
         return None
+
+
+def _copy_skill_docs(skill_name: str, dest_skill_dir: Path) -> None:
+    """Mirror resources/skills/<skill>/docs/ into <dest_skill_dir>/docs/.
+    SKILL.md references sibling docs/<x>.md by relative path, so users need
+    them installed alongside SKILL.md."""
+    try:
+        src_docs = importlib.resources.files("rafter_cli.resources").joinpath(
+            "skills", skill_name, "docs",
+        )
+        if not src_docs.is_dir():
+            return
+    except Exception:
+        return
+
+    dest_docs = dest_skill_dir / "docs"
+    dest_docs.mkdir(parents=True, exist_ok=True)
+    for entry in src_docs.iterdir():
+        if not entry.is_file():
+            continue
+        try:
+            (dest_docs / entry.name).write_text(
+                entry.read_text(encoding="utf-8"), encoding="utf-8",
+            )
+        except Exception:
+            continue
+
+
+def _remove_skill_docs(dest_skill_dir: Path) -> None:
+    docs_dir = dest_skill_dir / "docs"
+    if not docs_dir.exists():
+        return
+    shutil.rmtree(docs_dir, ignore_errors=True)
 
 
 # ── Component spec dataclass ─────────────────────────────────────────
@@ -268,16 +302,18 @@ def _skills_component(
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(content, encoding="utf-8")
+            _copy_skill_docs(name, dest.parent)
 
     def uninstall() -> None:
         for p in dest_paths:
             if p.exists():
                 p.unlink()
-                try:
-                    if p.parent.exists() and not any(p.parent.iterdir()):
-                        p.parent.rmdir()
-                except OSError:
-                    pass
+            _remove_skill_docs(p.parent)
+            try:
+                if p.parent.exists() and not any(p.parent.iterdir()):
+                    p.parent.rmdir()
+            except OSError:
+                pass
 
     return ComponentSpec(
         id=cid,
