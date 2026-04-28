@@ -21,11 +21,23 @@ import { createReportCommand } from "./commands/report.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 import { createRequire } from "module";
+import { realpathSync } from "fs";
+import { fileURLToPath } from "url";
 
 dotenv.config();
 
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require("../package.json");
+
+// realpathSync resolves the npm/pnpm `.bin/rafter` symlink to dist/index.js.
+function isCliEntry(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
 
 // Set agent mode early from argv — preAction hooks may not propagate to nested
 // subcommands on Node 18, so we detect -a/--agent before Commander parses.
@@ -96,9 +108,11 @@ program.addCommand(
     })
 );
 
-// Non-blocking update check — runs after command, prints to stderr
-checkForUpdate(VERSION).then((notice) => {
-  if (notice) process.stderr.write(notice);
-});
+if (isCliEntry()) {
+  // Non-blocking update check — runs after command, prints to stderr
+  checkForUpdate(VERSION).then((notice) => {
+    if (notice) process.stderr.write(notice);
+  });
 
-program.parse();
+  program.parse();
+}
