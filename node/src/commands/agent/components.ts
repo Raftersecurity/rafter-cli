@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import yaml from "js-yaml";
 import {
   RAFTER_MARKER_START,
   RAFTER_MARKER_END,
@@ -847,6 +848,97 @@ function aiderMcp(): ComponentSpec {
   };
 }
 
+/**
+ * Hermes (Nous Research) components. Hermes loads instructions from
+ * `~/.hermes/SOUL.md` (global) and project-root files (.hermes.md, AGENTS.md,
+ * CLAUDE.md), reads MCP servers from `~/.hermes/config.yaml`, and loads skills
+ * from `~/.hermes/skills/<name>/SKILL.md`. Hermes does not expose a hooks
+ * surface, so there is no hermes.hooks component.
+ */
+function hermesInstructions(): ComponentSpec {
+  const home = os.homedir();
+  const filePath = path.join(home, ".hermes", "SOUL.md");
+  return {
+    id: "hermes.instructions",
+    platform: "hermes",
+    kind: "instructions",
+    description: "Hermes global instruction block (~/.hermes/SOUL.md)",
+    detectDir: path.join(home, ".hermes"),
+    path: filePath,
+    isInstalled: () => hasMarkerBlock(filePath),
+    install: () => injectInstructionFile(filePath),
+    uninstall: () => {
+      stripMarkerBlock(filePath);
+    },
+  };
+}
+
+function hermesMcp(): ComponentSpec {
+  const home = os.homedir();
+  const configPath = path.join(home, ".hermes", "config.yaml");
+
+  const readYaml = (): Record<string, any> => {
+    if (!fs.existsSync(configPath)) return {};
+    try {
+      const parsed = yaml.load(fs.readFileSync(configPath, "utf-8"));
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, any>) : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const writeYaml = (cfg: Record<string, any>): void => {
+    const dir = path.dirname(configPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(configPath, yaml.dump(cfg, { indent: 2, lineWidth: 100 }), "utf-8");
+  };
+
+  return {
+    id: "hermes.mcp",
+    platform: "hermes",
+    kind: "mcp",
+    description: "Hermes MCP server entry (~/.hermes/config.yaml)",
+    detectDir: path.join(home, ".hermes"),
+    path: configPath,
+    isInstalled: () => {
+      const cfg = readYaml();
+      const servers = cfg.mcp_servers;
+      return !!(servers && typeof servers === "object" && !Array.isArray(servers) && servers.rafter);
+    },
+    install: () => {
+      const cfg = readYaml();
+      const servers = cfg.mcp_servers && typeof cfg.mcp_servers === "object" && !Array.isArray(cfg.mcp_servers)
+        ? (cfg.mcp_servers as Record<string, any>)
+        : {};
+      servers.rafter = { ...RAFTER_MCP_ENTRY };
+      cfg.mcp_servers = servers;
+      writeYaml(cfg);
+    },
+    uninstall: () => {
+      if (!fs.existsSync(configPath)) return;
+      const cfg = readYaml();
+      const servers = cfg.mcp_servers;
+      if (!(servers && typeof servers === "object" && !Array.isArray(servers))) return;
+      if (!removeKey(servers as Record<string, any>, "rafter")) return;
+      if (Object.keys(servers as Record<string, any>).length === 0) {
+        delete cfg.mcp_servers;
+      }
+      writeYaml(cfg);
+    },
+  };
+}
+
+function hermesSkills(): ComponentSpec {
+  const home = os.homedir();
+  return skillsDirComponent({
+    id: "hermes.skills",
+    platform: "hermes",
+    description: "Hermes skills (rafter + rafter-secure-design + rafter-code-review + rafter-skill-review)",
+    detectDir: path.join(home, ".hermes"),
+    skillsBaseDir: path.join(home, ".hermes", "skills"),
+  });
+}
+
 function openclawSkill(): ComponentSpec {
   const home = os.homedir();
   const skillPath = path.join(home, ".openclaw", "skills", "rafter-security.md");
@@ -895,6 +987,9 @@ export function getComponentRegistry(): ComponentSpec[] {
       continueHooks(),
       continueMcp(),
       aiderMcp(),
+      hermesInstructions(),
+      hermesMcp(),
+      hermesSkills(),
       openclawSkill(),
     ];
   }
