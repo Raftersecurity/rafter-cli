@@ -226,6 +226,48 @@ class TestAgentEnableDisable:
         settings = json.loads((home / ".claude" / "settings.json").read_text())
         assert len(settings["hooks"]["PreToolUse"]) > 0
 
+    def test_claude_code_skills_install_includes_docs_and_uninstall_removes_them(
+        self, home: Path,
+    ):
+        (home / ".claude").mkdir()
+        _, stderr, code = _run_cli("agent enable claude-code.skills", home)
+        assert code == 0, f"stderr={stderr!r}"
+
+        skills_dir = home / ".claude" / "skills"
+        for name in (
+            "rafter",
+            "rafter-secure-design",
+            "rafter-code-review",
+            "rafter-skill-review",
+        ):
+            skill_dir = skills_dir / name
+            assert (skill_dir / "SKILL.md").exists(), f"missing SKILL.md for {name}"
+            docs_dir = skill_dir / "docs"
+            assert docs_dir.exists(), f"missing docs/ for {name}"
+            assert any(docs_dir.iterdir()), f"empty docs/ for {name}"
+
+        # Every docs/<x>.md path referenced from SKILL.md must resolve on disk.
+        import re
+        rafter_skill = (skills_dir / "rafter" / "SKILL.md").read_text()
+        refs = re.findall(r"`docs/([\w-]+\.md)`", rafter_skill)
+        assert refs, "expected SKILL.md to reference docs/"
+        for ref in refs:
+            assert (skills_dir / "rafter" / "docs" / ref).exists(), (
+                f"SKILL.md references docs/{ref} but it was not installed"
+            )
+
+        _, _, code = _run_cli("agent disable claude-code.skills", home)
+        assert code == 0
+        for name in (
+            "rafter",
+            "rafter-secure-design",
+            "rafter-code-review",
+            "rafter-skill-review",
+        ):
+            skill_dir = skills_dir / name
+            assert not (skill_dir / "SKILL.md").exists(), f"{name}/SKILL.md not removed"
+            assert not (skill_dir / "docs").exists(), f"{name}/docs not removed"
+
     def test_instructions_strip_leaves_surrounding_content(self, home: Path):
         (home / ".claude").mkdir()
         file_path = home / ".claude" / "CLAUDE.md"

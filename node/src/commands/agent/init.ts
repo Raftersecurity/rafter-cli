@@ -570,21 +570,51 @@ function installSkillsTo(skillsDir: string): void {
     fs.mkdirSync(skillsDir, { recursive: true });
   }
   for (const skill of AGENT_SKILLS) {
+    const srcSkillRoot = path.join(
+      __dirname, "..", "..", "..", "resources", "skills", skill.name,
+    );
+    const srcPath = path.join(srcSkillRoot, "SKILL.md");
     const destDir = path.join(skillsDir, skill.name);
     const destPath = path.join(destDir, "SKILL.md");
-    const srcPath = path.join(
-      __dirname, "..", "..", "..", "resources", "skills", skill.name, "SKILL.md",
-    );
     if (!fs.existsSync(destDir)) {
       fs.mkdirSync(destDir, { recursive: true });
     }
     if (fs.existsSync(srcPath)) {
       fs.copyFileSync(srcPath, destPath);
-      console.log(fmt.success(`Installed ${skill.description} skill to ${destPath}`));
+      const docsCount = copySkillDocs(srcSkillRoot, destDir);
+      const docsSuffix = docsCount > 0 ? ` (+${docsCount} docs)` : "";
+      console.log(fmt.success(`Installed ${skill.description} skill to ${destPath}${docsSuffix}`));
     } else {
       console.log(fmt.warning(`${skill.description} skill template not found at ${srcPath}`));
     }
   }
+}
+
+/**
+ * Mirror <srcSkillRoot>/docs into <destSkillDir>/docs. SKILL.md files reference
+ * sibling sub-docs by relative path (e.g. "Read docs/backend.md"); without this
+ * copy, those references resolve to nothing on user installs. Returns count of
+ * doc files copied.
+ */
+function copySkillDocs(srcSkillRoot: string, destSkillDir: string): number {
+  const srcDocsDir = path.join(srcSkillRoot, "docs");
+  if (!fs.existsSync(srcDocsDir) || !fs.statSync(srcDocsDir).isDirectory()) {
+    return 0;
+  }
+  const destDocsDir = path.join(destSkillDir, "docs");
+  if (!fs.existsSync(destDocsDir)) {
+    fs.mkdirSync(destDocsDir, { recursive: true });
+  }
+  let count = 0;
+  for (const entry of fs.readdirSync(srcDocsDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    fs.copyFileSync(
+      path.join(srcDocsDir, entry.name),
+      path.join(destDocsDir, entry.name),
+    );
+    count += 1;
+  }
+  return count;
 }
 
 async function installClaudeCodeSkills(root: string): Promise<void> {

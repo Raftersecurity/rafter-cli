@@ -202,7 +202,9 @@ def _install_claude_code_hooks(root: Path) -> None:
 
 
 def _install_skills_to(skills_dir: Path) -> None:
-    """Copy all four AGENT_SKILLS into <skills_dir>/<skill>/SKILL.md."""
+    """Copy all four AGENT_SKILLS into <skills_dir>/<skill>/SKILL.md, plus
+    each skill's docs/ folder. SKILL.md instructs agents to "Read docs/<x>.md";
+    without the sibling docs install, those references resolve to nothing."""
     skills_dir.mkdir(parents=True, exist_ok=True)
     res = importlib.resources.files("rafter_cli.resources")
     for skill in _AGENT_SKILLS:
@@ -212,9 +214,35 @@ def _install_skills_to(skills_dir: Path) -> None:
         try:
             content = res.joinpath("skills", skill["name"], "SKILL.md").read_text(encoding="utf-8")
             dest_path.write_text(content, encoding="utf-8")
-            rprint(fmt.success(f"Installed {skill['description']} skill to {dest_path}"))
+            docs_count = _copy_skill_docs(res, skill["name"], dest_dir)
+            docs_suffix = f" (+{docs_count} docs)" if docs_count > 0 else ""
+            rprint(fmt.success(f"Installed {skill['description']} skill to {dest_path}{docs_suffix}"))
         except Exception:
             rprint(fmt.warning(f"{skill['description']} skill template not found in package resources"))
+
+
+def _copy_skill_docs(res: Any, skill_name: str, dest_skill_dir: Path) -> int:
+    """Mirror resources/skills/<skill>/docs/ into <dest_skill_dir>/docs/.
+    Returns count of doc files copied."""
+    try:
+        src_docs = res.joinpath("skills", skill_name, "docs")
+        if not src_docs.is_dir():
+            return 0
+    except Exception:
+        return 0
+
+    dest_docs = dest_skill_dir / "docs"
+    dest_docs.mkdir(parents=True, exist_ok=True)
+    count = 0
+    for entry in src_docs.iterdir():
+        if not entry.is_file():
+            continue
+        try:
+            (dest_docs / entry.name).write_text(entry.read_text(encoding="utf-8"), encoding="utf-8")
+            count += 1
+        except Exception:
+            continue
+    return count
 
 
 def _install_claude_code_skills(root: Path) -> None:

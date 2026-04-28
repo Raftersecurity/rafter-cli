@@ -228,6 +228,35 @@ function skillTemplatePath(name: string): string {
   return path.join(__dirname, "..", "..", "..", "resources", "skills", name, "SKILL.md");
 }
 
+function skillDocsSrcDir(name: string): string {
+  return path.join(__dirname, "..", "..", "..", "resources", "skills", name, "docs");
+}
+
+function copySkillDocs(srcDocsDir: string, destDocsDir: string): void {
+  if (!fs.existsSync(srcDocsDir) || !fs.statSync(srcDocsDir).isDirectory()) {
+    return;
+  }
+  if (!fs.existsSync(destDocsDir)) {
+    fs.mkdirSync(destDocsDir, { recursive: true });
+  }
+  for (const entry of fs.readdirSync(srcDocsDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    fs.copyFileSync(
+      path.join(srcDocsDir, entry.name),
+      path.join(destDocsDir, entry.name),
+    );
+  }
+}
+
+function removeSkillDocs(destDocsDir: string): void {
+  if (!fs.existsSync(destDocsDir)) return;
+  try {
+    fs.rmSync(destDocsDir, { recursive: true, force: true });
+  } catch {
+    // best-effort — leave on disk if removal fails
+  }
+}
+
 /**
  * Canonical rafter-authored skills that a per-platform "skills" component
  * installs. Mirrors `python/rafter_cli/commands/agent_components.py`. Keep in
@@ -266,20 +295,22 @@ function skillsDirComponent(opts: {
         const dir = path.dirname(dst);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         fs.copyFileSync(src, dst);
+        copySkillDocs(skillDocsSrcDir(name), path.join(dir, "docs"));
       }
     },
     uninstall: () => {
       for (const p of destPaths) {
         if (fs.existsSync(p)) {
           fs.rmSync(p, { force: true });
-          const dir = path.dirname(p);
-          try {
-            if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) {
-              fs.rmdirSync(dir);
-            }
-          } catch {
-            // non-empty or races — leave it
+        }
+        const dir = path.dirname(p);
+        removeSkillDocs(path.join(dir, "docs"));
+        try {
+          if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) {
+            fs.rmdirSync(dir);
           }
+        } catch {
+          // non-empty or races — leave it
         }
       }
     },
