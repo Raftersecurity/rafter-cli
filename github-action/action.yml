@@ -69,7 +69,11 @@ runs:
         RAFTER_URL: ${{ inputs.rafter-url }}
         SCAN_MODE: ${{ inputs.scan-mode }}
       run: |
-        RESPONSE=$(curl -fsS -X POST \
+        # --fail-with-body: non-2xx → body printed to stdout AND exit nonzero.
+        # We capture body+status separately so future failures self-explain
+        # (instead of just "curl exit 22"). API key never echoed.
+        BODY_FILE="$(mktemp)"
+        HTTP_CODE=$(curl -sS -o "$BODY_FILE" -w "%{http_code}" -X POST \
           -H "Content-Type: application/json" \
           -H "x-api-key: ${RAFTER_API_KEY}" \
           -d "{
@@ -77,12 +81,31 @@ runs:
             \"branch_name\": \"${{ github.head_ref || github.ref_name }}\",
             \"scan_mode\": \"${SCAN_MODE}\"
           }" \
-          "${RAFTER_URL}/api/static/scan" 2>&1)
+          "${RAFTER_URL}/api/static/scan") || {
+            echo "::error::curl transport error contacting ${RAFTER_URL}/api/static/scan"
+            cat "$BODY_FILE" || true
+            rm -f "$BODY_FILE"
+            exit 1
+          }
+
+        RESPONSE=$(cat "$BODY_FILE")
+        rm -f "$BODY_FILE"
+
+        if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+          ERROR=$(echo "$RESPONSE" | jq -r '.error // empty' 2>/dev/null || true)
+          echo "::error::Rafter scan trigger failed: HTTP ${HTTP_CODE}"
+          if [ -n "$ERROR" ]; then
+            echo "::error::Server: ${ERROR}"
+          else
+            echo "Server response: ${RESPONSE}"
+          fi
+          exit 1
+        fi
 
         SCAN_ID=$(echo "$RESPONSE" | jq -r '.scan_id // empty')
         if [ -z "$SCAN_ID" ]; then
           ERROR=$(echo "$RESPONSE" | jq -r '.error // "Unknown error triggering scan"')
-          echo "::error::Failed to trigger scan: ${ERROR}"
+          echo "::error::Failed to trigger scan (HTTP ${HTTP_CODE}): ${ERROR}"
           exit 1
         fi
 
@@ -103,9 +126,25 @@ runs:
         STATUS="pending"
 
         while [ $POLL_COUNT -lt $MAX_POLLS ]; do
-          RESPONSE=$(curl -fsS \
+          BODY_FILE="$(mktemp)"
+          HTTP_CODE=$(curl -sS -o "$BODY_FILE" -w "%{http_code}" \
             -H "x-api-key: ${RAFTER_API_KEY}" \
-            "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}" 2>&1)
+            "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}") || {
+              echo "::warning::curl transport error during poll (will retry)"
+              cat "$BODY_FILE" || true
+              rm -f "$BODY_FILE"
+              sleep 10
+              POLL_COUNT=$((POLL_COUNT+1))
+              continue
+            }
+          RESPONSE=$(cat "$BODY_FILE")
+          rm -f "$BODY_FILE"
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            ERROR=$(echo "$RESPONSE" | jq -r '.error // empty' 2>/dev/null || true)
+            echo "::error::Rafter scan poll failed: HTTP ${HTTP_CODE}${ERROR:+ — $ERROR}"
+            exit 1
+          fi
 
           STATUS=$(echo "$RESPONSE" | jq -r '.status // "unknown"')
 
@@ -139,20 +178,30 @@ runs:
         RAFTER_URL: ${{ inputs.rafter-url }}
         SCAN_ID: ${{ steps.scan.outputs.scan_id }}
       run: |
-        # Fetch JSON results
-        curl -fsS -H "x-api-key: ${RAFTER_API_KEY}" \
-          "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}" \
-          > "${{ runner.temp }}/rafter-results.json"
+        # fetch_results <output-path> <url>: HTTP-status aware GET that surfaces
+        # server error body on non-2xx (avoids silent curl exit 22 failures).
+        fetch_results() {
+          local out="$1"
+          local url="$2"
+          local code
+          code=$(curl -sS -o "$out" -w "%{http_code}" \
+            -H "x-api-key: ${RAFTER_API_KEY}" "$url") || {
+              echo "::error::curl transport error fetching ${url}"
+              cat "$out" || true
+              return 1
+            }
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            local body err
+            body=$(cat "$out" || true)
+            err=$(echo "$body" | jq -r '.error // empty' 2>/dev/null || true)
+            echo "::error::Rafter results fetch failed: HTTP ${code}${err:+ — $err}"
+            return 1
+          fi
+        }
 
-        # Fetch Markdown results
-        curl -fsS -H "x-api-key: ${RAFTER_API_KEY}" \
-          "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}&format=md" \
-          > "${{ runner.temp }}/rafter-results.md"
-
-        # Fetch SARIF results
-        curl -fsS -H "x-api-key: ${RAFTER_API_KEY}" \
-          "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}&format=sarif" \
-          > "${{ runner.temp }}/rafter-results.sarif"
+        fetch_results "${{ runner.temp }}/rafter-results.json"  "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}"
+        fetch_results "${{ runner.temp }}/rafter-results.md"    "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}&format=md"
+        fetch_results "${{ runner.temp }}/rafter-results.sarif" "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}&format=sarif"
 
         # Extract counts
         RESULTS="${{ runner.temp }}/rafter-results.json"
