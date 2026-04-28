@@ -73,6 +73,9 @@ describe("rafter agent list", () => {
       "aider.mcp",
       "codex.hooks",
       "codex.skills",
+      "hermes.instructions",
+      "hermes.mcp",
+      "hermes.skills",
       "openclaw.skills",
     ]) {
       const c = byId.get(id) as any;
@@ -260,6 +263,71 @@ describe("rafter agent enable / disable", () => {
     expect(r.code).toBe(0);
     const settings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf-8"));
     expect(settings.hooks?.PreToolUse?.length).toBeGreaterThan(0);
+  });
+
+  it("hermes.mcp round-trips YAML and preserves unrelated mcp_servers entries", () => {
+    fs.mkdirSync(path.join(home, ".hermes"), { recursive: true });
+    const cfgPath = path.join(home, ".hermes", "config.yaml");
+    fs.writeFileSync(
+      cfgPath,
+      [
+        "model: hermes-3",
+        "mcp_servers:",
+        "  project_fs:",
+        "    command: npx",
+        "    args:",
+        "      - '-y'",
+        "      - '@modelcontextprotocol/server-filesystem'",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const enable = runCli("agent enable hermes.mcp", home);
+    expect(enable.code).toBe(0);
+    let after = fs.readFileSync(cfgPath, "utf-8");
+    // rafter is now under mcp_servers; project_fs and the model line are preserved.
+    expect(after).toMatch(/rafter:/);
+    expect(after).toMatch(/command:\s*rafter/);
+    expect(after).toMatch(/project_fs:/);
+    expect(after).toMatch(/model:\s*hermes-3/);
+
+    const disable = runCli("agent disable hermes.mcp", home);
+    expect(disable.code).toBe(0);
+    after = fs.readFileSync(cfgPath, "utf-8");
+    expect(after).not.toMatch(/^\s*rafter:/m);
+    expect(after).toMatch(/project_fs:/);
+    expect(after).toMatch(/model:\s*hermes-3/);
+  });
+
+  it("hermes.skills installs SKILL.md files and disable removes them", () => {
+    fs.mkdirSync(path.join(home, ".hermes"), { recursive: true });
+    const enable = runCli("agent enable hermes.skills", home);
+    expect(enable.code).toBe(0);
+    const rafterSkill = path.join(home, ".hermes", "skills", "rafter", "SKILL.md");
+    expect(fs.existsSync(rafterSkill)).toBe(true);
+
+    const disable = runCli("agent disable hermes.skills", home);
+    expect(disable.code).toBe(0);
+    expect(fs.existsSync(rafterSkill)).toBe(false);
+  });
+
+  it("hermes.instructions injects marker block into SOUL.md without disturbing existing content", () => {
+    fs.mkdirSync(path.join(home, ".hermes"), { recursive: true });
+    const soul = path.join(home, ".hermes", "SOUL.md");
+    fs.writeFileSync(soul, "# Personality\nSpeak plainly.\n");
+
+    runCli("agent enable hermes.instructions", home);
+    const after = fs.readFileSync(soul, "utf-8");
+    expect(after).toContain("# Personality");
+    expect(after).toContain("Speak plainly.");
+    expect(after).toContain("rafter:start");
+
+    runCli("agent disable hermes.instructions", home);
+    const cleaned = fs.readFileSync(soul, "utf-8");
+    expect(cleaned).toContain("# Personality");
+    expect(cleaned).toContain("Speak plainly.");
+    expect(cleaned).not.toContain("rafter:start");
   });
 
   it("claude-code.instructions strip leaves surrounding content intact", () => {

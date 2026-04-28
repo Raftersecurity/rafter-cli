@@ -66,6 +66,9 @@ class TestAgentList:
             "aider.mcp",
             "codex.hooks",
             "codex.skills",
+            "hermes.instructions",
+            "hermes.mcp",
+            "hermes.skills",
             "openclaw.skills",
         ]:
             c = by_id.get(cid)
@@ -225,6 +228,64 @@ class TestAgentEnableDisable:
         assert code == 0
         settings = json.loads((home / ".claude" / "settings.json").read_text())
         assert len(settings["hooks"]["PreToolUse"]) > 0
+
+    def test_hermes_mcp_round_trips_yaml_and_preserves_others(self, home: Path):
+        import yaml
+
+        (home / ".hermes").mkdir()
+        cfg_path = home / ".hermes" / "config.yaml"
+        cfg_path.write_text(
+            "model: hermes-3\n"
+            "mcp_servers:\n"
+            "  project_fs:\n"
+            "    command: npx\n"
+            "    args:\n"
+            "      - '-y'\n"
+            "      - '@modelcontextprotocol/server-filesystem'\n",
+            encoding="utf-8",
+        )
+
+        _, _, code = _run_cli("agent enable hermes.mcp", home)
+        assert code == 0
+        parsed = yaml.safe_load(cfg_path.read_text())
+        assert parsed["mcp_servers"]["rafter"]["command"] == "rafter"
+        assert "project_fs" in parsed["mcp_servers"]
+        assert parsed["model"] == "hermes-3"
+
+        _, _, code = _run_cli("agent disable hermes.mcp", home)
+        assert code == 0
+        parsed = yaml.safe_load(cfg_path.read_text())
+        assert "rafter" not in parsed.get("mcp_servers", {})
+        assert "project_fs" in parsed["mcp_servers"]
+        assert parsed["model"] == "hermes-3"
+
+    def test_hermes_skills_install_and_disable(self, home: Path):
+        (home / ".hermes").mkdir()
+        _, _, code = _run_cli("agent enable hermes.skills", home)
+        assert code == 0
+        rafter_skill = home / ".hermes" / "skills" / "rafter" / "SKILL.md"
+        assert rafter_skill.exists()
+
+        _, _, code = _run_cli("agent disable hermes.skills", home)
+        assert code == 0
+        assert not rafter_skill.exists()
+
+    def test_hermes_instructions_strip_leaves_personality_intact(self, home: Path):
+        (home / ".hermes").mkdir()
+        soul = home / ".hermes" / "SOUL.md"
+        soul.write_text("# Personality\nSpeak plainly.\n")
+
+        _run_cli("agent enable hermes.instructions", home)
+        after = soul.read_text()
+        assert "# Personality" in after
+        assert "Speak plainly." in after
+        assert "rafter:start" in after
+
+        _run_cli("agent disable hermes.instructions", home)
+        cleaned = soul.read_text()
+        assert "# Personality" in cleaned
+        assert "Speak plainly." in cleaned
+        assert "rafter:start" not in cleaned
 
     def test_instructions_strip_leaves_surrounding_content(self, home: Path):
         (home / ".claude").mkdir()

@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import yaml
+
 from ..core.config_manager import ConfigManager
 
 
@@ -868,6 +870,99 @@ def _aider_mcp() -> ComponentSpec:
     )
 
 
+def _hermes_instructions() -> ComponentSpec:
+    """Hermes global instruction block (~/.hermes/SOUL.md).
+
+    SOUL.md is the global identity file Hermes always loads at startup,
+    so a marker block there parallels claude-code's CLAUDE.md.
+    """
+    home = Path.home()
+    detect_dir = home / ".hermes"
+    file_path = detect_dir / "SOUL.md"
+    return ComponentSpec(
+        id="hermes.instructions",
+        platform="hermes",
+        kind="instructions",
+        description="Hermes global instruction block (~/.hermes/SOUL.md)",
+        detect_dir=detect_dir,
+        path=file_path,
+        is_installed=lambda: _has_marker_block(file_path),
+        install=lambda: _inject_instruction_file(file_path),
+        uninstall=lambda: _strip_marker_block(file_path),
+    )
+
+
+def _hermes_mcp() -> ComponentSpec:
+    """Hermes MCP server entry in ~/.hermes/config.yaml under top-level mcp_servers."""
+    home = Path.home()
+    detect_dir = home / ".hermes"
+    config_path = detect_dir / "config.yaml"
+
+    def _read_yaml() -> dict[str, Any]:
+        if not config_path.exists():
+            return {}
+        try:
+            parsed = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _write_yaml(cfg: dict[str, Any]) -> None:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            yaml.safe_dump(cfg, indent=2, sort_keys=False, width=100),
+            encoding="utf-8",
+        )
+
+    def is_installed() -> bool:
+        servers = _read_yaml().get("mcp_servers")
+        return isinstance(servers, dict) and "rafter" in servers
+
+    def install() -> None:
+        cfg = _read_yaml()
+        servers = cfg.get("mcp_servers")
+        if not isinstance(servers, dict):
+            servers = {}
+        servers["rafter"] = dict(RAFTER_MCP_ENTRY)
+        cfg["mcp_servers"] = servers
+        _write_yaml(cfg)
+
+    def uninstall() -> None:
+        if not config_path.exists():
+            return
+        cfg = _read_yaml()
+        servers = cfg.get("mcp_servers")
+        if not (isinstance(servers, dict) and "rafter" in servers):
+            return
+        del servers["rafter"]
+        if not servers:
+            del cfg["mcp_servers"]
+        _write_yaml(cfg)
+
+    return ComponentSpec(
+        id="hermes.mcp",
+        platform="hermes",
+        kind="mcp",
+        description="Hermes MCP server entry (~/.hermes/config.yaml)",
+        detect_dir=detect_dir,
+        path=config_path,
+        is_installed=is_installed,
+        install=install,
+        uninstall=uninstall,
+    )
+
+
+def _hermes_skills() -> ComponentSpec:
+    home = Path.home()
+    return _skills_component(
+        cid="hermes.skills",
+        platform="hermes",
+        description="Hermes skills (rafter + rafter-secure-design + rafter-code-review + rafter-skill-review)",
+        detect_dir=home / ".hermes",
+        skills_base_dir=home / ".hermes" / "skills",
+    )
+
+
 def _openclaw_skill() -> ComponentSpec:
     home = Path.home()
     detect_dir = home / ".openclaw"
@@ -922,6 +1017,9 @@ def get_registry() -> list[ComponentSpec]:
             _continue_hooks(),
             _continue_mcp(),
             _aider_mcp(),
+            _hermes_instructions(),
+            _hermes_mcp(),
+            _hermes_skills(),
             _openclaw_skill(),
         ]
     return _REGISTRY

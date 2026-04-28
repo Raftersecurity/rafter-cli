@@ -153,6 +153,7 @@ Initialize local security system. Creates config and detects available developme
 - `--with-cursor` — install Cursor integration
 - `--with-windsurf` — install Windsurf integration
 - `--with-continue` — install Continue.dev integration
+- `--with-hermes` — install Hermes (Nous Research) integration
 - `--with-gitleaks` — download and install Gitleaks binary
 - `--all` — install all detected integrations and download Gitleaks
 - `-i, --interactive` — guided setup — prompts for each detected integration (Node only)
