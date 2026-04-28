@@ -14,7 +14,7 @@
 | Gemini       | yes (rf-yit)   | partial                 | yes (BeforeTool)      | unverified         | yes   | n/a       | GEMINI.md        | partial (MCP only) |
 | Cursor       | **NO**         | n/a                     | yes (beforeShell)     | unverified         | yes   | n/a       | .cursor/rules/*.mdc | partial (MCP only) |
 | Windsurf     | **NO**         | n/a                     | yes (pre_run_command) | unverified         | yes   | n/a       | **none**         | partial (MCP only) |
-| Continue.dev | **NO**         | n/a                     | yes — but **wrong fmt** | **almost certainly no** | yes   | n/a       | **none**         | **NOT CHECKED** |
+| Continue.dev | **NO**         | n/a                     | **none (pruned)**     | n/a                | yes   | n/a       | **none**         | **NOT CHECKED** |
 | Aider        | **NO**         | n/a                     | **none**              | n/a                | yes   | n/a       | **none**         | **NOT CHECKED** |
 | OpenClaw     | yes            | unverified              | none                  | n/a                | —     | n/a       | none             | yes            |
 
@@ -96,17 +96,20 @@ Gaps:
 - Hook schema (`pre_run_command`, `pre_write_code`) needs verification against current Windsurf docs.
 - Recipe out of date.
 
-### Continue.dev — hooks file format is almost certainly wrong
+### Continue.dev — hooks pruned (rf-cia phase b)
 
-What we ship per code: hooks written to `.continue/settings.json` using Claude Code's `PreToolUse` / `PostToolUse` protocol — Continue.dev does NOT natively use that protocol. v1 used `config.json` with model + slash-command rules; v2 uses `config.yaml` with assistant + tool customization. Neither has a `PreToolUse` array. The hook file we write almost certainly does nothing at runtime.
+**Status (2026-04-28):** Hook install removed. Continue.dev integration is now MCP-only — matches what the recipe always claimed.
 
-MCP: `.continue/config.json` mcpServers — correct.
+What we previously shipped: hooks written to `.continue/settings.json` using Claude Code's `PreToolUse` / `PostToolUse` protocol. Continue.dev does NOT natively use that protocol; current versions use `~/.continue/config.yaml` (legacy `config.json`), with no `hooks.PreToolUse` field. Confirmed against `docs.continue.dev/customize/deep-dives/configuration` 2026-04-28: settings.json is not a Continue.dev config file. The install was a silent no-op at runtime.
 
-Verify check: not implemented at all (`checkContinueDev` does not exist in verify.ts).
+What we ship now: MCP server entry in `.continue/config.json` only. The hook install function (`installContinueDevHooks` in Node, `_continue_hooks` ComponentSpec in Node + Python) was removed. The components registry no longer exposes `continue.hooks` for `rafter agent enable/disable`.
 
-Gaps:
-- **Hooks file is silently no-op.** Either find Continue.dev's actual tool-customization hook surface (if one exists in v2) or drop hook install entirely and document the platform as MCP-only.
-- No skills install, no instruction file, no verify check.
+Verify check: still not implemented (`checkContinueDev` does not exist in verify.ts) — that comes in the next phase.
+
+Remaining gaps:
+- No skills install (Continue.dev's analog is its assistant config — not adopted yet).
+- No instruction file.
+- No `checkContinueDev` in `rafter agent verify`.
 
 ### Aider — only MCP via YAML append
 
