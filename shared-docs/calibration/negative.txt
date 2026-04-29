@@ -6,20 +6,20 @@
 #
 # Comments start with `#`. Blank lines are ignored.
 #
-# Seeds:
-#   - rc-vi2 known/suspected false positives (numeric IDs, prose)
-#   - ordinary coding prompts a developer would actually type
-#   - prompts ABOUT credentials but not assigning them
-#   - DB_/HOST_/PORT_/VERSION_ patterns that look adjacency-similar
-#   - placeholder-form values (<your-key>, ${VAR}, example-*)
-#   - identifiers and config keys that look like credentials but aren't
+# Each section is tagged with a `signal:` class — the underlying defense
+# that prevents detection on that class of prompt. A regression in class N
+# fails the lines under that section's signal, which makes the failing
+# defense visible at a glance. Today's 6 known FPs all live under
+# `signal: kebab-non-secret-rhs` (rc-wk5).
 #
 # Each prompt is scanned in isolation: the loader splits on lines and
-# scans each non-blank, non-comment line individually. So adjacency
-# across lines does NOT matter for detection — only intra-line content.
+# scans each non-blank, non-comment line individually. Cross-line
+# adjacency does not matter for detection.
 
 # ──────────────────────────────────────────────────────────────────────
-# rc-vi2 suspected false positives — these MUST stay quiet
+# signal: rc-vi2-known-suspects
+# Cases hand-picked from the calibration design doc as suspected FPs;
+# most turn out to be defended by a length floor or alternation guard.
 # ──────────────────────────────────────────────────────────────────────
 secret_id=12345
 the password to victory is patience
@@ -32,7 +32,10 @@ the secret to good code is short functions
 my password manager keeps everything synced
 
 # ──────────────────────────────────────────────────────────────────────
-# Ordinary coding prompts — refactor / debug / explain / build
+# signal: prose-mentioning-credential-keyword
+# Prose that mentions a credential keyword without an assignment shape;
+# defended by the assignment regex requiring `[ \t]*[:=]` after the
+# identifier and the phrase regex requiring `is/=/:` after the keyword.
 # ──────────────────────────────────────────────────────────────────────
 refactor the auth middleware to validate JWT signatures
 add a unit test for the password hashing helper
@@ -65,7 +68,9 @@ mock the github api token check in unit tests
 why is the jwt library rejecting our test fixtures
 
 # ──────────────────────────────────────────────────────────────────────
-# Talking ABOUT credentials, not assigning them
+# signal: talking-about-credentials
+# Same defense as prose-mentioning-credential-keyword, but the topic is
+# specifically the SHAPE of a credential rather than a debugging task.
 # ──────────────────────────────────────────────────────────────────────
 the api_key field is required in the request body
 document that DATABASE_URL is read from the environment
@@ -77,7 +82,12 @@ explain what an aws secret access key looks like
 list every env var name we read at startup
 
 # ──────────────────────────────────────────────────────────────────────
-# Adjacency: identifier looks credential-ish, value isn't
+# signal: kebab-non-secret-rhs
+# Identifier matches a credential keyword (api_key, secret, token, …)
+# but the RHS is a short kebab/snake-case identifier (X-Api-Key,
+# ordered_set, aws-default, public, opaque, argon2id) — clearly a config
+# value, not a credential. THE 6 KNOWN FPs LIVE HERE (rc-wk5). Future
+# regressions in this class show up as count growth from 6.
 # ──────────────────────────────────────────────────────────────────────
 api_key_header_name=X-Api-Key
 auth_token_lifetime_seconds=86400
@@ -92,7 +102,9 @@ auth_token_type=opaque
 password_hash_algorithm=argon2id
 
 # ──────────────────────────────────────────────────────────────────────
-# Numeric / short / non-credential RHS values (under length floor)
+# signal: under-length-floor
+# Defended by the regex's value-length floor (assignment ≥6, phrase ≥6,
+# URL ≥6). Numeric-only and short config values fall under this floor.
 # ──────────────────────────────────────────────────────────────────────
 port=8080
 version=1.2.3
@@ -108,22 +120,41 @@ WORKERS=4
 REPLICAS=3
 
 # ──────────────────────────────────────────────────────────────────────
-# Placeholder-form values — the redaction would be useless
+# signal: placeholder-filter
+# Defended by isLikelyPlaceholder() in prompt-shield.ts: whole-string
+# matches against `xxx` / `<…>` / `${VAR}` / `^example…` / a literal
+# placeholder set. Real secrets that share a substring (e.g.
+# Mxxx2024aB, your-system-key1234) are NOT filtered — see the
+# placeholder-near-miss-* cases in positive.yaml.
 # ──────────────────────────────────────────────────────────────────────
 api_key=<your-key>
 DB_PASSWORD=${DB_PASSWORD}
 GITHUB_TOKEN=${GITHUB_TOKEN}
 SECRET=${SECRET}
 api_key=your-secret
+api_key=your-key
+api_key=your-token
+api_key=your-api-key
+DB_PASSWORD=your-password
 api_key=changeme
 password=change-me
+api_key=replace-me
+DB_PASSWORD=replaceme
+api_key=replace-this
+DB_PASSWORD=fixme
+api_key=placeholder
+SECRET=redacted
 api_key=example-key
+api_key=example-token
 DB_PASSWORD=xxx
+DB_PASSWORD=xxxx-secret
 api_key=<api-key-here>
 SECRET=<redacted>
 
 # ──────────────────────────────────────────────────────────────────────
-# Code-comment / quoted prose
+# signal: prose-meta-comment
+# Same defense as prose-mentioning-credential-keyword, framed as a
+# docstring or note ("note:", "remember:", "the doc comment says").
 # ──────────────────────────────────────────────────────────────────────
 note: the user's password must rotate every 90 days
 note: rotate the api_key on each release
@@ -131,7 +162,10 @@ remember: the secret is in the env var, never hardcoded
 the doc comment says "set the api key in your config"
 
 # ──────────────────────────────────────────────────────────────────────
-# Filenames and paths — adjacency similar to assignment
+# signal: file-path-or-extension
+# Identifier-shaped tokens that are file/path names rather than
+# assignments. Defended by the assignment regex needing `[:=]` directly
+# after the identifier (paths use `/`, `.`, etc.).
 # ──────────────────────────────────────────────────────────────────────
 read the secret from /etc/rafter/secret.key
 the password file lives at /etc/passwd on linux
@@ -140,7 +174,9 @@ api_key.json is gitignored
 secret.tfvars is encrypted with sops
 
 # ──────────────────────────────────────────────────────────────────────
-# URL forms WITHOUT credentials (must not match URL-with-credentials)
+# signal: url-no-credentials
+# URLs that lack the `user:pass@host` shape — defended by the URL regex
+# requiring a colon-and-at-sign credential segment.
 # ──────────────────────────────────────────────────────────────────────
 hit https://api.example.com/v1/users to list users
 the docs are at https://docs.rafter.security/quickstart
@@ -149,7 +185,9 @@ the webhook endpoint is https://hooks.example.com/incoming
 proxy traffic through http://proxy.internal:8080
 
 # ──────────────────────────────────────────────────────────────────────
-# Misc adjacency
+# signal: misc-adjacency
+# Tokens that share characters with credential keywords but appear as
+# slashes, paths, audit-log fields, or filenames.
 # ──────────────────────────────────────────────────────────────────────
 the api/key endpoint returns 200 with a stub response
 trace the auth/token refresh path in the proxy

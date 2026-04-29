@@ -25,9 +25,10 @@
 import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
+import { spawnSync } from "child_process";
 import yaml from "js-yaml";
 import { fileURLToPath } from "url";
-import { detectSecrets, DetectedSecret } from "../src/core/prompt-shield.js";
+import { detectSecrets, DetectedSecret, replaceSecretsWithRefs } from "../src/core/prompt-shield.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.resolve(__dirname, "../../shared-docs/calibration");
@@ -51,6 +52,9 @@ const PRECISION_FLOOR = 0.9; // combined: tp / (tp + fp); target 0.95
 const AKIA = "AKI" + "A";
 const ASIA = "ASI" + "A"; // session token prefix
 const AROA = "ARO" + "A"; // role prefix
+const AGPA = "AGP" + "A"; // group prefix
+const AIDA = "AID" + "A"; // IAM user prefix
+const A3T = "A3" + "T"; // A3T[A-Z0-9] alternation arm — needs +1 char before the 16-char tail
 const SK_LIVE = "sk_" + "live_";
 const RK_LIVE = "rk_" + "live_";
 const GHP = "ghp" + "_";
@@ -59,6 +63,8 @@ const GHU = "ghu" + "_";
 const GHR = "ghr" + "_";
 const SLACK_BOT = "xox" + "b-";
 const SLACK_USER = "xox" + "p-";  // user token
+const SLACK_APP = "xox" + "a-";   // app-level token
+const SLACK_REFRESH = "xox" + "r-";
 const GHS = "ghs" + "_";           // GitHub Server-to-Server App token
 const NPM_PREFIX = "npm" + "_";
 const PYPI_PREFIX = "pypi-AgEI" + "cHlwaS5vcmc";
@@ -112,14 +118,15 @@ type PatternCase = {
 const MATRIX: PatternCase[] = [
   {
     name: "AWS Access Key ID",
-    // Regex accepts 9 prefixes (AKIA / ASIA / AROA / AGPA / AIDA / AIPA /
-    // ANPA / ANVA / A3T*). Test the three live-traffic shapes (AKIA = user
-    // access key, ASIA = STS session token, AROA = role) — a regex
-    // refactor that drops one of these is now visible.
+    // Regex accepts 9 prefixes; cover one per alternation arm so a
+    // refactor that drops any prefix surfaces immediately.
     hits: [
       { prompt: `use ${AWS_DOCS_KEY} for the test`, value: AWS_DOCS_KEY },
       { prompt: `STS issued ${ASIA}IOSFODNN7EXAMPLE for staging`, value: `${ASIA}IOSFODNN7EXAMPLE` },
       { prompt: `assumed role ${AROA}IOSFODNN7EXAMPLE today`, value: `${AROA}IOSFODNN7EXAMPLE` },
+      { prompt: `group key ${AGPA}IOSFODNN7EXAMPLE active`, value: `${AGPA}IOSFODNN7EXAMPLE` },
+      { prompt: `IAM user ${AIDA}IOSFODNN7EXAMPLE created`, value: `${AIDA}IOSFODNN7EXAMPLE` },
+      { prompt: `legacy ${A3T}XIOSFODNN7EXAMPLE found`, value: `${A3T}XIOSFODNN7EXAMPLE` },
     ],
     misses: [`the ${AKIA} prefix is part of AWS keys`, `${AKIA}SHORT123`],
   },
@@ -176,11 +183,13 @@ const MATRIX: PatternCase[] = [
   },
   {
     name: "Slack Token",
-    // Regex is `xox[baprs]-…`; bot (xoxb) and user (xoxp) are the two
-    // shapes most commonly pasted. Dropping either surfaces here.
+    // Regex is `xox[baprs]-…`; cover bot/user/app/refresh so a refactor
+    // that narrows the bracket alternation surfaces immediately.
     hits: [
       { prompt: `slack: ${SLACK_BOT}${ALNUM24} success`, value: `${SLACK_BOT}${ALNUM24}` },
       { prompt: `user token ${SLACK_USER}${ALNUM24} ok`, value: `${SLACK_USER}${ALNUM24}` },
+      { prompt: `app token ${SLACK_APP}${ALNUM24} ok`, value: `${SLACK_APP}${ALNUM24}` },
+      { prompt: `refresh ${SLACK_REFRESH}${ALNUM24} stored`, value: `${SLACK_REFRESH}${ALNUM24}` },
     ],
     misses: [`${SLACK_BOT}short`],
   },
@@ -458,4 +467,120 @@ describe("calibration: per-pattern hit/miss matrix", () => {
       }
     });
   }
+});
+
+// rc-apd #1: round-trip envelope path. detectSecrets() is exercised heavily
+// by the corpus + matrix above, but `envBaseName` derivation, longest-first
+// substring-safe replacement, and the placeholder filter feed the actual
+// hook envelope (additionalContext / llm_request rewrite). A regex change
+// that left detection intact while breaking these auxiliary paths would pass
+// every other assertion in this file.
+describe("calibration: round-trip envelope (rc-apd #1)", () => {
+  it("derives envBaseName from the LHS identifier on assignment forms", () => {
+    const detected = detectSecrets("Connect with DB_PASSWORD=hunter2andmore please");
+    expect(detected).toHaveLength(1);
+    expect(detected[0].value).toBe("hunter2andmore");
+    expect(detected[0].envBaseName).toBe("DB_PASSWORD");
+  });
+
+  it("rewrites the captured value with $ENV_NAME via replaceSecretsWithRefs", () => {
+    const prompt = "Connect with DB_PASSWORD=hunter2andmore please";
+    const detected = detectSecrets(prompt);
+    const valueToName = new Map(detected.map((d) => [d.value, d.envBaseName]));
+    const rewritten = replaceSecretsWithRefs(prompt, detected, valueToName);
+    expect(rewritten).toBe("Connect with DB_PASSWORD=$DB_PASSWORD please");
+  });
+
+  it("longest-first replacement avoids substring shadowing", () => {
+    // If the shorter value `hunter2andmore` were replaced first, the
+    // substring inside `hunter2andmore_extended` would collide and yield
+    // garbage. replaceSecretsWithRefs sorts by value length descending.
+    const prompt =
+      "DB_PASSWORD=hunter2andmore_extended and AUTH_TOKEN=hunter2andmore here";
+    const detected = detectSecrets(prompt);
+    const valueToName = new Map(detected.map((d) => [d.value, d.envBaseName]));
+    const rewritten = replaceSecretsWithRefs(prompt, detected, valueToName);
+    expect(rewritten).toContain("DB_PASSWORD=$DB_PASSWORD");
+    expect(rewritten).toContain("AUTH_TOKEN=$AUTH_TOKEN");
+    // The shorter value's env-ref must NOT appear inside the longer match.
+    expect(rewritten).not.toContain("$AUTH_TOKEN_extended");
+  });
+
+  it("URL-with-credentials uses the URL_PASSWORD envBaseName", () => {
+    const detected = detectSecrets(
+      "connect to redis://admin:hunter2andmore@cache.internal:6379/0"
+    );
+    const url = detected.find((d) => d.patternName === "URL with credentials");
+    expect(url).toBeTruthy();
+    expect(url!.envBaseName).toBe("URL_PASSWORD");
+  });
+});
+
+// rc-apd #2: Node ↔ Python parity. The two implementations are parallel,
+// not parity-checked. This test runs detect on the shared corpus through
+// both impls and asserts identical (pattern, value) sets per prompt. Drift
+// in one impl (e.g. a regex tweaked in Node but not Python) fails here.
+//
+// Skipped if `python3` isn't on PATH or the Python package isn't importable.
+describe("calibration: Node ↔ Python parity (rc-apd #2)", () => {
+  it("Python detect_secrets matches Node on every corpus prompt", () => {
+    const PYTHON_DIR = path.resolve(__dirname, "../../python");
+    const probe = spawnSync(
+      "python3",
+      ["-c", "import sys; sys.path.insert(0, sys.argv[1]); import rafter_cli.core.prompt_shield", PYTHON_DIR],
+      { encoding: "utf-8", timeout: 5000 }
+    );
+    if (probe.status !== 0) {
+      console.warn(`[parity] skipping — python3 / rafter_cli not importable: ${probe.stderr}`);
+      return;
+    }
+
+    const negatives = loadNegatives();
+    const positives = loadPositives().map((c) => c.prompt);
+    const prompts = [...negatives, ...positives];
+
+    const nodeResults = prompts.map((p) =>
+      detectSecrets(p).map((d) => ({ pattern: d.patternName, value: d.value }))
+    );
+
+    const script = [
+      "import sys, json",
+      `sys.path.insert(0, ${JSON.stringify(PYTHON_DIR)})`,
+      "from rafter_cli.core.prompt_shield import detect_secrets",
+      "prompts = json.load(sys.stdin)",
+      "out = [[{'pattern': d.pattern_name, 'value': d.value} for d in detect_secrets(p)] for p in prompts]",
+      "json.dump(out, sys.stdout)",
+    ].join("\n");
+
+    const proc = spawnSync("python3", ["-c", script], {
+      input: JSON.stringify(prompts),
+      encoding: "utf-8",
+      timeout: 30000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    expect(proc.status, `python detection script failed:\nstderr: ${proc.stderr}`).toBe(0);
+
+    const pythonResults: { pattern: string; value: string }[][] = JSON.parse(proc.stdout);
+    expect(pythonResults).toHaveLength(prompts.length);
+
+    const drift: string[] = [];
+    for (let i = 0; i < prompts.length; i++) {
+      const key = (r: { pattern: string; value: string }) => `${r.pattern}\x00${r.value}`;
+      const nodeSet = new Set(nodeResults[i].map(key));
+      const pySet = new Set(pythonResults[i].map(key));
+      const onlyNode = [...nodeSet].filter((x) => !pySet.has(x));
+      const onlyPy = [...pySet].filter((x) => !nodeSet.has(x));
+      if (onlyNode.length || onlyPy.length) {
+        drift.push(
+          `prompt[${i}] ${JSON.stringify(prompts[i].slice(0, 80))}:\n` +
+            `    node-only: ${JSON.stringify(onlyNode)}\n` +
+            `    python-only: ${JSON.stringify(onlyPy)}`
+        );
+      }
+    }
+    if (drift.length > 0) {
+      console.error(`\nNode/Python drift on ${drift.length} prompt(s):\n${drift.join("\n")}`);
+    }
+    expect(drift).toEqual([]);
+  });
 });

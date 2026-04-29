@@ -67,7 +67,10 @@ export const PROMPT_SHIELD_PATTERNS: PromptShieldPattern[] = [
     name: "URL with credentials",
     envBaseName: "URL_PASSWORD",
     // Matches scheme://user:password@host — captures the password segment.
-    regex: /\b[a-z][a-z0-9+\-.]{1,32}:\/\/[^\s:@/]+:([^\s@/'"`]{4,256})@[^\s'"`]+/gi,
+    // Floor of 6 chars on the password segment matches the assignment
+    // pattern's floor (was previously 4 here, inconsistent with the rest
+    // of prompt-shield).
+    regex: /\b[a-z][a-z0-9+\-.]{1,32}:\/\/[^\s:@/]+:([^\s@/'"`]{6,256})@[^\s'"`]+/gi,
     valueGroup: 1,
     severity: "critical",
   },
