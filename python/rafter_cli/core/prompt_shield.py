@@ -30,6 +30,15 @@ class DetectedSecret:
 _PLACEHOLDER_LITERALS = {"changeme", "change-me", "your-secret", "your_secret"}
 _PLACEHOLDER_BRACKET_RE = re.compile(r"^<.+>$")
 _PLACEHOLDER_VAR_RE = re.compile(r"^\$\{?[A-Z_][A-Z0-9_]*\}?$")
+# `xxx`/`xxxx`/... as the *whole* value (optional `-suffix`); replaces the old
+# substring rule that dropped real-looking values containing `xxx` (e.g.
+# `Mxxx2024aB`).
+_PLACEHOLDER_XXX_RE = re.compile(r"^x{3,}([-_][a-z]+)?$")
+# `example` as a whole token, optionally with a credential-shape suffix; the
+# old prefix rule dropped real values like `example4Hunter2!`.
+_PLACEHOLDER_EXAMPLE_RE = re.compile(
+    r"^example([-_]?(key|secret|token|value|password|placeholder|api[-_]?key|api[-_]?secret))?$"
+)
 
 
 def detect_secrets(text: str) -> list[DetectedSecret]:
@@ -96,7 +105,7 @@ def replace_secrets_with_refs(
 
 def _is_likely_placeholder(value: str) -> bool:
     lower = value.lower()
-    if "xxx" in lower and len(lower) < 16:
+    if _PLACEHOLDER_XXX_RE.match(lower):
         return True
     if lower in _PLACEHOLDER_LITERALS:
         return True
@@ -104,6 +113,6 @@ def _is_likely_placeholder(value: str) -> bool:
         return True
     if _PLACEHOLDER_VAR_RE.match(value):
         return True
-    if lower.startswith("example"):
+    if _PLACEHOLDER_EXAMPLE_RE.match(lower):
         return True
     return False

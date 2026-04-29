@@ -58,6 +58,7 @@ cases:
     prompt: "set MY_API_KEY = abcd1234efgh on startup"
     expects:
       - value: abcd1234efgh
+        pattern: Inline credential assignment
 
   # ─── Case variations on the credential keyword ───────────────────────
   - id: assignment-uppercase-keyword
@@ -201,6 +202,7 @@ cases:
     prompt: "DB_PASSWORD\t=\thunter2andmore in the script"
     expects:
       - value: hunter2andmore
+        pattern: Inline credential assignment
 
   # ─── Assignment: position variants ───────────────────────────────────
   - id: assignment-start-of-prompt
@@ -261,6 +263,7 @@ cases:
       Why won't it parse?
     expects:
       - value: abcd1234efgh
+        pattern: Inline credential assignment
 
   - id: paste-dotenv-line-standalone
     prompt: "DB_PASSWORD=hunter2andmore"
@@ -363,6 +366,7 @@ cases:
     prompt: '// db_password = "hunter2andmore"  // TODO: move to vault'
     expects:
       - value: hunter2andmore
+        pattern: Inline credential assignment
 
   - id: comment-hash
     prompt: "# my_api_key: abcd1234efgh5678  # delete before commit"
@@ -373,6 +377,7 @@ cases:
     prompt: "/* app_secret = 'hunter2andmore' */ // legacy"
     expects:
       - value: hunter2andmore
+        pattern: Inline credential assignment
 
   # ─── Value composition variants ──────────────────────────────────────
   - id: assignment-value-letters-only
@@ -438,8 +443,26 @@ cases:
     expects:
       - value: p4ssw0rdok
 
-  # ─── Phrase: prose-only framing without strict "X is Y" template ─────
-  - id: phrase-mid-sentence-trailing
-    prompt: "tried logging in with password=trailing1234abcd and it just hangs"
+  # ─── Phrase: realistic embedded prose with X is Y framing ────────────
+  - id: phrase-embedded-in-prose
+    prompt: "tried logging in but the password is trailing1234abcd and it just hangs"
     expects:
       - value: trailing1234abcd
+        pattern: Inline credential phrase
+
+  # ─── Real secrets that COINCIDE with placeholder shapes ──────────────
+  # Both critics flagged isLikelyPlaceholder as too aggressive: it dropped
+  # real values whose lowercase form started with "example" or contained
+  # "xxx". The filter is now whole-token-anchored. These cases pin the new
+  # behavior; they would have been silently swallowed before.
+  - id: placeholder-near-miss-example-prefix
+    prompt: "DB_PASSWORD=example4Hunter2 was the staging value"
+    expects:
+      - value: example4Hunter2
+        pattern: Inline credential assignment
+
+  - id: placeholder-near-miss-xxx-substring
+    prompt: "DB_PASSWORD=Mxxx2024aB is a real password the dev chose"
+    expects:
+      - value: Mxxx2024aB
+        pattern: Inline credential assignment
