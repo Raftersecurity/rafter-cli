@@ -125,14 +125,29 @@ function deriveEnvName(p: PromptShieldPattern, m: RegExpExecArray): string {
   return p.envBaseName;
 }
 
+// Placeholder values are filtered before persistence so the user doesn't end
+// up with `.env` entries like `DB_PASSWORD=changeme`. Each rule is
+// whole-string anchored so real secrets that happen to contain a
+// placeholder substring (e.g. `Mxxx2024aB`, `example4Hunter2`) pass.
+const PLACEHOLDER_LITERALS = new Set([
+  "changeme", "change-me",
+  "replace-me", "replaceme", "replace-this",
+  "fixme", "placeholder", "redacted",
+  "your-secret", "your_secret",
+  "your-key", "your_key",
+  "your-token", "your_token",
+  "your-password", "your_password",
+  "your-api-key", "your_api_key",
+  "your-api-secret", "your_api_secret",
+]);
+
 function isLikelyPlaceholder(value: string): boolean {
   const lower = value.toLowerCase();
   // `xxx`/`xxxx`/… as the *whole* value (with an optional suffix like
   // `-secret`/`_token`). The earlier substring rule dropped real-looking
   // values that happened to contain `xxx`, e.g. `Mxxx2024aB`.
   if (/^x{3,}([-_][a-z]+)?$/.test(lower)) return true;
-  if (lower === "your-secret" || lower === "your_secret") return true;
-  if (lower === "changeme" || lower === "change-me") return true;
+  if (PLACEHOLDER_LITERALS.has(lower)) return true;
   if (/^<.+>$/.test(value)) return true;
   if (/^\$\{?[A-Z_][A-Z0-9_]*\}?$/.test(value)) return true;
   // `example` as a whole token, optionally with a credential-shape suffix

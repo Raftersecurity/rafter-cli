@@ -459,3 +459,26 @@ cases:
     expects:
       - value: Mxxx2024aB
         pattern: Inline credential assignment
+
+  - id: placeholder-near-miss-your-substring
+    # Real secret whose VALUE happens to start with "your-" — the literal
+    # filter must not whole-match this. Whole-string `your-key` would be
+    # filtered (see negative.txt); `your-system-key1234` must not.
+    prompt: "DB_PASSWORD=your-system-key1234 was the staging secret"
+    expects:
+      - value: your-system-key1234
+        pattern: Inline credential assignment
+
+  - id: placeholder-near-miss-changeme-substring
+    # Real secret containing "change" but not the whole-string literal.
+    prompt: "DB_PASSWORD=changemyfate1234 keep this safe"
+    expects:
+      - value: changemyfate1234
+        pattern: Inline credential assignment
+
+  - id: placeholder-near-miss-replaceme-substring
+    # Real secret containing "replace" but not the whole-string literal.
+    prompt: "DB_PASSWORD=replacemymind1234 was set last month"
+    expects:
+      - value: replacemymind1234
+        pattern: Inline credential assignment

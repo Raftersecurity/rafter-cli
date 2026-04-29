@@ -60,8 +60,10 @@ PROMPT_SHIELD_PATTERNS: list[PromptShieldPattern] = [
     PromptShieldPattern(
         name="URL with credentials",
         env_base_name="URL_PASSWORD",
+        # Floor of 6 chars on the password segment matches the assignment
+        # pattern's floor (was previously 4 here, inconsistent).
         regex=re.compile(
-            r"\b[a-z][a-z0-9+\-.]{1,32}://[^\s:@/]+:([^\s@/'\"`]{4,256})@[^\s'\"`]+",
+            r"\b[a-z][a-z0-9+\-.]{1,32}://[^\s:@/]+:([^\s@/'\"`]{6,256})@[^\s'\"`]+",
             re.IGNORECASE,
         ),
         value_group=1,

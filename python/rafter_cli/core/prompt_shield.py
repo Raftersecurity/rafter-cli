@@ -27,7 +27,17 @@ class DetectedSecret:
     value: str
 
 
-_PLACEHOLDER_LITERALS = {"changeme", "change-me", "your-secret", "your_secret"}
+_PLACEHOLDER_LITERALS = {
+    "changeme", "change-me",
+    "replace-me", "replaceme", "replace-this",
+    "fixme", "placeholder", "redacted",
+    "your-secret", "your_secret",
+    "your-key", "your_key",
+    "your-token", "your_token",
+    "your-password", "your_password",
+    "your-api-key", "your_api_key",
+    "your-api-secret", "your_api_secret",
+}
 _PLACEHOLDER_BRACKET_RE = re.compile(r"^<.+>$")
 _PLACEHOLDER_VAR_RE = re.compile(r"^\$\{?[A-Z_][A-Z0-9_]*\}?$")
 # `xxx`/`xxxx`/... as the *whole* value (optional `-suffix`); replaces the old

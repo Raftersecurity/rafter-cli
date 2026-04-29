@@ -29,7 +29,7 @@ import pytest
 import yaml
 
 from rafter_cli.core.config_schema import get_default_config
-from rafter_cli.core.prompt_shield import detect_secrets
+from rafter_cli.core.prompt_shield import detect_secrets, replace_secrets_with_refs
 
 pytestmark = pytest.mark.calibration
 
@@ -62,6 +62,9 @@ def _use_default_config():
 AKIA = "AKI" + "A"
 ASIA = "ASI" + "A"
 AROA = "ARO" + "A"
+AGPA = "AGP" + "A"
+AIDA = "AID" + "A"
+A3T = "A3" + "T"
 SK_LIVE = "sk_" + "live_"
 RK_LIVE = "rk_" + "live_"
 GHP = "ghp" + "_"
@@ -70,6 +73,8 @@ GHU = "ghu" + "_"
 GHR = "ghr" + "_"
 SLACK_BOT = "xox" + "b-"
 SLACK_USER = "xox" + "p-"
+SLACK_APP = "xox" + "a-"
+SLACK_REFRESH = "xox" + "r-"
 GHS = "ghs" + "_"
 NPM_PREFIX = "npm" + "_"
 PYPI_PREFIX = "pypi-AgEI" + "cHlwaS5vcmc"
@@ -116,12 +121,15 @@ for _name, _val, _expected in (
 MATRIX: list[tuple[str, list[tuple[str, str]], list[str]]] = [
     (
         "AWS Access Key ID",
-        # Regex accepts 9 prefixes; test the 3 live-traffic shapes (AKIA =
-        # user access key, ASIA = STS session token, AROA = role).
+        # Regex accepts 9 prefixes; cover one per alternation arm so a
+        # refactor that drops any prefix surfaces immediately.
         [
             (f"use {AWS_DOCS_KEY} for the test", AWS_DOCS_KEY),
             (f"STS issued {ASIA}IOSFODNN7EXAMPLE for staging", f"{ASIA}IOSFODNN7EXAMPLE"),
             (f"assumed role {AROA}IOSFODNN7EXAMPLE today", f"{AROA}IOSFODNN7EXAMPLE"),
+            (f"group key {AGPA}IOSFODNN7EXAMPLE active", f"{AGPA}IOSFODNN7EXAMPLE"),
+            (f"IAM user {AIDA}IOSFODNN7EXAMPLE created", f"{AIDA}IOSFODNN7EXAMPLE"),
+            (f"legacy {A3T}XIOSFODNN7EXAMPLE found", f"{A3T}XIOSFODNN7EXAMPLE"),
         ],
         [f"the {AKIA} prefix is part of AWS keys", f"{AKIA}SHORT123"],
     ),
@@ -172,10 +180,13 @@ MATRIX: list[tuple[str, list[tuple[str, str]], list[str]]] = [
     ),
     (
         "Slack Token",
-        # Regex `xox[baprs]-…`; bot (xoxb) and user (xoxp) are most common.
+        # Regex `xox[baprs]-…`; cover bot/user/app/refresh so a refactor
+        # that narrows the bracket alternation surfaces immediately.
         [
             (f"slack: {SLACK_BOT}{ALNUM24} success", f"{SLACK_BOT}{ALNUM24}"),
             (f"user token {SLACK_USER}{ALNUM24} ok", f"{SLACK_USER}{ALNUM24}"),
+            (f"app token {SLACK_APP}{ALNUM24} ok", f"{SLACK_APP}{ALNUM24}"),
+            (f"refresh {SLACK_REFRESH}{ALNUM24} stored", f"{SLACK_REFRESH}{ALNUM24}"),
         ],
         [f"{SLACK_BOT}short"],
     ),
@@ -418,3 +429,44 @@ def test_matrix_miss(pattern_name, prompt):
     assert not fired, (
         f"[{pattern_name}] unexpected hit on {prompt!r}: {_describe(detected)}"
     )
+
+
+# rc-apd #1: round-trip envelope path. detect_secrets() is exercised by the
+# corpus + matrix above, but env_base_name derivation, longest-first
+# substring-safe replacement, and the placeholder filter feed the actual
+# hook envelope. A regex change that left detection intact while breaking
+# these auxiliary paths would pass every other assertion in this file.
+class TestRoundTripEnvelope:
+    def test_envbase_from_assignment_lhs(self):
+        detected = detect_secrets("Connect with DB_PASSWORD=hunter2andmore please")
+        assert len(detected) == 1
+        assert detected[0].value == "hunter2andmore"
+        assert detected[0].env_base_name == "DB_PASSWORD"
+
+    def test_replace_with_env_ref(self):
+        prompt = "Connect with DB_PASSWORD=hunter2andmore please"
+        detected = detect_secrets(prompt)
+        value_to_name = {d.value: d.env_base_name for d in detected}
+        rewritten = replace_secrets_with_refs(prompt, detected, value_to_name)
+        assert rewritten == "Connect with DB_PASSWORD=$DB_PASSWORD please"
+
+    def test_longest_first_replacement_no_substring_shadowing(self):
+        prompt = (
+            "DB_PASSWORD=hunter2andmore_extended and "
+            "AUTH_TOKEN=hunter2andmore here"
+        )
+        detected = detect_secrets(prompt)
+        value_to_name = {d.value: d.env_base_name for d in detected}
+        rewritten = replace_secrets_with_refs(prompt, detected, value_to_name)
+        assert "DB_PASSWORD=$DB_PASSWORD" in rewritten
+        assert "AUTH_TOKEN=$AUTH_TOKEN" in rewritten
+        # Shorter value's env-ref must NOT appear inside the longer match.
+        assert "$AUTH_TOKEN_extended" not in rewritten
+
+    def test_url_credentials_envbase_is_url_password(self):
+        detected = detect_secrets(
+            "connect to redis://admin:hunter2andmore@cache.internal:6379/0"
+        )
+        urls = [d for d in detected if d.pattern_name == "URL with credentials"]
+        assert urls
+        assert urls[0].env_base_name == "URL_PASSWORD"
