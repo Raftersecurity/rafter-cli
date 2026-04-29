@@ -47,8 +47,13 @@ export const PROMPT_SHIELD_PATTERNS: PromptShieldPattern[] = [
   {
     name: "Inline credential phrase",
     envBaseName: "RAFTER_SECRET",
-    // Matches: "password is hunter2", "the api key is xyz", "use credential foo"
-    regex: /(?<![A-Za-z0-9])(?:password|passwd|pwd|pass|credential|api[\s_-]?key|token|secret)\s+(?:is|=|:)\s+["'`]?([^\s"'`.,;]{6,256})["'`]?/gi,
+    // Matches: "password is hunter2", "the api key is xyz".
+    // Lookahead requires the value to contain at least one digit. Without
+    // this, all-letter words like "missing" or "revoked" trigger on prose
+    // ("the bearer token is missing", "the api key is revoked"). Real
+    // secrets nearly always contain a digit; rejecting purely-alphabetic
+    // values eliminates a large class of FPs at near-zero recall cost.
+    regex: /(?<![A-Za-z0-9])(?:password|passwd|pwd|pass|credential|api[\s_-]?key|token|secret)\s+(?:is|=|:)\s+["'`]?(?=[^\s"'`.,;]*[0-9])([^\s"'`.,;]{6,256})["'`]?/gi,
     valueGroup: 1,
     severity: "high",
   },

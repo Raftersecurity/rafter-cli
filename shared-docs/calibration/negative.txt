@@ -1,0 +1,158 @@
+# Calibration: NEGATIVE corpus
+#
+# Each non-comment, non-blank line is a prompt that MUST produce zero
+# detections from prompt-shield. Any detection is a false positive and
+# fails calibration.
+#
+# Comments start with `#`. Blank lines are ignored.
+#
+# Seeds:
+#   - rc-vi2 known/suspected false positives (numeric IDs, prose)
+#   - ordinary coding prompts a developer would actually type
+#   - prompts ABOUT credentials but not assigning them
+#   - DB_/HOST_/PORT_/VERSION_ patterns that look adjacency-similar
+#   - placeholder-form values (<your-key>, ${VAR}, example-*)
+#   - identifiers and config keys that look like credentials but aren't
+#
+# Each prompt is scanned in isolation: the loader splits on lines and
+# scans each non-blank, non-comment line individually. So adjacency
+# across lines does NOT matter for detection — only intra-line content.
+
+# ──────────────────────────────────────────────────────────────────────
+# rc-vi2 suspected false positives — these MUST stay quiet
+# ──────────────────────────────────────────────────────────────────────
+secret_id=12345
+the password to victory is patience
+token_count=4096
+auth_token_expires_in=3600
+set api_key environment variable to your value
+read the api_key from the env var, do not hardcode it
+use your existing api_key when running the script
+the secret to good code is short functions
+my password manager keeps everything synced
+
+# ──────────────────────────────────────────────────────────────────────
+# Ordinary coding prompts — refactor / debug / explain / build
+# ──────────────────────────────────────────────────────────────────────
+refactor the auth middleware to validate JWT signatures
+add a unit test for the password hashing helper
+the bug repro is port=8080 hitting a 502
+deploy with version=1.2.3 to the staging cluster
+user=alice in the seed data should have admin role
+update DB_NAME=production in the docker-compose override
+set DB_HOST=db-primary.internal for the writer pool
+the request returns 401 when the bearer token is missing
+explain how oauth2 refresh tokens work in this codebase
+write a function that hashes the password using argon2id
+why does this jwt validation reject tokens with kid mismatch
+investigate why the api key rotation script fails on day 7
+draft docs for our credential rotation playbook
+the secrets manager mock returns an empty object in tests
+make the login form rate-limit per username, not per ip
+add support for storing the api token in the system keyring
+trace why session cookies are dropped on the staging redirect
+implement a role check on the admin api routes
+generate a migration that adds a hashed_password column
+print the request id when the credentials check fails
+log audit events when an api key is revoked
+rotate the database connection pool every hour
+the password reset link must expire after 30 minutes
+add csrf protection to the password change endpoint
+profile the bcrypt cost factor on the staging hardware
+serialize the access response struct as json
+the auth header must use the Bearer scheme exactly
+mock the github api token check in unit tests
+why is the jwt library rejecting our test fixtures
+
+# ──────────────────────────────────────────────────────────────────────
+# Talking ABOUT credentials, not assigning them
+# ──────────────────────────────────────────────────────────────────────
+the api_key field is required in the request body
+document that DATABASE_URL is read from the environment
+the openai api key format changed in 2024
+github personal access tokens are deprecated; use fine-grained tokens
+add documentation for the AWS_ACCESS_KEY_ID env var
+the password column should be at least 60 bytes for bcrypt
+explain what an aws secret access key looks like
+list every env var name we read at startup
+
+# ──────────────────────────────────────────────────────────────────────
+# Adjacency: identifier looks credential-ish, value isn't
+# ──────────────────────────────────────────────────────────────────────
+api_key_header_name=X-Api-Key
+auth_token_lifetime_seconds=86400
+secret_index=ordered_set
+password_min_length=12
+token_lifetime_default=3600
+credential_provider_name=aws-default
+secret_rotation_interval_days=90
+api_key_prefix=public
+access_key_format_regex=^AKIA
+auth_token_type=opaque
+password_hash_algorithm=argon2id
+
+# ──────────────────────────────────────────────────────────────────────
+# Numeric / short / non-credential RHS values (under length floor)
+# ──────────────────────────────────────────────────────────────────────
+port=8080
+version=1.2.3
+timeout=30s
+retries=5
+size=200
+DB_HOST=primary
+DB_NAME=staging
+ENV=production
+LOG_LEVEL=debug
+TIMEOUT=30
+WORKERS=4
+REPLICAS=3
+
+# ──────────────────────────────────────────────────────────────────────
+# Placeholder-form values — the redaction would be useless
+# ──────────────────────────────────────────────────────────────────────
+api_key=<your-key>
+DB_PASSWORD=${DB_PASSWORD}
+GITHUB_TOKEN=${GITHUB_TOKEN}
+SECRET=${SECRET}
+api_key=your-secret
+api_key=changeme
+password=change-me
+api_key=example-key
+DB_PASSWORD=xxx
+api_key=<api-key-here>
+SECRET=<redacted>
+
+# ──────────────────────────────────────────────────────────────────────
+# Code-comment / quoted prose
+# ──────────────────────────────────────────────────────────────────────
+note: the user's password must rotate every 90 days
+note: rotate the api_key on each release
+remember: the secret is in the env var, never hardcoded
+the doc comment says "set the api key in your config"
+
+# ──────────────────────────────────────────────────────────────────────
+# Filenames and paths — adjacency similar to assignment
+# ──────────────────────────────────────────────────────────────────────
+read the secret from /etc/rafter/secret.key
+the password file lives at /etc/passwd on linux
+the config is loaded from ~/.config/rafter/config.yaml
+api_key.json is gitignored
+secret.tfvars is encrypted with sops
+
+# ──────────────────────────────────────────────────────────────────────
+# URL forms WITHOUT credentials (must not match URL-with-credentials)
+# ──────────────────────────────────────────────────────────────────────
+hit https://api.example.com/v1/users to list users
+the docs are at https://docs.rafter.security/quickstart
+clone git@github.com:rafter/rafter-cli.git into ~/src
+the webhook endpoint is https://hooks.example.com/incoming
+proxy traffic through http://proxy.internal:8080
+
+# ──────────────────────────────────────────────────────────────────────
+# Misc adjacency
+# ──────────────────────────────────────────────────────────────────────
+the api/key endpoint returns 200 with a stub response
+trace the auth/token refresh path in the proxy
+audit log: token_count exceeded the per-minute limit
+metrics report password_attempts_total per minute
+my_recipe.md is in the docs folder
