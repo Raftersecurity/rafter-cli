@@ -41,8 +41,12 @@ PROMPT_SHIELD_PATTERNS: list[PromptShieldPattern] = [
     PromptShieldPattern(
         name="Inline credential phrase",
         env_base_name="RAFTER_SECRET",
+        # Lookahead requires the captured value to contain a digit. Drops
+        # FPs like "the bearer token is missing" / "the api key is revoked"
+        # (purely-alphabetic words after `is/=/:`) without losing realistic
+        # secrets, which essentially always contain a digit.
         regex=re.compile(
-            r"(?<![A-Za-z0-9])(?:password|passwd|pwd|pass|credential|api[\s_-]?key|token|secret)\s+(?:is|=|:)\s+[\"'`]?([^\s\"'`.,;]{6,256})[\"'`]?",
+            r"(?<![A-Za-z0-9])(?:password|passwd|pwd|pass|credential|api[\s_-]?key|token|secret)\s+(?:is|=|:)\s+[\"'`]?(?=[^\s\"'`.,;]*[0-9])([^\s\"'`.,;]{6,256})[\"'`]?",
             re.IGNORECASE,
         ),
         value_group=1,

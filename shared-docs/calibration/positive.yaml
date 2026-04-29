@@ -1,0 +1,125 @@
+# Calibration: POSITIVE corpus
+#
+# Cases that MUST be detected. Each entry is a prompt and the secrets that
+# should be found inside it. The harness asserts:
+#   - Each `expects[*].value` appears in detected[*].value (recall).
+#   - Optional `expects[*].pattern` is checked if present (so a regex
+#     refactor that keeps the value but renames the pattern still passes).
+#
+# This file is restricted to prompt-shield assignment+phrase forms with
+# synthetic values. URL-with-credentials, provider tokens (AWS/GitHub/
+# Stripe/...), and quoted Generic-API-Key/Generic-Secret forms live in
+# the per-pattern matrix that runs from test code, because:
+#   1. Putting literal provider tokens in this fixture would trip rafter's
+#      own pretool hook on every Write/Edit.
+#   2. Push protection on the GitHub remote rejects pushes containing
+#      live-looking provider tokens.
+# Test code constructs those values from parts at runtime.
+#
+# Identifiers used here all contain a non-word char before the credential
+# keyword (DB_PASSWORD, MY_API_KEY, …) so they don't accidentally also
+# match Generic Secret / Generic API Key — which would inflate detection
+# counts on the same value and confuse the per-pattern recall metric.
+
+cases:
+  # ─── Inline credential assignment — separator + quoting variations ───
+  - id: assignment-equals-bare
+    prompt: "Connect with DB_PASSWORD=hunter2andmore please"
+    expects:
+      - value: hunter2andmore
+        pattern: Inline credential assignment
+
+  - id: assignment-equals-double-quoted
+    prompt: 'Use DB_PASSWORD="qwerty1234abcd" in the request'
+    expects:
+      - value: qwerty1234abcd
+
+  - id: assignment-equals-single-quoted
+    prompt: "set DB_PASSWORD='abcd1234efgh' in compose"
+    expects:
+      - value: abcd1234efgh
+
+  - id: assignment-equals-backticked
+    prompt: "Run with AUTH_TOKEN=`abc12345defgh` for staging"
+    expects:
+      - value: abc12345defgh
+
+  - id: assignment-colon-yaml
+    prompt: "DB_PASSWORD: hunter2andmore in the yaml"
+    expects:
+      - value: hunter2andmore
+
+  - id: assignment-colon-spaced
+    prompt: "config has ACCESS_KEY : abcd1234efgh in it"
+    expects:
+      - value: abcd1234efgh
+
+  - id: assignment-equals-spaced
+    prompt: "set MY_API_KEY = abcd1234efgh on startup"
+    expects:
+      - value: abcd1234efgh
+
+  # ─── Case variations on the credential keyword ───────────────────────
+  - id: assignment-uppercase-keyword
+    prompt: "DB_PASSWORD=ZZZ12345aaaaa was the value"
+    expects:
+      - value: ZZZ12345aaaaa
+
+  - id: assignment-mixedcase-keyword
+    prompt: "MyAuthToken=mixed1234CaseValue was used"
+    expects:
+      - value: mixed1234CaseValue
+
+  - id: assignment-lowercase-snake
+    prompt: "my_api_key=abcd1234efgh5678 in env"
+    expects:
+      - value: abcd1234efgh5678
+
+  # ─── Multiple secrets in one prompt ──────────────────────────────────
+  - id: assignment-multiple-secrets
+    prompt: "DB_PASSWORD=firstone1234 and MY_API_KEY=secondone1234 both set"
+    expects:
+      - value: firstone1234
+      - value: secondone1234
+
+  # ─── Length boundary: 6 chars (lower bound) — must match ─────────────
+  - id: assignment-length-6
+    prompt: "DB_PASSWORD=abc123 was set"
+    expects:
+      - value: abc123
+
+  # ─── Inline credential phrase ────────────────────────────────────────
+  - id: phrase-password-is
+    prompt: "the password is hunter2andmore for the staging db"
+    expects:
+      - value: hunter2andmore
+
+  - id: phrase-api-key-is
+    prompt: "the api key is abcd1234efgh5678ijkl for the test account"
+    expects:
+      - value: abcd1234efgh5678ijkl
+
+  - id: phrase-secret-is
+    prompt: "the secret is hunter2andmore so do not share"
+    expects:
+      - value: hunter2andmore
+
+  - id: phrase-token-is
+    prompt: "the token is abcd1234efgh5678 for now"
+    expects:
+      - value: abcd1234efgh5678
+
+  - id: phrase-credential-is-quoted
+    prompt: "the credential is \"hunter2andmore\" right now"
+    expects:
+      - value: hunter2andmore
+
+  - id: phrase-api-dash-key-variant
+    prompt: "the api-key is abcd1234efgh5678 currently"
+    expects:
+      - value: abcd1234efgh5678
+
+  - id: phrase-passwd-variant
+    prompt: "the passwd is hunter2andmore now"
+    expects:
+      - value: hunter2andmore

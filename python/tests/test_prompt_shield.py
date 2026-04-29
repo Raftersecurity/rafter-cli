@@ -138,15 +138,20 @@ class TestDetectSecrets:
 
     def test_phrase_form(self):
         # Construct fake-stripe-shaped key from parts so the test source isn't
-        # itself flagged by secret-scanners.
-        fake_key = "sk_" + "live_" + "abcdefghijklmnop"
+        # itself flagged by secret-scanners. The phrase pattern requires a
+        # digit in the value (drops FPs like "api key is missing"); include
+        # one in the suffix.
+        fake_key = "sk_" + "live_" + "abcdefghij1234567890abcd"
         out = _detect_secrets(f"the api key is {fake_key} and please use it")
         # may match both phrase and Stripe pattern; at least one detected.
         assert len(out) >= 1
         assert any(d["value"].startswith("sk_") for d in out)
 
     def test_url_credentials(self):
-        out = _detect_secrets("connect to postgres://user:correctsecret@host:5432/db")
+        # Scheme split so the test source itself doesn't match the
+        # Database Connection String pattern when it sits on disk.
+        url = "post" + "gres://user:correctsecret@host:5432/db"
+        out = _detect_secrets(f"connect to {url}")
         # Default DB connection-string pattern + URL-with-credentials may both match.
         assert len(out) >= 1
         assert any("correctsecret" in d["value"] for d in out)
