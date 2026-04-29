@@ -211,10 +211,9 @@ cases:
       - value: hunter2andmore
 
   - id: assignment-in-parens
-    # Closing `)` is followed by a space, so the value capture stops cleanly.
-    # An adjacent `)` like `(DB_PASSWORD=foo)` would currently leak the paren
-    # into the captured value — that's a known gap, not asserted here.
-    prompt: "the writer pool (DB_PASSWORD=hunter2andmore here) is correct"
+    # Adjacent `)` is trimmed off the captured value by the post-match
+    # sentence-punctuation strip in detectSecrets.
+    prompt: "the writer pool (DB_PASSWORD=hunter2andmore) is correct"
     expects:
       - value: hunter2andmore
 
@@ -246,12 +245,10 @@ cases:
       - value: hunter2andmore
 
   - id: paste-embedded-json-object
-    # JSON-key form `{"db_password": "value"}` — current regex requires the
-    # identifier to be immediately followed by `[ \t]*[:=]`, but the JSON
-    # closing-quote `"` sits between, so this shape is a known FN. The
-    # corpus uses the unquoted-key form (also common in pasted pseudo-JSON
-    # / debug output) which the current regex DOES catch.
-    prompt: 'Posted body: { db_password: hunter2andmore } and got 401'
+    # JSON-key form `{"db_password": "value"}` — the regex now allows an
+    # optional `"` between identifier and separator, so the closing quote
+    # of the JSON key no longer blocks the match.
+    prompt: 'Posted body: {"db_password": "hunter2andmore"} and got 401'
     expects:
       - value: hunter2andmore
 
@@ -305,15 +302,13 @@ cases:
       - value: mailpw1234abcdwxyz
 
   - id: paste-kubectl-from-literal
-    # `--from-literal=DB_PASSWORD=…` is a known FN: the regex consumes the
-    # whole `literal=DB_PASSWORD=…` as one match starting at `from`, then
-    # discards it (LHS lacks credential keyword). The DB_PASSWORD assignment
-    # inside is never re-attempted. Tracked in rc-qet (assignment iteration
-    # bug). Workaround: split the kubectl line so DB_PASSWORD is the LHS of
-    # the regex's first match. Authentic shape preserved.
+    # `--from-literal=DB_PASSWORD=…` — when the outer LHS (`from-literal`)
+    # fails the credential-keyword gate, the orchestrator now rewinds the
+    # search to right after that LHS so the inner DB_PASSWORD assignment
+    # is re-attempted instead of being silently consumed.
     prompt: |
       Ran:
-      kubectl create secret generic db-creds with DB_PASSWORD=k8spw1234abcdwxyz
+      kubectl create secret generic db-creds --from-literal=DB_PASSWORD=k8spw1234abcdwxyz
       but the pod still can't connect
     expects:
       - value: k8spw1234abcdwxyz
@@ -330,15 +325,13 @@ cases:
 
   # ─── Real-world paste: HTTP / API debug ──────────────────────────────
   - id: paste-x-api-key-header
-    # HTTP header `X-API-Key: …` (with hyphens) is a known FN: the
-    # identifier regex `[A-Za-z][A-Za-z0-9_]{0,63}` doesn't traverse `-`,
-    # and `Key` alone fails the credential-keyword check. Tracked as rc-qet
-    # (extend identifier or keyword set to handle header-style names).
-    # Corpus uses an env-style snake_case identifier instead.
+    # HTTP header `X-API-Key: …` — identifier class now traverses `-`, so
+    # the full header name is captured and `x-api-key` matches the
+    # credential-keyword gate (api[\s_-]?key).
     prompt: |
       Postman shows my request as:
       GET /v2/orders
-      X_API_KEY: postman1234abcdwxyz
+      X-API-Key: postman1234abcdwxyz
       and the response is 403
     expects:
       - value: postman1234abcdwxyz

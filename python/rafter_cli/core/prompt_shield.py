@@ -49,22 +49,39 @@ def detect_secrets(text: str) -> list[DetectedSecret]:
 
     # 1. Prompt-shield patterns (capture-group aware)
     for p in PROMPT_SHIELD_PATTERNS:
-        for m in p.regex.finditer(text):
-            value = m.group(p.value_group) if p.value_group <= (m.lastindex or 0) else None
-            if not value or _is_likely_placeholder(value):
-                continue
+        # Walk the text manually so we can reset the search position when
+        # the credential-keyword gate rejects an assignment. If the gate
+        # fails, the regex has already greedy-consumed the value (which
+        # may contain an inner credential assignment like
+        # `--from-literal=DB_PASSWORD=...`); rewinding to after the LHS
+        # lets the inner assignment be re-tried.
+        pos = 0
+        while pos < len(text):
+            m = p.regex.search(text, pos)
+            if m is None:
+                break
             if p.name == "Inline credential assignment":
                 lhs = m.group(1) if (m.lastindex or 0) >= 1 else ""
                 if not CREDENTIAL_KEYWORD_RE.search(lhs):
+                    pos = m.start() + len(lhs)
                     continue
                 env_base = lhs
             else:
                 env_base = p.env_base_name
+            raw_value = m.group(p.value_group) if p.value_group <= (m.lastindex or 0) else None
+            # Trim trailing sentence-ending punctuation that the regex
+            # value class does not reject.
+            value = re.sub(r"[.?!)\]}]+$", "", raw_value) if raw_value else raw_value
+            if not value or len(value) < 6 or _is_likely_placeholder(value):
+                pos = max(m.end(), pos + 1)
+                continue
             key = (p.name, value)
             if key in seen:
+                pos = max(m.end(), pos + 1)
                 continue
             seen.add(key)
             out.append(DetectedSecret(pattern_name=p.name, env_base_name=env_base, value=value))
+            pos = max(m.end(), pos + 1)
 
     # 2. Default secret patterns (full match = value)
     scanner = RegexScanner()
