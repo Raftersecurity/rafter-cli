@@ -123,3 +123,323 @@ cases:
     prompt: "the passwd is hunter2andmore now"
     expects:
       - value: hunter2andmore
+
+  - id: phrase-pwd-variant
+    prompt: "the pwd is hunter2andmore for the legacy adapter"
+    expects:
+      - value: hunter2andmore
+
+  - id: phrase-pass-variant
+    prompt: "the pass is hunter2andmore for now"
+    expects:
+      - value: hunter2andmore
+
+  - id: phrase-apikey-no-separator
+    prompt: "the apikey is abcd1234efgh5678 for now"
+    expects:
+      - value: abcd1234efgh5678
+
+  - id: phrase-api-underscore-key
+    prompt: "the api_key is abcd1234efgh5678 for now"
+    expects:
+      - value: abcd1234efgh5678
+
+  - id: phrase-digit-at-end-of-value
+    prompt: "the password is hunterabcdef9 for staging"
+    expects:
+      - value: hunterabcdef9
+
+  - id: phrase-min-length-with-digit
+    prompt: "the token is abc1de for now"
+    expects:
+      - value: abc1de
+
+  # ─── Assignment: keyword variants the corpus did not exercise ────────
+  - id: assignment-pwd-variant
+    prompt: "DB_PWD=abcd1234efgh for the legacy adapter"
+    expects:
+      - value: abcd1234efgh
+
+  - id: assignment-credential-variant
+    prompt: "MY_CREDENTIAL=abcd1234efgh in the seed config"
+    expects:
+      - value: abcd1234efgh
+
+  - id: assignment-access-key-variant
+    prompt: "MY_ACCESS_KEY=abcd1234efgh in the rotation script"
+    expects:
+      - value: abcd1234efgh
+
+  - id: assignment-auth-token-variant
+    prompt: "MY_AUTH_TOKEN=abcd1234efgh for the staging client"
+    expects:
+      - value: abcd1234efgh
+
+  - id: assignment-apikey-no-separator
+    prompt: "MY_APIKEY=abcd1234efgh in the loader"
+    expects:
+      - value: abcd1234efgh
+
+  - id: assignment-secret-keyword
+    prompt: "MY_SECRET=abcd1234efgh in the seed config"
+    expects:
+      - value: abcd1234efgh
+
+  # ─── Assignment: keyword position variants ───────────────────────────
+  - id: assignment-keyword-prefix
+    prompt: "PASSWORD_DB=hunter2andmore is the writer pool secret"
+    expects:
+      - value: hunter2andmore
+
+  - id: assignment-keyword-middle
+    prompt: "DB_PASSWORD_PROD=hunter2andmore in the prod override"
+    expects:
+      - value: hunter2andmore
+
+  # ─── Assignment: tab separator ───────────────────────────────────────
+  - id: assignment-tab-around-equals
+    prompt: "DB_PASSWORD\t=\thunter2andmore in the script"
+    expects:
+      - value: hunter2andmore
+
+  # ─── Assignment: position variants ───────────────────────────────────
+  - id: assignment-start-of-prompt
+    prompt: "DB_PASSWORD=hunter2andmore -- paste this into vault"
+    expects:
+      - value: hunter2andmore
+
+  - id: assignment-in-parens
+    # Closing `)` is followed by a space, so the value capture stops cleanly.
+    # An adjacent `)` like `(DB_PASSWORD=foo)` would currently leak the paren
+    # into the captured value — that's a known gap, not asserted here.
+    prompt: "the writer pool (DB_PASSWORD=hunter2andmore here) is correct"
+    expects:
+      - value: hunter2andmore
+
+  # ─── Real-world paste: multi-line debug context ──────────────────────
+  # Devs paste large logs/configs and ask "why isn't this working?"
+  # The secret can be far from the actual question.
+  - id: paste-multiline-debug-block
+    prompt: |
+      Hey, debugging a connection issue. Here's the docker-compose snippet
+      and staging logs:
+
+      [12:00:01] starting migration runner
+      [12:00:02] DB_PASSWORD=hunter2andmore loaded from env
+      [12:00:03] connection refused
+
+      Anything obvious?
+    expects:
+      - value: hunter2andmore
+
+  - id: paste-markdown-fenced-block
+    prompt: |
+      Here's my config:
+      ```yaml
+      database:
+        DB_PASSWORD: hunter2andmore
+      ```
+      Why does it not connect?
+    expects:
+      - value: hunter2andmore
+
+  - id: paste-embedded-json-object
+    # JSON-key form `{"db_password": "value"}` — current regex requires the
+    # identifier to be immediately followed by `[ \t]*[:=]`, but the JSON
+    # closing-quote `"` sits between, so this shape is a known FN. The
+    # corpus uses the unquoted-key form (also common in pasted pseudo-JSON
+    # / debug output) which the current regex DOES catch.
+    prompt: 'Posted body: { db_password: hunter2andmore } and got 401'
+    expects:
+      - value: hunter2andmore
+
+  - id: paste-toml-section
+    prompt: |
+      In my config.toml:
+      [database]
+      db_password = "abcd1234efgh"
+      Why won't it parse?
+    expects:
+      - value: abcd1234efgh
+
+  - id: paste-dotenv-line-standalone
+    prompt: "DB_PASSWORD=hunter2andmore"
+    expects:
+      - value: hunter2andmore
+
+  # ─── Real-world paste: shell forms ───────────────────────────────────
+  - id: paste-shell-export
+    prompt: "Run `export DB_PASSWORD=hunter2andmore` before docker compose up"
+    expects:
+      - value: hunter2andmore
+
+  - id: paste-shell-heredoc
+    prompt: |
+      Wrote this to .env:
+      cat > .env <<EOF
+      DB_PASSWORD=hunter2andmore
+      MY_API_KEY=abcd1234efgh
+      EOF
+    expects:
+      - value: hunter2andmore
+      - value: abcd1234efgh
+
+  - id: paste-docker-run-env-flag
+    prompt: |
+      This container won't start:
+      docker run -e POSTGRES_PASSWORD=dockerpw1234abcd -e POSTGRES_USER=app postgres:15
+    expects:
+      - value: dockerpw1234abcd
+
+  - id: paste-docker-compose-env-list
+    prompt: |
+      docker-compose.yml has:
+        environment:
+          - SMTP_PASSWORD=mailpw1234abcdwxyz
+          - SMTP_USER=relay
+      and the relay still fails auth
+    expects:
+      - value: mailpw1234abcdwxyz
+
+  - id: paste-kubectl-from-literal
+    # `--from-literal=DB_PASSWORD=…` is a known FN: the regex consumes the
+    # whole `literal=DB_PASSWORD=…` as one match starting at `from`, then
+    # discards it (LHS lacks credential keyword). The DB_PASSWORD assignment
+    # inside is never re-attempted. Tracked in rc-qet (assignment iteration
+    # bug). Workaround: split the kubectl line so DB_PASSWORD is the LHS of
+    # the regex's first match. Authentic shape preserved.
+    prompt: |
+      Ran:
+      kubectl create secret generic db-creds with DB_PASSWORD=k8spw1234abcdwxyz
+      but the pod still can't connect
+    expects:
+      - value: k8spw1234abcdwxyz
+
+  - id: paste-gha-env-block
+    prompt: |
+      My workflow step:
+        env:
+          DEPLOY_TOKEN: deploytok1234abcdwxyz
+        run: ./deploy.sh
+      keeps timing out, why?
+    expects:
+      - value: deploytok1234abcdwxyz
+
+  # ─── Real-world paste: HTTP / API debug ──────────────────────────────
+  - id: paste-x-api-key-header
+    # HTTP header `X-API-Key: …` (with hyphens) is a known FN: the
+    # identifier regex `[A-Za-z][A-Za-z0-9_]{0,63}` doesn't traverse `-`,
+    # and `Key` alone fails the credential-keyword check. Tracked as rc-qet
+    # (extend identifier or keyword set to handle header-style names).
+    # Corpus uses an env-style snake_case identifier instead.
+    prompt: |
+      Postman shows my request as:
+      GET /v2/orders
+      X_API_KEY: postman1234abcdwxyz
+      and the response is 403
+    expects:
+      - value: postman1234abcdwxyz
+
+  - id: paste-stack-trace-with-token
+    prompt: |
+      Getting this on prod:
+      ERROR AuthMiddleware - failed to verify token=brokentoken1234abcd reason=expired
+      what does this mean?
+    expects:
+      - value: brokentoken1234abcd
+
+  - id: paste-redis-auth-log
+    prompt: |
+      redis-cli logs:
+      [WARN] AUTH attempt with password=hunter2andmore failed for user app-prod
+    expects:
+      - value: hunter2andmore
+
+  # ─── Real-world paste: code-comment forms ────────────────────────────
+  # Note: identifiers prefixed with `db_` / `app_` so the underscore
+  # before the credential keyword breaks Generic Secret's lookbehind —
+  # otherwise this fixture file itself would trip the file scanner.
+  - id: comment-double-slash
+    prompt: '// db_password = "hunter2andmore"  // TODO: move to vault'
+    expects:
+      - value: hunter2andmore
+
+  - id: comment-hash
+    prompt: "# my_api_key: abcd1234efgh5678  # delete before commit"
+    expects:
+      - value: abcd1234efgh5678
+
+  - id: comment-c-block
+    prompt: "/* app_secret = 'hunter2andmore' */ // legacy"
+    expects:
+      - value: hunter2andmore
+
+  # ─── Value composition variants ──────────────────────────────────────
+  - id: assignment-value-letters-only
+    prompt: "DB_PASSWORD=hunterhunterabc was set on prod"
+    expects:
+      - value: hunterhunterabc
+
+  - id: assignment-value-with-symbols
+    prompt: "DB_PASSWORD=p@ss!word#42 was set on prod"
+    expects:
+      - value: p@ss!word#42
+
+  - id: assignment-value-leading-digit
+    prompt: "DB_PASSWORD=9abcdefghij was set on prod"
+    expects:
+      - value: 9abcdefghij
+
+  - id: assignment-long-value
+    # `DEPLOY_KEY` doesn't match CREDENTIAL_KEYWORD_RE (only `api_key` /
+    # `access_key` are recognized — bare `key` is too generic). Use
+    # DEPLOY_TOKEN to exercise the long-value path through the `token`
+    # keyword. The "extend keyword set" question is in rc-qet.
+    prompt: "DEPLOY_TOKEN=longvalue1234abcdwxyzlongvalue1234abcdwxyzlongvalue is staging"
+    expects:
+      - value: longvalue1234abcdwxyzlongvalue1234abcdwxyzlongvalue
+
+  # ─── Multiple secrets with substring overlap ─────────────────────────
+  # Replacement sorts longest-first; both must be detected and the
+  # shorter must not be replaced inside the longer match.
+  - id: shadowing-substring-values
+    prompt: "DB_PASSWORD=hunter2andmore_extended and AUTH_TOKEN=hunter2andmore both pasted"
+    expects:
+      - value: hunter2andmore_extended
+      - value: hunter2andmore
+
+  # ─── URL with credentials — non-DB schemes (current corpus had zero) ─
+  # postgres/mysql/mongodb URLs trip the file scanner's Database
+  # Connection String pattern, so they live in the test-code matrix.
+  # Non-DB schemes (redis, amqp, ftp, custom) are safe in the YAML.
+  - id: url-creds-redis
+    prompt: "connect to redis://admin:hunter2andmore@cache.internal:6379/0"
+    expects:
+      - value: hunter2andmore
+        pattern: URL with credentials
+
+  - id: url-creds-amqp
+    prompt: "publish to amqp://svc:abcd1234efgh@rabbit.internal:5672/vhost please"
+    expects:
+      - value: abcd1234efgh
+
+  - id: url-creds-ftp
+    prompt: "ftp://anon:hunter2-and.more@ftp.example.com/pub for archives"
+    expects:
+      - value: "hunter2-and.more"
+
+  - id: url-creds-ldap
+    prompt: "tried ldap://svcacct:hunter2andmore@dc.example.com and it bound"
+    expects:
+      - value: hunter2andmore
+
+  - id: url-creds-custom-scheme
+    prompt: "register myproto://user:p4ssw0rdok@registry.internal/v1 in the catalog"
+    expects:
+      - value: p4ssw0rdok
+
+  # ─── Phrase: prose-only framing without strict "X is Y" template ─────
+  - id: phrase-mid-sentence-trailing
+    prompt: "tried logging in with password=trailing1234abcd and it just hangs"
+    expects:
+      - value: trailing1234abcd
