@@ -110,12 +110,18 @@ function deriveEnvName(p: PromptShieldPattern, m: RegExpExecArray): string {
 
 function isLikelyPlaceholder(value: string): boolean {
   const lower = value.toLowerCase();
-  if (lower.includes("xxx") && lower.length < 16) return true;
+  // `xxx`/`xxxx`/… as the *whole* value (with an optional suffix like
+  // `-secret`/`_token`). The earlier substring rule dropped real-looking
+  // values that happened to contain `xxx`, e.g. `Mxxx2024aB`.
+  if (/^x{3,}([-_][a-z]+)?$/.test(lower)) return true;
   if (lower === "your-secret" || lower === "your_secret") return true;
   if (lower === "changeme" || lower === "change-me") return true;
   if (/^<.+>$/.test(value)) return true;
   if (/^\$\{?[A-Z_][A-Z0-9_]*\}?$/.test(value)) return true;
-  if (/^example/.test(lower)) return true;
+  // `example` as a whole token, optionally with a credential-shape suffix
+  // (`example-key`, `example_token`, `example-api-key`). The earlier prefix
+  // rule dropped real values like `example4Hunter2!` or `examplezone-9`.
+  if (/^example([-_]?(key|secret|token|value|password|placeholder|api[-_]?key|api[-_]?secret))?$/.test(lower)) return true;
   return false;
 }
 

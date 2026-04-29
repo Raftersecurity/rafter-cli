@@ -11,7 +11,7 @@
  *
  *   2. Positive corpus — `shared-docs/calibration/positive.yaml`
  *      Each case lists the expected secret values; recall must clear
- *      RECALL_FLOOR (currently 0.80, ratchets up).
+ *      RECALL_FLOOR. Pinned just below today's actual; ratchets up.
  *
  *   3. Per-pattern matrix (defined here, not in the YAML — provider tokens
  *      would trip rafter's own pretool hook + GitHub push protection).
@@ -38,12 +38,19 @@ const FIXTURES = path.resolve(__dirname, "../../shared-docs/calibration");
 // LHS contains a credential keyword (api_key, secret, token, …) but the RHS
 // is a non-secret identifier (X-Api-Key, ordered_set, aws-default, public,
 // opaque, argon2id). Fix tracked in rc-wk5.
+//
+// Floors are pinned just below today's actuals so the suite gates against
+// drift. With 67 expected values + 6 negative-corpus FPs, today is
+// recall=1.00, precision=0.917. A regex change that drops 2 detections OR
+// adds 2 FPs trips the suite. Target ceiling 0.95 precision per rc-6fg.
 const KNOWN_FP_FLOOR = 6; // negative corpus: lines that produce ≥1 detection
-const RECALL_FLOOR = 0.8; // positive corpus: fraction of expected values found
-const PRECISION_FLOOR = 0.75; // combined: tp / (tp + fp); target 0.95
+const RECALL_FLOOR = 0.97; // positive corpus: fraction of expected values found
+const PRECISION_FLOOR = 0.9; // combined: tp / (tp + fp); target 0.95
 
 // ──────────── Token construction (split to dodge file scanners) ────────────
 const AKIA = "AKI" + "A";
+const ASIA = "ASI" + "A"; // session token prefix
+const AROA = "ARO" + "A"; // role prefix
 const SK_LIVE = "sk_" + "live_";
 const RK_LIVE = "rk_" + "live_";
 const GHP = "ghp" + "_";
@@ -51,6 +58,8 @@ const GHO = "gho" + "_";
 const GHU = "ghu" + "_";
 const GHR = "ghr" + "_";
 const SLACK_BOT = "xox" + "b-";
+const SLACK_USER = "xox" + "p-";  // user token
+const GHS = "ghs" + "_";           // GitHub Server-to-Server App token
 const NPM_PREFIX = "npm" + "_";
 const PYPI_PREFIX = "pypi-AgEI" + "cHlwaS5vcmc";
 const AIZA = "AI" + "za";
@@ -103,7 +112,15 @@ type PatternCase = {
 const MATRIX: PatternCase[] = [
   {
     name: "AWS Access Key ID",
-    hits: [{ prompt: `use ${AWS_DOCS_KEY} for the test`, value: AWS_DOCS_KEY }],
+    // Regex accepts 9 prefixes (AKIA / ASIA / AROA / AGPA / AIDA / AIPA /
+    // ANPA / ANVA / A3T*). Test the three live-traffic shapes (AKIA = user
+    // access key, ASIA = STS session token, AROA = role) — a regex
+    // refactor that drops one of these is now visible.
+    hits: [
+      { prompt: `use ${AWS_DOCS_KEY} for the test`, value: AWS_DOCS_KEY },
+      { prompt: `STS issued ${ASIA}IOSFODNN7EXAMPLE for staging`, value: `${ASIA}IOSFODNN7EXAMPLE` },
+      { prompt: `assumed role ${AROA}IOSFODNN7EXAMPLE today`, value: `${AROA}IOSFODNN7EXAMPLE` },
+    ],
     misses: [`the ${AKIA} prefix is part of AWS keys`, `${AKIA}SHORT123`],
   },
   {
@@ -129,7 +146,12 @@ const MATRIX: PatternCase[] = [
   },
   {
     name: "GitHub App Token",
-    hits: [{ prompt: `app: ${GHU}${ALNUM36} ok`, value: `${GHU}${ALNUM36}` }],
+    // Regex is `(ghu|ghs)_…`; both prefixes must hit so dropping either
+    // half of the alternation surfaces immediately.
+    hits: [
+      { prompt: `app: ${GHU}${ALNUM36} ok`, value: `${GHU}${ALNUM36}` },
+      { prompt: `server-to-server: ${GHS}${ALNUM36} ok`, value: `${GHS}${ALNUM36}` },
+    ],
     misses: [`${GHU}toosmall`],
   },
   {
@@ -154,8 +176,11 @@ const MATRIX: PatternCase[] = [
   },
   {
     name: "Slack Token",
+    // Regex is `xox[baprs]-…`; bot (xoxb) and user (xoxp) are the two
+    // shapes most commonly pasted. Dropping either surfaces here.
     hits: [
       { prompt: `slack: ${SLACK_BOT}${ALNUM24} success`, value: `${SLACK_BOT}${ALNUM24}` },
+      { prompt: `user token ${SLACK_USER}${ALNUM24} ok`, value: `${SLACK_USER}${ALNUM24}` },
     ],
     misses: [`${SLACK_BOT}short`],
   },

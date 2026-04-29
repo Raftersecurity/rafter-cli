@@ -36,15 +36,14 @@ pytestmark = pytest.mark.calibration
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = REPO_ROOT / "shared-docs" / "calibration"
 
-# Tunable floors. Lower KNOWN_FP_FLOOR / raise RECALL/PRECISION as patterns
-# get sharper. Loosening any floor requires a bead reference here.
-# Values mirror node/tests/calibration.test.ts; drift = bug in one impl.
+# Tunable floors. Mirror node/tests/calibration.test.ts; drift = bug in one impl.
 # 6 known FPs all in Inline credential assignment with non-secret RHS values
 # (X-Api-Key, ordered_set, aws-default, public, opaque, argon2id) — fix
-# tracked in rc-wk5.
+# tracked in rc-wk5. Floors are pinned just below today's actuals so the
+# suite gates against drift; today is recall=1.00, precision=0.917.
 KNOWN_FP_FLOOR = 6
-RECALL_FLOOR = 0.80
-PRECISION_FLOOR = 0.75  # target 0.95 (rc-6fg); current value reflects 6 FPs
+RECALL_FLOOR = 0.97
+PRECISION_FLOOR = 0.90  # target 0.95 (rc-6fg)
 
 
 @pytest.fixture(autouse=True)
@@ -61,6 +60,8 @@ def _use_default_config():
 
 # ──────────── Token construction (split to dodge file scanners) ────────────
 AKIA = "AKI" + "A"
+ASIA = "ASI" + "A"
+AROA = "ARO" + "A"
 SK_LIVE = "sk_" + "live_"
 RK_LIVE = "rk_" + "live_"
 GHP = "ghp" + "_"
@@ -68,6 +69,8 @@ GHO = "gho" + "_"
 GHU = "ghu" + "_"
 GHR = "ghr" + "_"
 SLACK_BOT = "xox" + "b-"
+SLACK_USER = "xox" + "p-"
+GHS = "ghs" + "_"
 NPM_PREFIX = "npm" + "_"
 PYPI_PREFIX = "pypi-AgEI" + "cHlwaS5vcmc"
 AIZA = "AI" + "za"
@@ -113,7 +116,13 @@ for _name, _val, _expected in (
 MATRIX: list[tuple[str, list[tuple[str, str]], list[str]]] = [
     (
         "AWS Access Key ID",
-        [(f"use {AWS_DOCS_KEY} for the test", AWS_DOCS_KEY)],
+        # Regex accepts 9 prefixes; test the 3 live-traffic shapes (AKIA =
+        # user access key, ASIA = STS session token, AROA = role).
+        [
+            (f"use {AWS_DOCS_KEY} for the test", AWS_DOCS_KEY),
+            (f"STS issued {ASIA}IOSFODNN7EXAMPLE for staging", f"{ASIA}IOSFODNN7EXAMPLE"),
+            (f"assumed role {AROA}IOSFODNN7EXAMPLE today", f"{AROA}IOSFODNN7EXAMPLE"),
+        ],
         [f"the {AKIA} prefix is part of AWS keys", f"{AKIA}SHORT123"],
     ),
     (
@@ -136,7 +145,11 @@ MATRIX: list[tuple[str, list[tuple[str, str]], list[str]]] = [
     ),
     (
         "GitHub App Token",
-        [(f"app: {GHU}{ALNUM36} ok", f"{GHU}{ALNUM36}")],
+        # Regex `(ghu|ghs)_…`; both prefixes must hit.
+        [
+            (f"app: {GHU}{ALNUM36} ok", f"{GHU}{ALNUM36}"),
+            (f"server-to-server: {GHS}{ALNUM36} ok", f"{GHS}{ALNUM36}"),
+        ],
         [f"{GHU}toosmall"],
     ),
     (
@@ -159,7 +172,11 @@ MATRIX: list[tuple[str, list[tuple[str, str]], list[str]]] = [
     ),
     (
         "Slack Token",
-        [(f"slack: {SLACK_BOT}{ALNUM24} success", f"{SLACK_BOT}{ALNUM24}")],
+        # Regex `xox[baprs]-…`; bot (xoxb) and user (xoxp) are most common.
+        [
+            (f"slack: {SLACK_BOT}{ALNUM24} success", f"{SLACK_BOT}{ALNUM24}"),
+            (f"user token {SLACK_USER}{ALNUM24} ok", f"{SLACK_USER}{ALNUM24}"),
+        ],
         [f"{SLACK_BOT}short"],
     ),
     (
