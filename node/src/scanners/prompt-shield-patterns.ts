@@ -40,7 +40,13 @@ export const PROMPT_SHIELD_PATTERNS: PromptShieldPattern[] = [
     // the whole identifier so DB_PASSWORD lands in .env as DB_PASSWORD,
     // not just PASSWORD. The keyword check is done in JS (see
     // CREDENTIAL_KEYWORD_RE) to keep the regex simple.
-    regex: /(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9_]{0,63})[ \t]*[:=][ \t]*["'`]?([^\s"'`,;]{6,256})["'`]?/g,
+    //
+    // Identifier class allows `-` so HTTP-header-style names match
+    // (X-API-Key:value); the optional quote between identifier and
+    // separator handles JSON-key form ({"db_password":"value"}).
+    // Trailing sentence punctuation is trimmed off the captured value
+    // post-match (see detectSecrets in prompt-shield.ts).
+    regex: /(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9_-]{0,63})["'`]?[ \t]*[:=][ \t]*["'`]?([^\s"'`,;]{6,256})["'`]?/g,
     valueGroup: 2,
     severity: "high",
   },

@@ -31,9 +31,14 @@ PROMPT_SHIELD_PATTERNS: list[PromptShieldPattern] = [
     PromptShieldPattern(
         name="Inline credential assignment",
         env_base_name="RAFTER_SECRET",
-        # LHS identifier on the left of = or :, gated on credential keyword in JS.
+        # LHS identifier on the left of = or :, gated on credential keyword.
+        # Identifier class allows `-` so HTTP-header names match
+        # (X-API-Key:value); the optional quote between identifier and
+        # separator handles JSON-key form ({"db_password":"value"}).
+        # Trailing sentence punctuation is trimmed post-match (see
+        # detect_secrets in prompt_shield.py).
         regex=re.compile(
-            r"(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9_]{0,63})[ \t]*[:=][ \t]*[\"'`]?([^\s\"'`,;]{6,256})[\"'`]?"
+            r"(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9_-]{0,63})[\"'`]?[ \t]*[:=][ \t]*[\"'`]?([^\s\"'`,;]{6,256})[\"'`]?"
         ),
         value_group=2,
         severity="high",

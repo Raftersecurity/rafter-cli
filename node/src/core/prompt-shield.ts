@@ -40,15 +40,32 @@ export function detectSecrets(text: string): DetectedSecret[] {
     const re = freshRegex(p.regex);
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
-      const value = m[p.valueGroup];
-      if (!value || isLikelyPlaceholder(value)) continue;
       // Assignment-style: gate on credential keyword in the LHS identifier.
+      // If the gate fails, the regex has already greedy-consumed the value
+      // (which may contain a real inner credential assignment, e.g.
+      // `--from-literal=DB_PASSWORD=...`). Reset lastIndex to right after
+      // the LHS so the inner assignment can be re-tried.
       if (p.name === "Inline credential assignment") {
         const lhs = m[1] || "";
-        if (!CREDENTIAL_KEYWORD_RE.test(lhs)) continue;
+        if (!CREDENTIAL_KEYWORD_RE.test(lhs)) {
+          re.lastIndex = m.index + lhs.length;
+          continue;
+        }
+      }
+      const rawValue = m[p.valueGroup];
+      // Trim trailing sentence-ending punctuation that the regex value
+      // class does not reject. Without this, prompts like
+      // `(DB_PASSWORD=hunter2andmore)` capture `hunter2andmore)`.
+      const value = rawValue ? rawValue.replace(/[.?!)\]}]+$/, "") : rawValue;
+      if (!value || value.length < 6 || isLikelyPlaceholder(value)) {
+        if (re.lastIndex === m.index) re.lastIndex++;
+        continue;
       }
       const key = `${p.name}\x00${value}`;
-      if (seen.has(key)) continue;
+      if (seen.has(key)) {
+        if (re.lastIndex === m.index) re.lastIndex++;
+        continue;
+      }
       seen.add(key);
       out.push({
         patternName: p.name,
