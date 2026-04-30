@@ -239,7 +239,10 @@ def _drafts_from_backend(scan_id: str, api_key: str | None) -> list[IssueDraft]:
 
 def _drafts_from_local(file_path: str) -> list[IssueDraft]:
     raw = Path(file_path).read_text()
-    results = json.loads(raw)
+    parsed = json.loads(raw)
+    # New shape: {"_note", "scan_mode", "triage_applied", "results": [...]}
+    # Legacy shape (pre-0.7.8): bare list. Accept both for forward-compat reading.
+    results = parsed if isinstance(parsed, list) else parsed.get("results", [])
     drafts: list[IssueDraft] = []
 
     for result in results:
