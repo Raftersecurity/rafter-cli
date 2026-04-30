@@ -57,7 +57,7 @@ describe("brief command — topic listing", () => {
     expect(r.stdout).toContain("commands");
     expect(r.stdout).toContain("setup");
     expect(r.stdout).toContain("all");
-    expect(r.stdout).toContain("pricing");
+    expect(r.stdout).not.toContain("pricing");
   });
 
   it("lists setup sub-topics", () => {
@@ -94,12 +94,10 @@ describe("brief command — topic rendering", () => {
     expect(r.stdout).toContain("Rafter Command Reference");
   });
 
-  it("renders pricing topic", () => {
+  it("rejects 'pricing' topic — removed; pricing lives in marketing surfaces", () => {
     const r = rafter("brief pricing");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("Rafter Pricing");
-    expect(r.stdout).toContain("Free forever");
-    expect(r.stdout).toContain("No API key");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stdout + r.stderr).not.toContain("Rafter Pricing");
   });
 
   it("renders all topic with separators", () => {
