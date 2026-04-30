@@ -310,42 +310,58 @@ Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
 
 #### JSON Output (`--json`)
 
-When `--json` is passed, output is a JSON array to stdout. Both Node and Python produce identical schema:
+When `--json` is passed, output is a JSON object to stdout with a `results` array and scan-mode metadata. Both Node and Python produce identical schema:
 
 ```json
-[
-  {
-    "file": "/absolute/path/to/file.ts",
-    "matches": [
-      {
-        "pattern": {
-          "name": "AWS Access Key",
-          "severity": "critical",
-          "description": "Detects AWS access key IDs"
-        },
-        "line": 42,
-        "column": 7,
-        "redacted": "AKIA************MPLE"
-      }
-    ]
-  }
-]
+{
+  "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
+  "scan_mode": "local",
+  "triage_applied": false,
+  "results": [
+    {
+      "file": "/absolute/path/to/file.ts",
+      "matches": [
+        {
+          "pattern": {
+            "name": "AWS Access Key",
+            "severity": "critical",
+            "description": "Detects AWS access key IDs"
+          },
+          "line": 42,
+          "column": 7,
+          "redacted": "AKIA************MPLE"
+        }
+      ]
+    }
+  ]
+}
 ```
 
-**Field reference:**
+**Top-level field reference:**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `file` | string | Absolute path to the scanned file |
-| `matches` | array | List of secret matches in this file |
-| `matches[].pattern.name` | string | Human-readable pattern name |
-| `matches[].pattern.severity` | string | `"low"`, `"medium"`, `"high"`, or `"critical"` |
-| `matches[].pattern.description` | string | Pattern description (may be empty) |
-| `matches[].line` | number\|null | 1-based line number, null if unknown |
-| `matches[].column` | number\|null | 1-based column number, null if unknown |
-| `matches[].redacted` | string | Redacted secret value (first/last 4 chars visible for values >8 chars, fully masked otherwise) |
+| `_note` | string | Human-readable scan-mode note. JSON has no comments — this `_*` key is the convention. Surface it to users when reporting findings. |
+| `scan_mode` | string | Always `"local"` for local secret scans. Programmatic flag for agents to detect that no agentic-intelligence triage was applied. |
+| `triage_applied` | boolean | Always `false` for local scans. `true` would indicate backend agentic context evaluation (i.e., `rafter run`). |
+| `results` | array | Per-file findings. |
+
+**Per-file field reference:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `results[].file` | string | Absolute path to the scanned file |
+| `results[].matches` | array | List of secret matches in this file |
+| `results[].matches[].pattern.name` | string | Human-readable pattern name |
+| `results[].matches[].pattern.severity` | string | `"low"`, `"medium"`, `"high"`, or `"critical"` |
+| `results[].matches[].pattern.description` | string | Pattern description (may be empty) |
+| `results[].matches[].line` | number\|null | 1-based line number, null if unknown |
+| `results[].matches[].column` | number\|null | 1-based column number, null if unknown |
+| `results[].matches[].redacted` | string | Redacted secret value (first/last 4 chars visible for values >8 chars, fully masked otherwise) |
 
 The raw secret value is never included in JSON output.
+
+**Why `_note`?** Local scans are pattern-only — they cannot tell whether a finding is in a public-facing file, whether the key is still valid, or whether it ever shipped. Backend scans (`rafter run`) apply agentic context. The `_note` exists so agents and reviewers don't treat local findings as final verdicts — they should investigate each, but the absence of agentic triage is *not* an excuse to dismiss findings.
 
 ### rafter agent exec COMMAND [OPTIONS]
 

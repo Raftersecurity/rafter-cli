@@ -245,7 +245,7 @@ function outputScanResults(
   }
 
   if (format === "json" || opts.json) {
-    const out = results.map((r) => ({
+    const resultsOut = results.map((r) => ({
       file: r.file,
       matches: r.matches.map((m) => ({
         pattern: { name: m.pattern.name, severity: m.pattern.severity, description: m.pattern.description || "" },
@@ -254,6 +254,16 @@ function outputScanResults(
         redacted: m.redacted || "",
       })),
     }));
+    const out = {
+      _note:
+        "Local-only scan: pattern-based detection without agentic-intelligence triage. " +
+        "Findings have not been evaluated for context (public exposure, key validity, " +
+        "deployment environment). Investigate each before acting; do not dismiss. " +
+        "Run 'rafter run' for backend agentic analysis.",
+      scan_mode: "local",
+      triage_applied: false,
+      results: resultsOut,
+    };
     console.log(JSON.stringify(out, null, 2));
     if (exitOnFindings) process.exit(results.length > 0 ? 1 : 0);
     return;

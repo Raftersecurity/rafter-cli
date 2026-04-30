@@ -947,7 +947,7 @@ def _output_scan_results(
         return
 
     if json_output or format == "json":
-        out = [
+        results_out = [
             {"file": r.file, "matches": [
                 {"pattern": {"name": m.pattern.name, "severity": m.pattern.severity, "description": m.pattern.description or ""},
                  "line": m.line, "column": m.column, "redacted": m.redacted}
@@ -955,6 +955,17 @@ def _output_scan_results(
             ]}
             for r in results
         ]
+        out = {
+            "_note": (
+                "Local-only scan: pattern-based detection without agentic-intelligence triage. "
+                "Findings have not been evaluated for context (public exposure, key validity, "
+                "deployment environment). Investigate each before acting; do not dismiss. "
+                "Run 'rafter run' for backend agentic analysis."
+            ),
+            "scan_mode": "local",
+            "triage_applied": False,
+            "results": results_out,
+        }
         print(json.dumps(out, indent=2))
         if exit_on_findings:
             raise typer.Exit(code=1 if results else 0)

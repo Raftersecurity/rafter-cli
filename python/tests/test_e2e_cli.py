@@ -164,12 +164,36 @@ class TestLocalScanning:
 
     def test_json_outputs_valid_json(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIAIOSFODNN7EXAMPLE\n")
+        f.write_text("AKIA" + "IOSFODNN7" + "EXAMPLE\n")
         stdout, _, rc = rafter(f"scan local {f} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
-        assert isinstance(parsed, list)
-        assert parsed[0]["matches"][0]["pattern"]["name"] == "AWS Access Key ID"
+        assert isinstance(parsed, dict)
+        assert isinstance(parsed["results"], list)
+        assert parsed["results"][0]["matches"][0]["pattern"]["name"] == "AWS Access Key ID"
+
+    def test_json_output_includes_scan_mode_note(self, tmp_path):
+        f = tmp_path / "secrets.txt"
+        f.write_text("AKIA" + "IOSFODNN7" + "EXAMPLE\n")
+        stdout, _, rc = rafter(f"scan local {f} --engine patterns --json")
+        assert rc == 1
+        parsed = json.loads(stdout)
+        assert parsed["scan_mode"] == "local"
+        assert parsed["triage_applied"] is False
+        assert isinstance(parsed["_note"], str)
+        assert "agentic" in parsed["_note"].lower()
+        assert "local" in parsed["_note"].lower()
+
+    def test_json_scan_mode_note_present_when_no_findings(self, tmp_path):
+        f = tmp_path / "clean.txt"
+        f.write_text("nothing to see here\n")
+        stdout, _, rc = rafter(f"scan local {f} --engine patterns --json")
+        assert rc == 0
+        parsed = json.loads(stdout)
+        assert parsed["scan_mode"] == "local"
+        assert parsed["triage_applied"] is False
+        assert parsed["results"] == []
+        assert isinstance(parsed["_note"], str)
 
     def test_sarif_format_outputs_sarif_schema(self, tmp_path):
         f = tmp_path / "secrets.txt"
@@ -185,11 +209,11 @@ class TestLocalScanning:
     def test_scans_directory_recursively(self, tmp_path):
         sub = tmp_path / "src"
         sub.mkdir()
-        (sub / "config.ts").write_text("const key = 'AKIAIOSFODNN7EXAMPLE';\n")
+        (sub / "config.ts").write_text("const key = '" + "AKIA" + "IOSFODNN7" + "EXAMPLE';\n")
         stdout, _, rc = rafter(f"scan local {tmp_path} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
-        assert len(parsed) > 0
+        assert len(parsed["results"]) > 0
 
     def test_exits_2_for_nonexistent_path(self):
         _, _, rc = rafter("scan local /tmp/nonexistent-rafter-path-12345 --engine patterns")
