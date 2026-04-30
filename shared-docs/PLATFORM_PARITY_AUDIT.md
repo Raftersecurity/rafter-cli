@@ -4,6 +4,9 @@
 > rf-cia P0 epic ("Cross-platform agent parity"). Establishes ground truth for
 > what each supported platform currently gets vs. what gold-standard parity
 > requires. Drives the per-platform work items that follow.
+>
+> Re-audited 2026-04-30 by raftercli/polecats/obsidian against `origin/main`
+> (commit `e366778`, v0.7.7). See "Re-audit (2026-04-30)" section below.
 
 ## Summary
 
@@ -245,3 +248,71 @@ Total: roughly 7-8 days of focused work for full parity. CI integration tests pe
 - New platform support (Hermes / future Continue extensions / etc.) — track separately under rf-01b and similar.
 - Sub-agent equivalents on Codex/Cursor/etc. — none of those platforms have a first-class sub-agent primitive today. Watch quarterly.
 - The `rafter review` standalone command — separate bead rf-0z9, on hold for user review.
+
+## Re-audit (2026-04-30)
+
+Re-run after phase a+b merged (rf-cia-audit branch, PR #61). Pinned at `origin/main` `e366778` / v0.7.7.
+
+### What shipped since 2026-04-28
+
+| Change | Commit / PR | Effect |
+|---|---|---|
+| Continue.dev hooks pruned in both Node + Python | `3378bcf` (rf-cia phase b) | `installContinueDevHooks` removed from `node/src/commands/agent/init.ts`; no `_continue_hooks` in `python/rafter_cli/commands/agent_components.py`. Components registry now exposes only `continue.mcp`. ✅ |
+| Audit doc landed | `3e84859` + `1846256` (PR #61) | This file. |
+| README OpenCode badge removed | `78caffe` (rc-dn0, PR #62) | We no longer claim OpenCode support in user-facing docs. |
+| Repo-root `AGENTS.md` added | `2c395f7` (rf-pkn, PR #72) | Side benefit: Windsurf reads `AGENTS.md` natively, so Windsurf-only users get rafter context for free. Not yet documented as such in the recipe. |
+
+Nothing else in the matrix has structurally changed. The four 2026-04-29 PRs shipped between 4/28 and 4/30 (#62, #71, #72) plus the rf-cia merge (#61) are the entire window. PR #71 was a test/binary-manager fix (gt-pvx), unrelated to platform parity.
+
+### Updated state matrix (v0.7.7)
+
+| Platform     | Skills install | Skills runtime-surfaced | Hooks installed             | Hooks runtime-fire | MCP   | Sub-agent | Instruction file       | `agent verify` |
+|--------------|----------------|-------------------------|-----------------------------|--------------------|-------|-----------|-------------------------|----------------|
+| Claude Code  | yes            | yes                     | yes (PreToolUse + PostToolUse) | yes              | yes   | **NOT YET (rf-q7j in flight)** | CLAUDE.md   | yes (hook)     |
+| Codex        | yes            | yes                     | yes (claude fmt)            | yes                | —     | n/a       | AGENTS.md               | partial (skills only) |
+| Gemini       | yes (rf-yit)   | partial                 | yes (BeforeTool / AfterTool) | unverified        | yes   | n/a       | GEMINI.md               | partial (Node only — MCP only; **Python missing**) |
+| Cursor       | **NO**         | n/a                     | yes (`beforeShellExecution` only) | unverified   | yes   | n/a (gets `.claude/agents/` once rf-q7j ships) | `.cursor/rules/rafter-security.mdc` (single file) | partial (Node only — MCP only; **Python missing**) |
+| Windsurf     | **NO**         | n/a                     | yes (`pre_run_command` + `pre_write_code`) — **silent no-op (no Windsurf hook surface exists)** | n/a | yes | n/a | none directly; **inherits root `AGENTS.md`** | partial (Node only — MCP only; **Python missing**) |
+| Continue.dev | **NO**         | n/a                     | **none (pruned in phase b)** | n/a               | yes   | n/a       | none                    | **NOT CHECKED (Node + Python)** |
+| Aider        | **NO**         | n/a                     | **none (no hook surface)**   | n/a               | yes (suspect — `mcp-server-command:` YAML append unverified against Aider docs) | n/a | none | **NOT CHECKED (Node + Python)** |
+| OpenClaw     | yes            | unverified              | none                        | n/a                | —     | n/a       | none                    | yes            |
+
+### Gaps (still open after phase a+b)
+
+Each gap below is filed as a followup bead (see "Followup beads filed" section). All of these were named in the original audit's "Revised per-platform deep-support plan" but had not been beaded.
+
+1. **Cursor — full hook coverage.** We install only `beforeShellExecution`; Cursor's hook surface supports `preToolUse` + `postToolUse` (matrix-equivalent to Claude Code). Add the missing events.
+2. **Cursor — per-skill rules files.** Today: one consolidated `.cursor/rules/rafter-security.mdc`. Goal: 4 per-skill rule files mirroring `node/resources/skills/<skill>/SKILL.md` content under `.cursor/rules/<skill>.mdc`.
+3. **Windsurf — drop hooks installer.** Per current Windsurf docs there is no `pre_run_command` / `pre_write_code` hook surface. Our installer writes `.windsurf/hooks.json` and Windsurf ignores it. Same fate as Continue.dev hooks: prune.
+4. **Windsurf — rules + AGENTS.md surface.** Windsurf reads `.windsurf/rules/*.md` (workspace, 12KB cap) and `~/.codeium/windsurf/memories/global_rules.md` (global, 6KB cap). Recipe should also surface that root `AGENTS.md` is read natively. Today neither is mentioned.
+5. **Continue.dev — rules.** Continue.dev reads `.continue/rules/*.md` (workspace) and `~/.continue/rules/*.md` (global). Today: zero skills/rules surface for Continue users.
+6. **Aider — RAFTER.md + read config.** Aider doesn't intercept tool calls but persistent context via `--read` / `.aider.conf.yml read: [...]` is the realistic surface. Today: nothing.
+7. **Aider MCP — verify or drop.** `installAiderMcp` appends `mcp-server-command: rafter mcp serve` to `.aider.conf.yml`. Aider's documented config schema does not list this field. Either confirm Aider reads it (recipe + test) or drop it like Continue.dev hooks. Treat with the rf-luk lesson: file presence isn't behavior.
+8. **`rafter agent verify` — Python parity.** Node has `checkClaudeCode`, `checkOpenClaw`, `checkCodex`, `checkGemini`, `checkCursor`, `checkWindsurf`. Python (`python/rafter_cli/commands/agent.py`) has only `_check_gitleaks`, `_check_config`, `_check_claude_code`, `_check_openclaw`, `_check_codex`. Three missing.
+9. **`rafter agent verify` — Continue.dev + Aider.** Neither implementation has `checkContinueDev` or `checkAider`. With phase b's prune, `continue.mcp` is the only surface — verify it.
+10. **`rafter agent verify --probe`.** A flag that triggers a known-dangerous command and asserts `~/.rafter/audit.jsonl` recorded the interception. Required to detect the Gemini-style "wrote file, runtime ignored it" failure mode for Cursor / Windsurf / Gemini hooks.
+11. **Re-verify Gemini end-to-end.** rf-yit shipped `gemini skills link` registration but no test confirms (a) hook schema still matches current Gemini, (b) `gemini skills link` survives Gemini upgrades, (c) GEMINI.md is read at session start.
+12. **`docs/adding-a-platform.md`.** Onboarding doc named in the original audit. Not yet written.
+13. **OpenClaw activity check.** Decide whether OpenClaw is still actively maintained / has users before any further investment. Our installer ships it as part of `--all` and `--with-openclaw`.
+14. **Recipes still claim "MCP only" for Cursor + Windsurf.** They install hooks (item 1) and an instruction file (Cursor), and Windsurf-specific work in items 3+4. Recipes need a rewrite once the installers settle.
+
+### Findings unchanged since 4/28
+
+- AGENTS.md as cross-platform context standard (read by Codex, Windsurf, our tools/AGENTS.md root): unchanged. Now realized at root via rf-pkn — no install path needed for Windsurf.
+- `.claude/agents/` is multi-platform (Cursor reads it too): unchanged. Materializes as a free win once rf-q7j ships.
+- All cross-cutting findings (verify weakness, recipes drift, skills binary coverage, no end-to-end runtime test, no onboarding doc): unchanged.
+
+### Followup beads filed (2026-04-30)
+
+All linked via `discovered-from:rf-guvb,rf-cia`. See each bead for scope and acceptance.
+
+- **rf-p1fs** (P1) — Cursor: full hook coverage + per-skill rules
+- **rf-jrs0** (P1) — Windsurf: prune hooks installer + add per-skill rules + recipe rewrite
+- **rf-acz0** (P1) — Continue.dev: per-skill rules under `.continue/rules/`
+- **rf-du2o** (P1) — Aider: verify or drop MCP YAML append; add RAFTER.md read-config
+- **rf-65zg** (P1) — `rafter agent verify`: Python parity + Continue/Aider coverage + `--probe` runtime mode
+- **rf-044o** (P2) — Gemini: end-to-end re-verification (rf-yit follow-up)
+- **rf-o329** (P2) — `docs/adding-a-platform.md`: onboarding contract for new agent CLIs
+- **rf-0lig** (P3) — OpenClaw: confirm activity / users before further investment
+
+The recipes-stale gap is folded into each per-platform bead's acceptance. Sub-agent for Claude Code is tracked under the existing rf-q7j (in flight).
