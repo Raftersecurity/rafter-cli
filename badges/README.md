@@ -29,13 +29,13 @@ Pick a badge and copy the snippet for your preferred format.
 **Markdown:**
 
 ```markdown
-[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter)
+[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/Raftersecurity/rafter-cli)
 ```
 
 **HTML:**
 
 ```html
-<a href="https://github.com/raftercli/rafter">
+<a href="https://github.com/Raftersecurity/rafter-cli">
   <img src="https://img.shields.io/badge/scanned_by-Rafter-2ea44f" alt="Scanned by Rafter">
 </a>
 ```
@@ -44,7 +44,7 @@ Pick a badge and copy the snippet for your preferred format.
 
 ```rst
 .. image:: https://img.shields.io/badge/scanned_by-Rafter-2ea44f
-   :target: https://github.com/raftercli/rafter
+   :target: https://github.com/Raftersecurity/rafter-cli
    :alt: Scanned by Rafter
 ```
 
@@ -53,13 +53,13 @@ Pick a badge and copy the snippet for your preferred format.
 **Markdown:**
 
 ```markdown
-[![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/raftercli/rafter)
+[![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/Raftersecurity/rafter-cli)
 ```
 
 **HTML:**
 
 ```html
-<a href="https://github.com/raftercli/rafter">
+<a href="https://github.com/Raftersecurity/rafter-cli">
   <img src="https://img.shields.io/badge/rafter_policy-enforced-2ea44f" alt="Rafter policy: enforced">
 </a>
 ```
@@ -68,7 +68,7 @@ Pick a badge and copy the snippet for your preferred format.
 
 ```rst
 .. image:: https://img.shields.io/badge/rafter_policy-enforced-2ea44f
-   :target: https://github.com/raftercli/rafter
+   :target: https://github.com/Raftersecurity/rafter-cli
    :alt: Rafter policy: enforced
 ```
 
@@ -77,13 +77,13 @@ Pick a badge and copy the snippet for your preferred format.
 **Markdown:**
 
 ```markdown
-[![Rafter policy: moderate](https://img.shields.io/badge/rafter_policy-moderate-blue)](https://github.com/raftercli/rafter)
+[![Rafter policy: moderate](https://img.shields.io/badge/rafter_policy-moderate-blue)](https://github.com/Raftersecurity/rafter-cli)
 ```
 
 **HTML:**
 
 ```html
-<a href="https://github.com/raftercli/rafter">
+<a href="https://github.com/Raftersecurity/rafter-cli">
   <img src="https://img.shields.io/badge/rafter_policy-moderate-blue" alt="Rafter policy: moderate">
 </a>
 ```
@@ -92,7 +92,7 @@ Pick a badge and copy the snippet for your preferred format.
 
 ```rst
 .. image:: https://img.shields.io/badge/rafter_policy-moderate-blue
-   :target: https://github.com/raftercli/rafter
+   :target: https://github.com/Raftersecurity/rafter-cli
    :alt: Rafter policy: moderate
 ```
 
@@ -101,13 +101,13 @@ Pick a badge and copy the snippet for your preferred format.
 **Markdown:**
 
 ```markdown
-[![Secrets: clean](https://img.shields.io/badge/secrets-clean-2ea44f)](https://github.com/raftercli/rafter)
+[![Secrets: clean](https://img.shields.io/badge/secrets-clean-2ea44f)](https://github.com/Raftersecurity/rafter-cli)
 ```
 
 **HTML:**
 
 ```html
-<a href="https://github.com/raftercli/rafter">
+<a href="https://github.com/Raftersecurity/rafter-cli">
   <img src="https://img.shields.io/badge/secrets-clean-2ea44f" alt="Secrets: clean">
 </a>
 ```
@@ -116,7 +116,7 @@ Pick a badge and copy the snippet for your preferred format.
 
 ```rst
 .. image:: https://img.shields.io/badge/secrets-clean-2ea44f
-   :target: https://github.com/raftercli/rafter
+   :target: https://github.com/Raftersecurity/rafter-cli
    :alt: Secrets: clean
 ```
 
