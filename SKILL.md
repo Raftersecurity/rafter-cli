@@ -55,19 +55,19 @@ Scan files or directories for hardcoded credentials. 21+ built-in patterns (AWS 
 
 ```bash
 # Scan a directory
-rafter scan local .
+rafter secrets .
 
 # Scan a specific file
-rafter scan local src/config.ts
+rafter secrets src/config.ts
 
 # Scan only git staged files (use before commits)
-rafter scan local --staged
+rafter secrets --staged
 
 # Scan files changed since a ref
-rafter scan local --diff HEAD~1
+rafter secrets --diff HEAD~1
 
 # JSON output (structured, pipe-friendly)
-rafter scan local . --json --quiet
+rafter secrets . --json --quiet
 ```
 
 **Exit codes (stable contract):**
@@ -227,7 +227,7 @@ rafter agent audit --event secret_detected
 rafter agent audit --since 2026-01-01
 ```
 
-Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`, `scan_executed`, `config_changed`.
+Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`. `scan_executed` and `config_changed` are reserved for future use (defined in the type union but not yet emitted).
 
 ## Skill Auditing
 
@@ -259,7 +259,7 @@ rafter ci init --platform github   # GitHub Actions
 GitHub Action:
 
 ```yaml
-- uses: raftersecurity/rafter-cli@v1
+- uses: Raftersecurity/rafter-cli@v1
   with:
     scan-path: '.'
     args: '--quiet'

@@ -8,7 +8,7 @@ If you use the [pre-commit](https://pre-commit.com) framework, add this to `.pre
 
 ```yaml
 repos:
-  - repo: https://github.com/raftersecurity/rafter-cli
+  - repo: https://github.com/Raftersecurity/rafter-cli
     rev: v0.6.5
     hooks:
       - id: rafter-scan-node   # auto-installs via npm, no global install needed
@@ -32,7 +32,7 @@ rafter agent install-hook
 rafter agent install-hook --global
 ```
 
-That's it. Every `git commit` now runs `rafter agent scan --staged` automatically.
+That's it. Every `git commit` now runs `rafter secrets --staged` automatically.
 
 ## Manual install
 
@@ -51,11 +51,11 @@ STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 [ -z "$STAGED_FILES" ] && exit 0
 
 echo "Scanning staged files for secrets..."
-rafter agent scan --staged --quiet
+rafter secrets --staged --quiet
 
 if [ $? -ne 0 ]; then
     echo "Commit blocked: secrets detected in staged files."
-    echo "Run: rafter agent scan --staged"
+    echo "Run: rafter secrets --staged"
     exit 1
 fi
 

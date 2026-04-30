@@ -1,6 +1,6 @@
 # Rafter CLI
 
-[![npm version](https://img.shields.io/npm/v/@rafter-security/cli)](https://www.npmjs.com/package/@rafter-security/cli) [![PyPI version](https://img.shields.io/pypi/v/rafter-cli)](https://pypi.org/project/rafter-cli/) [![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/@rafter-security/cli)](https://www.npmjs.com/package/@rafter-security/cli) [![PyPI version](https://img.shields.io/pypi/v/rafter-cli)](https://pypi.org/project/rafter-cli/) [![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/Raftersecurity/rafter-cli) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 <p>
   <a href="#supported-platforms"><img alt="Claude Code supported" src="https://img.shields.io/badge/Claude%20Code-supported-d97757?style=flat&labelColor=141413&logo=claude&logoColor=faf9f5"></a>
@@ -40,7 +40,7 @@ See what Rafter does before reading another word.
 # Drop a .env file with credentials in a test repo
 echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' > .env
 
-rafter scan local .
+rafter secrets .
 # → CRITICAL  .env:1  aws-access-key-id  AKIA***AMPLE
 # → exit 1
 ```
@@ -193,13 +193,13 @@ Use `rafter agent list/enable/disable` for granular per-component control after 
 Fast, reliable, and deterministic for a given CLI version. 21+ built-in patterns covering AWS, GitHub, Google, Slack, Stripe, Twilio, database connection strings, JWTs, private keys, npm/PyPI tokens, and generic API keys. Same inputs produce the same findings — no flaky CI, no phantom alerts.
 
 ```sh
-rafter agent scan .              # scan directory
-rafter agent scan ./config.js    # scan specific file
-rafter agent scan --staged       # scan git staged files only
-rafter agent scan --diff HEAD~1  # scan files changed since a git ref
-rafter agent scan --history      # scan full git history (requires gitleaks engine)
-rafter agent scan --json         # structured output
-rafter agent scan --quiet        # silent unless secrets found (CI-friendly)
+rafter secrets .              # scan directory
+rafter secrets ./config.js    # scan specific file
+rafter secrets --staged       # scan git staged files only
+rafter secrets --diff HEAD~1  # scan files changed since a git ref
+rafter secrets --history      # scan full git history (requires gitleaks engine)
+rafter secrets --json         # structured output
+rafter secrets --quiet        # silent unless secrets found (CI-friendly)
 ```
 
 Exit code 1 if secrets found, 0 if clean.
@@ -242,7 +242,7 @@ Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-c
 
 ```yaml
 repos:
-  - repo: https://github.com/raftersecurity/rafter-cli
+  - repo: https://github.com/Raftersecurity/rafter-cli
     rev: v0.7.1
     hooks:
       - id: rafter-scan-node
@@ -317,7 +317,7 @@ rafter agent audit --since 2026-02-01        # filter by date
 rafter agent audit --verify                  # verify hash chain (exit 1 if tampered)
 ```
 
-Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`, `scan_executed`, `config_changed`.
+Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`. `scan_executed` and `config_changed` are reserved for future use (defined in the type union but not yet emitted).
 
 Point the log at a repo-local path by setting `agent.audit.logPath` in `.rafter.yml` (e.g. `.rafter/audit.jsonl`) so every contributor can verify their own chain independently. Retention pruning rewrites the log atomically and re-seals the chain, preserving a sidecar manifest (`audit.jsonl.retention.log`) that records the hashes of pruned entries — verify still passes after legitimate cleanup, and fails on forgery.
 
@@ -396,7 +396,7 @@ rafter ci init --with-remote            # include remote security audit job
 Use as a reusable action in any GitHub Actions workflow:
 
 ```yaml
-- uses: raftersecurity/rafter-cli@v1
+- uses: Raftersecurity/rafter-cli@v1
   with:
     scan-path: '.'       # default
     args: '--quiet'      # default; override for verbose output
@@ -410,7 +410,7 @@ Inputs:
 | Input | Default | Description |
 |-------|---------|-------------|
 | `scan-path` | `.` | Path to scan |
-| `args` | `--quiet` | Additional args to `rafter scan local` |
+| `args` | `--quiet` | Additional args to `rafter secrets` |
 | `version` | `latest` | CLI version to install |
 | `install-method` | `npm` | `npm` or `pip` |
 | `format` | `json` | Output format: `json` or `text` |
@@ -429,7 +429,7 @@ Add to `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
-  - repo: https://github.com/raftersecurity/rafter-cli
+  - repo: https://github.com/Raftersecurity/rafter-cli
     rev: v0.7.1
     hooks:
       - id: rafter-scan-node      # auto-installs via npm
@@ -500,7 +500,7 @@ Install, remove, or audit them at any time with `rafter skill list/install/unins
 
 Exit codes are part of Rafter's output contract — CI pipelines and orchestrators can rely on these semantics across versions.
 
-### Local Secret Scan (`rafter scan local` / `rafter agent scan`)
+### Local Secret Scan (`rafter secrets`)
 
 | Code | Meaning | Action |
 |------|---------|--------|
@@ -552,16 +552,16 @@ Python package is in `python/` — see [`python/README.md`](python/README.md) fo
 
 Show that your project is protected by Rafter. Add one of these badges to your README:
 
-[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter) [![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/raftercli/rafter)
+[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/Raftersecurity/rafter-cli) [![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/Raftersecurity/rafter-cli)
 
 **Markdown (copy-paste):**
 
 ```markdown
-[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter)
+[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/Raftersecurity/rafter-cli)
 ```
 
 ```markdown
-[![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/raftercli/rafter)
+[![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/Raftersecurity/rafter-cli)
 ```
 
 More badge variants (HTML, reStructuredText) available in [`badges/`](badges/).
