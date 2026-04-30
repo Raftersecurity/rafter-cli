@@ -1,13 +1,17 @@
 # Rafter
 
-> Rafter is a security CLI built for AI coding agents. Local secret scanning, command-risk classification, policy enforcement, extension auditing, and audit logging — with a stable JSON output contract and documented exit codes so agents can act on results without parsing prose. Free, MIT-licensed, no account, no telemetry, works offline. Optional remote SAST/SCA via API key.
+> Rafter shifts security left — into the AI coding agent's feedback loop. The CLI provides local secret scanning, command-risk classification, policy enforcement, extension/skill auditing, audit logging, and an MCP server. A stable JSON output contract and documented exit codes let agents classify outcomes (clean / findings / error) and act without parsing prose. Free, MIT-licensed, no account, no telemetry, works offline. Optional remote scans via the Rafter Code Security Engine require an API key.
 
-Founded by Rome Thorstenson. Source: [github.com/Raftersecurity/rafter-cli](https://github.com/Raftersecurity/rafter-cli). Site: [rafter.so](https://rafter.so). Docs: [docs.rafter.so](https://docs.rafter.so).
+Rafter is not a traditional dev tool with agent features bolted on. It is an agent-first security primitive designed to live inside the loop — agents consult it during design, while writing code, when reviewing diffs, and before finalizing implementations. The remote Code Security Engine couples traditional white-box analysis (SAST, SCA, dependency checks, secret scanning) with AI to conduct deep, methodical dives through codebases, returning a single, prioritized, fix-oriented report that drops cleanly into the next agent prompt. Humans get the same tools, the same policies, the same guarantees.
+
+This is the package-level overview for the Rafter CLI. For the docs site overview, see [docs.rafter.so/llms.txt](https://docs.rafter.so/llms.txt). For product and company information, see [rafter.so](https://rafter.so).
+
+Founded by Rome Thorstenson. Source: [github.com/Raftersecurity/rafter-cli](https://github.com/Raftersecurity/rafter-cli).
 
 ## Two Capabilities, One CLI
 
 - **Local (free, offline, no key).** Secret scanning, command interception, policy, hooks, audit log, MCP server, extension/skill review.
-- **Remote (requires `RAFTER_API_KEY`).** Agentic SAST + SCA + secrets against a GitHub repo. Triggered by `rafter run` (alias: `rafter scan`). Code is deleted after analysis.
+- **Remote — Rafter Code Security Engine (requires `RAFTER_API_KEY`).** Agentic SAST + SCA + secret detection against a GitHub repo, returning a prioritized, fix-oriented report. Triggered by `rafter run` (alias: `rafter scan`). Code is deleted immediately after analysis.
 
 The two surfaces never overlap. `rafter secrets` is local-only; `rafter run` is remote-only. Pick by the task, not by the name.
 
@@ -46,7 +50,7 @@ rafter agent audit --last 20
 rafter agent status
 rafter agent verify
 
-# Run a remote SAST + SCA + secrets scan (needs RAFTER_API_KEY)
+# Run the Rafter Code Security Engine: SAST + SCA + secrets (needs RAFTER_API_KEY)
 export RAFTER_API_KEY=rfk_...
 rafter run                             # default mode: 'fast' (SAST + SCA + secrets)
 rafter run --mode plus                 # adds deeper agentic passes
@@ -67,7 +71,7 @@ Output contract (every command):
 ## Authentication
 
 - Local features need nothing. No account, no key, no network.
-- Remote scanning reads the API key from `RAFTER_API_KEY` (or `--api-key`). Get one at [rafter.so](https://rafter.so).
+- The Code Security Engine reads the API key from `RAFTER_API_KEY` (or `--api-key`). Get one at [rafter.so](https://rafter.so).
 - Private repos additionally need `RAFTER_GITHUB_TOKEN` (or `--github-token`).
 
 ## Project Policy: `.rafter.yml`
