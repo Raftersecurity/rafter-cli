@@ -699,68 +699,6 @@ function windsurfMcp(): ComponentSpec {
   };
 }
 
-function continueHooks(): ComponentSpec {
-  const home = os.homedir();
-  const settingsPath = path.join(home, ".continue", "settings.json");
-  return {
-    id: "continue.hooks",
-    platform: "continue",
-    kind: "hooks",
-    description: "Continue.dev PreToolUse + PostToolUse hooks",
-    detectDir: path.join(home, ".continue"),
-    path: settingsPath,
-    isInstalled: () => {
-      if (!fs.existsSync(settingsPath)) return false;
-      const s = readJson(settingsPath);
-      for (const entry of s.hooks?.PreToolUse ?? []) {
-        if (hookEntryMatchesRafter(entry, "rafter hook pretool")) return true;
-      }
-      return false;
-    },
-    install: () => {
-      const dir = path.join(home, ".continue");
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const s: Record<string, any> = fs.existsSync(settingsPath) ? readJson(settingsPath) : {};
-      s.hooks ??= {};
-      s.hooks.PreToolUse ??= [];
-      s.hooks.PostToolUse ??= [];
-      const pre = { type: "command", command: "rafter hook pretool" };
-      const post = { type: "command", command: "rafter hook posttool" };
-      s.hooks.PreToolUse = filterOutRafter(
-        s.hooks.PreToolUse,
-        (e) => hookEntryMatchesRafter(e, "rafter hook pretool"),
-      );
-      s.hooks.PostToolUse = filterOutRafter(
-        s.hooks.PostToolUse,
-        (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
-      );
-      s.hooks.PreToolUse.push(
-        { matcher: "Bash", hooks: [pre] },
-        { matcher: "Write|Edit", hooks: [pre] },
-      );
-      s.hooks.PostToolUse.push({ matcher: ".*", hooks: [post] });
-      writeJson(settingsPath, s);
-    },
-    uninstall: () => {
-      if (!fs.existsSync(settingsPath)) return;
-      const s = readJson(settingsPath);
-      if (s.hooks?.PreToolUse) {
-        s.hooks.PreToolUse = filterOutRafter(
-          s.hooks.PreToolUse,
-          (e) => hookEntryMatchesRafter(e, "rafter hook pretool"),
-        );
-      }
-      if (s.hooks?.PostToolUse) {
-        s.hooks.PostToolUse = filterOutRafter(
-          s.hooks.PostToolUse,
-          (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
-        );
-      }
-      writeJson(settingsPath, s);
-    },
-  };
-}
-
 function continueMcp(): ComponentSpec {
   const home = os.homedir();
   const configPath = path.join(home, ".continue", "config.json");
@@ -892,7 +830,6 @@ export function getComponentRegistry(): ComponentSpec[] {
       geminiMcp(),
       windsurfHooks(),
       windsurfMcp(),
-      continueHooks(),
       continueMcp(),
       aiderMcp(),
       openclawSkill(),

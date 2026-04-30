@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **`rafter agent init --with-continue` no longer writes `~/.continue/settings.json`** (Node + Python, rf-cia): Continue.dev does not read `settings.json` and has no `hooks.PreToolUse`/`PostToolUse` field in its config schema (current versions use `config.yaml`, legacy uses `config.json`). The hook install was a silent no-op at runtime — files written, never consumed. Removed `installContinueDevHooks` from the Node init flow, `_continue_hooks` ComponentSpec from both Node and Python `rafter agent enable/disable` registries, and the matching test expectations. MCP install (`.continue/config.json` mcpServers entry) is unchanged. Continue.dev integration is now MCP-only — matches what `recipes/continue-dev.md` always claimed.
+
 ## [0.7.4] - 2026-04-21
 
 ### Added

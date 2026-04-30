@@ -712,62 +712,6 @@ def _windsurf_mcp() -> ComponentSpec:
     )
 
 
-def _continue_hooks() -> ComponentSpec:
-    home = Path.home()
-    detect_dir = home / ".continue"
-    settings_path = detect_dir / "settings.json"
-
-    def is_installed() -> bool:
-        if not settings_path.exists():
-            return False
-        s = _read_json(settings_path)
-        for entry in s.get("hooks", {}).get("PreToolUse", []) or []:
-            if _hook_entry_has_rafter(entry, "rafter hook pretool"):
-                return True
-        return False
-
-    def install() -> None:
-        detect_dir.mkdir(parents=True, exist_ok=True)
-        s = _read_json(settings_path) if settings_path.exists() else {}
-        s.setdefault("hooks", {})
-        h = s["hooks"]
-        h.setdefault("PreToolUse", [])
-        h.setdefault("PostToolUse", [])
-        pre = {"type": "command", "command": "rafter hook pretool"}
-        post = {"type": "command", "command": "rafter hook posttool"}
-        h["PreToolUse"] = _filter_hooks(h["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
-        h["PostToolUse"] = _filter_hooks(h["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
-        h["PreToolUse"].extend([
-            {"matcher": "Bash", "hooks": [pre]},
-            {"matcher": "Write|Edit", "hooks": [pre]},
-        ])
-        h["PostToolUse"].append({"matcher": ".*", "hooks": [post]})
-        _write_json(settings_path, s)
-
-    def uninstall() -> None:
-        if not settings_path.exists():
-            return
-        s = _read_json(settings_path)
-        h = s.get("hooks") or {}
-        if "PreToolUse" in h:
-            h["PreToolUse"] = _filter_hooks(h["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
-        if "PostToolUse" in h:
-            h["PostToolUse"] = _filter_hooks(h["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
-        _write_json(settings_path, s)
-
-    return ComponentSpec(
-        id="continue.hooks",
-        platform="continue",
-        kind="hooks",
-        description="Continue.dev PreToolUse + PostToolUse hooks",
-        detect_dir=detect_dir,
-        path=settings_path,
-        is_installed=is_installed,
-        install=install,
-        uninstall=uninstall,
-    )
-
-
 def _continue_mcp() -> ComponentSpec:
     home = Path.home()
     detect_dir = home / ".continue"
@@ -919,7 +863,6 @@ def get_registry() -> list[ComponentSpec]:
             _gemini_mcp(),
             _windsurf_hooks(),
             _windsurf_mcp(),
-            _continue_hooks(),
             _continue_mcp(),
             _aider_mcp(),
             _openclaw_skill(),
