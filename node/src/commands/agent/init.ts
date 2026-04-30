@@ -338,50 +338,6 @@ function installWindsurfHooks(root: string): void {
   console.log(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
-function installContinueDevHooks(root: string): void {
-  const continueDir = path.join(root, ".continue");
-
-  if (!fs.existsSync(continueDir)) {
-    fs.mkdirSync(continueDir, { recursive: true });
-  }
-
-  const settingsPath = path.join(continueDir, "settings.json");
-
-  let settings: Record<string, any> = {};
-  if (fs.existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-    } catch {
-      console.log(fmt.warning("Existing Continue.dev settings.json was unreadable, creating new one"));
-    }
-  }
-
-  if (!settings.hooks) settings.hooks = {};
-  if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
-  if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
-
-  // Continue.dev uses the same protocol as Claude Code
-  const preHook = { type: "command", command: "rafter hook pretool" };
-  const postHook = { type: "command", command: "rafter hook posttool" };
-
-  settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
-    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
-  );
-  settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
-    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
-  );
-
-  settings.hooks.PreToolUse.push(
-    { matcher: "Bash", hooks: [preHook] },
-    { matcher: "Write|Edit", hooks: [preHook] },
-  );
-  settings.hooks.PostToolUse.push(
-    { matcher: ".*", hooks: [postHook] },
-  );
-
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
-  console.log(fmt.success(`Installed hooks to ${settingsPath}`));
-}
 
 /** MCP server entry for rafter — shared across MCP-native clients */
 const RAFTER_MCP_ENTRY = {
@@ -732,7 +688,7 @@ export function createInitCommand(): Command {
         if (hasGemini && !wantGemini) wantGemini = await askYesNo("Install Gemini CLI MCP + hooks?");
         if (hasCursor && !wantCursor) wantCursor = await askYesNo("Install Cursor MCP + hooks?");
         if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP + hooks?");
-        if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP + hooks?");
+        if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP server?");
         if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
         if (!wantGitleaks) wantGitleaks = await askYesNo("Download Gitleaks binary (enhanced scanning)?");
         console.log();
@@ -963,7 +919,6 @@ export function createInitCommand(): Command {
       if (hasContinueDev && wantContinue) {
         try {
           continueOk = installContinueDevMcp(root);
-          installContinueDevHooks(root);
           if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Continue.dev integration: ${e}`));
