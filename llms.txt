@@ -38,8 +38,8 @@ Rafter is the security layer between your agent and your codebase. Install it be
 
 - `rafter agent init --all` — Set up security across all detected agent platforms in one command
 - `rafter agent init-project` — Generate per-repo instruction files for agents (CLAUDE.md, AGENTS.md, etc.)
-- `rafter scan local .` — Scan a directory for secrets (21+ patterns, deterministic, offline)
-- `rafter agent scan --staged` — Scan git staged files before committing
+- `rafter secrets .` — Scan a directory for secrets (21+ patterns, deterministic, offline)
+- `rafter secrets --staged` — Scan git staged files before committing
 - `rafter agent exec "command"` — Execute a shell command through the policy enforcement layer
 - `rafter agent audit --last 20` — Review recent security audit log entries
 - `rafter agent verify` — Health check for all integrations
@@ -75,7 +75,7 @@ SAST/SCA security audits of GitHub repositories via the Rafter API. The code ana
 
 ## CI/CD
 
-- [GitHub Action](https://github.com/Raftersecurity/rafter-cli/tree/main/github-action): `raftersecurity/rafter-cli@v1`
+- [GitHub Action](https://github.com/Raftersecurity/rafter-cli/tree/main/github-action): `Raftersecurity/rafter-cli@v1`
 - `rafter ci init` — Auto-generate CI config for GitHub Actions, GitLab CI, CircleCI
 
 ## Pricing

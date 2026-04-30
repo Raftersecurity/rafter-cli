@@ -27,7 +27,7 @@ The CLI follows UNIX principles:
 | 3 | Quota exhausted (HTTP 429 or 403 scan-mode limit) |
 | 4 | Insufficient scope / forbidden (HTTP 403) |
 
-### Local Secret Scan (`rafter scan local` / `rafter agent scan`)
+### Local Secret Scan (`rafter secrets`)
 
 | Code | Meaning |
 |------|---------|
@@ -900,7 +900,7 @@ GitHub Issues integration — create issues from scan findings or natural text.
 Create GitHub issues from scan results.
 
 - `--scan-id <id>` — remote scan ID to create issues from
-- `--from-local <path>` — path to local scan JSON (from `rafter scan local --format json`)
+- `--from-local <path>` — path to local scan JSON (from `rafter secrets --format json`)
 - `-r, --repo <repo>` — target GitHub repo (`org/repo`)
 - `-k, --api-key <key>` — Rafter API key (required with `--scan-id`)
 - `--no-dedup` — skip deduplication check (create even if matching issue exists)
@@ -1050,11 +1050,12 @@ fi
 rafter agent init
 
 # Scan for secrets
-rafter scan local .
-rafter scan local --staged --quiet  # CI-friendly
+rafter secrets .
+rafter secrets --staged --quiet  # CI-friendly
 
-# Old command still works (deprecated)
-# rafter agent scan .  — deprecated, use rafter scan local
+# Aliases still work (deprecated)
+# rafter scan local .   — deprecated, use rafter secrets
+# rafter agent scan .   — deprecated, use rafter secrets
 
 # Pre-commit hook
 rafter agent install-hook --global
