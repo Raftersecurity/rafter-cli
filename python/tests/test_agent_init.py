@@ -734,3 +734,171 @@ class TestContinueDevHooksPruned:
             assert any(s.get("name") == "rafter" for s in servers)
         else:
             assert "rafter" in (servers or {})
+
+
+# ── Cursor deep support (rf-svn3) ────────────────────────────────────
+
+# Skills shipped as both Cursor rules and skills package — must mirror
+# AGENT_SKILLS_CURSOR in rafter_cli/commands/agent.py.
+_CURSOR_SHIPPED_SKILLS = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+class TestInstallCursorHooks:
+    """Cursor hooks must cover preToolUse, postToolUse, and beforeShellExecution."""
+
+    def test_writes_all_three_events_from_scratch(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_hooks
+        _install_cursor_hooks(tmp_path)
+
+        hooks_path = tmp_path / ".cursor" / "hooks.json"
+        assert hooks_path.exists()
+        cfg = json.loads(hooks_path.read_text())
+        assert cfg["version"] == 1
+        for event in ("preToolUse", "postToolUse", "beforeShellExecution"):
+            entries = cfg["hooks"][event]
+            assert isinstance(entries, list) and entries, f"missing {event}"
+
+        pre = next(e for e in cfg["hooks"]["preToolUse"] if "rafter" in e.get("command", ""))
+        assert pre["command"] == "rafter hook pretool --format cursor"
+        post = next(e for e in cfg["hooks"]["postToolUse"] if "rafter" in e.get("command", ""))
+        assert post["command"] == "rafter hook posttool --format cursor"
+
+    def test_idempotent_no_duplicates(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_hooks
+        _install_cursor_hooks(tmp_path)
+        _install_cursor_hooks(tmp_path)
+        _install_cursor_hooks(tmp_path)
+
+        cfg = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+        for event in ("preToolUse", "postToolUse", "beforeShellExecution"):
+            rafter_hooks = [
+                e for e in cfg["hooks"][event] if "rafter" in e.get("command", "")
+            ]
+            assert len(rafter_hooks) == 1, f"event {event} duplicated"
+
+    def test_preserves_non_rafter_entries(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_hooks
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "hooks.json").write_text(json.dumps({
+            "version": 1,
+            "hooks": {
+                "preToolUse": [{"command": "other pre", "type": "command"}],
+                "postToolUse": [{"command": "other post", "type": "command"}],
+                "beforeShellExecution": [{"command": "other shell", "type": "command"}],
+                "afterFileEdit": [{"command": "other edit", "type": "command"}],
+            },
+        }))
+
+        _install_cursor_hooks(tmp_path)
+
+        cfg = json.loads((cursor_dir / "hooks.json").read_text())
+        commands = lambda ev: [e.get("command") for e in cfg["hooks"][ev]]
+        assert "other pre" in commands("preToolUse")
+        assert "other post" in commands("postToolUse")
+        assert "other shell" in commands("beforeShellExecution")
+        # Unrelated event preserved untouched.
+        assert commands("afterFileEdit") == ["other edit"]
+
+
+class TestInstallCursorRules:
+    """Per-skill .mdc rules — one file per shipped skill."""
+
+    def test_writes_one_mdc_per_shipped_skill(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_rules
+        _install_cursor_rules(tmp_path)
+
+        rules_dir = tmp_path / ".cursor" / "rules"
+        for name in _CURSOR_SHIPPED_SKILLS:
+            assert (rules_dir / f"{name}.mdc").exists(), f"missing {name}.mdc"
+
+    def test_each_rule_has_alwaysApply_false_and_description(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_rules
+        _install_cursor_rules(tmp_path)
+
+        rules_dir = tmp_path / ".cursor" / "rules"
+        for name in _CURSOR_SHIPPED_SKILLS:
+            content = (rules_dir / f"{name}.mdc").read_text()
+            assert content.startswith("---\n"), f"{name}: missing frontmatter"
+            fm_end = content.find("\n---", 4)
+            assert fm_end > 0, f"{name}: missing closing frontmatter"
+            frontmatter = content[4:fm_end]
+            assert "alwaysApply: false" in frontmatter, f"{name}: alwaysApply must be false"
+            assert "description:" in frontmatter, f"{name}: description must exist"
+
+    def test_descriptions_are_action_forcing(self, tmp_path):
+        import re
+        from rafter_cli.commands.agent import _install_cursor_rules
+        _install_cursor_rules(tmp_path)
+
+        rules_dir = tmp_path / ".cursor" / "rules"
+        for name in _CURSOR_SHIPPED_SKILLS:
+            content = (rules_dir / f"{name}.mdc").read_text()
+            m = re.search(r'description:\s*"([^"]+)"', content)
+            assert m, f"{name}: cannot extract description"
+            desc = m.group(1)
+            assert len(desc) > 20, f"{name}: description too short"
+            assert re.match(r"^(REQUIRED|Use|Invoke|Entry|Run|Read|Stop)", desc), (
+                f"{name}: description must be action-forcing, got: {desc[:40]}"
+            )
+
+    def test_does_not_write_legacy_rafter_security_mdc(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_rules
+        _install_cursor_rules(tmp_path)
+        legacy = tmp_path / ".cursor" / "rules" / "rafter-security.mdc"
+        assert not legacy.exists(), "legacy consolidated rule must not be written"
+
+    def test_idempotent(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_rules
+        _install_cursor_rules(tmp_path)
+        rules_dir = tmp_path / ".cursor" / "rules"
+        before = {n: (rules_dir / f"{n}.mdc").read_text() for n in _CURSOR_SHIPPED_SKILLS}
+        _install_cursor_rules(tmp_path)
+        after = {n: (rules_dir / f"{n}.mdc").read_text() for n in _CURSOR_SHIPPED_SKILLS}
+        assert after == before
+
+
+class TestInstallCursorSubAgent:
+    """Cursor sub-agent — .cursor/agents/rafter.md."""
+
+    def test_writes_subagent_file(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_subagents
+        _install_cursor_subagents(tmp_path)
+        agent_path = tmp_path / ".cursor" / "agents" / "rafter.md"
+        assert agent_path.exists()
+
+    def test_frontmatter_has_name_description_no_tools(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_subagents
+        _install_cursor_subagents(tmp_path)
+
+        content = (tmp_path / ".cursor" / "agents" / "rafter.md").read_text()
+        assert content.startswith("---\n")
+        fm_end = content.find("\n---", 4)
+        frontmatter = content[4:fm_end]
+        assert "name: rafter" in frontmatter
+        assert "description:" in frontmatter
+        # Cursor frontmatter has no tools: field.
+        for line in frontmatter.splitlines():
+            assert not line.startswith("tools:"), \
+                "Cursor sub-agent frontmatter must not include tools:"
+
+    def test_body_references_all_three_cli_tiers(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_subagents
+        _install_cursor_subagents(tmp_path)
+        content = (tmp_path / ".cursor" / "agents" / "rafter.md").read_text()
+        assert "rafter run" in content
+        assert "--mode plus" in content
+        assert "rafter secrets" in content
+
+    def test_idempotent(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_subagents
+        _install_cursor_subagents(tmp_path)
+        agent_path = tmp_path / ".cursor" / "agents" / "rafter.md"
+        before = agent_path.read_text()
+        _install_cursor_subagents(tmp_path)
+        assert agent_path.read_text() == before

@@ -410,6 +410,13 @@ function claudeCodeMcp(): ComponentSpec {
   };
 }
 
+/** Cursor hook events covered by rafter (rf-svn3). */
+const CURSOR_HOOK_EVENTS: { event: string; command: string }[] = [
+  { event: "preToolUse", command: "rafter hook pretool --format cursor" },
+  { event: "postToolUse", command: "rafter hook posttool --format cursor" },
+  { event: "beforeShellExecution", command: "rafter hook pretool --format cursor" },
+];
+
 function cursorHooks(): ComponentSpec {
   const home = os.homedir();
   const hooksPath = path.join(home, ".cursor", "hooks.json");
@@ -417,14 +424,16 @@ function cursorHooks(): ComponentSpec {
     id: "cursor.hooks",
     platform: "cursor",
     kind: "hooks",
-    description: "Cursor hooks (~/.cursor/hooks.json)",
+    description: "Cursor hooks: preToolUse + postToolUse + beforeShellExecution (~/.cursor/hooks.json)",
     detectDir: path.join(home, ".cursor"),
     path: hooksPath,
     isInstalled: () => {
       if (!fs.existsSync(hooksPath)) return false;
       const cfg = readJson(hooksPath);
-      for (const entry of cfg.hooks?.beforeShellExecution ?? []) {
-        if (String(entry?.command ?? "").includes("rafter hook pretool")) return true;
+      for (const { event } of CURSOR_HOOK_EVENTS) {
+        for (const entry of cfg.hooks?.[event] ?? []) {
+          if (String(entry?.command ?? "").includes("rafter hook")) return true;
+        }
       }
       return false;
     },
@@ -434,50 +443,127 @@ function cursorHooks(): ComponentSpec {
       const cfg: Record<string, any> = fs.existsSync(hooksPath) ? readJson(hooksPath) : {};
       cfg.version ??= 1;
       cfg.hooks ??= {};
-      cfg.hooks.beforeShellExecution ??= [];
-      cfg.hooks.beforeShellExecution = filterOutRafter(
-        cfg.hooks.beforeShellExecution,
-        (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-      );
-      cfg.hooks.beforeShellExecution.push({
-        command: "rafter hook pretool --format cursor",
-        type: "command",
-        timeout: 5000,
-      });
+      for (const { event, command } of CURSOR_HOOK_EVENTS) {
+        cfg.hooks[event] ??= [];
+        cfg.hooks[event] = filterOutRafter(
+          cfg.hooks[event],
+          (e) => String(e?.command ?? "").includes("rafter hook"),
+        );
+        cfg.hooks[event].push({ command, type: "command", timeout: 5000 });
+      }
       writeJson(hooksPath, cfg);
     },
     uninstall: () => {
       if (!fs.existsSync(hooksPath)) return;
       const cfg = readJson(hooksPath);
-      if (cfg.hooks?.beforeShellExecution) {
-        cfg.hooks.beforeShellExecution = filterOutRafter(
-          cfg.hooks.beforeShellExecution,
-          (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-        );
+      for (const { event } of CURSOR_HOOK_EVENTS) {
+        if (cfg.hooks?.[event]) {
+          cfg.hooks[event] = filterOutRafter(
+            cfg.hooks[event],
+            (e) => String(e?.command ?? "").includes("rafter hook"),
+          );
+        }
       }
       writeJson(hooksPath, cfg);
     },
   };
 }
 
+const CURSOR_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
+function cursorRuleSourceDir(): string | null {
+  // After build: dist/commands/agent/components.js -> ../../../resources/cursor-rules
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "cursor-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "cursor-rules"),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) ?? null;
+}
+
+function cursorAgentSourceFile(): string | null {
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "agents", "rafter.md"),
+    path.resolve(__dirname, "..", "..", "resources", "agents", "rafter.md"),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) ?? null;
+}
+
+/**
+ * Cursor instructions = per-skill rules under .cursor/rules/ + the rafter
+ * sub-agent at .cursor/agents/rafter.md (rf-svn3). The legacy consolidated
+ * rafter-security.mdc was retired.
+ *
+ * `path` reports the rules dir for diagnostics; install/uninstall manage
+ * both rules and the sub-agent file together.
+ */
 function cursorInstructions(): ComponentSpec {
   const home = os.homedir();
-  const filePath = path.join(home, ".cursor", "rules", "rafter-security.mdc");
+  const rulesDir = path.join(home, ".cursor", "rules");
+  const agentPath = path.join(home, ".cursor", "agents", "rafter.md");
+  const legacyPath = path.join(rulesDir, "rafter-security.mdc");
   return {
     id: "cursor.instructions",
     platform: "cursor",
     kind: "instructions",
-    description: "Cursor global rule block (~/.cursor/rules/rafter-security.mdc)",
+    description: "Cursor per-skill rules + rafter sub-agent (~/.cursor/rules/, ~/.cursor/agents/rafter.md)",
     detectDir: path.join(home, ".cursor"),
-    path: filePath,
-    isInstalled: () => hasMarkerBlock(filePath),
-    install: () => injectInstructionFile(filePath),
+    path: rulesDir,
+    isInstalled: () => {
+      const rulesPresent = CURSOR_RULE_SKILLS.every((n) =>
+        fs.existsSync(path.join(rulesDir, `${n}.mdc`)),
+      );
+      return rulesPresent && fs.existsSync(agentPath);
+    },
+    install: () => {
+      fs.mkdirSync(rulesDir, { recursive: true });
+      const ruleSrc = cursorRuleSourceDir();
+      if (ruleSrc) {
+        for (const name of CURSOR_RULE_SKILLS) {
+          const src = path.join(ruleSrc, `${name}.mdc`);
+          if (fs.existsSync(src)) {
+            fs.copyFileSync(src, path.join(rulesDir, `${name}.mdc`));
+          }
+        }
+      }
+      // Migrate away from the legacy consolidated rule.
+      if (fs.existsSync(legacyPath)) {
+        try { fs.unlinkSync(legacyPath); } catch { /* best-effort */ }
+      }
+
+      const agentSrc = cursorAgentSourceFile();
+      if (agentSrc) {
+        fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+        const raw = fs.readFileSync(agentSrc, "utf-8");
+        const cursored = stripFrontmatterField(raw, "tools");
+        fs.writeFileSync(agentPath, cursored, "utf-8");
+      }
+    },
     uninstall: () => {
-      if (!fs.existsSync(filePath)) return;
-      // This file is ours — delete it rather than editing around the block.
-      fs.rmSync(filePath, { force: true });
+      for (const name of CURSOR_RULE_SKILLS) {
+        const p = path.join(rulesDir, `${name}.mdc`);
+        if (fs.existsSync(p)) fs.rmSync(p, { force: true });
+      }
+      if (fs.existsSync(legacyPath)) fs.rmSync(legacyPath, { force: true });
+      if (fs.existsSync(agentPath)) fs.rmSync(agentPath, { force: true });
     },
   };
+}
+
+/** Strip a single-line frontmatter field from a markdown file's frontmatter. */
+function stripFrontmatterField(content: string, field: string): string {
+  if (!content.startsWith("---\n")) return content;
+  const fmEnd = content.indexOf("\n---", 4);
+  if (fmEnd === -1) return content;
+  const frontmatter = content.slice(4, fmEnd);
+  const body = content.slice(fmEnd);
+  const re = new RegExp(`^${field}:\\s.*$`, "m");
+  const cleaned = frontmatter.replace(re, "").replace(/\n\n+/g, "\n").replace(/^\n/, "");
+  return `---\n${cleaned}${body}`;
 }
 
 function cursorMcp(): ComponentSpec {

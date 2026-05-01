@@ -1382,21 +1382,20 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(hook.timeout).toBe(5000);
     });
 
-    it("should install global instruction file to ~/.cursor/rules/rafter-security.mdc", () => {
+    it("should install per-skill rule files under ~/.cursor/rules/ (rf-svn3)", () => {
       fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
 
       runCli("agent init --with-cursor", testHomeDir);
 
-      const instructionPath = path.join(
-        testHomeDir, ".cursor", "rules", "rafter-security.mdc"
-      );
-      expect(fs.existsSync(instructionPath)).toBe(true);
+      // The legacy consolidated rafter-security.mdc was retired in rf-svn3 in
+      // favor of per-skill rules with trigger-first descriptions.
+      const legacy = path.join(testHomeDir, ".cursor", "rules", "rafter-security.mdc");
+      expect(fs.existsSync(legacy)).toBe(false);
 
-      const content = fs.readFileSync(instructionPath, "utf-8");
-      expect(content).toContain("<!-- rafter:start -->");
-      expect(content).toContain("<!-- rafter:end -->");
-      expect(content).toContain("rafter-secure-design");
-      expect(content).toContain("rafter-code-review");
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        const p = path.join(testHomeDir, ".cursor", "rules", `${name}.mdc`);
+        expect(fs.existsSync(p), `missing ${p}`).toBe(true);
+      }
     });
 
     it("should deduplicate hooks on repeated installs", () => {
@@ -1532,17 +1531,21 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(starts).toBe(1);
     });
 
-    it("should not duplicate rafter block in Cursor rules on repeated installs", () => {
+    it("should not duplicate per-skill rule files in Cursor rules on repeated installs (rf-svn3)", () => {
       fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
 
       runCli("agent init --with-cursor", testHomeDir);
       runCli("agent init --with-cursor", testHomeDir);
 
-      const content = fs.readFileSync(
-        path.join(testHomeDir, ".cursor", "rules", "rafter-security.mdc"), "utf-8"
-      );
-      const starts = (content.match(/<!-- rafter:start -->/g) || []).length;
-      expect(starts).toBe(1);
+      const rulesDir = path.join(testHomeDir, ".cursor", "rules");
+      const files = fs.readdirSync(rulesDir).sort();
+      // Exactly the four shipped per-skill rules — no duplicates, no legacy.
+      expect(files).toEqual([
+        "rafter-code-review.mdc",
+        "rafter-secure-design.mdc",
+        "rafter-skill-review.mdc",
+        "rafter.mdc",
+      ]);
     });
   });
 
@@ -1593,11 +1596,18 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(geminiSettings.hooks.BeforeTool).toBeDefined();
       expect(geminiSettings.hooks.AfterTool).toBeDefined();
 
-      // ── Cursor: MCP + hooks + instructions ──
+      // ── Cursor: MCP + hooks + per-skill rules + sub-agent (rf-svn3) ──
       expect(fs.existsSync(path.join(testHomeDir, ".cursor", "mcp.json"))).toBe(true);
       expect(fs.existsSync(path.join(testHomeDir, ".cursor", "hooks.json"))).toBe(true);
-      const cursorInstructions = path.join(testHomeDir, ".cursor", "rules", "rafter-security.mdc");
-      expect(fs.existsSync(cursorInstructions)).toBe(true);
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        expect(
+          fs.existsSync(path.join(testHomeDir, ".cursor", "rules", `${name}.mdc`)),
+          `cursor rule missing: ${name}`,
+        ).toBe(true);
+      }
+      expect(
+        fs.existsSync(path.join(testHomeDir, ".cursor", "agents", "rafter.md")),
+      ).toBe(true);
 
       // ── Windsurf: MCP + hooks ──
       expect(fs.existsSync(path.join(testHomeDir, ".codeium", "windsurf", "mcp_config.json"))).toBe(true);

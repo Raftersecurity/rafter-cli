@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Cursor deep support: per-skill rules + sub-agent + full pre/post-tool hooks** (Node + Python, rf-svn3 / rf-cia phase c). `rafter agent init --with-cursor` now ships Cursor to Claude-Code parity:
+  - Hooks at `~/.cursor/hooks.json` cover `preToolUse` + `postToolUse` + `beforeShellExecution` (was `beforeShellExecution` only). Idempotent across all three events; non-rafter entries preserved.
+  - Replaces the single consolidated `.cursor/rules/rafter-security.mdc` with **four per-skill rules** (`rafter.mdc`, `rafter-secure-design.mdc`, `rafter-code-review.mdc`, `rafter-skill-review.mdc`). Each rule's frontmatter description is reused verbatim from the skill's `SKILL.md` (trigger-first), `alwaysApply: false`. The legacy file is auto-removed on reinstall.
+  - Drops the rafter sub-agent at `.cursor/agents/rafter.md`, reusing the rf-q7j Claude-Code sub-agent body with the `tools:` line stripped (Cursor's frontmatter doesn't have it; tools inherit from parent).
+  - Backed by 13 new Node tests and 12 new Python tests. The `cursor.instructions` component now manages rules + sub-agent together for `rafter agent enable/disable`.
+
 ### Removed
 - **`rafter agent init --with-continue` no longer writes `~/.continue/settings.json`** (Node + Python, rf-cia): Continue.dev does not read `settings.json` and has no `hooks.PreToolUse`/`PostToolUse` field in its config schema (current versions use `config.yaml`, legacy uses `config.json`). The hook install was a silent no-op at runtime — files written, never consumed. Removed `installContinueDevHooks` from the Node init flow, `_continue_hooks` ComponentSpec from both Node and Python `rafter agent enable/disable` registries, and the matching test expectations. MCP install (`.continue/config.json` mcpServers entry) is unchanged. Continue.dev integration is now MCP-only — matches what `recipes/continue-dev.md` always claimed.
 

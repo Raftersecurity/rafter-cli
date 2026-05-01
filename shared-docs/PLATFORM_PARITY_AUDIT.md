@@ -12,7 +12,7 @@
 | Claude Code  | yes            | yes                     | yes (PreToolUse+Post) | yes                | yes   | **yes (rf-q7j)** | CLAUDE.md   | yes (hook)     |
 | Codex        | yes            | yes                     | yes (claude fmt)      | yes                | —     | n/a       | AGENTS.md        | partial (skills only) |
 | Gemini       | yes (rf-yit)   | partial                 | yes (BeforeTool)      | unverified         | yes   | n/a       | GEMINI.md        | partial (MCP only) |
-| Cursor       | **NO**         | n/a                     | yes (beforeShell)     | unverified         | yes   | n/a       | .cursor/rules/*.mdc | partial (MCP only) |
+| Cursor       | **NO**         | n/a                     | yes (preToolUse+postToolUse+beforeShell, rf-svn3) | unverified         | yes   | **yes (rf-svn3)** | per-skill `.cursor/rules/<skill>.mdc` (rf-svn3) | partial (MCP only) |
 | Windsurf     | **NO**         | n/a                     | yes (pre_run_command) | unverified         | yes   | n/a       | **none**         | partial (MCP only) |
 | Continue.dev | **NO**         | n/a                     | **none (pruned)**     | n/a                | yes   | n/a       | **none**         | **NOT CHECKED** |
 | Aider        | **NO**         | n/a                     | **none**              | n/a                | yes   | n/a       | **none**         | **NOT CHECKED** |
@@ -169,14 +169,14 @@ Windsurf reads `AGENTS.md` natively (any directory in workspace). Our rf-djw Cod
 
 ## Revised per-platform deep-support plan (replaces earlier plan)
 
-### Cursor — currently MCP only; can be full parity with Claude Code
+### Cursor — DONE (rf-svn3): full parity with Claude Code
 
-| Surface | Today | Goal |
+| Surface | Pre-rf-svn3 | Now |
 |---|---|---|
-| Hooks | `beforeShellExecution` only | Add `preToolUse` + `postToolUse` for full coverage |
-| Rules | one consolidated `.cursor/rules/rafter-security.mdc` | 4 per-skill `.cursor/rules/<skill>.mdc` files with description-based activation |
-| Sub-agent | none | `.cursor/agents/rafter.md` (rf-q7j content reuse — Cursor will also read existing `.claude/agents/`) |
-| MCP | yes | yes (no change) |
+| Hooks | `beforeShellExecution` only | `preToolUse` + `postToolUse` + `beforeShellExecution` (all three idempotent, non-rafter entries preserved) |
+| Rules | one consolidated `.cursor/rules/rafter-security.mdc` | 4 per-skill `.cursor/rules/<skill>.mdc` files with trigger-first descriptions reused verbatim from each SKILL.md (description-based activation) |
+| Sub-agent | none | `.cursor/agents/rafter.md` (reuses rf-q7j body; Cursor frontmatter has no `tools:` field) |
+| MCP | yes | yes (unchanged) |
 
 ### Windsurf — currently MCP + broken hooks; can be rules + AGENTS.md
 

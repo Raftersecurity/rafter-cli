@@ -51,7 +51,6 @@ function installGlobalInstructions(
     claudeCode?: boolean;
     codex?: boolean;
     gemini?: boolean;
-    cursor?: boolean;
   },
   root: string,
   scope: "user" | "project",
@@ -93,16 +92,10 @@ function installGlobalInstructions(
     }
   }
 
-  // Cursor — <root>/.cursor/rules/rafter-security.mdc
-  if (platforms.cursor) {
-    try {
-      const filePath = path.join(root, ".cursor", "rules", "rafter-security.mdc");
-      injectInstructionFile(filePath);
-      console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
-    } catch (e) {
-      console.log(fmt.warning(`Failed to write Cursor instructions: ${e}`));
-    }
-  }
+  // Cursor uses per-skill rules at <root>/.cursor/rules/<skill>.mdc and the
+  // rafter sub-agent at <root>/.cursor/agents/rafter.md (installed in the
+  // Cursor branch above). The consolidated rafter-security.mdc was retired
+  // in rf-svn3 in favor of per-skill rules with trigger-first descriptions.
 }
 
 function installClaudeCodeHooks(root: string): void {
@@ -215,6 +208,18 @@ function installCodexHooks(root: string): void {
   console.log(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
+/**
+ * Install Cursor hooks at <root>/.cursor/hooks.json.
+ *
+ * Covers the full pre/post-tool lifecycle plus shell-specific gating:
+ *   - preToolUse           — rafter classifies every tool call
+ *   - postToolUse          — rafter post-hook (audit, telemetry)
+ *   - beforeShellExecution — narrower complement; some Cursor versions
+ *                            fire this without firing preToolUse for shell.
+ *
+ * Idempotent — repeated installs do not duplicate rafter entries.
+ * Non-rafter entries (other tools' hooks, unrelated events) are preserved.
+ */
 function installCursorHooks(root: string): void {
   const cursorDir = path.join(root, ".cursor");
 
@@ -235,21 +240,126 @@ function installCursorHooks(root: string): void {
 
   if (!config.version) config.version = 1;
   if (!config.hooks) config.hooks = {};
-  if (!config.hooks.beforeShellExecution) config.hooks.beforeShellExecution = [];
 
-  // Remove existing rafter hooks
-  config.hooks.beforeShellExecution = config.hooks.beforeShellExecution.filter(
-    (entry: any) => !entry.command?.includes("rafter hook pretool")
-  );
+  const events: { event: string; command: string }[] = [
+    { event: "preToolUse", command: "rafter hook pretool --format cursor" },
+    { event: "postToolUse", command: "rafter hook posttool --format cursor" },
+    { event: "beforeShellExecution", command: "rafter hook pretool --format cursor" },
+  ];
 
-  config.hooks.beforeShellExecution.push({
-    command: "rafter hook pretool --format cursor",
-    type: "command",
-    timeout: 5000,
-  });
+  for (const { event, command } of events) {
+    if (!Array.isArray(config.hooks[event])) config.hooks[event] = [];
+    config.hooks[event] = config.hooks[event].filter(
+      (entry: any) => !entry?.command?.includes("rafter hook"),
+    );
+    config.hooks[event].push({ command, type: "command", timeout: 5000 });
+  }
 
   fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
   console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+}
+
+/** Skills shipped as both Cursor rules and (Claude Code / Codex / Gemini) skills. */
+const CURSOR_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
+/**
+ * Install per-skill Cursor rules at <root>/.cursor/rules/<skill>.mdc.
+ *
+ * One file per shipped skill. Each rule's frontmatter description is reused
+ * verbatim from the skill's SKILL.md frontmatter (trigger-first phrasing per
+ * rf-4ei / rf-8po) so Cursor surfaces it on the same triggers as Claude Code.
+ *
+ * Replaces the legacy consolidated `.cursor/rules/rafter-security.mdc` — that
+ * single file is no longer written by the Cursor install path.
+ */
+function installCursorRules(root: string): void {
+  const rulesDir = path.join(root, ".cursor", "rules");
+  fs.mkdirSync(rulesDir, { recursive: true });
+
+  // Resolve resources/cursor-rules relative to this module.
+  // After build: dist/commands/agent/init.js -> ../../../resources/cursor-rules
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "cursor-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "cursor-rules"),
+  ];
+  const sourceDir = candidates.find((p) => fs.existsSync(p));
+  if (!sourceDir) {
+    console.log(fmt.warning(`Cursor rule templates not found in resources/cursor-rules`));
+    return;
+  }
+
+  for (const name of CURSOR_RULE_SKILLS) {
+    const src = path.join(sourceDir, `${name}.mdc`);
+    const dest = path.join(rulesDir, `${name}.mdc`);
+    if (!fs.existsSync(src)) {
+      console.log(fmt.warning(`Cursor rule template missing: ${src}`));
+      continue;
+    }
+    fs.copyFileSync(src, dest);
+    console.log(fmt.success(`Installed Cursor rule to ${dest}`));
+  }
+
+  // Remove the legacy consolidated rule if present, so reinstall on top of
+  // an old layout migrates cleanly.
+  const legacy = path.join(rulesDir, "rafter-security.mdc");
+  if (fs.existsSync(legacy)) {
+    try {
+      fs.unlinkSync(legacy);
+      console.log(fmt.info(`Removed legacy ${legacy} (superseded by per-skill rules)`));
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+/**
+ * Install Cursor sub-agent at <root>/.cursor/agents/rafter.md.
+ *
+ * Reuses the Claude-Code sub-agent body (rf-q7j) with one shape difference:
+ * Cursor's frontmatter has no `tools:` field — tools inherit from the parent
+ * agent. The hard rules in the body (no code modification, no commits) still
+ * apply, since Cursor relies on prompt-level constraints rather than
+ * structural restriction.
+ */
+function installCursorSubAgents(root: string): void {
+  const agentsDir = path.join(root, ".cursor", "agents");
+  fs.mkdirSync(agentsDir, { recursive: true });
+
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "agents", "rafter.md"),
+    path.resolve(__dirname, "..", "..", "resources", "agents", "rafter.md"),
+  ];
+  const src = candidates.find((p) => fs.existsSync(p));
+  if (!src) {
+    console.log(fmt.warning(`Rafter sub-agent template not found in resources/agents`));
+    return;
+  }
+
+  const raw = fs.readFileSync(src, "utf-8");
+  const cursored = stripToolsFromFrontmatter(raw);
+
+  const dest = path.join(agentsDir, "rafter.md");
+  fs.writeFileSync(dest, cursored, "utf-8");
+  console.log(fmt.success(`Installed Cursor sub-agent to ${dest}`));
+}
+
+/** Strip the Claude-Code `tools:` line from sub-agent frontmatter — Cursor doesn't have it. */
+function stripToolsFromFrontmatter(content: string): string {
+  if (!content.startsWith("---\n")) return content;
+  const fmEnd = content.indexOf("\n---", 4);
+  if (fmEnd === -1) return content;
+  const frontmatter = content.slice(4, fmEnd);
+  const body = content.slice(fmEnd);
+  const cleaned = frontmatter
+    .split("\n")
+    .filter((line) => !/^tools:\s/.test(line))
+    .join("\n");
+  return `---\n${cleaned}${body}`;
 }
 
 function installGeminiHooks(root: string): void {
@@ -888,12 +998,14 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install Cursor MCP + hooks if opted in
+      // Install Cursor MCP + hooks + per-skill rules + sub-agent if opted in
       let cursorOk = false;
       if ((hasCursor || (opts.local && wantCursor)) && wantCursor) {
         try {
           cursorOk = installCursorMcp(root);
           installCursorHooks(root);
+          installCursorRules(root);
+          installCursorSubAgents(root);
           if (cursorOk && scope === "user") manager.set("agent.environments.cursor.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Cursor integration: ${e}`));
@@ -940,12 +1052,13 @@ export function createInitCommand(): Command {
         localUnsupported("Aider");
       }
 
-      // Install global instruction files for platforms that support them
+      // Install global instruction files for platforms that support them.
+      // Cursor is intentionally absent — Cursor uses per-skill rules + the
+      // rafter sub-agent installed in the Cursor branch above (rf-svn3).
       installGlobalInstructions({
         claudeCode: claudeCodeOk,
         codex: codexOk,
         gemini: geminiOk,
-        cursor: cursorOk,
       }, root, scope);
 
       console.log();
