@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Continue.dev per-skill workspace rules + project-scope (`--local`) install** (Node + Python, rf-acz0 / rf-cia phase c). `rafter agent init --with-continue` now ships:
+  - 4 per-skill rule files at `.continue/rules/<skill>.md` with Continue.dev YAML frontmatter (`name:`, `description:`, `alwaysApply: false`) — `rafter`, `rafter-secure-design`, `rafter-code-review`, `rafter-skill-review`.
+  - `--local` (project) scope install, in addition to user scope. Project install ships rules only; user install additionally registers the MCP entry under `~/.continue/config.json`.
+  - New `continue.rules` ComponentSpec, manageable via `rafter agent enable/disable`.
+  - Backed by 2 new Node tests + 3 new Python tests; combined-platforms integration test asserts the rules ship; recipe rewritten to match.
+
 - **Aider read-only context: `RAFTER.md` + `.aider.conf.yml read:` entry** (Node + Python, rf-du2o / rf-cia phase c). Aider has no plugin/hook system and no native MCP support — `read:` in `.aider.conf.yml` is its only documented persistent-context primitive. `rafter agent init --with-aider` now writes:
   - `RAFTER.md` at workspace root with the rafter security context block (`<!-- rafter:start --> ... <!-- rafter:end -->`).
   - Adds `RAFTER.md` to the `read:` list in `.aider.conf.yml` (preserves existing keys and existing `read:` entries; idempotent across reinstalls).
