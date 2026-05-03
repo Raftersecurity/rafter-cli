@@ -51,6 +51,7 @@ function installGlobalInstructions(
     claudeCode?: boolean;
     codex?: boolean;
     gemini?: boolean;
+    windsurf?: boolean;
   },
   root: string,
   scope: "user" | "project",
@@ -66,16 +67,22 @@ function installGlobalInstructions(
     }
   }
 
-  // Codex — ~/.codex/AGENTS.md (user) or <cwd>/AGENTS.md (project)
-  if (platforms.codex) {
+  // AGENTS.md — read natively by Codex AND Windsurf. Codex at user scope keeps
+  // its own copy at ~/.codex/AGENTS.md; everything else (project scope, or any
+  // scope where Windsurf is in play) writes <root>/AGENTS.md once.
+  if (platforms.codex || platforms.windsurf) {
     try {
-      const filePath = scope === "user"
+      const codexUser = scope === "user" && platforms.codex && !platforms.windsurf;
+      const filePath = codexUser
         ? path.join(root, ".codex", "AGENTS.md")
         : path.join(root, "AGENTS.md");
       injectInstructionFile(filePath);
-      console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
+      const readers = [platforms.codex && "Codex", platforms.windsurf && "Windsurf"]
+        .filter(Boolean)
+        .join(" + ");
+      console.log(fmt.success(`Installed Rafter instructions for ${readers} to ${filePath}`));
     } catch (e) {
-      console.log(fmt.warning(`Failed to write Codex instructions: ${e}`));
+      console.log(fmt.warning(`Failed to write AGENTS.md: ${e}`));
     }
   }
 
@@ -405,47 +412,50 @@ function installGeminiHooks(root: string): void {
   console.log(fmt.success(`Installed hooks to ${settingsPath}`));
 }
 
-function installWindsurfHooks(root: string): void {
-  const windsurfDir = path.join(root, ".windsurf");
+/** Skills shipped as Windsurf per-workspace rules at .windsurf/rules/<skill>.md (rf-0vr3). */
+const WINDSURF_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
 
-  if (!fs.existsSync(windsurfDir)) {
-    fs.mkdirSync(windsurfDir, { recursive: true });
+/**
+ * Install per-skill Windsurf rules at <root>/.windsurf/rules/<skill>.md.
+ *
+ * Windsurf reads workspace rules from .windsurf/rules/*.md (12KB cap per file
+ * per docs). Each file uses Windsurf YAML frontmatter (`trigger: model_decision`
+ * + `description:`) so the agent fetches the rule when its description matches
+ * the task. Body content mirrors the Cursor pointer-rule pattern.
+ *
+ * Replaces the prior `~/.windsurf/hooks.json` install, which was a silent
+ * no-op — Windsurf has no documented hook surface as of v1.x (research bead
+ * rf-s1n3, gap reports rf-p1ri / rf-vayl).
+ */
+function installWindsurfRules(root: string): void {
+  const rulesDir = path.join(root, ".windsurf", "rules");
+  fs.mkdirSync(rulesDir, { recursive: true });
+
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "windsurf-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "windsurf-rules"),
+  ];
+  const sourceDir = candidates.find((p) => fs.existsSync(p));
+  if (!sourceDir) {
+    console.log(fmt.warning(`Windsurf rule templates not found in resources/windsurf-rules`));
+    return;
   }
 
-  const hooksPath = path.join(windsurfDir, "hooks.json");
-
-  let config: Record<string, any> = {};
-  if (fs.existsSync(hooksPath)) {
-    try {
-      config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
-    } catch {
-      console.log(fmt.warning("Existing Windsurf hooks.json was unreadable, creating new one"));
+  for (const name of WINDSURF_RULE_SKILLS) {
+    const src = path.join(sourceDir, `${name}.md`);
+    const dest = path.join(rulesDir, `${name}.md`);
+    if (!fs.existsSync(src)) {
+      console.log(fmt.warning(`Windsurf rule template missing: ${src}`));
+      continue;
     }
+    fs.copyFileSync(src, dest);
+    console.log(fmt.success(`Installed Windsurf rule to ${dest}`));
   }
-
-  if (!config.hooks) config.hooks = {};
-  if (!config.hooks.pre_run_command) config.hooks.pre_run_command = [];
-  if (!config.hooks.pre_write_code) config.hooks.pre_write_code = [];
-
-  // Remove existing rafter hooks
-  config.hooks.pre_run_command = config.hooks.pre_run_command.filter(
-    (entry: any) => !entry.command?.includes("rafter hook pretool")
-  );
-  config.hooks.pre_write_code = config.hooks.pre_write_code.filter(
-    (entry: any) => !entry.command?.includes("rafter hook pretool")
-  );
-
-  config.hooks.pre_run_command.push({
-    command: "rafter hook pretool --format windsurf",
-    show_output: true,
-  });
-  config.hooks.pre_write_code.push({
-    command: "rafter hook pretool --format windsurf",
-    show_output: true,
-  });
-
-  fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
 
@@ -782,7 +792,9 @@ export function createInitCommand(): Command {
       let wantCodex = opts.withCodex || opts.all;
       let wantGemini = opts.withGemini || opts.all;
       let wantCursor = opts.withCursor || opts.all;
-      let wantWindsurf = opts.withWindsurf || (opts.all && !opts.local);
+      // Windsurf can install at --local scope (project rules + AGENTS.md)
+      // since rf-0vr3. User scope still also installs the MCP entry.
+      let wantWindsurf = opts.withWindsurf || opts.all;
       let wantContinue = opts.withContinue || (opts.all && !opts.local);
       let wantAider = opts.withAider || (opts.all && !opts.local);
       let wantGitleaks = opts.withGitleaks || (opts.all && !opts.local);
@@ -1012,18 +1024,28 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install Windsurf MCP + hooks if opted in
+      // Install Windsurf integration if opted in.
+      // - User scope: MCP entry under ~/.codeium/windsurf/ + per-skill rules
+      //   at .windsurf/rules/ (workspace) + AGENTS.md (workspace, written by
+      //   installGlobalInstructions below).
+      // - Project scope (--local): per-skill rules + AGENTS.md only (no
+      //   user-scope MCP entry written from a project init).
+      // The previous ~/.windsurf/hooks.json install was pruned: Windsurf has
+      // no documented hook surface (rf-0vr3).
       let windsurfOk = false;
-      if (hasWindsurf && wantWindsurf) {
+      if (wantWindsurf && (hasWindsurf || opts.local)) {
         try {
-          windsurfOk = installWindsurfMcp(root);
-          installWindsurfHooks(root);
-          if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
+          if (hasWindsurf) {
+            windsurfOk = installWindsurfMcp(root);
+            if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
+          }
+          installWindsurfRules(root);
+          // AGENTS.md is written below in installGlobalInstructions when
+          // platforms.windsurf is true.
+          if (!hasWindsurf) windsurfOk = true; // local-scope success: rules + AGENTS.md
         } catch (e) {
           console.error(fmt.error(`Failed to install Windsurf integration: ${e}`));
         }
-      } else if (opts.local && wantWindsurf) {
-        localUnsupported("Windsurf");
       }
 
       // Install Continue.dev MCP + hooks if opted in
@@ -1059,6 +1081,7 @@ export function createInitCommand(): Command {
         claudeCode: claudeCodeOk,
         codex: codexOk,
         gemini: geminiOk,
+        windsurf: windsurfOk,
       }, root, scope);
 
       console.log();

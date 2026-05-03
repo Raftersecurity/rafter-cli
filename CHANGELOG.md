@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Windsurf deep support: per-skill workspace rules + AGENTS.md + project-scope (`--local`) install** (Node + Python, rf-0vr3 / rf-cia phase c). `rafter agent init --with-windsurf` now ships Windsurf the way it actually consumes context:
+  - Writes 4 per-skill rules under `.windsurf/rules/<skill>.md` with Windsurf YAML frontmatter (`trigger: model_decision`, `description:`) so the agent fetches the right rule per task description.
+  - Writes `AGENTS.md` at workspace root — Windsurf reads it natively (so does Codex; one file covers both). `<!-- rafter:start --> ... <!-- rafter:end -->` marker preserves user content.
+  - Now installs at `--local` (project) scope as well as user scope. Project install ships rules + AGENTS.md; user install additionally registers the MCP entry under `~/.codeium/windsurf/mcp_config.json`.
+  - Backed by 5 new Node tests + 4 new Python tests, plus updates to the existing combined-platforms integration test.
+
 - **Cursor deep support: per-skill rules + sub-agent + full pre/post-tool hooks** (Node + Python, rf-svn3 / rf-cia phase c). `rafter agent init --with-cursor` now ships Cursor to Claude-Code parity:
   - Hooks at `~/.cursor/hooks.json` cover `preToolUse` + `postToolUse` + `beforeShellExecution` (was `beforeShellExecution` only). Idempotent across all three events; non-rafter entries preserved.
   - Replaces the single consolidated `.cursor/rules/rafter-security.mdc` with **four per-skill rules** (`rafter.mdc`, `rafter-secure-design.mdc`, `rafter-code-review.mdc`, `rafter-skill-review.mdc`). Each rule's frontmatter description is reused verbatim from the skill's `SKILL.md` (trigger-first), `alwaysApply: false`. The legacy file is auto-removed on reinstall.
@@ -15,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Backed by 13 new Node tests and 12 new Python tests. The `cursor.instructions` component now manages rules + sub-agent together for `rafter agent enable/disable`.
 
 ### Removed
+- **`rafter agent init --with-windsurf` no longer writes `~/.windsurf/hooks.json`** (Node + Python, rf-0vr3): Windsurf has no documented hook surface in current versions — `pre_run_command` / `pre_write_code` were not consumed by the IDE at runtime. The install was a silent no-op (independently flagged by gap reports rf-p1ri / rf-vayl and research bead rf-s1n3). Pruned along the same pattern as the Continue.dev hooks prune. Removed `installWindsurfHooks` from the Node init flow, `_windsurf_hooks` ComponentSpec from both registries, and the matching test expectations. The MCP install at `~/.codeium/windsurf/mcp_config.json` is unchanged.
+
 - **`rafter agent init --with-continue` no longer writes `~/.continue/settings.json`** (Node + Python, rf-cia): Continue.dev does not read `settings.json` and has no `hooks.PreToolUse`/`PostToolUse` field in its config schema (current versions use `config.yaml`, legacy uses `config.json`). The hook install was a silent no-op at runtime — files written, never consumed. Removed `installContinueDevHooks` from the Node init flow, `_continue_hooks` ComponentSpec from both Node and Python `rafter agent enable/disable` registries, and the matching test expectations. MCP install (`.continue/config.json` mcpServers entry) is unchanged. Continue.dev integration is now MCP-only — matches what `recipes/continue-dev.md` always claimed.
 
 ## [0.7.4] - 2026-04-21

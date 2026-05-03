@@ -66,7 +66,7 @@ describe("rafter agent list", () => {
       "cursor.mcp",
       "gemini.hooks",
       "gemini.mcp",
-      "windsurf.hooks",
+      "windsurf.rules",
       "windsurf.mcp",
       "continue.mcp",
       "aider.mcp",

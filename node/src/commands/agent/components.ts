@@ -691,65 +691,61 @@ function geminiMcp(): ComponentSpec {
   };
 }
 
-function windsurfHooks(): ComponentSpec {
+/** Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3). */
+const WINDSURF_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
+function windsurfRuleSourceDir(): string | null {
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "windsurf-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "windsurf-rules"),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) ?? null;
+}
+
+/**
+ * Windsurf rules component: per-skill files at .windsurf/rules/<skill>.md.
+ *
+ * Project/workspace-scope by design — Windsurf reads workspace rules from
+ * .windsurf/rules/ (12KB cap per file). The cwd at the time install runs is
+ * what gets the rules. Shown in the registry as resolved to the current
+ * working directory.
+ *
+ * Replaces the prior `windsurf.hooks` component, pruned in rf-0vr3 because
+ * Windsurf has no documented hook surface.
+ */
+function windsurfRules(): ComponentSpec {
   const home = os.homedir();
-  const hooksPath = path.join(home, ".windsurf", "hooks.json");
+  const rulesDir = path.join(process.cwd(), ".windsurf", "rules");
   return {
-    id: "windsurf.hooks",
+    id: "windsurf.rules",
     platform: "windsurf",
-    kind: "hooks",
-    description: "Windsurf hooks (~/.windsurf/hooks.json)",
+    kind: "instructions",
+    description: "Windsurf per-skill rules (.windsurf/rules/*.md, workspace-scope)",
     detectDir: path.join(home, ".codeium", "windsurf"),
-    path: hooksPath,
-    isInstalled: () => {
-      if (!fs.existsSync(hooksPath)) return false;
-      const cfg = readJson(hooksPath);
-      for (const entry of cfg.hooks?.pre_run_command ?? []) {
-        if (String(entry?.command ?? "").includes("rafter hook pretool")) return true;
-      }
-      return false;
-    },
+    path: rulesDir,
+    isInstalled: () =>
+      WINDSURF_RULE_SKILLS.every((n) => fs.existsSync(path.join(rulesDir, `${n}.md`))),
     install: () => {
-      const dir = path.join(home, ".windsurf");
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const cfg: Record<string, any> = fs.existsSync(hooksPath) ? readJson(hooksPath) : {};
-      cfg.hooks ??= {};
-      cfg.hooks.pre_run_command ??= [];
-      cfg.hooks.pre_write_code ??= [];
-      cfg.hooks.pre_run_command = filterOutRafter(
-        cfg.hooks.pre_run_command,
-        (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-      );
-      cfg.hooks.pre_write_code = filterOutRafter(
-        cfg.hooks.pre_write_code,
-        (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-      );
-      cfg.hooks.pre_run_command.push({
-        command: "rafter hook pretool --format windsurf",
-        show_output: true,
-      });
-      cfg.hooks.pre_write_code.push({
-        command: "rafter hook pretool --format windsurf",
-        show_output: true,
-      });
-      writeJson(hooksPath, cfg);
+      fs.mkdirSync(rulesDir, { recursive: true });
+      const src = windsurfRuleSourceDir();
+      if (!src) return;
+      for (const name of WINDSURF_RULE_SKILLS) {
+        const from = path.join(src, `${name}.md`);
+        if (fs.existsSync(from)) {
+          fs.copyFileSync(from, path.join(rulesDir, `${name}.md`));
+        }
+      }
     },
     uninstall: () => {
-      if (!fs.existsSync(hooksPath)) return;
-      const cfg = readJson(hooksPath);
-      if (cfg.hooks?.pre_run_command) {
-        cfg.hooks.pre_run_command = filterOutRafter(
-          cfg.hooks.pre_run_command,
-          (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-        );
+      for (const name of WINDSURF_RULE_SKILLS) {
+        const p = path.join(rulesDir, `${name}.md`);
+        if (fs.existsSync(p)) fs.rmSync(p, { force: true });
       }
-      if (cfg.hooks?.pre_write_code) {
-        cfg.hooks.pre_write_code = filterOutRafter(
-          cfg.hooks.pre_write_code,
-          (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-        );
-      }
-      writeJson(hooksPath, cfg);
     },
   };
 }
@@ -914,7 +910,7 @@ export function getComponentRegistry(): ComponentSpec[] {
       cursorMcp(),
       geminiHooks(),
       geminiMcp(),
-      windsurfHooks(),
+      windsurfRules(),
       windsurfMcp(),
       continueMcp(),
       aiderMcp(),

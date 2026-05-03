@@ -10,6 +10,7 @@ from rafter_cli.commands.agent import (
     _install_gemini_mcp,
     _install_cursor_mcp,
     _install_windsurf_mcp,
+    _install_windsurf_rules,
     _install_continue_dev_mcp,
     _install_aider_mcp,
 )
@@ -145,6 +146,42 @@ class TestInstallWindsurfMcp:
         assert mcp_path.exists()
         config = json.loads(mcp_path.read_text())
         assert config["mcpServers"]["rafter"]["command"] == "rafter"
+
+
+class TestInstallWindsurfRules:
+    """rf-0vr3 — per-skill rules at .windsurf/rules/<skill>.md replace
+    the broken ~/.windsurf/hooks.json install (Windsurf has no hook surface)."""
+
+    SKILL_NAMES = ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review")
+
+    def test_writes_one_rule_per_skill(self, tmp_path):
+        _install_windsurf_rules(tmp_path)
+        rules_dir = tmp_path / ".windsurf" / "rules"
+        for name in self.SKILL_NAMES:
+            assert (rules_dir / f"{name}.md").exists(), f"missing rule: {name}"
+
+    def test_rules_have_windsurf_frontmatter(self, tmp_path):
+        _install_windsurf_rules(tmp_path)
+        rules_dir = tmp_path / ".windsurf" / "rules"
+        for name in self.SKILL_NAMES:
+            body = (rules_dir / f"{name}.md").read_text()
+            assert body.startswith("---\ntrigger: model_decision"), (
+                f"{name}.md missing Windsurf trigger frontmatter"
+            )
+            assert "description:" in body.split("---")[1]
+
+    def test_does_not_write_hooks_json(self, tmp_path):
+        _install_windsurf_rules(tmp_path)
+        # hooks.json explicitly not created — Windsurf has no hook surface (rf-0vr3).
+        assert not (tmp_path / ".windsurf" / "hooks.json").exists()
+
+    def test_idempotent_on_reinstall(self, tmp_path):
+        _install_windsurf_rules(tmp_path)
+        _install_windsurf_rules(tmp_path)
+        rules_dir = tmp_path / ".windsurf" / "rules"
+        # Still exactly the four files; no duplicates appended to filenames.
+        files = sorted(p.name for p in rules_dir.iterdir())
+        assert files == sorted(f"{n}.md" for n in self.SKILL_NAMES)
 
 
 class TestInstallContinueDevMcp:

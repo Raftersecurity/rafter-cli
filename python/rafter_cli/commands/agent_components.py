@@ -627,48 +627,55 @@ def _gemini_mcp() -> ComponentSpec:
     )
 
 
-def _windsurf_hooks() -> ComponentSpec:
+# Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3).
+_WINDSURF_RULE_SKILLS: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+def _windsurf_rules() -> ComponentSpec:
+    """Windsurf per-skill workspace rules at .windsurf/rules/<skill>.md.
+
+    Replaces the prior `windsurf.hooks` component (pruned in rf-0vr3 — Windsurf
+    has no documented hook surface). Workspace-scope by design; the rules dir
+    is resolved against the cwd at registry-build time.
+    """
     home = Path.home()
     detect_dir = home / ".codeium" / "windsurf"
-    hooks_path = home / ".windsurf" / "hooks.json"
+    rules_dir = Path.cwd() / ".windsurf" / "rules"
 
     def is_installed() -> bool:
-        if not hooks_path.exists():
-            return False
-        cfg = _read_json(hooks_path)
-        for entry in cfg.get("hooks", {}).get("pre_run_command", []) or []:
-            if "rafter hook pretool" in str(entry.get("command", "") if isinstance(entry, dict) else ""):
-                return True
-        return False
+        return all((rules_dir / f"{n}.md").exists() for n in _WINDSURF_RULE_SKILLS)
 
     def install() -> None:
-        hooks_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg = _read_json(hooks_path) if hooks_path.exists() else {}
-        cfg.setdefault("hooks", {})
-        h = cfg["hooks"]
-        for k in ("pre_run_command", "pre_write_code"):
-            h.setdefault(k, [])
-            h[k] = [e for e in h[k] if "rafter hook pretool" not in str(e.get("command", "") if isinstance(e, dict) else "")]
-            h[k].append({"command": "rafter hook pretool --format windsurf", "show_output": True})
-        _write_json(hooks_path, cfg)
+        rules_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            res = importlib.resources.files("rafter_cli.resources")
+        except Exception:
+            return
+        for name in _WINDSURF_RULE_SKILLS:
+            try:
+                content = res.joinpath("windsurf-rules", f"{name}.md").read_text(encoding="utf-8")
+            except Exception:
+                continue
+            (rules_dir / f"{name}.md").write_text(content, encoding="utf-8")
 
     def uninstall() -> None:
-        if not hooks_path.exists():
-            return
-        cfg = _read_json(hooks_path)
-        h = cfg.get("hooks") or {}
-        for k in ("pre_run_command", "pre_write_code"):
-            if k in h:
-                h[k] = [e for e in h[k] if "rafter hook pretool" not in str(e.get("command", "") if isinstance(e, dict) else "")]
-        _write_json(hooks_path, cfg)
+        for name in _WINDSURF_RULE_SKILLS:
+            p = rules_dir / f"{name}.md"
+            if p.exists():
+                p.unlink()
 
     return ComponentSpec(
-        id="windsurf.hooks",
+        id="windsurf.rules",
         platform="windsurf",
-        kind="hooks",
-        description="Windsurf hooks (~/.windsurf/hooks.json)",
+        kind="instructions",
+        description="Windsurf per-skill rules (.windsurf/rules/*.md, workspace-scope)",
         detect_dir=detect_dir,
-        path=hooks_path,
+        path=rules_dir,
         is_installed=is_installed,
         install=install,
         uninstall=uninstall,
@@ -861,7 +868,7 @@ def get_registry() -> list[ComponentSpec]:
             _cursor_mcp(),
             _gemini_hooks(),
             _gemini_mcp(),
-            _windsurf_hooks(),
+            _windsurf_rules(),
             _windsurf_mcp(),
             _continue_mcp(),
             _aider_mcp(),

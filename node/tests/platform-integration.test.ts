@@ -1414,54 +1414,79 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
-  // ── 15. Windsurf hooks ────────────────────────────────────────────
+  // ── 15. Windsurf integration (rf-0vr3) ─────────────────────────────
+  //
+  // The prior install wrote ~/.windsurf/hooks.json with pre_run_command /
+  // pre_write_code entries — Windsurf has no documented hook surface, so
+  // that file was a silent no-op (research bead rf-s1n3, gap reports
+  // rf-p1ri / rf-vayl). Pruned in rf-0vr3 along the same pattern as the
+  // Continue.dev prune (rf-cia phase b).
+  //
+  // Replaced by per-skill rules at .windsurf/rules/<skill>.md (workspace
+  // scope per Windsurf docs) + AGENTS.md (Windsurf reads it natively).
 
-  describe("Windsurf hooks (--with-windsurf)", () => {
-    it("should install pre_run_command/pre_write_code hooks to ~/.windsurf/hooks.json", () => {
+  describe("Windsurf integration (--with-windsurf)", () => {
+    it("does NOT write ~/.windsurf/hooks.json (Windsurf has no hook surface)", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
 
       runCli("agent init --with-windsurf", testHomeDir);
 
-      const hooksPath = path.join(testHomeDir, ".windsurf", "hooks.json");
-      expect(fs.existsSync(hooksPath)).toBe(true);
-
-      const config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
-      expect(config.hooks).toBeDefined();
-      expect(config.hooks.pre_run_command).toBeDefined();
-      expect(config.hooks.pre_write_code).toBeDefined();
-
-      // Both hook arrays should have rafter entries
-      const runCmd = config.hooks.pre_run_command.find(
-        (e: any) => e.command?.includes("rafter")
-      );
-      expect(runCmd).toBeDefined();
-      expect(runCmd.command).toContain("--format windsurf");
-      expect(runCmd.show_output).toBe(true);
-
-      const writeCmd = config.hooks.pre_write_code.find(
-        (e: any) => e.command?.includes("rafter")
-      );
-      expect(writeCmd).toBeDefined();
-      expect(writeCmd.command).toContain("--format windsurf");
+      expect(fs.existsSync(path.join(testHomeDir, ".windsurf", "hooks.json"))).toBe(false);
     });
 
-    it("should deduplicate hooks on repeated installs", () => {
+    it("writes per-skill rules under .windsurf/rules/<skill>.md", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
+
+      runCli("agent init --with-windsurf", testHomeDir);
+
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        const rulePath = path.join(testHomeDir, ".windsurf", "rules", `${name}.md`);
+        expect(fs.existsSync(rulePath), `windsurf rule missing: ${name}`).toBe(true);
+
+        const body = fs.readFileSync(rulePath, "utf-8");
+        expect(body, `windsurf rule ${name} missing trigger`).toMatch(/^---\ntrigger:\s*model_decision/m);
+        expect(body, `windsurf rule ${name} missing description`).toMatch(/^description:\s*"/m);
+      }
+    });
+
+    it("writes AGENTS.md at workspace root (read natively by Windsurf)", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
+
+      runCli("agent init --with-windsurf", testHomeDir);
+
+      const agentsMd = path.join(testHomeDir, "AGENTS.md");
+      expect(fs.existsSync(agentsMd)).toBe(true);
+      const body = fs.readFileSync(agentsMd, "utf-8");
+      expect(body).toContain("<!-- rafter:start -->");
+      expect(body).toContain("<!-- rafter:end -->");
+    });
+
+    it("still installs MCP entry under ~/.codeium/windsurf/mcp_config.json", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
+
+      runCli("agent init --with-windsurf", testHomeDir);
+
+      const mcpPath = path.join(testHomeDir, ".codeium", "windsurf", "mcp_config.json");
+      expect(fs.existsSync(mcpPath)).toBe(true);
+      const cfg = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
+      expect(cfg.mcpServers?.rafter).toBeDefined();
+    });
+
+    it("is idempotent across repeat installs", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
 
       runCli("agent init --with-windsurf", testHomeDir);
       runCli("agent init --with-windsurf", testHomeDir);
 
-      const config = JSON.parse(
-        fs.readFileSync(path.join(testHomeDir, ".windsurf", "hooks.json"), "utf-8")
-      );
-      const rafterRun = config.hooks.pre_run_command.filter(
-        (e: any) => e.command?.includes("rafter")
-      );
-      expect(rafterRun).toHaveLength(1);
-      const rafterWrite = config.hooks.pre_write_code.filter(
-        (e: any) => e.command?.includes("rafter")
-      );
-      expect(rafterWrite).toHaveLength(1);
+      // Rules still present, AGENTS.md still has exactly one rafter block.
+      const agentsMd = fs.readFileSync(path.join(testHomeDir, "AGENTS.md"), "utf-8");
+      expect((agentsMd.match(/<!-- rafter:start -->/g) ?? []).length).toBe(1);
+
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        expect(
+          fs.existsSync(path.join(testHomeDir, ".windsurf", "rules", `${name}.md`)),
+        ).toBe(true);
+      }
     });
   });
 
@@ -1609,9 +1634,17 @@ describe("Platform Integration — MCP Installs via CLI", () => {
         fs.existsSync(path.join(testHomeDir, ".cursor", "agents", "rafter.md")),
       ).toBe(true);
 
-      // ── Windsurf: MCP + hooks ──
+      // ── Windsurf: MCP + per-skill rules + AGENTS.md (rf-0vr3) ──
+      // hooks.json is NOT written (Windsurf has no hook surface, pruned in rf-0vr3).
       expect(fs.existsSync(path.join(testHomeDir, ".codeium", "windsurf", "mcp_config.json"))).toBe(true);
-      expect(fs.existsSync(path.join(testHomeDir, ".windsurf", "hooks.json"))).toBe(true);
+      expect(fs.existsSync(path.join(testHomeDir, ".windsurf", "hooks.json"))).toBe(false);
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        expect(
+          fs.existsSync(path.join(testHomeDir, ".windsurf", "rules", `${name}.md`)),
+          `windsurf rule missing: ${name}`,
+        ).toBe(true);
+      }
+      expect(fs.existsSync(path.join(testHomeDir, "AGENTS.md"))).toBe(true);
 
       // ── Continue.dev: MCP only (hooks pruned in rf-cia phase b) ──
       expect(fs.existsSync(path.join(testHomeDir, ".continue", "config.json"))).toBe(true);

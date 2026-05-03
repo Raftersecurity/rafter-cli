@@ -316,3 +316,11 @@ All linked via `discovered-from:rf-guvb,rf-cia`. See each bead for scope and acc
 - **rf-0lig** (P3) — OpenClaw: confirm activity / users before further investment
 
 The recipes-stale gap is folded into each per-platform bead's acceptance. Sub-agent for Claude Code is tracked under the existing rf-q7j (in flight).
+
+## Update (2026-05-03 — phase c progress)
+
+- **Cursor deep support shipped** — PR #81 (rf-svn3, merged). `preToolUse` + `postToolUse` + `beforeShellExecution` hooks, 4 per-skill `.cursor/rules/<skill>.mdc` files, and `.cursor/agents/rafter.md` sub-agent. Closes the Cursor matrix-row gaps (skills, hooks, sub-agent). rf-p1fs closed as duplicate of rf-svn3.
+- **Windsurf deep support shipped** — this PR (rf-0vr3). Pruned the silent-no-op `~/.windsurf/hooks.json` install (Windsurf has no hook surface), added 4 per-skill rules under `.windsurf/rules/<skill>.md`, extended `installGlobalInstructions` so `--with-windsurf` writes `AGENTS.md` at workspace root (Windsurf reads it natively). Windsurf now installs at `--local` scope as well. rf-jrs0 closed as duplicate of rf-0vr3.
+- **Codex hook schema verification** — newly beaded as rf-ovql (P1) after the rf-cia gap reports independently flagged it. Tracks the unverified assumption that Codex consumes Claude Code's `PreToolUse`/`PostToolUse` schema verbatim.
+
+Outstanding rf-cia work after this PR: rf-acz0 (Continue rules), rf-du2o (Aider prune+RAFTER.md), rf-044o (Gemini re-verify), rf-ovql (Codex schema), rf-65zg (`agent verify` enhancements), rf-o329 (onboarding doc), rf-0lig (OpenClaw activity check).
