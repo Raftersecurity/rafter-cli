@@ -61,6 +61,7 @@ class TestAgentList:
             "gemini.mcp",
             "windsurf.rules",
             "windsurf.mcp",
+            "continue.rules",
             "continue.mcp",
             "aider.read",
             "codex.hooks",

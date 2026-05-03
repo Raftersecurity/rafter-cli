@@ -577,7 +577,40 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
-  // ── 5. Continue.dev MCP install ────────────────────────────────────
+  // ── 5. Continue.dev rules + MCP install (rf-acz0) ─────────────────
+
+  describe("Continue.dev rules (--with-continue)", () => {
+    it("writes per-skill rules under .continue/rules/<skill>.md", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
+
+      runCli("agent init --with-continue", testHomeDir);
+
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        const rulePath = path.join(testHomeDir, ".continue", "rules", `${name}.md`);
+        expect(fs.existsSync(rulePath), `continue rule missing: ${name}`).toBe(true);
+        const body = fs.readFileSync(rulePath, "utf-8");
+        expect(body).toMatch(/^---\nname:\s+/m);
+        expect(body).toMatch(/^description:\s+"/m);
+        expect(body).toMatch(/^alwaysApply:\s+false$/m);
+      }
+    });
+
+    it("is idempotent on repeat installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
+
+      runCli("agent init --with-continue", testHomeDir);
+      runCli("agent init --with-continue", testHomeDir);
+
+      const rulesDir = path.join(testHomeDir, ".continue", "rules");
+      const files = fs.readdirSync(rulesDir).sort();
+      expect(files).toEqual([
+        "rafter-code-review.md",
+        "rafter-secure-design.md",
+        "rafter-skill-review.md",
+        "rafter.md",
+      ]);
+    });
+  });
 
   describe("Continue.dev MCP install (--with-continue)", () => {
     it("should create config.json with mcpServers containing rafter (fresh)", () => {
@@ -1675,9 +1708,15 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       }
       expect(fs.existsSync(path.join(testHomeDir, "AGENTS.md"))).toBe(true);
 
-      // ── Continue.dev: MCP only (hooks pruned in rf-cia phase b) ──
+      // ── Continue.dev: MCP + per-skill rules (rf-acz0); hooks pruned in rf-cia phase b ──
       expect(fs.existsSync(path.join(testHomeDir, ".continue", "config.json"))).toBe(true);
       expect(fs.existsSync(path.join(testHomeDir, ".continue", "settings.json"))).toBe(false);
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        expect(
+          fs.existsSync(path.join(testHomeDir, ".continue", "rules", `${name}.md`)),
+          `continue rule missing: ${name}`,
+        ).toBe(true);
+      }
 
       // ── Aider: RAFTER.md + read: entry (rf-du2o; legacy mcp line not written) ──
       const aiderContent = fs.readFileSync(
