@@ -229,6 +229,7 @@ def _install_global_instructions(
     cursor: bool,
     root: Path,
     scope: str,
+    windsurf: bool = False,
 ) -> None:
     """Install Rafter instruction files for platforms that support them.
 
@@ -237,9 +238,11 @@ def _install_global_instructions(
         Codex CLI   — user: ~/.codex/AGENTS.md      project: <cwd>/AGENTS.md
         Gemini CLI  — user: ~/.gemini/GEMINI.md     project: <cwd>/GEMINI.md
         Cursor      — user: ~/.cursor/rules/*.mdc   project: <cwd>/.cursor/rules/*.mdc
+        Windsurf    — <cwd>/AGENTS.md (read natively, workspace scope)
 
-    Codex (AGENTS.md) and Gemini (GEMINI.md) each have the same filename at
-    user and project scope — only the location differs — so scope is explicit.
+    AGENTS.md is the cross-platform instruction file: Codex (project scope) and
+    Windsurf (any scope) both read it. When either is enabled we write it once
+    at the project root; only Codex at user scope gets its own ~/.codex/AGENTS.md.
     """
     if claude_code:
         try:
@@ -249,13 +252,19 @@ def _install_global_instructions(
         except Exception as e:
             rprint(fmt.warning(f"Failed to write Claude Code instructions: {e}"))
 
-    if codex:
+    if codex or windsurf:
         try:
-            file_path = root / ".codex" / "AGENTS.md" if scope == "user" else root / "AGENTS.md"
+            codex_user = scope == "user" and codex and not windsurf
+            file_path = (
+                root / ".codex" / "AGENTS.md" if codex_user else root / "AGENTS.md"
+            )
             _inject_instruction_file(file_path)
-            rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
+            readers = " + ".join(
+                name for name, on in [("Codex", codex), ("Windsurf", windsurf)] if on
+            )
+            rprint(fmt.success(f"Installed Rafter instructions for {readers} to {file_path}"))
         except Exception as e:
-            rprint(fmt.warning(f"Failed to write Codex instructions: {e}"))
+            rprint(fmt.warning(f"Failed to write AGENTS.md: {e}"))
 
     if gemini:
         try:
@@ -599,6 +608,42 @@ def _install_windsurf_mcp(root: Path) -> bool:
     return True
 
 
+# Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3).
+_WINDSURF_RULE_SKILLS: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+def _install_windsurf_rules(root: Path) -> None:
+    """Install per-skill Windsurf rules at <root>/.windsurf/rules/<skill>.md.
+
+    Workspace-scope rules consumed by Windsurf's rules system (.windsurf/rules/*.md,
+    12KB cap per file per docs). Each rule uses Windsurf's YAML frontmatter
+    (`trigger: model_decision` + `description:`) so the agent fetches the rule
+    when the description matches the task.
+
+    Replaces the prior `~/.windsurf/hooks.json` install — Windsurf has no
+    documented hook surface (rf-0vr3 prune; same pattern as Continue.dev hooks
+    prune in rf-cia phase b).
+    """
+    rules_dir = root / ".windsurf" / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    res = importlib.resources.files("rafter_cli.resources")
+    for name in _WINDSURF_RULE_SKILLS:
+        try:
+            content = res.joinpath("windsurf-rules", f"{name}.md").read_text(encoding="utf-8")
+        except Exception:
+            rprint(fmt.warning(f"Windsurf rule template missing: {name}.md"))
+            continue
+        dest = rules_dir / f"{name}.md"
+        dest.write_text(content, encoding="utf-8")
+        rprint(fmt.success(f"Installed Windsurf rule to {dest}"))
+
+
 def _install_continue_dev_mcp(root: Path) -> bool:
     """Install MCP server config for Continue.dev (<root>/.continue/config.json)."""
     continue_dir = root / ".continue"
@@ -703,7 +748,9 @@ def init(
     want_codex = with_codex or all_integrations
     want_gemini = with_gemini or all_integrations
     want_cursor = with_cursor or all_integrations
-    want_windsurf = with_windsurf or (all_integrations and not local)
+    # Windsurf can install at --local scope (project rules + AGENTS.md) since
+    # rf-0vr3. User scope still also installs the MCP entry.
+    want_windsurf = with_windsurf or all_integrations
     want_continue = with_continue or (all_integrations and not local)
     want_aider = with_aider or (all_integrations and not local)
     want_gitleaks = with_gitleaks or (all_integrations and not local)
@@ -888,17 +935,26 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Cursor integration: {e}"))
 
-    # Install Windsurf MCP if opted in
+    # Install Windsurf integration if opted in (rf-0vr3).
+    # - User scope: MCP entry under ~/.codeium/windsurf/ + per-skill workspace
+    #   rules at .windsurf/rules/ + AGENTS.md (written below by
+    #   _install_global_instructions).
+    # - Project scope (--local): rules + AGENTS.md only.
+    # The previous ~/.windsurf/hooks.json install was pruned: Windsurf has no
+    # documented hook surface.
     windsurf_ok = False
-    if has_windsurf and want_windsurf:
+    if want_windsurf and (has_windsurf or local):
         try:
-            windsurf_ok = _install_windsurf_mcp(root)
-            if windsurf_ok:
-                manager.set("agent.environments.windsurf.enabled", True)
+            if has_windsurf:
+                windsurf_ok = _install_windsurf_mcp(root)
+                if windsurf_ok:
+                    manager.set("agent.environments.windsurf.enabled", True)
+            _install_windsurf_rules(root)
+            if not has_windsurf:
+                # Project-scope success: rules + AGENTS.md (written below).
+                windsurf_ok = True
         except Exception as e:
             rprint(fmt.error(f"Failed to install Windsurf integration: {e}"))
-    elif local and want_windsurf:
-        _local_unsupported("Windsurf")
 
     # Install Continue.dev MCP if opted in
     continue_ok = False
@@ -930,6 +986,7 @@ def init(
         codex=codex_ok,
         gemini=gemini_ok,
         cursor=cursor_ok,
+        windsurf=windsurf_ok,
         root=root,
         scope=scope,
     )
