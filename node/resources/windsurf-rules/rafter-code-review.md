@@ -1,0 +1,14 @@
+---
+trigger: model_decision
+description: "REQUIRED before declaring a task done when the diff touches user input, SQL, shell, auth, credentials, file paths, serialization, or dependency surface. Walks OWASP/ASVS/MITRE questions the compiler and the test suite won't catch. Pair with `rafter run` on the same diff. A security-relevant task marked complete without both has been under-delivered — do not claim done."
+---
+
+# rafter-code-review — structured pre-merge review
+
+Pointer rule. Use the `rafter-code-review` skill at `.claude/skills/rafter-code-review/SKILL.md` BEFORE declaring done on any diff touching the surface listed above.
+
+- Read the matching sub-doc (web-app / api / llm / cli-library-iac).
+- Walk the OWASP / ASVS / MITRE questions the scanner can't ask.
+- Pair with `rafter run` on the same diff — the scanner finds known-bad patterns, this skill asks the questions patterns miss.
+
+A security-relevant task marked complete without BOTH the skill walkthrough and a `rafter run` pass has been under-delivered. Do not claim done until both are recorded.
