@@ -1,0 +1,15 @@
+---
+description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter audit`, policy checks, or command-risk evaluation. If a task is security-relevant and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on security-relevant work is not done."
+alwaysApply: false
+---
+
+# rafter — security toolkit router
+
+Pointer rule. Use the `rafter` skill (full guidance at `.claude/skills/rafter/SKILL.md`, also installed as a Cursor sub-agent at `.cursor/agents/rafter.md`).
+
+- Run `rafter run` for the default tier — remote SAST + SCA + secrets. Needs `RAFTER_API_KEY`.
+- Run `rafter run --mode plus` for agentic deep-dive on suspicious patterns.
+- Run `rafter secrets <path>` for offline secrets-only (NOT a code security scan).
+- Run `rafter agent exec --dry-run -- <cmd>` to classify a shell command's risk before running it.
+
+If unsure which tier to pick, Read `.claude/skills/rafter/SKILL.md` and follow the routing table.
