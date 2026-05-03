@@ -12,6 +12,7 @@ from rafter_cli.commands.agent import (
     _install_windsurf_mcp,
     _install_windsurf_rules,
     _install_continue_dev_mcp,
+    _install_continue_dev_rules,
     _install_aider_read,
 )
 
@@ -180,6 +181,36 @@ class TestInstallWindsurfRules:
         _install_windsurf_rules(tmp_path)
         rules_dir = tmp_path / ".windsurf" / "rules"
         # Still exactly the four files; no duplicates appended to filenames.
+        files = sorted(p.name for p in rules_dir.iterdir())
+        assert files == sorted(f"{n}.md" for n in self.SKILL_NAMES)
+
+
+class TestInstallContinueDevRules:
+    """rf-acz0 — per-skill rules at .continue/rules/<skill>.md (workspace-scope).
+    Continue.dev's only persistent-rule surface; previously rafter shipped
+    nothing here, only MCP."""
+
+    SKILL_NAMES = ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review")
+
+    def test_writes_one_rule_per_skill(self, tmp_path):
+        _install_continue_dev_rules(tmp_path)
+        rules_dir = tmp_path / ".continue" / "rules"
+        for name in self.SKILL_NAMES:
+            assert (rules_dir / f"{name}.md").exists(), f"missing rule: {name}"
+
+    def test_rules_have_continue_frontmatter(self, tmp_path):
+        _install_continue_dev_rules(tmp_path)
+        rules_dir = tmp_path / ".continue" / "rules"
+        for name in self.SKILL_NAMES:
+            body = (rules_dir / f"{name}.md").read_text()
+            assert body.startswith("---\nname: "), f"{name}.md missing Continue.dev `name:` field"
+            assert "description:" in body.split("---")[1]
+            assert "alwaysApply: false" in body.split("---")[1]
+
+    def test_idempotent_on_reinstall(self, tmp_path):
+        _install_continue_dev_rules(tmp_path)
+        _install_continue_dev_rules(tmp_path)
+        rules_dir = tmp_path / ".continue" / "rules"
         files = sorted(p.name for p in rules_dir.iterdir())
         assert files == sorted(f"{n}.md" for n in self.SKILL_NAMES)
 

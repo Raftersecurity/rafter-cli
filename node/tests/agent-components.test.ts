@@ -68,6 +68,7 @@ describe("rafter agent list", () => {
       "gemini.mcp",
       "windsurf.rules",
       "windsurf.mcp",
+      "continue.rules",
       "continue.mcp",
       "aider.read",
       "codex.hooks",

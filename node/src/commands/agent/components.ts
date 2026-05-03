@@ -782,6 +782,55 @@ function windsurfMcp(): ComponentSpec {
   };
 }
 
+/** Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0). */
+const CONTINUE_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
+function continueRuleSourceDir(): string | null {
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "continue-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "continue-rules"),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) ?? null;
+}
+
+/** Continue.dev rules component: .continue/rules/<skill>.md, workspace-scope (rf-acz0). */
+function continueRules(): ComponentSpec {
+  const home = os.homedir();
+  const rulesDir = path.join(process.cwd(), ".continue", "rules");
+  return {
+    id: "continue.rules",
+    platform: "continue",
+    kind: "instructions",
+    description: "Continue.dev per-skill rules (.continue/rules/*.md, workspace-scope)",
+    detectDir: path.join(home, ".continue"),
+    path: rulesDir,
+    isInstalled: () =>
+      CONTINUE_RULE_SKILLS.every((n) => fs.existsSync(path.join(rulesDir, `${n}.md`))),
+    install: () => {
+      fs.mkdirSync(rulesDir, { recursive: true });
+      const src = continueRuleSourceDir();
+      if (!src) return;
+      for (const name of CONTINUE_RULE_SKILLS) {
+        const from = path.join(src, `${name}.md`);
+        if (fs.existsSync(from)) {
+          fs.copyFileSync(from, path.join(rulesDir, `${name}.md`));
+        }
+      }
+    },
+    uninstall: () => {
+      for (const name of CONTINUE_RULE_SKILLS) {
+        const p = path.join(rulesDir, `${name}.md`);
+        if (fs.existsSync(p)) fs.rmSync(p, { force: true });
+      }
+    },
+  };
+}
+
 function continueMcp(): ComponentSpec {
   const home = os.homedir();
   const configPath = path.join(home, ".continue", "config.json");
@@ -966,6 +1015,7 @@ export function getComponentRegistry(): ComponentSpec[] {
       geminiMcp(),
       windsurfRules(),
       windsurfMcp(),
+      continueRules(),
       continueMcp(),
       aiderRead(),
       openclawSkill(),

@@ -722,6 +722,63 @@ def _windsurf_mcp() -> ComponentSpec:
     )
 
 
+# Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0).
+_CONTINUE_RULE_SKILLS: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+def _continue_rules() -> ComponentSpec:
+    """Continue.dev per-skill workspace rules at .continue/rules/<skill>.md.
+
+    Workspace-scope (cwd at registry-build time). Replaces the shape gap
+    flagged by rf-acz0 / the rf-cia gap reports — Continue.dev shipped
+    MCP-only support before this; rules + MCP are the only intercepts
+    (Continue has no documented hook surface; the prior hooks install was
+    pruned in rf-cia phase b).
+    """
+    home = Path.home()
+    detect_dir = home / ".continue"
+    rules_dir = Path.cwd() / ".continue" / "rules"
+
+    def is_installed() -> bool:
+        return all((rules_dir / f"{n}.md").exists() for n in _CONTINUE_RULE_SKILLS)
+
+    def install() -> None:
+        rules_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            res = importlib.resources.files("rafter_cli.resources")
+        except Exception:
+            return
+        for name in _CONTINUE_RULE_SKILLS:
+            try:
+                content = res.joinpath("continue-rules", f"{name}.md").read_text(encoding="utf-8")
+            except Exception:
+                continue
+            (rules_dir / f"{name}.md").write_text(content, encoding="utf-8")
+
+    def uninstall() -> None:
+        for name in _CONTINUE_RULE_SKILLS:
+            p = rules_dir / f"{name}.md"
+            if p.exists():
+                p.unlink()
+
+    return ComponentSpec(
+        id="continue.rules",
+        platform="continue",
+        kind="instructions",
+        description="Continue.dev per-skill rules (.continue/rules/*.md, workspace-scope)",
+        detect_dir=detect_dir,
+        path=rules_dir,
+        is_installed=is_installed,
+        install=install,
+        uninstall=uninstall,
+    )
+
+
 def _continue_mcp() -> ComponentSpec:
     home = Path.home()
     detect_dir = home / ".continue"
@@ -934,6 +991,7 @@ def get_registry() -> list[ComponentSpec]:
             _gemini_mcp(),
             _windsurf_rules(),
             _windsurf_mcp(),
+            _continue_rules(),
             _continue_mcp(),
             _aider_read(),
             _openclaw_skill(),

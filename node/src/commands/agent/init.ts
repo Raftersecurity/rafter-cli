@@ -574,6 +574,50 @@ function installWindsurfMcp(root: string): boolean {
   return true;
 }
 
+/** Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0). */
+const CONTINUE_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
+/**
+ * Install per-skill Continue.dev rules at <root>/.continue/rules/<skill>.md.
+ *
+ * Continue.dev reads workspace rules from .continue/rules/*.md (per-rule files,
+ * lexicographic load order). Frontmatter: `name`, `description`, `alwaysApply`.
+ * Each rule body mirrors the Cursor / Windsurf pointer-rule pattern.
+ *
+ * Continue.dev has no documented hook surface (the prior hooks install was
+ * pruned in rf-cia phase b). Rules + MCP are the only intercepts.
+ */
+function installContinueDevRules(root: string): void {
+  const rulesDir = path.join(root, ".continue", "rules");
+  fs.mkdirSync(rulesDir, { recursive: true });
+
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "continue-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "continue-rules"),
+  ];
+  const sourceDir = candidates.find((p) => fs.existsSync(p));
+  if (!sourceDir) {
+    console.log(fmt.warning(`Continue.dev rule templates not found in resources/continue-rules`));
+    return;
+  }
+
+  for (const name of CONTINUE_RULE_SKILLS) {
+    const src = path.join(sourceDir, `${name}.md`);
+    const dest = path.join(rulesDir, `${name}.md`);
+    if (!fs.existsSync(src)) {
+      console.log(fmt.warning(`Continue.dev rule template missing: ${src}`));
+      continue;
+    }
+    fs.copyFileSync(src, dest);
+    console.log(fmt.success(`Installed Continue.dev rule to ${dest}`));
+  }
+}
+
 /**
  * Install MCP server config for Continue.dev (~/.continue/config.json)
  */
@@ -848,7 +892,9 @@ export function createInitCommand(): Command {
       // Windsurf can install at --local scope (project rules + AGENTS.md)
       // since rf-0vr3. User scope still also installs the MCP entry.
       let wantWindsurf = opts.withWindsurf || opts.all;
-      let wantContinue = opts.withContinue || (opts.all && !opts.local);
+      // Continue.dev can install at --local scope (project rules) since rf-acz0.
+      // User scope additionally registers the MCP entry.
+      let wantContinue = opts.withContinue || opts.all;
       // Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
       // in cwd) since rf-du2o.
       let wantAider = opts.withAider || opts.all;
@@ -1103,17 +1149,24 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install Continue.dev MCP + hooks if opted in
+      // Install Continue.dev integration if opted in (rf-acz0).
+      // - User scope: per-skill rules (.continue/rules/) + MCP entry under
+      //   ~/.continue/config.json.
+      // - Project scope (--local): rules only.
+      // Continue.dev has no hook surface — the prior hooks install was pruned
+      // in rf-cia phase b.
       let continueOk = false;
-      if (hasContinueDev && wantContinue) {
+      if (wantContinue && (hasContinueDev || opts.local)) {
         try {
-          continueOk = installContinueDevMcp(root);
-          if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
+          if (hasContinueDev) {
+            continueOk = installContinueDevMcp(root);
+            if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
+          }
+          installContinueDevRules(root);
+          if (!hasContinueDev) continueOk = true; // local-scope success: rules only
         } catch (e) {
           console.error(fmt.error(`Failed to install Continue.dev integration: ${e}`));
         }
-      } else if (opts.local && wantContinue) {
-        localUnsupported("Continue.dev");
       }
 
       // Install Aider integration if opted in (rf-du2o).

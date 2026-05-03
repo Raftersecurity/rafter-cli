@@ -646,6 +646,38 @@ def _install_windsurf_rules(root: Path) -> None:
         rprint(fmt.success(f"Installed Windsurf rule to {dest}"))
 
 
+# Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0).
+_CONTINUE_RULE_SKILLS: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+def _install_continue_dev_rules(root: Path) -> None:
+    """Install per-skill Continue.dev rules at <root>/.continue/rules/<skill>.md.
+
+    Continue.dev reads workspace rules from .continue/rules/*.md (per-rule
+    files, lexicographic load order). YAML frontmatter: `name`, `description`,
+    `alwaysApply`. Each rule body mirrors the Cursor / Windsurf pointer-rule
+    pattern.
+    """
+    rules_dir = root / ".continue" / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    res = importlib.resources.files("rafter_cli.resources")
+    for name in _CONTINUE_RULE_SKILLS:
+        try:
+            content = res.joinpath("continue-rules", f"{name}.md").read_text(encoding="utf-8")
+        except Exception:
+            rprint(fmt.warning(f"Continue.dev rule template missing: {name}.md"))
+            continue
+        dest = rules_dir / f"{name}.md"
+        dest.write_text(content, encoding="utf-8")
+        rprint(fmt.success(f"Installed Continue.dev rule to {dest}"))
+
+
 def _install_continue_dev_mcp(root: Path) -> bool:
     """Install MCP server config for Continue.dev (<root>/.continue/config.json)."""
     continue_dir = root / ".continue"
@@ -807,7 +839,8 @@ def init(
     # Windsurf can install at --local scope (project rules + AGENTS.md) since
     # rf-0vr3. User scope still also installs the MCP entry.
     want_windsurf = with_windsurf or all_integrations
-    want_continue = with_continue or (all_integrations and not local)
+    # Continue.dev can install at --local scope (project rules) since rf-acz0.
+    want_continue = with_continue or all_integrations
     # Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
     # in cwd) since rf-du2o.
     want_aider = with_aider or all_integrations
@@ -1014,17 +1047,22 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Windsurf integration: {e}"))
 
-    # Install Continue.dev MCP if opted in
+    # Install Continue.dev integration if opted in (rf-acz0).
+    # - User scope: per-skill rules (.continue/rules/) + MCP entry under
+    #   ~/.continue/config.json.
+    # - Project scope (--local): rules only.
     continue_ok = False
-    if has_continue_dev and want_continue:
+    if want_continue and (has_continue_dev or local):
         try:
-            continue_ok = _install_continue_dev_mcp(root)
-            if continue_ok:
-                manager.set("agent.environments.continue_dev.enabled", True)
+            if has_continue_dev:
+                continue_ok = _install_continue_dev_mcp(root)
+                if continue_ok:
+                    manager.set("agent.environments.continue_dev.enabled", True)
+            _install_continue_dev_rules(root)
+            if not has_continue_dev:
+                continue_ok = True
         except Exception as e:
             rprint(fmt.error(f"Failed to install Continue.dev integration: {e}"))
-    elif local and want_continue:
-        _local_unsupported("Continue.dev")
 
     # Install Aider integration if opted in (rf-du2o).
     # Aider has no MCP and no hook surface — its only intercept is the
