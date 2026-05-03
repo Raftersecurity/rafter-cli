@@ -344,7 +344,8 @@ function codexHooks(): ComponentSpec {
         cfg.hooks.PostToolUse,
         (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
       );
-      cfg.hooks.PreToolUse.push({ matcher: "Bash", hooks: [pre] });
+      // Bash + apply_patch per Codex hook docs (rf-ovql verification).
+      cfg.hooks.PreToolUse.push({ matcher: "Bash|apply_patch", hooks: [pre] });
       cfg.hooks.PostToolUse.push({ matcher: ".*", hooks: [post] });
       writeJson(hooksPath, cfg);
     },
@@ -631,8 +632,10 @@ function geminiHooks(): ComponentSpec {
         s.hooks.AfterTool,
         (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
       );
+      // Explicit Gemini built-in tool names per geminicli.com/docs/hooks/reference
+      // (rf-044o verification).
       s.hooks.BeforeTool.push({
-        matcher: "shell|write_file",
+        matcher: "run_shell_command|write_file|replace|edit",
         hooks: [{ type: "command", command: "rafter hook pretool --format gemini", timeout: 5000 }],
       });
       s.hooks.AfterTool.push({

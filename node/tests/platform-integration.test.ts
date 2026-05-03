@@ -1345,11 +1345,12 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(config.hooks.PreToolUse).toBeDefined();
       expect(config.hooks.PostToolUse).toBeDefined();
 
-      // Codex has Bash matcher for PreToolUse
+      // Codex matchers per developers.openai.com/codex/hooks (rf-ovql verified):
+      // PreToolUse intercepts Bash + apply_patch (file edits via apply_patch).
+      // PostToolUse is catch-all so all completed events land in audit.jsonl.
       const preMatchers = config.hooks.PreToolUse.map((e: any) => e.matcher);
-      expect(preMatchers).toContain("Bash");
+      expect(preMatchers).toContain("Bash|apply_patch");
 
-      // PostToolUse has catch-all
       const postMatchers = config.hooks.PostToolUse.map((e: any) => e.matcher);
       expect(postMatchers).toContain(".*");
     });
@@ -1388,9 +1389,10 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(settings.hooks.BeforeTool).toBeDefined();
       expect(settings.hooks.AfterTool).toBeDefined();
 
-      // BeforeTool matcher targets shell and write_file
+      // BeforeTool matcher targets the mutating Gemini built-in tools by
+      // exact name (rf-044o verified against geminicli.com/docs/hooks/reference).
       const beforeMatchers = settings.hooks.BeforeTool.map((e: any) => e.matcher);
-      expect(beforeMatchers).toContain("shell|write_file");
+      expect(beforeMatchers).toContain("run_shell_command|write_file|replace|edit");
 
       // Commands use --format gemini
       const beforeCommands = settings.hooks.BeforeTool.flatMap(
