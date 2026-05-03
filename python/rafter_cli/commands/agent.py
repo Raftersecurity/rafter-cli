@@ -265,13 +265,12 @@ def _install_global_instructions(
         except Exception as e:
             rprint(fmt.warning(f"Failed to write Gemini instructions: {e}"))
 
-    if cursor:
-        try:
-            file_path = root / ".cursor" / "rules" / "rafter-security.mdc"
-            _inject_instruction_file(file_path)
-            rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
-        except Exception as e:
-            rprint(fmt.warning(f"Failed to write Cursor instructions: {e}"))
+    # Cursor uses per-skill rules at <root>/.cursor/rules/<skill>.mdc plus
+    # the rafter sub-agent at <root>/.cursor/agents/rafter.md. Both are
+    # installed in the Cursor branch of init() — see _install_cursor_rules
+    # and _install_cursor_subagents (rf-svn3). The legacy consolidated
+    # rafter-security.mdc was retired.
+    _ = cursor  # parameter kept for call-site compatibility
 
 
 def _install_openclaw_skill() -> tuple[bool, str, str, str]:
@@ -433,6 +432,125 @@ def _install_gemini_mcp(root: Path) -> bool:
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
     rprint(fmt.success(f"Installed Rafter MCP server to {settings_path}"))
     return True
+
+
+# Cursor hook events covered by rafter (rf-svn3).
+_CURSOR_HOOK_EVENTS: tuple[tuple[str, str], ...] = (
+    ("preToolUse", "rafter hook pretool --format cursor"),
+    ("postToolUse", "rafter hook posttool --format cursor"),
+    ("beforeShellExecution", "rafter hook pretool --format cursor"),
+)
+
+# Skills shipped as both Cursor rules and Claude Code / Codex / Gemini skills.
+_CURSOR_RULE_SKILLS: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+def _install_cursor_hooks(root: Path) -> None:
+    """Install Cursor hooks at <root>/.cursor/hooks.json.
+
+    Covers preToolUse + postToolUse + beforeShellExecution. Idempotent —
+    repeated installs do not duplicate rafter entries. Non-rafter hook
+    entries are preserved.
+    """
+    cursor_dir = root / ".cursor"
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+    hooks_path = cursor_dir / "hooks.json"
+
+    config: dict[str, Any] = {}
+    if hooks_path.exists():
+        try:
+            config = json.loads(hooks_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Cursor hooks.json was unreadable, creating new one"))
+
+    config.setdefault("version", 1)
+    config.setdefault("hooks", {})
+
+    for event, command in _CURSOR_HOOK_EVENTS:
+        entries = config["hooks"].get(event)
+        if not isinstance(entries, list):
+            entries = []
+        entries = [
+            e for e in entries
+            if "rafter hook" not in (e or {}).get("command", "")
+        ]
+        entries.append({"command": command, "type": "command", "timeout": 5000})
+        config["hooks"][event] = entries
+
+    hooks_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed hooks to {hooks_path}"))
+
+
+def _install_cursor_rules(root: Path) -> None:
+    """Install per-skill Cursor rule files at <root>/.cursor/rules/<skill>.mdc.
+
+    Replaces the legacy consolidated `.cursor/rules/rafter-security.mdc`.
+    Each rule is a static template shipped under
+    `rafter_cli/resources/cursor-rules/`.
+    """
+    rules_dir = root / ".cursor" / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    res = importlib.resources.files("rafter_cli.resources")
+    for name in _CURSOR_RULE_SKILLS:
+        try:
+            content = res.joinpath("cursor-rules", f"{name}.mdc").read_text(encoding="utf-8")
+        except Exception:
+            rprint(fmt.warning(f"Cursor rule template missing: {name}.mdc"))
+            continue
+        dest = rules_dir / f"{name}.mdc"
+        dest.write_text(content, encoding="utf-8")
+        rprint(fmt.success(f"Installed Cursor rule to {dest}"))
+
+    # Migrate away from the legacy consolidated rule on reinstall.
+    legacy = rules_dir / "rafter-security.mdc"
+    if legacy.exists():
+        try:
+            legacy.unlink()
+            rprint(fmt.info(f"Removed legacy {legacy} (superseded by per-skill rules)"))
+        except OSError:
+            pass
+
+
+def _install_cursor_subagents(root: Path) -> None:
+    """Install the Cursor sub-agent at <root>/.cursor/agents/rafter.md.
+
+    Reuses the rf-q7j Claude-Code sub-agent body, with Cursor-shape
+    frontmatter (no `tools:` field — tools inherit from parent agent).
+    """
+    agents_dir = root / ".cursor" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    res = importlib.resources.files("rafter_cli.resources")
+    try:
+        raw = res.joinpath("agents", "rafter.md").read_text(encoding="utf-8")
+    except Exception:
+        rprint(fmt.warning("Rafter sub-agent template not found in resources/agents/"))
+        return
+
+    cursored = _strip_frontmatter_field(raw, "tools")
+    dest = agents_dir / "rafter.md"
+    dest.write_text(cursored, encoding="utf-8")
+    rprint(fmt.success(f"Installed Cursor sub-agent to {dest}"))
+
+
+def _strip_frontmatter_field(content: str, field: str) -> str:
+    """Strip a single-line frontmatter field from a markdown file's frontmatter."""
+    if not content.startswith("---\n"):
+        return content
+    fm_end = content.find("\n---", 4)
+    if fm_end == -1:
+        return content
+    frontmatter = content[4:fm_end]
+    body = content[fm_end:]
+    pattern = re.compile(rf"^{re.escape(field)}:\s.*$\n?", re.MULTILINE)
+    cleaned = pattern.sub("", frontmatter)
+    return f"---\n{cleaned}{body}"
 
 
 def _install_cursor_mcp(root: Path) -> bool:
@@ -757,11 +875,14 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Gemini CLI integration: {e}"))
 
-    # Install Cursor MCP if opted in
+    # Install Cursor MCP + hooks + per-skill rules + sub-agent if opted in
     cursor_ok = False
     if (has_cursor or (local and want_cursor)) and want_cursor:
         try:
             cursor_ok = _install_cursor_mcp(root)
+            _install_cursor_hooks(root)
+            _install_cursor_rules(root)
+            _install_cursor_subagents(root)
             if cursor_ok and scope == "user":
                 manager.set("agent.environments.cursor.enabled", True)
         except Exception as e:
