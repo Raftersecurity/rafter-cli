@@ -342,7 +342,8 @@ def _codex_hooks() -> ComponentSpec:
         post = {"type": "command", "command": "rafter hook posttool"}
         h["PreToolUse"] = _filter_hooks(h["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         h["PostToolUse"] = _filter_hooks(h["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
-        h["PreToolUse"].append({"matcher": "Bash", "hooks": [pre]})
+        # Bash + apply_patch per Codex hook docs (rf-ovql verification).
+        h["PreToolUse"].append({"matcher": "Bash|apply_patch", "hooks": [pre]})
         h["PostToolUse"].append({"matcher": ".*", "hooks": [post]})
         _write_json(hooks_path, cfg)
 
@@ -559,8 +560,10 @@ def _gemini_hooks() -> ComponentSpec:
         h.setdefault("AfterTool", [])
         h["BeforeTool"] = _filter_hooks(h["BeforeTool"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         h["AfterTool"] = _filter_hooks(h["AfterTool"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
+        # Explicit Gemini built-in tool names per geminicli.com/docs/hooks/reference
+        # (rf-044o verification).
         h["BeforeTool"].append({
-            "matcher": "shell|write_file",
+            "matcher": "run_shell_command|write_file|replace|edit",
             "hooks": [{"type": "command", "command": "rafter hook pretool --format gemini", "timeout": 5000}],
         })
         h["AfterTool"].append({

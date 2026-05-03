@@ -205,9 +205,16 @@ function installCodexHooks(root: string): void {
     (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
   );
 
+  // PreToolUse intercepts the tools Codex documents support for: Bash and
+  // apply_patch (file edits). Per developers.openai.com/codex/hooks PreToolUse
+  // also covers MCP tool calls via patterns like `mcp__<server>__<tool>` —
+  // when an MCP server is wired up, install a separate matcher for it.
+  // (rf-ovql verification 2026-05-03.)
   config.hooks.PreToolUse.push(
-    { matcher: "Bash", hooks: [preHook] },
+    { matcher: "Bash|apply_patch", hooks: [preHook] },
   );
+  // PostToolUse fires for the same tool surface; .* keeps all events in the
+  // audit log without filtering.
   config.hooks.PostToolUse.push(
     { matcher: ".*", hooks: [postHook] },
   );
@@ -400,8 +407,12 @@ function installGeminiHooks(root: string): void {
     (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.includes("rafter hook posttool"))
   );
 
+  // Gemini matchers are regexes against built-in tool names per
+  // geminicli.com/docs/hooks/reference. Match the mutating tools by name
+  // explicitly: run_shell_command, write_file, replace, edit. (rf-044o
+  // verification 2026-05-03 — schema confirmed against current Gemini docs.)
   settings.hooks.BeforeTool.push({
-    matcher: "shell|write_file",
+    matcher: "run_shell_command|write_file|replace|edit",
     hooks: [{ type: "command", command: "rafter hook pretool --format gemini", timeout: 5000 }],
   });
   settings.hooks.AfterTool.push({

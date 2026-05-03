@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Codex hook matchers now intercept `apply_patch` (file edits) in addition to `Bash`** (Node + Python, rf-ovql / rf-cia phase c). Schema verified against `developers.openai.com/codex/hooks` — Codex's `PreToolUse` documents support for Bash, `apply_patch` file edits, and MCP tool calls; we previously only matched `Bash`. Updated `~/.codex/hooks.json` `PreToolUse.matcher` from `"Bash"` to `"Bash|apply_patch"` so file edits actually fire the rafter pretool hook. The known Codex limitation that hooks don't fire for every shell call (per upstream issues #16732 / #20204) is unchanged from our side.
+- **Gemini hook matchers now use the documented Gemini built-in tool names** (Node + Python, rf-044o / rf-cia phase c). Schema verified against `geminicli.com/docs/hooks/reference` — `BeforeTool`/`AfterTool` are the canonical events, `matcher` is a regex against the built-in tool name. Updated `~/.gemini/settings.json` `BeforeTool.matcher` from the implicit-substring `"shell|write_file"` to the explicit `"run_shell_command|write_file|replace|edit"` so the install reads cleanly against current docs and is robust if Gemini ever tightens the matcher to exact-name.
+
 ### Added
 - **Continue.dev per-skill workspace rules + project-scope (`--local`) install** (Node + Python, rf-acz0 / rf-cia phase c). `rafter agent init --with-continue` now ships:
   - 4 per-skill rule files at `.continue/rules/<skill>.md` with Continue.dev YAML frontmatter (`name:`, `description:`, `alwaysApply: false`) — `rafter`, `rafter-secure-design`, `rafter-code-review`, `rafter-skill-review`.
