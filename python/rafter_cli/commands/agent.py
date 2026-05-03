@@ -11,6 +11,8 @@ import shutil
 import stat
 import subprocess
 import sys
+
+import yaml
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -677,21 +679,75 @@ def _install_continue_dev_mcp(root: Path) -> bool:
     return True
 
 
-def _install_aider_mcp(root: Path) -> bool:
-    """Install MCP config for Aider (<root>/.aider.conf.yml)."""
+_AIDER_LEGACY_MCP_BLOCK_RE = re.compile(
+    r"\n?#\s*Rafter security MCP server\s*\nmcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?",
+)
+_AIDER_LEGACY_MCP_LINE_RE = re.compile(
+    r"^mcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?",
+    flags=re.MULTILINE,
+)
+_AIDER_READ_ENTRY = "RAFTER.md"
+
+
+def _install_aider_read(root: Path) -> bool:
+    """Install Rafter context for Aider (rf-du2o).
+
+    Aider has no native MCP support and no plugin/hook surface. Its only
+    intercept-friendly persistent-context primitive is the `read:` flag in
+    `.aider.conf.yml`, which injects read-only files into every session.
+
+    Behavior:
+      1. Write `<root>/RAFTER.md` with the rafter instruction block.
+      2. Update `<root>/.aider.conf.yml` so `read:` includes `RAFTER.md`
+         (preserves any pre-existing `read:` entries; preserves other YAML keys).
+      3. Strip the legacy `mcp-server-command: rafter mcp serve` line(s) if
+         present — silent no-op in earlier versions (Aider has no MCP).
+    """
+    rafter_md_path = root / "RAFTER.md"
     config_path = root / ".aider.conf.yml"
 
-    content = ""
-    if config_path.exists():
-        content = config_path.read_text()
+    # 1. Write RAFTER.md (idempotent — marker block replaced in place).
+    _inject_instruction_file(rafter_md_path)
 
-    if "rafter mcp serve" in content:
-        rprint(fmt.success("Rafter MCP already configured in Aider config"))
-        return True
+    # 2. Update .aider.conf.yml read: list.
+    raw = config_path.read_text() if config_path.exists() else ""
 
-    mcp_line = "\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n"
-    config_path.write_text(content + mcp_line)
-    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    # 2a. Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
+    raw = _AIDER_LEGACY_MCP_BLOCK_RE.sub("\n", raw)
+    raw = _AIDER_LEGACY_MCP_LINE_RE.sub("", raw)
+
+    parsed: dict[str, Any] = {}
+    if raw.strip():
+        try:
+            loaded = yaml.safe_load(raw)
+            if isinstance(loaded, dict):
+                parsed = loaded
+        except yaml.YAMLError:
+            # Unparseable YAML — append a read: section without rewriting.
+            if _AIDER_READ_ENTRY not in raw:
+                sep = "" if not raw or raw.endswith("\n") else "\n"
+                config_path.write_text(f"{raw}{sep}read:\n  - {_AIDER_READ_ENTRY}\n")
+            else:
+                config_path.write_text(raw)
+            rprint(fmt.success(f"Installed Rafter read-only context to {config_path}"))
+            return True
+
+    # Normalize read: to a list of strings.
+    reads: list[str] = []
+    raw_read = parsed.get("read")
+    if isinstance(raw_read, list):
+        reads = [str(p) for p in raw_read]
+    elif isinstance(raw_read, str):
+        reads = [raw_read]
+
+    if _AIDER_READ_ENTRY not in reads:
+        reads.append(_AIDER_READ_ENTRY)
+    parsed["read"] = reads
+
+    config_path.write_text(yaml.safe_dump(parsed, sort_keys=False))
+    rprint(fmt.success(
+        f"Installed Rafter read-only context to {rafter_md_path} + {config_path}"
+    ))
     return True
 
 
@@ -752,7 +808,9 @@ def init(
     # rf-0vr3. User scope still also installs the MCP entry.
     want_windsurf = with_windsurf or all_integrations
     want_continue = with_continue or (all_integrations and not local)
-    want_aider = with_aider or (all_integrations and not local)
+    # Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
+    # in cwd) since rf-du2o.
+    want_aider = with_aider or all_integrations
     want_gitleaks = with_gitleaks or (all_integrations and not local)
 
     # Show detected environments
@@ -968,17 +1026,18 @@ def init(
     elif local and want_continue:
         _local_unsupported("Continue.dev")
 
-    # Install Aider MCP if opted in
+    # Install Aider integration if opted in (rf-du2o).
+    # Aider has no MCP and no hook surface — its only intercept is the
+    # `read:` flag in .aider.conf.yml. We write RAFTER.md and ensure the
+    # `read:` list includes it. Legacy mcp-server-command line is stripped.
     aider_ok = False
-    if has_aider and want_aider:
+    if want_aider and (has_aider or local):
         try:
-            aider_ok = _install_aider_mcp(root)
-            if aider_ok:
+            aider_ok = _install_aider_read(root)
+            if aider_ok and has_aider:
                 manager.set("agent.environments.aider.enabled", True)
         except Exception as e:
             rprint(fmt.error(f"Failed to install Aider integration: {e}"))
-    elif local and want_aider:
-        _local_unsupported("Aider")
 
     # Install global instruction files for platforms that support them
     _install_global_instructions(
@@ -1014,7 +1073,7 @@ def init(
         if continue_ok:
             rprint("  - Restart Continue.dev to load MCP server")
         if aider_ok:
-            rprint("  - Restart Aider to load MCP server")
+            rprint("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:")
     elif scope == "project":
         rprint("No integrations were installed. In --local mode, pass one or more opt-in flags:")
         rprint("  rafter agent init --local --with-claude-code")

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Aider read-only context: `RAFTER.md` + `.aider.conf.yml read:` entry** (Node + Python, rf-du2o / rf-cia phase c). Aider has no plugin/hook system and no native MCP support — `read:` in `.aider.conf.yml` is its only documented persistent-context primitive. `rafter agent init --with-aider` now writes:
+  - `RAFTER.md` at workspace root with the rafter security context block (`<!-- rafter:start --> ... <!-- rafter:end -->`).
+  - Adds `RAFTER.md` to the `read:` list in `.aider.conf.yml` (preserves existing keys and existing `read:` entries; idempotent across reinstalls).
+  - Reinstalls on top of older layouts strip the legacy `mcp-server-command: rafter mcp serve` line (silent no-op — Aider ignored unknown YAML keys per its docs).
+  - Now installs at `--local` (project) scope. Backed by 6 new Node tests + 6 new Python tests; recipe rewritten to match.
+
 - **Windsurf deep support: per-skill workspace rules + AGENTS.md + project-scope (`--local`) install** (Node + Python, rf-0vr3 / rf-cia phase c). `rafter agent init --with-windsurf` now ships Windsurf the way it actually consumes context:
   - Writes 4 per-skill rules under `.windsurf/rules/<skill>.md` with Windsurf YAML frontmatter (`trigger: model_decision`, `description:`) so the agent fetches the right rule per task description.
   - Writes `AGENTS.md` at workspace root — Windsurf reads it natively (so does Codex; one file covers both). `<!-- rafter:start --> ... <!-- rafter:end -->` marker preserves user content.
@@ -21,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Backed by 13 new Node tests and 12 new Python tests. The `cursor.instructions` component now manages rules + sub-agent together for `rafter agent enable/disable`.
 
 ### Removed
+- **`rafter agent init --with-aider` no longer appends `mcp-server-command: rafter mcp serve` to `.aider.conf.yml`** (Node + Python, rf-du2o): Aider has no native MCP support; the unknown YAML key was silently ignored at runtime (independently flagged by gap reports rf-p1ri / rf-vayl and research bead rf-s1n3). Removed `installAiderMcp` from the Node init flow, `_aider_mcp` ComponentSpec from both Node and Python registries (replaced by `aider.read`), and the matching test expectations. Reinstalling on top of an older `.aider.conf.yml` strips the legacy line as a migration step.
+
 - **`rafter agent init --with-windsurf` no longer writes `~/.windsurf/hooks.json`** (Node + Python, rf-0vr3): Windsurf has no documented hook surface in current versions — `pre_run_command` / `pre_write_code` were not consumed by the IDE at runtime. The install was a silent no-op (independently flagged by gap reports rf-p1ri / rf-vayl and research bead rf-s1n3). Pruned along the same pattern as the Continue.dev hooks prune. Removed `installWindsurfHooks` from the Node init flow, `_windsurf_hooks` ComponentSpec from both registries, and the matching test expectations. The MCP install at `~/.codeium/windsurf/mcp_config.json` is unchanged.
 
 - **`rafter agent init --with-continue` no longer writes `~/.continue/settings.json`** (Node + Python, rf-cia): Continue.dev does not read `settings.json` and has no `hooks.PreToolUse`/`PostToolUse` field in its config schema (current versions use `config.yaml`, legacy uses `config.json`). The hook install was a silent no-op at runtime — files written, never consumed. Removed `installContinueDevHooks` from the Node init flow, `_continue_hooks` ComponentSpec from both Node and Python `rafter agent enable/disable` registries, and the matching test expectations. MCP install (`.continue/config.json` mcpServers entry) is unchanged. Continue.dev integration is now MCP-only — matches what `recipes/continue-dev.md` always claimed.

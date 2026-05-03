@@ -12,6 +12,7 @@ import { createRequire } from "module";
 import { createInterface } from "readline";
 import { fmt } from "../../utils/formatter.js";
 import { injectInstructionFile } from "./instruction-block.js";
+import yaml from "js-yaml";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -616,28 +617,80 @@ function installContinueDevMcp(root: string): boolean {
 }
 
 /**
- * Install MCP config for Aider (~/.aider.conf.yml)
- * Aider uses YAML config with mcpServers list
+ * Install Rafter context for Aider (rf-du2o).
+ *
+ * Aider has no native MCP support and no plugin/hook surface. Its only
+ * intercept-friendly persistent-context primitive is the `read:` flag in
+ * `.aider.conf.yml`, which injects read-only files into every session.
+ *
+ * Behavior:
+ *   1. Write `<root>/RAFTER.md` with the rafter instruction block.
+ *   2. Update `<root>/.aider.conf.yml` so `read:` includes `RAFTER.md`
+ *      (preserves any pre-existing `read:` entries; preserves other YAML keys).
+ *   3. Strip the legacy `mcp-server-command: rafter mcp serve` line if present
+ *      — it was a silent no-op in earlier rafter versions (Aider has no MCP).
+ *
+ * Returns true on success.
  */
-function installAiderMcp(root: string): boolean {
+function installAiderRead(root: string): boolean {
+  const rafterMdPath = path.join(root, "RAFTER.md");
   const configPath = path.join(root, ".aider.conf.yml");
+  const RAFTER_READ_ENTRY = "RAFTER.md";
 
-  // Aider's YAML config is simple — we append the MCP flag if not present
-  let content = "";
+  // 1. Write RAFTER.md (idempotent — the marker block is replaced in place).
+  injectInstructionFile(rafterMdPath);
+
+  // 2. Update .aider.conf.yml read: list.
+  let raw = "";
   if (fs.existsSync(configPath)) {
-    content = fs.readFileSync(configPath, "utf-8");
+    raw = fs.readFileSync(configPath, "utf-8");
   }
 
-  // Check if rafter MCP is already configured
-  if (content.includes("rafter mcp serve")) {
-    console.log(fmt.success("Rafter MCP already configured in Aider config"));
-    return true;
+  // 2a. Strip the legacy mcp-server-command line(s). Match a contiguous block
+  // that may include the preceding `# Rafter security MCP server` comment.
+  raw = raw.replace(
+    /\n?#\s*Rafter security MCP server\s*\nmcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?/g,
+    "\n",
+  );
+  raw = raw.replace(/^mcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?/gm, "");
+
+  // 2b. Parse remaining YAML, normalize read:.
+  let parsed: Record<string, any> = {};
+  if (raw.trim().length > 0) {
+    try {
+      const loaded = yaml.load(raw);
+      if (loaded && typeof loaded === "object" && !Array.isArray(loaded)) {
+        parsed = loaded as Record<string, any>;
+      }
+    } catch {
+      console.log(fmt.warning(`Existing ${configPath} was not valid YAML — preserving raw content and appending read: entry`));
+      // Append the read: line at the bottom rather than rewriting an
+      // unparseable file. We still need to make sure RAFTER.md ends up in it.
+      if (!new RegExp(`^read:\\s*\\[?[^\\n]*\\b${RAFTER_READ_ENTRY}\\b`, "m").test(raw)) {
+        const sep = raw.length > 0 && !raw.endsWith("\n") ? "\n" : "";
+        raw = `${raw}${sep}read:\n  - ${RAFTER_READ_ENTRY}\n`;
+        fs.writeFileSync(configPath, raw, "utf-8");
+      }
+      console.log(fmt.success(`Installed Rafter read-only context to ${configPath}`));
+      return true;
+    }
   }
 
-  // Append MCP server config
-  const mcpLine = "\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n";
-  fs.writeFileSync(configPath, content + mcpLine, "utf-8");
-  console.log(fmt.success(`Installed Rafter MCP server to ${configPath}`));
+  // Normalize `read:` to a string array.
+  let reads: string[] = [];
+  if (Array.isArray(parsed.read)) {
+    reads = parsed.read.map(String);
+  } else if (typeof parsed.read === "string") {
+    reads = [parsed.read];
+  }
+
+  if (!reads.includes(RAFTER_READ_ENTRY)) {
+    reads.push(RAFTER_READ_ENTRY);
+  }
+  parsed.read = reads;
+
+  fs.writeFileSync(configPath, yaml.dump(parsed), "utf-8");
+  console.log(fmt.success(`Installed Rafter read-only context to ${rafterMdPath} + ${configPath}`));
   return true;
 }
 
@@ -796,7 +849,9 @@ export function createInitCommand(): Command {
       // since rf-0vr3. User scope still also installs the MCP entry.
       let wantWindsurf = opts.withWindsurf || opts.all;
       let wantContinue = opts.withContinue || (opts.all && !opts.local);
-      let wantAider = opts.withAider || (opts.all && !opts.local);
+      // Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
+      // in cwd) since rf-du2o.
+      let wantAider = opts.withAider || opts.all;
       let wantGitleaks = opts.withGitleaks || (opts.all && !opts.local);
 
       // Interactive mode: prompt for each detected integration
@@ -1061,17 +1116,19 @@ export function createInitCommand(): Command {
         localUnsupported("Continue.dev");
       }
 
-      // Install Aider MCP if opted in
+      // Install Aider integration if opted in (rf-du2o).
+      // Aider has no MCP and no hook surface — its only intercept is the
+      // `read:` flag in .aider.conf.yml. We write RAFTER.md and ensure
+      // `read:` includes it. The legacy mcp-server-command YAML line (a
+      // silent no-op) is stripped on reinstall.
       let aiderOk = false;
-      if (hasAider && wantAider) {
+      if (wantAider && (hasAider || opts.local)) {
         try {
-          aiderOk = installAiderMcp(root);
-          if (aiderOk) manager.set("agent.environments.aider.enabled", true);
+          aiderOk = installAiderRead(root);
+          if (aiderOk && hasAider) manager.set("agent.environments.aider.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Aider integration: ${e}`));
         }
-      } else if (opts.local && wantAider) {
-        localUnsupported("Aider");
       }
 
       // Install global instruction files for platforms that support them.
@@ -1099,7 +1156,7 @@ export function createInitCommand(): Command {
         if (cursorOk) console.log("  - Restart Cursor to load MCP server");
         if (windsurfOk) console.log("  - Restart Windsurf to load MCP server");
         if (continueOk) console.log("  - Restart Continue.dev to load MCP server");
-        if (aiderOk) console.log("  - Restart Aider to load MCP server");
+        if (aiderOk) console.log("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:");
       } else if (scope === "project") {
         console.log("No integrations were installed. In --local mode, pass one or more opt-in flags:");
         console.log("  rafter agent init --local --with-claude-code");

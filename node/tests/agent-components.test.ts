@@ -69,7 +69,7 @@ describe("rafter agent list", () => {
       "windsurf.rules",
       "windsurf.mcp",
       "continue.mcp",
-      "aider.mcp",
+      "aider.read",
       "codex.hooks",
       "codex.skills",
       "openclaw.skills",
@@ -93,7 +93,7 @@ describe("rafter agent list", () => {
     expect((byId.get("cursor.mcp") as any).state).toBe("not-detected");
     expect((byId.get("gemini.mcp") as any).state).toBe("not-detected");
     // aider's "platform detected" is HOME which always exists
-    expect((byId.get("aider.mcp") as any).detected).toBe(true);
+    expect((byId.get("aider.read") as any).detected).toBe(true);
   });
 
   it("--installed filters to only installed rows", () => {
@@ -222,21 +222,32 @@ describe("rafter agent enable / disable", () => {
     expect(rafterPreCount).toBe(2);
   });
 
-  it("aider.mcp appends only once; disable strips the block", () => {
+  it("aider.read writes RAFTER.md + read: entry, idempotent, strips legacy mcp line", () => {
     const conf = path.join(home, ".aider.conf.yml");
-    fs.writeFileSync(conf, "# pre-existing line\nmodel: gpt-5\n");
+    // Pre-existing config including the legacy silent-no-op MCP line that
+    // earlier rafter versions wrote (rf-du2o migration path).
+    fs.writeFileSync(
+      conf,
+      "model: gpt-5\n\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n",
+    );
 
-    runCli("agent enable aider.mcp", home);
-    runCli("agent enable aider.mcp", home); // idempotent
+    runCli("agent enable aider.read", home);
+    runCli("agent enable aider.read", home); // idempotent
+
     const after = fs.readFileSync(conf, "utf-8");
-    const occurrences = (after.match(/rafter mcp serve/g) || []).length;
-    expect(occurrences).toBe(1);
+    expect(after).not.toContain("rafter mcp serve");
     expect(after).toContain("model: gpt-5");
+    // RAFTER.md should appear in read: exactly once.
+    const occurrences = (after.match(/RAFTER\.md/g) || []).length;
+    expect(occurrences).toBe(1);
+    // RAFTER.md was written at cwd (test runs with cwd=home).
+    expect(fs.existsSync(path.join(home, "RAFTER.md"))).toBe(true);
 
-    runCli("agent disable aider.mcp", home);
+    runCli("agent disable aider.read", home);
     const cleaned = fs.readFileSync(conf, "utf-8");
-    expect(cleaned).not.toContain("rafter mcp serve");
+    expect(cleaned).not.toContain("RAFTER.md");
     expect(cleaned).toContain("model: gpt-5");
+    expect(fs.existsSync(path.join(home, "RAFTER.md"))).toBe(false);
   });
 
   it("records enabled=true/false in ~/.rafter/config.json for each toggle", () => {
