@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import yaml from "js-yaml";
 import {
   RAFTER_MARKER_START,
   RAFTER_MARKER_END,
@@ -828,41 +829,94 @@ function continueMcp(): ComponentSpec {
   };
 }
 
-function aiderMcp(): ComponentSpec {
+/**
+ * Aider read-only context: writes RAFTER.md and adds it to .aider.conf.yml `read:`.
+ *
+ * Replaces the prior `aider.mcp` component, pruned in rf-du2o because Aider
+ * has no native MCP support — the legacy `mcp-server-command: rafter mcp serve`
+ * line was a silent no-op (Aider ignores unknown YAML keys per its docs).
+ *
+ * Project-scope by design — RAFTER.md and the read entry land in cwd.
+ */
+function aiderRead(): ComponentSpec {
   const home = os.homedir();
-  const configPath = path.join(home, ".aider.conf.yml");
-  const mcpLineHeader = "# Rafter security MCP server";
+  const cwd = process.cwd();
+  const configPath = path.join(cwd, ".aider.conf.yml");
+  const rafterMdPath = path.join(cwd, "RAFTER.md");
+  const READ_ENTRY = "RAFTER.md";
+
   return {
-    id: "aider.mcp",
+    id: "aider.read",
     platform: "aider",
-    kind: "mcp",
-    description: "Aider MCP server entry (~/.aider.conf.yml)",
-    // Aider has no config dir — its presence is the file itself. Point detectDir
-    // at $HOME so the platform is always considered "present enough to install into".
+    kind: "instructions",
+    description: "Aider read-only context (RAFTER.md + .aider.conf.yml read:)",
     detectDir: home,
-    path: configPath,
+    path: rafterMdPath,
     isInstalled: () => {
+      if (!fs.existsSync(rafterMdPath)) return false;
       if (!fs.existsSync(configPath)) return false;
-      return fs.readFileSync(configPath, "utf-8").includes("rafter mcp serve");
+      const raw = fs.readFileSync(configPath, "utf-8");
+      try {
+        const parsed = yaml.load(raw) as any;
+        const reads = Array.isArray(parsed?.read)
+          ? parsed.read.map(String)
+          : typeof parsed?.read === "string" ? [parsed.read] : [];
+        return reads.includes(READ_ENTRY);
+      } catch {
+        return raw.includes(READ_ENTRY);
+      }
     },
     install: () => {
-      const content = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : "";
-      if (content.includes("rafter mcp serve")) return;
-      const block = `\n${mcpLineHeader}\nmcp-server-command: rafter mcp serve\n`;
-      fs.writeFileSync(configPath, content + block, "utf-8");
+      injectInstructionFile(rafterMdPath);
+      let raw = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : "";
+      // Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
+      raw = raw.replace(
+        /\n?#\s*Rafter security MCP server\s*\nmcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?/g,
+        "\n",
+      );
+      raw = raw.replace(/^mcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?/gm, "");
+
+      let parsed: Record<string, any> = {};
+      if (raw.trim().length > 0) {
+        try {
+          const loaded = yaml.load(raw);
+          if (loaded && typeof loaded === "object" && !Array.isArray(loaded)) {
+            parsed = loaded as Record<string, any>;
+          }
+        } catch {
+          // Unparseable YAML — append safely without touching existing content.
+          if (!new RegExp(`\\b${READ_ENTRY}\\b`).test(raw)) {
+            const sep = raw.length > 0 && !raw.endsWith("\n") ? "\n" : "";
+            fs.writeFileSync(configPath, `${raw}${sep}read:\n  - ${READ_ENTRY}\n`, "utf-8");
+          }
+          return;
+        }
+      }
+      let reads: string[] = [];
+      if (Array.isArray(parsed.read)) reads = parsed.read.map(String);
+      else if (typeof parsed.read === "string") reads = [parsed.read];
+      if (!reads.includes(READ_ENTRY)) reads.push(READ_ENTRY);
+      parsed.read = reads;
+      fs.writeFileSync(configPath, yaml.dump(parsed), "utf-8");
     },
     uninstall: () => {
+      if (fs.existsSync(rafterMdPath)) {
+        try { fs.rmSync(rafterMdPath, { force: true }); } catch { /* best-effort */ }
+      }
       if (!fs.existsSync(configPath)) return;
-      const content = fs.readFileSync(configPath, "utf-8");
-      // Remove both the comment marker and the command line; preserve everything else.
-      const lines = content.split("\n");
-      const next = lines.filter((l) => {
-        const t = l.trim();
-        if (t === mcpLineHeader) return false;
-        if (t.startsWith("mcp-server-command:") && t.includes("rafter mcp serve")) return false;
-        return true;
-      });
-      fs.writeFileSync(configPath, next.join("\n"), "utf-8");
+      const raw = fs.readFileSync(configPath, "utf-8");
+      try {
+        const parsed = yaml.load(raw) as any;
+        if (parsed && Array.isArray(parsed.read)) {
+          parsed.read = parsed.read.filter((p: any) => String(p) !== READ_ENTRY);
+          if (parsed.read.length === 0) delete parsed.read;
+        } else if (parsed && parsed.read === READ_ENTRY) {
+          delete parsed.read;
+        }
+        fs.writeFileSync(configPath, yaml.dump(parsed ?? {}), "utf-8");
+      } catch {
+        /* preserve unparseable file */
+      }
     },
   };
 }
@@ -913,7 +967,7 @@ export function getComponentRegistry(): ComponentSpec[] {
       windsurfRules(),
       windsurfMcp(),
       continueMcp(),
-      aiderMcp(),
+      aiderRead(),
       openclawSkill(),
     ];
   }

@@ -12,7 +12,7 @@ from rafter_cli.commands.agent import (
     _install_windsurf_mcp,
     _install_windsurf_rules,
     _install_continue_dev_mcp,
-    _install_aider_mcp,
+    _install_aider_read,
 )
 
 
@@ -223,36 +223,74 @@ class TestInstallContinueDevMcp:
         assert config["mcpServers"]["other"]["command"] == "other"
 
 
-class TestInstallAiderMcp:
-    def test_creates_config_from_scratch(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        assert _install_aider_mcp(tmp_path)
+class TestInstallAiderRead:
+    """rf-du2o — replaces broken `mcp-server-command:` install. Aider has no
+    native MCP support; its only persistent-context primitive is the `read:`
+    flag in `.aider.conf.yml`."""
 
-        config_path = tmp_path / ".aider.conf.yml"
-        assert config_path.exists()
-        content = config_path.read_text()
-        assert "rafter mcp serve" in content
+    def test_writes_rafter_md(self, tmp_path):
+        assert _install_aider_read(tmp_path)
+        rafter_md = tmp_path / "RAFTER.md"
+        assert rafter_md.exists()
+        body = rafter_md.read_text()
+        assert "<!-- rafter:start -->" in body
+        assert "<!-- rafter:end -->" in body
 
-    def test_skips_if_already_configured(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        config_path = tmp_path / ".aider.conf.yml"
-        config_path.write_text("mcp-server-command: rafter mcp serve\n")
-
-        assert _install_aider_mcp(tmp_path)
-
-        content = config_path.read_text()
-        assert content.count("rafter mcp serve") == 1
-
-    def test_appends_to_existing_config(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    def test_adds_rafter_md_to_read_list(self, tmp_path):
         config_path = tmp_path / ".aider.conf.yml"
         config_path.write_text("model: gpt-4\n")
 
-        _install_aider_mcp(tmp_path)
+        _install_aider_read(tmp_path)
 
         content = config_path.read_text()
         assert "model: gpt-4" in content
-        assert "rafter mcp serve" in content
+        assert "RAFTER.md" in content
+
+    def test_does_not_write_legacy_mcp_line(self, tmp_path):
+        config_path = tmp_path / ".aider.conf.yml"
+        config_path.write_text("# fresh\n")
+
+        _install_aider_read(tmp_path)
+
+        content = config_path.read_text()
+        assert "mcp-server-command" not in content
+        assert "rafter mcp serve" not in content
+
+    def test_strips_legacy_mcp_block_on_reinstall(self, tmp_path):
+        """Migration path: pre-existing legacy line must be removed."""
+        config_path = tmp_path / ".aider.conf.yml"
+        config_path.write_text(
+            "model: gpt-5\n\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n"
+        )
+
+        _install_aider_read(tmp_path)
+
+        content = config_path.read_text()
+        assert "mcp-server-command" not in content
+        assert "Rafter security MCP server" not in content
+        assert "model: gpt-5" in content
+        assert "RAFTER.md" in content
+
+    def test_preserves_existing_read_entries(self, tmp_path):
+        config_path = tmp_path / ".aider.conf.yml"
+        config_path.write_text("read:\n  - CONVENTIONS.md\n  - DESIGN.md\n")
+
+        _install_aider_read(tmp_path)
+
+        content = config_path.read_text()
+        assert "CONVENTIONS.md" in content
+        assert "DESIGN.md" in content
+        assert "RAFTER.md" in content
+
+    def test_idempotent_on_repeated_installs(self, tmp_path):
+        config_path = tmp_path / ".aider.conf.yml"
+        config_path.write_text("model: gpt-5\n")
+
+        _install_aider_read(tmp_path)
+        _install_aider_read(tmp_path)
+
+        content = config_path.read_text()
+        assert content.count("RAFTER.md") == 1
 
 
 # ── Flag rejection tests ─────────────────────────────────────────────
@@ -331,9 +369,10 @@ class TestOptInGating:
         continue_config = tmp_path / ".continue" / "config.json"
         assert not continue_config.exists(), "Continue config.json should not be created without --with-continue"
 
-        # Aider MCP should NOT be appended
+        # Aider read: should NOT be appended (rf-du2o); RAFTER.md not written.
         aider_content = (tmp_path / ".aider.conf.yml").read_text()
-        assert "rafter" not in aider_content, "Aider config should not be modified without --with-aider"
+        assert "RAFTER.md" not in aider_content, "Aider config should not be modified without --with-aider"
+        assert not (tmp_path / "RAFTER.md").exists()
 
 
 # ── Codex skill installation tests ───────────────────────────────────

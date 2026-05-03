@@ -161,7 +161,9 @@ Add to Windsurf's MCP config (`~/.codeium/windsurf/mcp_config.json`):
     "aider": """\
 # Rafter Setup — Aider
 
-Aider uses MCP for tool integration.
+Aider has no plugin/hook system and no native MCP support. Its only intercept
+for persistent context is the `read:` flag in `.aider.conf.yml`, which
+injects read-only files into every session.
 
 ## Automated Setup
 
@@ -169,18 +171,21 @@ Aider uses MCP for tool integration.
 rafter agent init --with-aider
 ```
 
+This writes `RAFTER.md` at the workspace root and adds it to `read:` in
+`.aider.conf.yml`.
+
 ## Manual Setup
 
-Add to `~/.aider.conf.yml`:
-```yaml
-mcp-servers:
-  - name: rafter
-    command: rafter mcp serve
-```
+1. Create `RAFTER.md` at the workspace root with rafter's security context.
+2. Add to `.aider.conf.yml`:
+   ```yaml
+   read:
+     - RAFTER.md
+   ```
 
 ## Supplementing with Brief
 
-Aider doesn't have persistent memory, so run before each session:
+Aider doesn't have persistent memory beyond `read:`, so run before each session:
 ```bash
 rafter brief commands    # quick command reference
 ```""",

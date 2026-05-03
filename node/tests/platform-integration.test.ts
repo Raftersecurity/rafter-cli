@@ -739,74 +739,96 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
-  // ── 6. Aider MCP install ───────────────────────────────────────────
+  // ── 6. Aider read-only context (rf-du2o) ──────────────────────────
+  //
+  // Earlier rafter versions appended `mcp-server-command: rafter mcp serve`
+  // to .aider.conf.yml — Aider has no native MCP support and silently
+  // ignores unknown YAML keys per its docs. That install was a no-op.
+  //
+  // Replaced by RAFTER.md + .aider.conf.yml `read:` entry, Aider's only
+  // documented persistent-context primitive.
 
-  describe("Aider MCP install (--with-aider)", () => {
-    it("should create .aider.conf.yml with rafter mcp serve", () => {
-      // Aider detection checks for the file itself, not a directory
-      fs.writeFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        "# existing aider config\n"
-      );
+  describe("Aider read-only context (--with-aider)", () => {
+    it("writes RAFTER.md at workspace root with the rafter marker block", () => {
+      fs.writeFileSync(path.join(testHomeDir, ".aider.conf.yml"), "# existing aider config\n");
 
       const result = runCli("agent init --with-aider", testHomeDir);
       expect(result.exitCode).toBe(0);
 
-      const configPath = path.join(testHomeDir, ".aider.conf.yml");
-      expect(fs.existsSync(configPath)).toBe(true);
-
-      const content = fs.readFileSync(configPath, "utf-8");
-      expect(content).toContain("rafter mcp serve");
-      expect(content).toContain("mcp-server-command: rafter mcp serve");
-      // Should preserve existing content
-      expect(content).toContain("# existing aider config");
-    });
-  });
-
-  // ── 6b. Aider idempotency and preservation ────────────────────────
-
-  describe("Aider MCP idempotency", () => {
-    it("should not duplicate mcp-server-command on repeated installs", () => {
-      fs.writeFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        "# aider config\n"
-      );
-
-      runCli("agent init --with-aider", testHomeDir);
-      runCli("agent init --with-aider", testHomeDir);
-
-      const content = fs.readFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        "utf-8"
-      );
-      // Count occurrences of the mcp line
-      const matches = content.match(/mcp-server-command: rafter mcp serve/g);
-      expect(matches).toHaveLength(1);
+      const rafterMd = path.join(testHomeDir, "RAFTER.md");
+      expect(fs.existsSync(rafterMd)).toBe(true);
+      const body = fs.readFileSync(rafterMd, "utf-8");
+      expect(body).toContain("<!-- rafter:start -->");
+      expect(body).toContain("<!-- rafter:end -->");
     });
 
-    it("should preserve all existing YAML config", () => {
+    it("adds RAFTER.md to .aider.conf.yml `read:` list (preserving existing keys)", () => {
       const existingConfig = [
         "model: gpt-4-turbo",
         "auto-commits: false",
         "dark-mode: true",
         "map-tokens: 1024",
       ].join("\n") + "\n";
-      fs.writeFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        existingConfig
-      );
+      fs.writeFileSync(path.join(testHomeDir, ".aider.conf.yml"), existingConfig);
 
       runCli("agent init --with-aider", testHomeDir);
 
-      const content = fs.readFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        "utf-8"
-      );
+      const content = fs.readFileSync(path.join(testHomeDir, ".aider.conf.yml"), "utf-8");
       expect(content).toContain("model: gpt-4-turbo");
       expect(content).toContain("auto-commits: false");
       expect(content).toContain("dark-mode: true");
       expect(content).toContain("map-tokens: 1024");
-      expect(content).toContain("rafter mcp serve");
+      expect(content).toContain("RAFTER.md");
+    });
+
+    it("does NOT write the legacy mcp-server-command (silent no-op pruned)", () => {
+      fs.writeFileSync(path.join(testHomeDir, ".aider.conf.yml"), "# fresh\n");
+
+      runCli("agent init --with-aider", testHomeDir);
+
+      const content = fs.readFileSync(path.join(testHomeDir, ".aider.conf.yml"), "utf-8");
+      expect(content).not.toContain("mcp-server-command");
+      expect(content).not.toContain("rafter mcp serve");
+    });
+
+    it("strips a pre-existing legacy mcp-server-command on reinstall (rf-du2o migration)", () => {
+      fs.writeFileSync(
+        path.join(testHomeDir, ".aider.conf.yml"),
+        "model: gpt-5\n\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n",
+      );
+
+      runCli("agent init --with-aider", testHomeDir);
+
+      const content = fs.readFileSync(path.join(testHomeDir, ".aider.conf.yml"), "utf-8");
+      expect(content).not.toContain("mcp-server-command");
+      expect(content).not.toContain("Rafter security MCP server");
+      expect(content).toContain("model: gpt-5");
+      expect(content).toContain("RAFTER.md");
+    });
+
+    it("is idempotent across repeated installs (RAFTER.md listed once)", () => {
+      fs.writeFileSync(path.join(testHomeDir, ".aider.conf.yml"), "model: gpt-5\n");
+
+      runCli("agent init --with-aider", testHomeDir);
+      runCli("agent init --with-aider", testHomeDir);
+
+      const content = fs.readFileSync(path.join(testHomeDir, ".aider.conf.yml"), "utf-8");
+      const matches = content.match(/RAFTER\.md/g) || [];
+      expect(matches).toHaveLength(1);
+    });
+
+    it("preserves existing read: entries", () => {
+      fs.writeFileSync(
+        path.join(testHomeDir, ".aider.conf.yml"),
+        "read:\n  - CONVENTIONS.md\n  - DESIGN.md\n",
+      );
+
+      runCli("agent init --with-aider", testHomeDir);
+
+      const content = fs.readFileSync(path.join(testHomeDir, ".aider.conf.yml"), "utf-8");
+      expect(content).toContain("CONVENTIONS.md");
+      expect(content).toContain("DESIGN.md");
+      expect(content).toContain("RAFTER.md");
     });
   });
 
@@ -855,11 +877,12 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(
         fs.existsSync(path.join(testHomeDir, ".continue", "config.json"))
       ).toBe(false);
-      // Aider file existed before but should NOT have rafter appended
+      // Aider file existed before but should NOT have rafter touch it.
       const aiderContent = fs.readFileSync(
         path.join(testHomeDir, ".aider.conf.yml"),
         "utf-8"
       );
+      expect(aiderContent).not.toContain("RAFTER.md");
       expect(aiderContent).not.toContain("rafter mcp serve");
     });
   });
@@ -923,12 +946,14 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       );
       expect(continueDev.mcpServers).toBeDefined();
 
-      // Aider
+      // Aider — RAFTER.md + read: entry (rf-du2o; legacy mcp line removed)
       const aiderContent = fs.readFileSync(
         path.join(testHomeDir, ".aider.conf.yml"),
         "utf-8"
       );
-      expect(aiderContent).toContain("rafter mcp serve");
+      expect(aiderContent).not.toContain("rafter mcp serve");
+      expect(aiderContent).toContain("RAFTER.md");
+      expect(fs.existsSync(path.join(testHomeDir, "RAFTER.md"))).toBe(true);
     });
   });
 
@@ -976,6 +1001,8 @@ describe("Platform Integration — MCP Installs via CLI", () => {
         path.join(testHomeDir, ".aider.conf.yml"),
         "utf-8"
       );
+      // Aider not requested — its config file remains untouched.
+      expect(aiderContent).not.toContain("RAFTER.md");
       expect(aiderContent).not.toContain("rafter mcp serve");
     });
 
@@ -1000,11 +1027,13 @@ describe("Platform Integration — MCP Installs via CLI", () => {
           path.join(testHomeDir, ".codeium", "windsurf", "mcp_config.json")
         )
       ).toBe(true);
+      // Aider — RAFTER.md + read: entry (rf-du2o)
       const aiderContent = fs.readFileSync(
         path.join(testHomeDir, ".aider.conf.yml"),
         "utf-8"
       );
-      expect(aiderContent).toContain("rafter mcp serve");
+      expect(aiderContent).toContain("RAFTER.md");
+      expect(fs.existsSync(path.join(testHomeDir, "RAFTER.md"))).toBe(true);
     });
   });
 
@@ -1650,11 +1679,13 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(fs.existsSync(path.join(testHomeDir, ".continue", "config.json"))).toBe(true);
       expect(fs.existsSync(path.join(testHomeDir, ".continue", "settings.json"))).toBe(false);
 
-      // ── Aider: YAML config ──
+      // ── Aider: RAFTER.md + read: entry (rf-du2o; legacy mcp line not written) ──
       const aiderContent = fs.readFileSync(
         path.join(testHomeDir, ".aider.conf.yml"), "utf-8"
       );
-      expect(aiderContent).toContain("rafter mcp serve");
+      expect(aiderContent).not.toContain("rafter mcp serve");
+      expect(aiderContent).toContain("RAFTER.md");
+      expect(fs.existsSync(path.join(testHomeDir, "RAFTER.md"))).toBe(true);
     });
   });
 });

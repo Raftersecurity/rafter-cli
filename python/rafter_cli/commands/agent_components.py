@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+import yaml
 
 from ..core.config_manager import ConfigManager
 
@@ -776,43 +779,104 @@ def _continue_mcp() -> ComponentSpec:
     )
 
 
-def _aider_mcp() -> ComponentSpec:
+_AIDER_LEGACY_MCP_BLOCK_RE = re.compile(
+    r"\n?#\s*Rafter security MCP server\s*\nmcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?",
+)
+_AIDER_LEGACY_MCP_LINE_RE = re.compile(
+    r"^mcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?",
+    flags=re.MULTILINE,
+)
+_AIDER_READ_ENTRY = "RAFTER.md"
+
+
+def _aider_read() -> ComponentSpec:
+    """Aider read-only context: writes RAFTER.md and adds it to .aider.conf.yml `read:`.
+
+    Replaces the prior `aider.mcp` component, pruned in rf-du2o because Aider
+    has no native MCP support — the legacy `mcp-server-command: rafter mcp serve`
+    line was a silent no-op (Aider ignores unknown YAML keys per its docs).
+
+    Project-scope by design — RAFTER.md and the read entry land in cwd.
+    """
     home = Path.home()
-    config_path = home / ".aider.conf.yml"
-    header = "# Rafter security MCP server"
+    cwd = Path.cwd()
+    config_path = cwd / ".aider.conf.yml"
+    rafter_md_path = cwd / "RAFTER.md"
 
     def is_installed() -> bool:
-        return config_path.exists() and "rafter mcp serve" in config_path.read_text(encoding="utf-8")
+        if not rafter_md_path.exists() or not config_path.exists():
+            return False
+        try:
+            parsed = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            return _AIDER_READ_ENTRY in config_path.read_text(encoding="utf-8")
+        reads = parsed.get("read")
+        if isinstance(reads, list):
+            return _AIDER_READ_ENTRY in [str(p) for p in reads]
+        if isinstance(reads, str):
+            return reads == _AIDER_READ_ENTRY
+        return False
 
     def install() -> None:
-        existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
-        if "rafter mcp serve" in existing:
-            return
-        block = f"\n{header}\nmcp-server-command: rafter mcp serve\n"
-        config_path.write_text(existing + block, encoding="utf-8")
+        _inject_instruction_file(rafter_md_path)
+        raw = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+        # Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
+        raw = _AIDER_LEGACY_MCP_BLOCK_RE.sub("\n", raw)
+        raw = _AIDER_LEGACY_MCP_LINE_RE.sub("", raw)
+
+        parsed: dict[str, Any] = {}
+        if raw.strip():
+            try:
+                loaded = yaml.safe_load(raw)
+                if isinstance(loaded, dict):
+                    parsed = loaded
+            except yaml.YAMLError:
+                if _AIDER_READ_ENTRY not in raw:
+                    sep = "" if not raw or raw.endswith("\n") else "\n"
+                    config_path.write_text(f"{raw}{sep}read:\n  - {_AIDER_READ_ENTRY}\n", encoding="utf-8")
+                else:
+                    config_path.write_text(raw, encoding="utf-8")
+                return
+
+        reads: list[str] = []
+        raw_read = parsed.get("read")
+        if isinstance(raw_read, list):
+            reads = [str(p) for p in raw_read]
+        elif isinstance(raw_read, str):
+            reads = [raw_read]
+        if _AIDER_READ_ENTRY not in reads:
+            reads.append(_AIDER_READ_ENTRY)
+        parsed["read"] = reads
+        config_path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
 
     def uninstall() -> None:
+        if rafter_md_path.exists():
+            try:
+                rafter_md_path.unlink()
+            except OSError:
+                pass
         if not config_path.exists():
             return
-        lines = config_path.read_text(encoding="utf-8").split("\n")
-        filtered = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped == header:
-                continue
-            if stripped.startswith("mcp-server-command:") and "rafter mcp serve" in stripped:
-                continue
-            filtered.append(line)
-        config_path.write_text("\n".join(filtered), encoding="utf-8")
+        try:
+            parsed = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            return
+        reads = parsed.get("read")
+        if isinstance(reads, list):
+            parsed["read"] = [str(p) for p in reads if str(p) != _AIDER_READ_ENTRY]
+            if not parsed["read"]:
+                del parsed["read"]
+        elif isinstance(reads, str) and reads == _AIDER_READ_ENTRY:
+            del parsed["read"]
+        config_path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
 
-    # Aider has no config dir; treat $HOME as always present so detection is true.
     return ComponentSpec(
-        id="aider.mcp",
+        id="aider.read",
         platform="aider",
-        kind="mcp",
-        description="Aider MCP server entry (~/.aider.conf.yml)",
+        kind="instructions",
+        description="Aider read-only context (RAFTER.md + .aider.conf.yml read:)",
         detect_dir=home,
-        path=config_path,
+        path=rafter_md_path,
         is_installed=is_installed,
         install=install,
         uninstall=uninstall,
@@ -871,7 +935,7 @@ def get_registry() -> list[ComponentSpec]:
             _windsurf_rules(),
             _windsurf_mcp(),
             _continue_mcp(),
-            _aider_mcp(),
+            _aider_read(),
             _openclaw_skill(),
         ]
     return _REGISTRY
