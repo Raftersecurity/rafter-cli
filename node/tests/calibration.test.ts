@@ -35,18 +35,15 @@ const FIXTURES = path.resolve(__dirname, "../../shared-docs/calibration");
 
 // Tunable floors. The intent (per rc-6fg) is to ratchet UP recall + precision
 // and DOWN the FP count. Loosening any floor requires a bead reference here.
-// Today's 6 known FPs all fire on `Inline credential assignment` where the
-// LHS contains a credential keyword (api_key, secret, token, …) but the RHS
-// is a non-secret identifier (X-Api-Key, ordered_set, aws-default, public,
-// opaque, argon2id). Fix tracked in rc-wk5.
+// rc-wk5 closed the 6 prior FPs (kebab-non-secret-rhs class) by gating the
+// assignment pattern's RHS through looksLikeIdentifierConfig in
+// prompt-shield.ts. Floor now sits at 0.
 //
 // Floors are pinned just below today's actuals so the suite gates against
-// drift. With 67 expected values + 6 negative-corpus FPs, today is
-// recall=1.00, precision=0.917. A regex change that drops 2 detections OR
-// adds 2 FPs trips the suite. Target ceiling 0.95 precision per rc-6fg.
-const KNOWN_FP_FLOOR = 6; // negative corpus: lines that produce ≥1 detection
+// drift. A regex change that drops 2 detections OR adds 1 FP trips the suite.
+const KNOWN_FP_FLOOR = 0; // negative corpus: lines that produce ≥1 detection
 const RECALL_FLOOR = 0.97; // positive corpus: fraction of expected values found
-const PRECISION_FLOOR = 0.9; // combined: tp / (tp + fp); target 0.95
+const PRECISION_FLOOR = 0.95; // combined: tp / (tp + fp); rc-6fg ceiling met
 
 // ──────────── Token construction (split to dodge file scanners) ────────────
 const AKIA = "AKI" + "A";

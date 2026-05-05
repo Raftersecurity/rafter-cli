@@ -85,6 +85,13 @@ def detect_secrets(text: str) -> list[DetectedSecret]:
             if not value or len(value) < 6 or _is_likely_placeholder(value):
                 pos = max(m.end(), pos + 1)
                 continue
+            # Assignment-style: drop identifier-shaped RHS values (rc-wk5).
+            # LHS having a credential keyword is too weak alone — devs write
+            # `api_key_header_name=X-Api-Key`, `auth_token_type=opaque`,
+            # `password_hash_algorithm=argon2id`. See _looks_like_identifier_config.
+            if p.name == "Inline credential assignment" and _looks_like_identifier_config(value):
+                pos = max(m.end(), pos + 1)
+                continue
             key = (p.name, value)
             if key in seen:
                 pos = max(m.end(), pos + 1)
@@ -128,6 +135,30 @@ def replace_secrets_with_refs(
             continue
         out = out.replace(d.value, f"${name}")
     return out
+
+
+_IDENTIFIER_SHAPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+_DIGIT_RE = re.compile(r"\d")
+
+
+def _looks_like_identifier_config(value: str) -> bool:
+    """RHS gate for "Inline credential assignment" (rc-wk5).
+
+    True when the value looks like a config token (header name, enum,
+    algorithm) rather than a credential. All three must hold:
+
+      1. Identifier-shaped: starts with letter, then [A-Za-z0-9_-].
+         `9abcdefghij` (leading digit) and `p@ss!word#42` (symbols) pass.
+      2. Length < 12. Real passwords ≥ 12 chars pass regardless.
+      3. ≤ 1 digit. `argon2id`/`pbkdf2` have one digit; real passwords with
+         embedded digits (`hunter2andmore`, `abc123`) usually have more.
+    """
+    if len(value) >= 12:
+        return False
+    if not _IDENTIFIER_SHAPE_RE.match(value):
+        return False
+    digit_count = len(_DIGIT_RE.findall(value))
+    return digit_count <= 1
 
 
 def _is_likely_placeholder(value: str) -> bool:
