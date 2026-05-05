@@ -203,20 +203,43 @@ def _install_claude_code_hooks(root: Path) -> None:
 # ── init ─────────────────────────────────────────────────────────────
 
 
+def _copy_skill_tree(skill_name: str, dest_dir: Path, label: str) -> None:
+    """Copy the full skill source tree (SKILL.md + any docs/ etc.) into dest_dir.
+
+    Skills can ship a ``docs/`` subfolder of reference material referenced by
+    SKILL.md. Copying only SKILL.md would silently strip those resources.
+    """
+    res = importlib.resources.files("rafter_cli.resources").joinpath("skills", skill_name)
+    skill_md = res.joinpath("SKILL.md")
+    if not skill_md.is_file():
+        rprint(fmt.warning(f"{label} skill template not found in package resources"))
+        return
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    def _walk(node, target: Path) -> None:
+        for child in node.iterdir():
+            child_target = target / child.name
+            if child.is_dir():
+                # Skip Python package metadata that has no value at the install site.
+                if child.name in {"__pycache__"}:
+                    continue
+                child_target.mkdir(parents=True, exist_ok=True)
+                _walk(child, child_target)
+            elif child.is_file():
+                if child.name == "__init__.py":
+                    continue
+                child_target.write_bytes(child.read_bytes())
+
+    _walk(res, dest_dir)
+    rprint(fmt.success(f"Installed {label} skill to {dest_dir}"))
+
+
 def _install_skills_to(skills_dir: Path) -> None:
-    """Copy all four AGENT_SKILLS into <skills_dir>/<skill>/SKILL.md."""
+    """Install all _AGENT_SKILLS into <skills_dir>, including any docs/ trees."""
     skills_dir.mkdir(parents=True, exist_ok=True)
-    res = importlib.resources.files("rafter_cli.resources")
     for skill in _AGENT_SKILLS:
-        dest_dir = skills_dir / skill["name"]
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = dest_dir / "SKILL.md"
-        try:
-            content = res.joinpath("skills", skill["name"], "SKILL.md").read_text(encoding="utf-8")
-            dest_path.write_text(content, encoding="utf-8")
-            rprint(fmt.success(f"Installed {skill['description']} skill to {dest_path}"))
-        except Exception:
-            rprint(fmt.warning(f"{skill['description']} skill template not found in package resources"))
+        _copy_skill_tree(skill["name"], skills_dir / skill["name"], skill["description"])
 
 
 def _install_claude_code_skills(root: Path) -> None:
