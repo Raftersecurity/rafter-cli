@@ -15,6 +15,12 @@ from rafter_cli.commands.agent import (
     _check_claude_code,
     _check_openclaw,
     _check_codex,
+    _check_gemini,
+    _check_cursor,
+    _check_windsurf,
+    _check_continue_dev,
+    _check_aider,
+    _probe_claude_code,
     _CheckResult,
 )
 
@@ -198,6 +204,144 @@ class TestCheckCodex:
         with patch("pathlib.Path.home", return_value=tmp_path):
             r = _check_codex()
         assert r.passed
+
+
+# ── _check_gemini / _check_cursor / _check_windsurf (rf-65zg parity) ─
+
+
+class TestCheckGemini:
+    def test_warns_when_gemini_absent(self, tmp_path):
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_gemini()
+        assert not r.passed and r.optional and "Not detected" in r.detail
+
+    def test_warns_when_settings_missing(self, tmp_path):
+        (tmp_path / ".gemini").mkdir()
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_gemini()
+        assert not r.passed and r.optional
+
+    def test_warns_when_mcp_absent(self, tmp_path):
+        (tmp_path / ".gemini").mkdir()
+        (tmp_path / ".gemini" / "settings.json").write_text(json.dumps({"hooks": {}}))
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_gemini()
+        assert not r.passed and r.optional
+
+    def test_passes_when_mcp_configured(self, tmp_path):
+        (tmp_path / ".gemini").mkdir()
+        (tmp_path / ".gemini" / "settings.json").write_text(
+            json.dumps({"mcpServers": {"rafter": {"command": "rafter"}}})
+        )
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_gemini()
+        assert r.passed
+
+
+class TestCheckCursor:
+    def test_warns_when_cursor_absent(self, tmp_path):
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_cursor()
+        assert not r.passed and r.optional
+
+    def test_passes_when_mcp_configured(self, tmp_path):
+        (tmp_path / ".cursor").mkdir()
+        (tmp_path / ".cursor" / "mcp.json").write_text(
+            json.dumps({"mcpServers": {"rafter": {"command": "rafter"}}})
+        )
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_cursor()
+        assert r.passed
+
+
+class TestCheckWindsurf:
+    def test_warns_when_windsurf_absent(self, tmp_path):
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_windsurf()
+        assert not r.passed and r.optional
+
+    def test_passes_when_mcp_configured(self, tmp_path):
+        wdir = tmp_path / ".codeium" / "windsurf"
+        wdir.mkdir(parents=True)
+        (wdir / "mcp_config.json").write_text(
+            json.dumps({"mcpServers": {"rafter": {"command": "rafter"}}})
+        )
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_windsurf()
+        assert r.passed
+
+
+class TestCheckContinueDev:
+    def test_warns_when_absent(self, tmp_path):
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_continue_dev()
+        assert not r.passed and r.optional
+
+    def test_warns_when_mcp_absent(self, tmp_path):
+        (tmp_path / ".continue").mkdir()
+        (tmp_path / ".continue" / "config.json").write_text(json.dumps({"mcpServers": []}))
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_continue_dev()
+        assert not r.passed and r.optional
+
+    def test_passes_with_array_format(self, tmp_path):
+        (tmp_path / ".continue").mkdir()
+        (tmp_path / ".continue" / "config.json").write_text(
+            json.dumps({"mcpServers": [{"name": "rafter", "command": "rafter"}]})
+        )
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_continue_dev()
+        assert r.passed
+
+    def test_passes_with_object_format(self, tmp_path):
+        (tmp_path / ".continue").mkdir()
+        (tmp_path / ".continue" / "config.json").write_text(
+            json.dumps({"mcpServers": {"rafter": {"command": "rafter"}}})
+        )
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_continue_dev()
+        assert r.passed
+
+
+class TestCheckAider:
+    def test_warns_when_no_config(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_aider()
+        assert not r.passed and r.optional
+
+    def test_warns_when_rafter_md_not_in_read(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".aider.conf.yml").write_text("model: gpt-5\n")
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_aider()
+        assert not r.passed and r.optional and "RAFTER.md" in r.detail
+
+    def test_warns_when_rafter_md_missing_on_disk(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".aider.conf.yml").write_text("read:\n  - RAFTER.md\n")
+        # No RAFTER.md file written.
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_aider()
+        assert not r.passed and r.optional and "missing" in r.detail.lower()
+
+    def test_passes_when_rafter_md_listed_and_present(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".aider.conf.yml").write_text("read:\n  - RAFTER.md\n")
+        (tmp_path / "RAFTER.md").write_text("<!-- rafter:start -->\n<!-- rafter:end -->\n")
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_aider()
+        assert r.passed
+
+
+# ── _probe_claude_code (rf-65zg) ──────────────────────────────────────
+
+
+class TestProbeClaudeCode:
+    def test_warns_when_claude_code_not_installed(self, tmp_path):
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _probe_claude_code()
+        assert not r.passed and r.optional and "Not installed" in r.detail
 
 
 # ── verify command (exit code contract) ──────────────────────────────

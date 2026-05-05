@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`rafter agent verify` — Python parity, Continue/Aider coverage, `--json`, and `--probe` runtime mode** (Node + Python, rf-65zg / rf-cia phase d). Verify is now 10 checks across all 8 supported platforms in both implementations:
+  - **Python parity:** added `_check_gemini`, `_check_cursor`, `_check_windsurf` so Python now covers everything Node covers (was MCP-only / Claude-only before).
+  - **Continue.dev + Aider:** new `checkContinueDev` (Node) / `_check_continue_dev` (Python) verifies the MCP entry. New `checkAider` / `_check_aider` reads `.aider.conf.yml` and confirms `RAFTER.md` is in `read:` AND on disk (rf-du2o-aware).
+  - **`--json`:** emits a single JSON object (`checks[]` + `summary`) with stable `pass | warn | fail` status — intended for CI consumption. Schema documented in `shared-docs/CLI_SPEC.md`.
+  - **`--probe`:** runtime probe for Claude Code that synthesizes a `PreToolUse` stdin payload with a known-dangerous sentinel command, invokes `rafter hook pretool`, and asserts `~/.rafter/audit.jsonl` recorded a `command_intercepted` entry for the sentinel. Catches the rf-luk-style "wrote file but the hook never fires" failure mode without driving Claude Code itself. Codex/Cursor/Gemini probes can be added in follow-ups using each platform's documented payload format.
+  - The `Claude Code` and Python claude-hook check now substring-match the hook command, so `rafter hook pretool` and `<abs-path>/rafter hook pretool` (Python install style) both verify clean.
+
 ### Changed
 - **Codex hook matchers now intercept `apply_patch` (file edits) in addition to `Bash`** (Node + Python, rf-ovql / rf-cia phase c). Schema verified against `developers.openai.com/codex/hooks` — Codex's `PreToolUse` documents support for Bash, `apply_patch` file edits, and MCP tool calls; we previously only matched `Bash`. Updated `~/.codex/hooks.json` `PreToolUse.matcher` from `"Bash"` to `"Bash|apply_patch"` so file edits actually fire the rafter pretool hook. The known Codex limitation that hooks don't fire for every shell call (per upstream issues #16732 / #20204) is unchanged from our side.
 - **Gemini hook matchers now use the documented Gemini built-in tool names** (Node + Python, rf-044o / rf-cia phase c). Schema verified against `geminicli.com/docs/hooks/reference` — `BeforeTool`/`AfterTool` are the canonical events, `matcher` is a regex against the built-in tool name. Updated `~/.gemini/settings.json` `BeforeTool.matcher` from the implicit-substring `"shell|write_file"` to the explicit `"run_shell_command|write_file|replace|edit"` so the install reads cleanly against current docs and is robust if Gemini ever tightens the matcher to exact-name.
