@@ -547,6 +547,7 @@ Python package is in `python/` — see [`python/README.md`](python/README.md) fo
 - **Node.js CLI**: See [`node/README.md`](node/README.md) for complete command reference
 - **Python CLI**: See [`python/README.md`](python/README.md)
 - **CLI Spec**: See [`shared-docs/CLI_SPEC.md`](shared-docs/CLI_SPEC.md) for flags and output formats
+- **Adding a new agent platform**: See [`docs/adding-a-platform.md`](docs/adding-a-platform.md) for the contract any new platform integration must follow (Node + Python parity, recipe, verify check, probe).
 
 ## Badges
 

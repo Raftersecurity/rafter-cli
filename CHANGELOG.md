@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`docs/adding-a-platform.md` onboarding contract** (rf-o329 / rf-cia phase d). Single canonical doc for adding rafter integration to a new agent CLI / IDE: 5-question pre-flight (hooks, skills, instruction file, MCP, sub-agent), file-by-file checklist across both impls, decision tree per integration shape, dual-impl rule, verification gate (file-presence tests + `agent verify --probe`), and a worked example for a fictional "Cleo" platform. Documents known exceptions (OpenClaw category mismatch, Aider's read-only-context-only shape, no-hook-surface platforms). Linked from README "Documentation".
+
 - **`rafter agent verify` — Python parity, Continue/Aider coverage, `--json`, and `--probe` runtime mode** (Node + Python, rf-65zg / rf-cia phase d). Verify is now 10 checks across all 8 supported platforms in both implementations:
   - **Python parity:** added `_check_gemini`, `_check_cursor`, `_check_windsurf` so Python now covers everything Node covers (was MCP-only / Claude-only before).
   - **Continue.dev + Aider:** new `checkContinueDev` (Node) / `_check_continue_dev` (Python) verifies the MCP entry. New `checkAider` / `_check_aider` reads `.aider.conf.yml` and confirms `RAFTER.md` is in `read:` AND on disk (rf-du2o-aware).
