@@ -722,9 +722,55 @@ Generate project-level instruction files so AI agents discover Rafter at session
 
 Node only. Not yet implemented in Python.
 
-### rafter agent verify
+### rafter agent verify [OPTIONS]
 
-Check agent security integration status. Reports whether config files, hooks, and platform integrations are properly installed.
+Check agent security integration status. Reports whether config files, hooks, and platform integrations are properly installed across all 8 supported platforms.
+
+**Options:**
+- `--json` — emit results as a single JSON object (one entry per check + a summary). Stable schema; intended for CI consumption.
+- `--probe` — runtime probe: synthesize a known-dangerous tool-call payload, pipe it to `rafter hook pretool`, and assert the resulting `command_intercepted` entry landed in `~/.rafter/audit.jsonl`. Catches the failure mode where rafter wrote the right files but the hook command itself doesn't actually fire (rf-65zg). Currently covers Claude Code; Codex/Cursor/Gemini probes are planned follow-ups.
+
+**Checks (10 total, in order):**
+
+| Name | Severity | Detection | Pass criterion |
+|---|---|---|---|
+| `Config` | hard (exit 1 on fail) | `~/.rafter/config.json` exists and parses | valid JSON |
+| `Gitleaks` | hard | binary on PATH or at `~/.rafter/bin/gitleaks` | `--version` succeeds |
+| `Claude Code` | optional | `~/.claude/` exists | `settings.json` PreToolUse contains `rafter hook pretool` |
+| `OpenClaw` | optional | `~/.openclaw/skills/` exists | `rafter-security.md` skill present |
+| `Codex CLI` | optional | `~/.codex/` exists | `~/.agents/skills/rafter/SKILL.md` present |
+| `Gemini CLI` | optional | `~/.gemini/` exists | `settings.json` `mcpServers.rafter` set |
+| `Cursor` | optional | `~/.cursor/` exists | `mcp.json` `mcpServers.rafter` set |
+| `Windsurf` | optional | `~/.codeium/windsurf/` exists | `mcp_config.json` `mcpServers.rafter` set |
+| `Continue.dev` | optional | `~/.continue/` exists | `config.json` `mcpServers` contains rafter (array or object format) |
+| `Aider` | optional | `<cwd>/.aider.conf.yml` or `~/.aider.conf.yml` exists | `read:` list includes `RAFTER.md` AND `RAFTER.md` exists on disk |
+
+With `--probe`, an additional `Claude Code (probe)` check appears as the last entry.
+
+**Exit codes:**
+- `0` — all hard checks passed (optional checks may be unconfigured / warning)
+- `1` — at least one hard check failed
+
+**JSON schema (`--json`):**
+
+```json
+{
+  "checks": [
+    { "name": "Config",      "status": "pass",  "detail": "/home/u/.rafter/config.json" },
+    { "name": "Gitleaks",    "status": "fail",  "detail": "Not found on PATH or at ..." },
+    { "name": "Claude Code", "status": "warn",  "detail": "Not detected — run 'rafter agent init --with-claude-code' to enable" }
+  ],
+  "summary": {
+    "passed": 1,
+    "warned": 1,
+    "failed": 1,
+    "total": 3,
+    "probe": false
+  }
+}
+```
+
+`status` is one of `pass | warn | fail`. `warn` is reserved for optional integrations that aren't installed; `fail` is reserved for hard failures (Config, Gitleaks, or any failing `--probe` check).
 
 ### rafter agent status
 
