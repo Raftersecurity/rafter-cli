@@ -6,7 +6,7 @@
         "name": "Database Connection String",
         "severity": "critical"
       },
-      "line": 3,
+      "line": 4,
       "column": 11,
       "redacted": "mong******************************************************tion"
     }
