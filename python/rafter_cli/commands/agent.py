@@ -880,7 +880,13 @@ def init(
 
     # Resolve opt-in flags. In --local scope, --all is restricted to platforms with
     # a project-local config story (claudeCode, codex, gemini, cursor).
-    want_openclaw = with_openclaw or (all_integrations and not local)
+    # OpenClaw is excluded from --all (rf-0lig). The platform is highly
+    # active but the current rafter integration shape (a markdown file at
+    # ~/.openclaw/skills/rafter-security.md) doesn't match ClawHub's actual
+    # skill format — installing it under --all ships an integration we know
+    # isn't loaded by the platform. Require explicit --with-openclaw until
+    # a ClawHub-style rebuild lands.
+    want_openclaw = with_openclaw
     want_claude_code = with_claude_code or all_integrations
     want_codex = with_codex or all_integrations
     want_gemini = with_gemini or all_integrations
