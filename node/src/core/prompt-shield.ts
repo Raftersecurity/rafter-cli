@@ -61,6 +61,16 @@ export function detectSecrets(text: string): DetectedSecret[] {
         if (re.lastIndex === m.index) re.lastIndex++;
         continue;
       }
+      // Assignment-style: drop identifier-shaped RHS values (rc-wk5).
+      // LHS having a credential keyword is too weak a signal alone — devs
+      // write `api_key_header_name=X-Api-Key`, `auth_token_type=opaque`,
+      // `password_hash_algorithm=argon2id`. Reject the value if it looks
+      // like a config token rather than a credential. See
+      // looksLikeIdentifierConfig for the exact shape.
+      if (p.name === "Inline credential assignment" && looksLikeIdentifierConfig(value)) {
+        if (re.lastIndex === m.index) re.lastIndex++;
+        continue;
+      }
       const key = `${p.name}\x00${value}`;
       if (seen.has(key)) {
         if (re.lastIndex === m.index) re.lastIndex++;
@@ -159,4 +169,25 @@ function isLikelyPlaceholder(value: string): boolean {
 
 function freshRegex(re: RegExp): RegExp {
   return new RegExp(re.source, re.flags);
+}
+
+/**
+ * RHS gate for "Inline credential assignment" (rc-wk5). True when the value
+ * looks like a config token (header name, enum, algorithm name) rather than
+ * a credential. Three conditions must all hold:
+ *
+ *   1. Identifier-shaped: starts with a letter, otherwise only [A-Za-z0-9_-].
+ *      Values starting with a digit (e.g. `9abcdefghij`) or containing
+ *      symbols (e.g. `p@ss!word#42`) are NOT identifier-shaped, so they pass.
+ *   2. Length < 12. Real passwords ≥ 12 chars pass regardless of shape.
+ *   3. ≤ 1 digit. Real passwords with embedded digits (`hunter2andmore`,
+ *      `qwerty1234abcd`, even short `abc123`) usually have multiple digits;
+ *      identifier-style names typically have at most one digit
+ *      (`argon2id`, `pbkdf2`).
+ */
+function looksLikeIdentifierConfig(value: string): boolean {
+  if (value.length >= 12) return false;
+  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(value)) return false;
+  const digitCount = (value.match(/\d/g) || []).length;
+  return digitCount <= 1;
 }

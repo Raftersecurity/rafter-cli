@@ -37,13 +37,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = REPO_ROOT / "shared-docs" / "calibration"
 
 # Tunable floors. Mirror node/tests/calibration.test.ts; drift = bug in one impl.
-# 6 known FPs all in Inline credential assignment with non-secret RHS values
-# (X-Api-Key, ordered_set, aws-default, public, opaque, argon2id) — fix
-# tracked in rc-wk5. Floors are pinned just below today's actuals so the
-# suite gates against drift; today is recall=1.00, precision=0.917.
-KNOWN_FP_FLOOR = 6
+# rc-wk5 closed the 6 prior FPs (kebab-non-secret-rhs class) via the
+# _looks_like_identifier_config gate in prompt_shield.py. Floor is now 0.
+KNOWN_FP_FLOOR = 0
 RECALL_FLOOR = 0.97
-PRECISION_FLOOR = 0.90  # target 0.95 (rc-6fg)
+PRECISION_FLOOR = 0.95  # rc-6fg ceiling met
 
 
 @pytest.fixture(autouse=True)

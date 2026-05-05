@@ -9,8 +9,7 @@
 # Each section is tagged with a `signal:` class — the underlying defense
 # that prevents detection on that class of prompt. A regression in class N
 # fails the lines under that section's signal, which makes the failing
-# defense visible at a glance. Today's 6 known FPs all live under
-# `signal: kebab-non-secret-rhs` (rc-wk5).
+# defense visible at a glance.
 #
 # Each prompt is scanned in isolation: the loader splits on lines and
 # scans each non-blank, non-comment line individually. Cross-line
@@ -86,8 +85,9 @@ list every env var name we read at startup
 # Identifier matches a credential keyword (api_key, secret, token, …)
 # but the RHS is a short kebab/snake-case identifier (X-Api-Key,
 # ordered_set, aws-default, public, opaque, argon2id) — clearly a config
-# value, not a credential. THE 6 KNOWN FPs LIVE HERE (rc-wk5). Future
-# regressions in this class show up as count growth from 6.
+# value, not a credential. Closed by rc-wk5 via the
+# looksLikeIdentifierConfig RHS gate (identifier-shape + length<12 +
+# ≤1 digit). A regression here puts these lines back over the floor.
 # ──────────────────────────────────────────────────────────────────────
 api_key_header_name=X-Api-Key
 auth_token_lifetime_seconds=86400
