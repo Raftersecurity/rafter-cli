@@ -749,25 +749,28 @@ function installAiderRead(root: string): boolean {
   return true;
 }
 
-function installSkillsTo(skillsDir: string): void {
-  if (!fs.existsSync(skillsDir)) {
-    fs.mkdirSync(skillsDir, { recursive: true });
+// Copies an entire skill source directory (SKILL.md + any subfolders like docs/)
+// into the destination. Without this, `docs/` reference material referenced from
+// SKILL.md would never reach users — only SKILL.md would.
+function installSkillDir(sourceSkillDir: string, destSkillDir: string, label: string): void {
+  const sourceSkillFile = path.join(sourceSkillDir, "SKILL.md");
+  if (!fs.existsSync(sourceSkillFile)) {
+    console.log(fmt.warning(`${label} skill template not found at ${sourceSkillFile}`));
+    return;
   }
+  fs.mkdirSync(destSkillDir, { recursive: true });
+  fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true });
+  console.log(fmt.success(`Installed ${label} skill to ${destSkillDir}`));
+}
+
+function skillResourceDir(name: string): string {
+  return path.join(__dirname, "..", "..", "..", "resources", "skills", name);
+}
+
+function installSkillsTo(skillsDir: string): void {
+  fs.mkdirSync(skillsDir, { recursive: true });
   for (const skill of AGENT_SKILLS) {
-    const destDir = path.join(skillsDir, skill.name);
-    const destPath = path.join(destDir, "SKILL.md");
-    const srcPath = path.join(
-      __dirname, "..", "..", "..", "resources", "skills", skill.name, "SKILL.md",
-    );
-    if (!fs.existsSync(destDir)) {
-      fs.mkdirSync(destDir, { recursive: true });
-    }
-    if (fs.existsSync(srcPath)) {
-      fs.copyFileSync(srcPath, destPath);
-      console.log(fmt.success(`Installed ${skill.description} skill to ${destPath}`));
-    } else {
-      console.log(fmt.warning(`${skill.description} skill template not found at ${srcPath}`));
-    }
+    installSkillDir(skillResourceDir(skill.name), path.join(skillsDir, skill.name), skill.description);
   }
 }
 
