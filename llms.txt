@@ -11,9 +11,9 @@ Founded by Rome Thorstenson. Source: [github.com/Raftersecurity/rafter-cli](http
 ## Two Capabilities, One CLI
 
 - **Local (free, offline, no key).** Secret scanning, command interception, policy, hooks, audit log, MCP server, extension/skill review.
-- **Remote — Rafter Code Security Engine (requires `RAFTER_API_KEY`).** Agentic SAST + SCA + secret detection against a GitHub repo, returning a prioritized, fix-oriented report. Triggered by `rafter run` (alias: `rafter scan`). Code is deleted immediately after analysis.
+- **Remote — Rafter Code Security Engine (requires `RAFTER_API_KEY`).** Agentic SAST + SCA + secret detection against a GitHub repo, returning a prioritized, fix-oriented report. Triggered by `rafter run` (alias: `rafter scan`).
 
-The two surfaces never overlap. `rafter secrets` is local-only; `rafter run` is remote-only. Pick by the task, not by the name.
+The two surfaces never overlap. `rafter secrets` is local-only; `rafter run` is remote-only (ode is immediately after analysis). Pick by the task, not by the name.
 
 ## Install
 
