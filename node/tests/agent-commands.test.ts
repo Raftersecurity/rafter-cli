@@ -653,6 +653,68 @@ describe("agent verify", () => {
     expect(r.stdout).toContain("Windsurf:");
     expect(r.stdout).toContain("MCP server configured");
   });
+
+  // ── rf-65zg ────────────────────────────────────────────────────────
+
+  it("detects Continue.dev when configured (rf-65zg)", () => {
+    const continueDir = path.join(home, ".continue");
+    fs.mkdirSync(continueDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(continueDir, "config.json"),
+      JSON.stringify({ mcpServers: [{ name: "rafter", command: "rafter" }] }),
+    );
+
+    runCli("agent init", home);
+    const r = runCli("agent verify", home);
+    expect(r.stdout).toContain("Continue.dev:");
+    expect(r.stdout).toContain("MCP server configured");
+  });
+
+  it("detects Aider when RAFTER.md is in read: list (rf-65zg)", () => {
+    fs.writeFileSync(path.join(home, ".aider.conf.yml"), "read:\n  - RAFTER.md\n");
+    fs.writeFileSync(
+      path.join(home, "RAFTER.md"),
+      "<!-- rafter:start -->\n<!-- rafter:end -->\n",
+    );
+
+    runCli("agent init", home);
+    const r = runCli("agent verify", home);
+    expect(r.stdout).toContain("Aider:");
+    expect(r.stdout).toContain("RAFTER.md");
+  });
+
+  it("--json emits structured output with summary (rf-65zg)", () => {
+    runCli("agent init", home);
+    const r = runCli("agent verify --json", home);
+    // Stdout should be a single JSON line.
+    const firstLine = r.stdout.split("\n").find((l) => l.trim().startsWith("{"));
+    expect(firstLine, `expected JSON in stdout, got: ${r.stdout}`).toBeDefined();
+    const payload = JSON.parse(firstLine!);
+    expect(Array.isArray(payload.checks)).toBe(true);
+    expect(payload.summary).toBeDefined();
+    expect(payload.summary.total).toBe(payload.checks.length);
+    // Every check has a status of pass | warn | fail.
+    for (const c of payload.checks) {
+      expect(["pass", "warn", "fail"]).toContain(c.status);
+    }
+  });
+
+  it("--probe runs Claude Code probe end-to-end and records command_intercepted (rf-65zg)", () => {
+    runCli("agent init --with-claude-code", home);
+    const r = runCli("agent verify --probe --json", home);
+    const firstLine = r.stdout.split("\n").find((l) => l.trim().startsWith("{"));
+    expect(firstLine, `expected JSON in stdout, got: ${r.stdout}`).toBeDefined();
+    const payload = JSON.parse(firstLine!);
+    const probeEntry = payload.checks.find((c: any) => c.name === "Claude Code (probe)");
+    expect(probeEntry, "probe check missing").toBeDefined();
+    expect(probeEntry.status, `probe failed: ${probeEntry?.detail}`).toBe("pass");
+
+    // Audit log should have the sentinel.
+    const auditPath = path.join(home, ".rafter", "audit.jsonl");
+    expect(fs.existsSync(auditPath)).toBe(true);
+    const content = fs.readFileSync(auditPath, "utf-8");
+    expect(content).toContain("rafter-probe-");
+  });
 });
 
 // ─── audit helpers (unit tests) ──────────────────────────────────────────────

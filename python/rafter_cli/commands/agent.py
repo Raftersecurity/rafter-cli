@@ -11,6 +11,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 
 import yaml
 from dataclasses import dataclass
@@ -1973,9 +1974,12 @@ def _check_claude_code() -> _CheckResult:
     except (json.JSONDecodeError, OSError) as e:
         return _CheckResult(name, False, f"Cannot read settings: {e}", optional=True)
 
+    # Python install writes an absolute path (/home/foo/bin/rafter hook
+    # pretool), Node writes the bare `rafter hook pretool`. Substring match
+    # accepts both.
     hooks = settings.get("hooks", {}).get("PreToolUse", [])
     has_rafter = any(
-        any(h.get("command") == "rafter hook pretool" for h in (entry.get("hooks") or []))
+        any("rafter hook pretool" in str(h.get("command", "")) for h in (entry.get("hooks") or []))
         for entry in hooks
     )
     if not has_rafter:
@@ -2026,12 +2030,236 @@ def _check_codex() -> _CheckResult:
     return _CheckResult(name, True, f"Skills installed ({home / '.agents' / 'skills'})")
 
 
+def _check_gemini() -> _CheckResult:
+    """Check if Gemini CLI integration is healthy (rf-65zg Python parity)."""
+    name = "Gemini CLI"
+    home = Path.home()
+    gemini_dir = home / ".gemini"
+
+    if not gemini_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-gemini' to enable", optional=True)
+
+    settings_path = gemini_dir / "settings.json"
+    if not settings_path.exists():
+        return _CheckResult(name, False, f"Settings file not found: {settings_path} — run 'rafter agent init --with-gemini'", optional=True)
+
+    try:
+        settings = json.loads(settings_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return _CheckResult(name, False, f"Cannot read settings: {e}", optional=True)
+
+    if not settings.get("mcpServers", {}).get("rafter"):
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-gemini'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
+def _check_cursor() -> _CheckResult:
+    """Check if Cursor integration is healthy (rf-65zg Python parity)."""
+    name = "Cursor"
+    home = Path.home()
+    cursor_dir = home / ".cursor"
+
+    if not cursor_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-cursor' to enable", optional=True)
+
+    mcp_path = cursor_dir / "mcp.json"
+    if not mcp_path.exists():
+        return _CheckResult(name, False, f"MCP config not found: {mcp_path} — run 'rafter agent init --with-cursor'", optional=True)
+
+    try:
+        cfg = json.loads(mcp_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    if not cfg.get("mcpServers", {}).get("rafter"):
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-cursor'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
+def _check_windsurf() -> _CheckResult:
+    """Check if Windsurf integration is healthy (rf-65zg Python parity)."""
+    name = "Windsurf"
+    home = Path.home()
+    windsurf_dir = home / ".codeium" / "windsurf"
+
+    if not windsurf_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-windsurf' to enable", optional=True)
+
+    mcp_path = windsurf_dir / "mcp_config.json"
+    if not mcp_path.exists():
+        return _CheckResult(name, False, f"MCP config not found: {mcp_path} — run 'rafter agent init --with-windsurf'", optional=True)
+
+    try:
+        cfg = json.loads(mcp_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    if not cfg.get("mcpServers", {}).get("rafter"):
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-windsurf'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
+def _check_continue_dev() -> _CheckResult:
+    """Check if Continue.dev integration is healthy (rf-65zg)."""
+    name = "Continue.dev"
+    home = Path.home()
+    continue_dir = home / ".continue"
+
+    if not continue_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-continue' to enable", optional=True)
+
+    config_path = continue_dir / "config.json"
+    if not config_path.exists():
+        return _CheckResult(name, False, f"MCP config not found: {config_path} — run 'rafter agent init --with-continue'", optional=True)
+
+    try:
+        cfg = json.loads(config_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    servers = cfg.get("mcpServers")
+    has_rafter = False
+    if isinstance(servers, list):
+        has_rafter = any(s.get("name") == "rafter" for s in servers if isinstance(s, dict))
+    elif isinstance(servers, dict):
+        has_rafter = "rafter" in servers
+    if not has_rafter:
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-continue'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
+def _check_aider() -> _CheckResult:
+    """Check if Aider integration is healthy (rf-65zg).
+
+    Aider has no platform dir; presence of .aider.conf.yml is the signal. We
+    prefer a project-local config (rf-du2o ships at --local scope too); fall
+    back to ~/.aider.conf.yml.
+    """
+    name = "Aider"
+    home = Path.home()
+    user_conf = home / ".aider.conf.yml"
+    project_conf = Path.cwd() / ".aider.conf.yml"
+
+    conf = project_conf if project_conf.exists() else user_conf if user_conf.exists() else None
+    if conf is None:
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-aider' to enable", optional=True)
+
+    try:
+        raw = conf.read_text()
+    except OSError as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    try:
+        parsed = yaml.safe_load(raw) or {}
+    except yaml.YAMLError:
+        if "RAFTER.md" not in raw:
+            return _CheckResult(name, False, "RAFTER.md not in read: list — run 'rafter agent init --with-aider'", optional=True)
+        return _CheckResult(name, True, "RAFTER.md in read: list (config not strict-YAML)")
+
+    reads = parsed.get("read") if isinstance(parsed, dict) else None
+    read_list: list[str] = []
+    if isinstance(reads, list):
+        read_list = [str(p) for p in reads]
+    elif isinstance(reads, str):
+        read_list = [reads]
+    if "RAFTER.md" not in read_list:
+        return _CheckResult(name, False, f"RAFTER.md not in read: list ({conf}) — run 'rafter agent init --with-aider'", optional=True)
+
+    rafter_md = (project_conf.parent / "RAFTER.md") if conf == project_conf else (user_conf.parent / "RAFTER.md")
+    if not rafter_md.exists():
+        return _CheckResult(name, False, f"RAFTER.md missing at {rafter_md} — run 'rafter agent init --with-aider'", optional=True)
+
+    return _CheckResult(name, True, f"RAFTER.md + read: entry in {conf}")
+
+
+def _probe_claude_code() -> _CheckResult:
+    """Runtime probe of the Claude Code hook integration (rf-65zg).
+
+    Synthesizes a Claude PreToolUse stdin payload, invokes `rafter hook
+    pretool`, and asserts ~/.rafter/audit.jsonl received a
+    `command_intercepted` entry for the unique sentinel command. Catches
+    the rf-luk-style "wrote file but the command never fires" failure
+    without driving Claude Code itself.
+    """
+    name = "Claude Code (probe)"
+    home = Path.home()
+    settings_path = home / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return _CheckResult(name, False, "Not installed — skip", optional=True)
+
+    sentinel = f"rafter-probe-{os.getpid()}-{int(time.time() * 1000)}"
+    probe_command = f"rm -rf /tmp/{sentinel}"
+    payload = json.dumps({
+        "session_id": sentinel,
+        "transcript_path": "",
+        "cwd": str(Path.cwd()),
+        "permission_mode": "default",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": probe_command},
+    })
+
+    audit_path = home / ".rafter" / "audit.jsonl"
+    size_before = audit_path.stat().st_size if audit_path.exists() else 0
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "rafter_cli", "hook", "pretool"],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return _CheckResult(name, False, f"rafter hook pretool failed to spawn: {e}")
+
+    if not audit_path.exists():
+        return _CheckResult(name, False, f"Hook ran but {audit_path} was not created (exit={result.returncode})")
+
+    new_content = audit_path.read_text()[size_before:]
+    hit = False
+    for line in new_content.splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        # Audit logger nests the command under entry.action.command; older
+        # writers may flatten — accept either shape.
+        cmd = str((entry.get("action") or {}).get("command") or entry.get("command") or "")
+        if entry.get("eventType") == "command_intercepted" and sentinel in cmd:
+            hit = True
+            break
+
+    if not hit:
+        return _CheckResult(
+            name,
+            False,
+            f'Probe ran (exit={result.returncode}) but no command_intercepted entry for sentinel "{sentinel}" landed in {audit_path}',
+        )
+
+    return _CheckResult(name, True, f"Probe fired → command_intercepted recorded in {audit_path}")
+
+
 @agent_app.command()
-def verify():
+def verify(
+    json_output: bool = typer.Option(False, "--json", help="Emit results as JSON (one object per check + summary)"),
+    probe: bool = typer.Option(
+        False,
+        "--probe",
+        help=(
+            "Runtime probe: invoke rafter hook commands with synthetic platform-format "
+            "payloads and assert ~/.rafter/audit.jsonl recorded the interception. "
+            "Catches the 'wrote file but never fires' failure mode (rf-65zg)."
+        ),
+    ),
+):
     """Check agent security integration status."""
-    rprint(fmt.header("Rafter Agent Verify"))
-    rprint(fmt.divider())
-    rprint()
+    if not json_output:
+        rprint(fmt.header("Rafter Agent Verify"))
+        rprint(fmt.divider())
+        rprint()
 
     results = [
         _check_config(),
@@ -2039,27 +2267,57 @@ def verify():
         _check_claude_code(),
         _check_openclaw(),
         _check_codex(),
+        _check_gemini(),
+        _check_cursor(),
+        _check_windsurf(),
+        _check_continue_dev(),
+        _check_aider(),
     ]
 
-    for r in results:
-        if r.passed:
-            rprint(fmt.success(f"{r.name}: {r.detail}"))
-        elif r.optional:
-            rprint(fmt.warning(f"{r.name}: {r.detail}"))
-        else:
-            rprint(fmt.error(f"{r.name}: FAIL — {r.detail}"))
+    if probe:
+        # Only Claude Code has a probe today (rf-65zg). Codex/Cursor/Gemini
+        # hook payloads can be added in follow-ups.
+        results.append(_probe_claude_code())
 
-    rprint()
     hard_failed = [r for r in results if not r.passed and not r.optional]
     warned = [r for r in results if not r.passed and r.optional]
     passed = [r for r in results if r.passed]
 
-    if not hard_failed:
-        warn_note = f" ({len(warned)} optional check{'s' if len(warned) != 1 else ''} not configured)" if warned else ""
-        rprint(fmt.success(f"{len(passed)}/{len(results)} core checks passed{warn_note}"))
+    if json_output:
+        payload = {
+            "checks": [
+                {
+                    "name": r.name,
+                    "status": "pass" if r.passed else "warn" if r.optional else "fail",
+                    "detail": r.detail,
+                }
+                for r in results
+            ],
+            "summary": {
+                "passed": len(passed),
+                "warned": len(warned),
+                "failed": len(hard_failed),
+                "total": len(results),
+                "probe": probe,
+            },
+        }
+        sys.stdout.write(json.dumps(payload) + "\n")
     else:
-        rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
-    rprint()
+        for r in results:
+            if r.passed:
+                rprint(fmt.success(f"{r.name}: {r.detail}"))
+            elif r.optional:
+                rprint(fmt.warning(f"{r.name}: {r.detail}"))
+            else:
+                rprint(fmt.error(f"{r.name}: FAIL — {r.detail}"))
+
+        rprint()
+        if not hard_failed:
+            warn_note = f" ({len(warned)} optional check{'s' if len(warned) != 1 else ''} not configured)" if warned else ""
+            rprint(fmt.success(f"{len(passed)}/{len(results)} core checks passed{warn_note}"))
+        else:
+            rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
+        rprint()
 
     if hard_failed:
         raise typer.Exit(code=1)
