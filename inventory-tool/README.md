@@ -36,6 +36,19 @@ Plus the storage and fingerprint internals the rest of v1 builds on:
   docker config, gh hosts.yml, Claude settings, and shell rc files.
   Every scanner opens `O_RDONLY`, captures the file's mode in
   `FoundIn.Permissions`, and never writes/renames/deletes the source.
+- `internal/scan`: filesystem walk that honours configured roots and
+  excludes (with `**/X/`, `~/X/`, and basename rules), follows symlinks
+  INTO scan roots only (never out), and detects ancestor cycles.
+  Dispatches recognised paths to the matching scanner and folds
+  observations into the global store via `Upsert`. Scans are
+  zero-mutation by construction.
+- `internal/wizard`: first-run prompt that seeds `ScanConfig.Roots`
+  with `$HOME` (plus any detected `~/code`, `~/git`, … layouts) and
+  pre-loads the spec's default exclude list.
+
+A `--rescan` flag on `trove` triggers a non-interactive scan and
+persists the updated store. The first-run wizard fires automatically
+on launch when `ScanConfig.Roots` is empty.
 
 The file watcher, the keystore reader, and the real UI land in
 subsequent commits.
@@ -68,6 +81,8 @@ inventory-tool/
     ├── browser/       # cross-platform default-browser opener
     ├── storage/       # global.json schema, atomic Load/Save, Upsert/dedup/drift
     ├── fingerprint/   # BLAKE3 dedup ids and value previews
+    ├── scan/          # walk orchestrator + scanner dispatch + symlink/cycle rules
+    ├── wizard/        # first-run scope prompt
     └── scanners/      # per-source secret scanners (read-only)
         ├── file/      # .env, .env.*, .envrc parsers
         ├── config/    # ~/.aws/credentials, .npmrc, docker, gh, claude
