@@ -8,7 +8,7 @@ read-only, annotate-only auditor for secrets that already live in plaintext on
 your machine (`.env*` files, shell rc, agent configs, OS keystores, and source
 code via betterleaks).
 
-## What's in the scaffold
+## What's landed so far
 
 A single Go binary that:
 
@@ -21,8 +21,16 @@ A single Go binary that:
   timeout with no heartbeat
 - Serves a placeholder index page + `/api/status`
 
-That's the whole runtime shape. Scanners, the global JSON store, the file
-watcher, the keystore reader, and the real UI all land in subsequent commits.
+Plus the storage and fingerprint internals the rest of v1 builds on:
+
+- `internal/storage`: typed schema for the `~/.config/trove/global.json`
+  document, atomic `Save` (temp-file + fsync + rename, mode `0600`), `Load`
+  with first-run-as-empty semantics, XDG-aware default path
+- `internal/fingerprint`: `BLAKE3(key_name + 0x00 + value)` cross-source
+  dedup ids and the rune-safe `value_preview` formatter
+
+Scanners, the file watcher, the keystore reader, and the real UI land in
+subsequent commits.
 
 ## Hard rules (carried in from the spec)
 
@@ -49,7 +57,9 @@ inventory-tool/
 ├── cmd/trove/         # entry point
 └── internal/
     ├── server/        # localhost HTTP + token auth + lifecycle watchdog
-    └── browser/       # cross-platform default-browser opener
+    ├── browser/       # cross-platform default-browser opener
+    ├── storage/       # global.json schema + atomic Load/Save
+    └── fingerprint/   # BLAKE3 dedup ids and value previews
 ```
 
 ## Pointers
