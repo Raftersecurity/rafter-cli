@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/docstore"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/eventbus"
 )
 
@@ -22,6 +23,11 @@ type Config struct {
 	// it returns 503 so a misconfigured launch fails loudly instead of
 	// silently dropping drift updates on the floor.
 	Bus *eventbus.Bus
+
+	// Store, if non-nil, is the doc the secrets API reads and mutates.
+	// /api/secrets and friends return 503 when nil; this matches Bus's
+	// "fail loud" pattern for misconfigured launches.
+	Store *docstore.Store
 }
 
 type Server struct {
@@ -31,6 +37,7 @@ type Server struct {
 	url      string
 	life     *lifecycle
 	bus      *eventbus.Bus
+	store    *docstore.Store
 }
 
 // New binds to a random port on 127.0.0.1 and prepares (but does not start)
@@ -52,6 +59,7 @@ func New(cfg Config) (*Server, error) {
 		token:    tok,
 		life:     newLifecycle(cfg.IdleTimeout),
 		bus:      cfg.Bus,
+		store:    cfg.Store,
 	}
 	addr := ln.Addr().(*net.TCPAddr)
 	s.url = fmt.Sprintf("http://127.0.0.1:%d/?token=%s", addr.Port, tok)

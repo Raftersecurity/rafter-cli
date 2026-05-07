@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/browser"
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/docstore"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/eventbus"
 	rescanpkg "github.com/Raftersecurity/rafter-cli/inventory-tool/internal/rescan"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/scan"
@@ -68,8 +69,16 @@ func main() {
 		return
 	}
 
+	store := docstore.New(doc, func(d *storage.Global) error {
+		return storage.Save(storePath, d)
+	})
+
 	bus := eventbus.New()
-	srv, err := server.New(server.Config{IdleTimeout: *idleTimeout, Bus: bus})
+	srv, err := server.New(server.Config{
+		IdleTimeout: *idleTimeout,
+		Bus:         bus,
+		Store:       store,
+	})
 	if err != nil {
 		log.Fatalf("trove: %v", err)
 	}
@@ -106,8 +115,7 @@ func main() {
 	}
 
 	rs, rsErr := rescanpkg.New(rescanpkg.Config{
-		Doc:     doc,
-		Saver:   func(d *storage.Global) error { return storage.Save(storePath, d) },
+		Store:   store,
 		Bus:     bus,
 		Watcher: wch,
 		OnError: func(err error) {

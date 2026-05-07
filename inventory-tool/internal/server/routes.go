@@ -6,38 +6,39 @@ import (
 	"net/http"
 )
 
+// routes wires every URL pattern handled by the trove HTTP surface.
+//
+// Patterns use Go 1.22's method-aware ServeMux so the per-handler
+// method check is enforced declaratively. Unlisted methods on listed
+// paths fall through to 405; unlisted paths fall through to 404.
 func (s *Server) routes(mux *http.ServeMux) {
-	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/api/heartbeat", s.handleHeartbeat)
-	mux.HandleFunc("/api/close", s.handleClose)
-	mux.HandleFunc("/api/status", s.handleStatus)
-	mux.HandleFunc("/api/events", s.handleEvents)
+	mux.HandleFunc("GET /{$}", s.handleIndex)
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+
+	mux.HandleFunc("GET /api/status", s.handleStatus)
+	mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
+	mux.HandleFunc("POST /api/close", s.handleClose)
+	mux.HandleFunc("GET /api/events", s.handleEvents)
+
+	mux.HandleFunc("GET /api/secrets", s.handleSecretsList)
+	mux.HandleFunc("POST /api/secrets/{id}/reveal", s.handleSecretReveal)
+	mux.HandleFunc("PUT /api/secrets/{id}/annotation", s.handleSecretAnnotate)
+	mux.HandleFunc("POST /api/secrets/{id}/stale", s.handleSecretMarkStale)
+	mux.HandleFunc("POST /api/secrets/{id}/rotated", s.handleSecretMarkRotated)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(indexHTML))
+	_, _ = w.Write(indexHTML)
 }
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	s.life.beat()
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	s.life.close()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -101,47 +102,3 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-
-const indexHTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>trove — scaffold</title>
-<style>
-  body { font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; max-width: 640px; margin: 4em auto; padding: 0 1em; color: #222; }
-  code { background: #f3f3f3; padding: 0.1em 0.3em; border-radius: 3px; }
-  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef; font-size: 12px; }
-</style>
-</head>
-<body>
-  <h1>trove <span class="pill">scaffold</span></h1>
-  <p>Runtime shell only. Scanners, storage, UI not implemented yet.</p>
-  <p>Spec: Inventory Tool v1, Rafter 2.0 Secret Management.</p>
-  <p>Status endpoint: <code>GET /api/status</code></p>
-  <h2>Live drift events</h2>
-  <ul id="events" aria-live="polite"></ul>
-  <script>
-    // Heartbeat every 30s so the binary knows the tab is open.
-    setInterval(() => {
-      fetch("/api/heartbeat", { method: "POST", credentials: "same-origin" });
-    }, 30_000);
-    // Close beacon on tab close so the binary exits promptly.
-    window.addEventListener("pagehide", () => {
-      navigator.sendBeacon("/api/close");
-    });
-    // Subscribe to drift events. EventSource auto-reconnects on drop.
-    const list = document.getElementById("events");
-    const es = new EventSource("/api/events");
-    const log = (label, data) => {
-      const li = document.createElement("li");
-      li.textContent = label + ": " + data;
-      list.appendChild(li);
-      while (list.children.length > 100) list.removeChild(list.firstChild);
-    };
-    ["scan_started", "scan_complete",
-     "secret_created", "secret_refreshed", "secret_drifted"
-    ].forEach(t => es.addEventListener(t, e => log(t, e.data)));
-  </script>
-</body>
-</html>
-`

@@ -8,54 +8,51 @@ package rescan
 import (
 	"context"
 	"fmt"
-	"sync"
 
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/docstore"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/eventbus"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/scan"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/storage"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/watch"
 )
 
-// Saver persists the global doc. The whole point of the rescanner is
-// to keep the on-disk store in sync with the live filesystem, so we
-// require a saver rather than letting it default to a no-op.
-type Saver func(*storage.Global) error
-
-// Config wires the rescanner. Doc/Saver/Bus are required; Watcher is
-// optional — passing nil means "construct one from doc.ScanConfig.Roots".
+// Config wires the rescanner. Store/Bus are required; Watcher is
+// optional — passing nil means "construct one from the doc's
+// ScanConfig.Roots".
 type Config struct {
-	Doc     *storage.Global
-	Saver   Saver
+	Store   *docstore.Store
 	Bus     *eventbus.Bus
 	Watcher *watch.Watcher
 	// OnError is called for non-fatal scan or save errors. nil = drop.
 	OnError func(error)
 }
 
-// Rescanner owns the watcher lifecycle. It is safe to call Run exactly
-// once; for re-arming after a config change, build a new Rescanner.
+// Rescanner owns the watcher lifecycle. Concurrency safety with the
+// HTTP handlers comes from the shared docstore.Store; Rescanner
+// itself adds no extra mutex.
 type Rescanner struct {
 	cfg Config
-	mu  sync.Mutex
 }
 
 // New validates cfg and returns a Rescanner. If cfg.Watcher is nil, a
-// fresh watch.Watcher is created against doc.ScanConfig.Roots. Any
-// partial-setup error from the watcher is returned alongside a usable
-// Rescanner so the caller can decide whether to abort or proceed.
+// fresh watch.Watcher is created against the doc's ScanConfig.Roots.
+// Any partial-setup error from the watcher is returned alongside a
+// usable Rescanner so the caller can decide whether to abort or
+// proceed.
 func New(cfg Config) (*Rescanner, error) {
-	if cfg.Doc == nil {
-		return nil, fmt.Errorf("rescan: nil doc")
-	}
-	if cfg.Saver == nil {
-		return nil, fmt.Errorf("rescan: nil saver")
+	if cfg.Store == nil {
+		return nil, fmt.Errorf("rescan: nil store")
 	}
 	if cfg.Bus == nil {
 		return nil, fmt.Errorf("rescan: nil bus")
 	}
 	var partial error
 	if cfg.Watcher == nil {
-		w, err := watch.New(cfg.Doc.ScanConfig.Roots, 0)
+		var roots []string
+		cfg.Store.Read(func(g *storage.Global) {
+			roots = append(roots, g.ScanConfig.Roots...)
+		})
+		w, err := watch.New(roots, 0)
 		if err != nil {
 			partial = err
 		}
@@ -80,20 +77,40 @@ func (r *Rescanner) Run(ctx context.Context) error {
 // Exposed (rather than only-private) so tests and the manual --rescan
 // path can drive it deterministically.
 func (r *Rescanner) Rescan(ctx context.Context) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	r.cfg.Bus.Publish(eventbus.Event{Type: eventbus.EventScanStarted})
 
-	res, err := scan.Run(ctx, r.cfg.Doc, r.cfg.Doc.ScanConfig)
-	if err != nil {
+	var (
+		runErr error
+		// Capture changes + stats outside the lock so we can publish
+		// events without holding it longer than necessary.
+		changes []scan.Change
+		stats   *eventbus.ScanStats
+	)
+	saveErr := r.cfg.Store.Update(func(g *storage.Global) bool {
+		res, err := scan.Run(ctx, g, g.ScanConfig)
+		if err != nil {
+			runErr = err
+			return false
+		}
+		changes = append(changes, res.Changes...)
+		stats = &eventbus.ScanStats{
+			FilesScanned: res.FilesScanned,
+			SecretsFound: res.SecretsFound,
+			Errors:       len(res.Errors),
+		}
+		return true
+	})
+	if runErr != nil {
 		if r.cfg.OnError != nil {
-			r.cfg.OnError(fmt.Errorf("rescan: scan: %w", err))
+			r.cfg.OnError(fmt.Errorf("rescan: scan: %w", runErr))
 		}
 		return
 	}
+	if saveErr != nil && r.cfg.OnError != nil {
+		r.cfg.OnError(fmt.Errorf("rescan: save: %w", saveErr))
+	}
 
-	for _, c := range res.Changes {
+	for _, c := range changes {
 		r.cfg.Bus.Publish(eventbus.Event{
 			Type:     outcomeToEventType(c.Outcome),
 			SecretID: c.SecretID,
@@ -102,19 +119,9 @@ func (r *Rescanner) Rescan(ctx context.Context) {
 		})
 	}
 
-	if err := r.cfg.Saver(r.cfg.Doc); err != nil {
-		if r.cfg.OnError != nil {
-			r.cfg.OnError(fmt.Errorf("rescan: save: %w", err))
-		}
-	}
-
 	r.cfg.Bus.Publish(eventbus.Event{
-		Type: eventbus.EventScanComplete,
-		Stats: &eventbus.ScanStats{
-			FilesScanned: res.FilesScanned,
-			SecretsFound: res.SecretsFound,
-			Errors:       len(res.Errors),
-		},
+		Type:  eventbus.EventScanComplete,
+		Stats: stats,
 	})
 }
 
