@@ -7,13 +7,17 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/browser"
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/eventbus"
+	rescanpkg "github.com/Raftersecurity/rafter-cli/inventory-tool/internal/rescan"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/scan"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/server"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/storage"
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/watch"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/wizard"
 )
 
@@ -64,7 +68,8 @@ func main() {
 		return
 	}
 
-	srv, err := server.New(server.Config{IdleTimeout: *idleTimeout})
+	bus := eventbus.New()
+	srv, err := server.New(server.Config{IdleTimeout: *idleTimeout, Bus: bus})
 	if err != nil {
 		log.Fatalf("trove: %v", err)
 	}
@@ -82,6 +87,43 @@ func main() {
 		defer shCancel()
 		_ = srv.Shutdown(shCtx)
 	}()
+
+	// Bring up the fsnotify drift watcher. A partial-setup error
+	// (e.g. one root unreadable) is logged but doesn't abort: the
+	// other roots are still watched, and the user can fix config
+	// without restarting.
+	// Exclude the trove store directory itself from the watcher; if a
+	// scan root is set to $HOME (the spec default), the store-save
+	// landing under ~/.config/trove would otherwise re-fire the
+	// watcher and loop forever.
+	storeDir := filepath.Dir(storePath)
+	wch, wchErr := watch.NewWithConfig(watch.Config{
+		Roots:       doc.ScanConfig.Roots,
+		ExcludeDirs: []string{storeDir},
+	})
+	if wchErr != nil {
+		fmt.Fprintf(os.Stderr, "trove: watcher partial setup: %v\n", wchErr)
+	}
+
+	rs, rsErr := rescanpkg.New(rescanpkg.Config{
+		Doc:     doc,
+		Saver:   func(d *storage.Global) error { return storage.Save(storePath, d) },
+		Bus:     bus,
+		Watcher: wch,
+		OnError: func(err error) {
+			fmt.Fprintf(os.Stderr, "trove: %v\n", err)
+		},
+	})
+	if rsErr != nil {
+		fmt.Fprintf(os.Stderr, "trove: watcher partial setup: %v\n", rsErr)
+	}
+	if rs != nil {
+		go func() {
+			if err := rs.Run(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "trove: watcher exited: %v\n", err)
+			}
+		}()
+	}
 
 	if !*noOpen {
 		if err := browser.Open(url); err != nil {

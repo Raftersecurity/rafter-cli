@@ -50,8 +50,24 @@ A `--rescan` flag on `trove` triggers a non-interactive scan and
 persists the updated store. The first-run wizard fires automatically
 on launch when `ScanConfig.Roots` is empty.
 
-The file watcher, the keystore reader, and the real UI land in
-subsequent commits.
+- `internal/watch`: fsnotify-backed drift watcher. Registers every
+  directory under each scan root, debounces fs events into a single
+  rescan trigger, and picks up new subdirectories as they appear.
+  The trove store directory is excluded so the save-after-scan write
+  doesn't loop the watcher.
+- `internal/eventbus`: in-process pub/sub broker for drift signals.
+  Slow subscribers have events dropped rather than blocking the
+  publisher, so a stalled browser tab can't stall the rescanner.
+- `internal/rescan`: glues the above together — the watcher's
+  debounced trigger fires a `scan.Run`, per-secret outcomes are
+  published to the bus, and the doc is persisted before
+  `scan_complete`.
+- `/api/events`: server-sent-events stream over the trove HTTP
+  surface. Clients connect with the existing session token, receive
+  `scan_started`, `secret_created`, `secret_refreshed`,
+  `secret_drifted`, and `scan_complete` frames as they happen.
+
+The keystore reader and the real UI land in subsequent commits.
 
 ## Hard rules (carried in from the spec)
 
@@ -77,11 +93,14 @@ make run         # build + launch
 inventory-tool/
 ├── cmd/trove/         # entry point
 └── internal/
-    ├── server/        # localhost HTTP + token auth + lifecycle watchdog
+    ├── server/        # localhost HTTP + token auth + lifecycle watchdog + SSE
     ├── browser/       # cross-platform default-browser opener
     ├── storage/       # global.json schema, atomic Load/Save, Upsert/dedup/drift
     ├── fingerprint/   # BLAKE3 dedup ids and value previews
     ├── scan/          # walk orchestrator + scanner dispatch + symlink/cycle rules
+    ├── watch/         # fsnotify drift watcher + debounced rescan trigger
+    ├── eventbus/      # in-process pub/sub for drift events
+    ├── rescan/        # watch+scan+bus glue for live drift updates
     ├── wizard/        # first-run scope prompt
     └── scanners/      # per-source secret scanners (read-only)
         ├── file/      # .env, .env.*, .envrc parsers
