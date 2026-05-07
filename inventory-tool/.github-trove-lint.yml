@@ -1,0 +1,57 @@
+# trove zero-mutation lint job
+#
+# This file is the staging shape of a GitHub Actions workflow. P7 of
+# the trove rollout will move it to .github/workflows/ once the project
+# is ready to enforce CI status checks. Until then it lives at the repo
+# root with a `.github-` prefix so:
+#   - it's discoverable next to the script it runs
+#   - it doesn't get auto-picked up by Actions before P7 wires it in
+#   - the YAML is identical to the eventual workflow, so the move in
+#     P7 is a `git mv` and a status-check rename, nothing more
+#
+# What it enforces:
+#   1. The static lint (scripts/no-write-syscalls.sh) — banned write
+#      symbols in any read-only package.
+#   2. The dynamic invariant (go test ./tests/invariant/...) — the
+#      same guarantee asserted at runtime against a fixture filesystem.
+#
+# Failure of either job fails the workflow, blocking the merge.
+
+name: trove-lint
+
+on:
+  pull_request:
+    paths:
+      - 'inventory-tool/**'
+      - '.github-trove-lint.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'inventory-tool/**'
+      - '.github-trove-lint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  no-write-syscalls:
+    name: no-write-syscalls (static)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run lint
+        working-directory: inventory-tool
+        run: bash scripts/no-write-syscalls.sh
+
+  invariant-tests:
+    name: invariant tests (runtime)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: inventory-tool/go.sum
+      - name: Run invariant tests
+        working-directory: inventory-tool
+        run: go test -count=1 -timeout 60s ./tests/invariant/...

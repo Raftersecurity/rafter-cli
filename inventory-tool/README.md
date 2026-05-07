@@ -94,6 +94,32 @@ The keystore reader lands in subsequent commits.
 - Source-code scan must NOT land before betterleaks lands in raftercli (bead
   **rc-ksy**).
 
+The zero-mutation rule has two enforcement layers — both must stay green:
+
+- `scripts/no-write-syscalls.sh` is the **static** lint. It rejects banned
+  write symbols (`os.WriteFile`, `os.Remove`, `os.Rename`, etc.) inside the
+  read-only packages: `internal/scanners`, `internal/scan`, `internal/watch`,
+  `internal/rescan`. `os.OpenFile` is allowed only when paired with
+  `os.O_RDONLY` on the same line. Run from `inventory-tool/`:
+  ```bash
+  bash scripts/no-write-syscalls.sh
+  ```
+- `tests/invariant/` is the **runtime** safety net. It builds a synthetic
+  fixture of `.env`, `.env.production`, `.npmrc`, `.zshrc`, and
+  `.aws/credentials`, takes a SHA-256 manifest of the tree, drives the full
+  HTTP API and the real fsnotify-backed rescan pipeline against it, and
+  asserts the manifest is byte-identical afterwards (apart from any mutation
+  the test itself performs). A second test attaches an independent fsnotify
+  watcher to the fixture and asserts trove generates **zero** write events
+  there. A third fuzzes random JSON bodies at every PATCH/POST endpoint and
+  asserts the fixture is still untouched.
+  ```bash
+  go test ./tests/invariant/...
+  ```
+
+`.github-trove-lint.yml` is the staged GitHub Actions workflow that wires
+both layers into CI; P7 promotes it to `.github/workflows/`.
+
 ## Build
 
 ```bash
