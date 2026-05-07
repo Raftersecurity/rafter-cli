@@ -931,13 +931,12 @@ export function createInitCommand(): Command {
       // Resolve opt-in flags (--all enables all detected, --interactive prompts).
       // In --local scope, --all is restricted to platforms that have a project-local
       // config story (claudeCode, codex, gemini, cursor). The rest require user scope.
-      // OpenClaw is excluded from --all (rf-0lig). The platform is highly
-      // active but the current rafter integration shape (a markdown file at
-      // ~/.openclaw/skills/rafter-security.md) doesn't match ClawHub's
-      // actual skill format — installing it under --all ships an integration
-      // we know isn't loaded by the platform. Require explicit
-      // --with-openclaw until a ClawHub-style rebuild lands.
-      let wantOpenClaw = opts.withOpenclaw;
+      // OpenClaw returns to --all in rf-zgwj — the integration was rebuilt
+      // to ship a ClawHub-shaped skill at the canonical workspace path
+      // (~/.openclaw/workspace/skills/rafter-security/SKILL.md), so OpenClaw
+      // actually auto-discovers it now. (User-scope only; --local doesn't
+      // apply since the platform is user-config-driven.)
+      let wantOpenClaw = opts.withOpenclaw || (opts.all && !opts.local);
       let wantClaudeCode = opts.withClaudeCode || opts.all;
       let wantCodex = opts.withCodex || opts.all;
       let wantGemini = opts.withGemini || opts.all;

@@ -1,13 +1,21 @@
 ---
-openclaw:
-  skillKey: rafter-security
-  primaryEnv: RAFTER_API_KEY
-  emoji: 🛡️
-  always: false
-  requires:
-    bins: [rafter]
-version: 0.5.8
-last_updated: 2026-03-04
+name: rafter-security
+description: Security toolkit for AI workflows. Use when scanning code or repos for vulnerabilities, auditing third-party skills/MCPs/agent configs before installing, evaluating shell commands before running them, or generating secure design questions for new features. Provides `rafter run` (remote SAST + SCA, needs RAFTER_API_KEY), `rafter secrets` (offline secrets-only), `rafter agent exec --dry-run` (command-risk classification), and `rafter skill review`.
+version: 0.7.7
+homepage: https://rafter.so
+metadata:
+  openclaw:
+    skillKey: rafter-security
+    primaryEnv: RAFTER_API_KEY
+    emoji: 🛡️
+    always: false
+    requires:
+      bins: [rafter]
+    envVars:
+      - name: RAFTER_API_KEY
+        required: false
+        description: API key for `rafter run` (remote SAST + SCA + agentic deep-dive). Without it, `rafter secrets` (local secrets scan) still works.
+last_updated: 2026-05-07
 ---
 
 # Rafter Security
@@ -65,25 +73,28 @@ rafter secrets <path>
 - Private keys (RSA, SSH, etc.)
 - 21+ secret patterns
 
+**Exit codes:**
+- `0` — clean, no secrets
+- `1` — secrets found
+- `2` — runtime error (path not found, not a git repo)
+
+**JSON output** (`--json`): Array of `{file, matches[]}` objects. Each match contains `pattern` (name, severity, description), `line`, `column`, and `redacted` value. Raw secrets are never included.
+
 ---
 
 ### /rafter-bash
 
-Execute shell command with security validation.
+Explicitly run a command through Rafter's security validator.
 
 ```bash
 rafter agent exec <command>
 ```
 
-**Features:**
-- Blocks destructive commands (rm -rf /, fork bombs)
-- Requires approval for dangerous operations
-- Logs all command attempts
-- Scans staged files before git commits
+**When to use:** Only needed in environments where the `PreToolUse` hook is not installed. When `rafter agent init` has been run, all shell commands are validated automatically — you do not need to route commands through this.
 
 **Risk levels:**
 - **Critical** (blocked): rm -rf /, fork bombs, dd to /dev
-- **High** (approval required): sudo rm, chmod 777, curl|bash
+- **High** (approval required): sudo rm, chmod 777, curl | bash
 - **Medium** (approval on moderate+): sudo, chmod, kill -9
 - **Low** (allowed): npm install, git commit, ls
 

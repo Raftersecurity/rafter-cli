@@ -334,24 +334,30 @@ def _install_global_instructions(
 
 
 def _install_openclaw_skill() -> tuple[bool, str, str, str]:
-    """Install Rafter Security skill to OpenClaw. Returns (ok, source, dest, error)."""
-    home = Path.home()
-    skills_dir = home / ".openclaw" / "skills"
-    dest_path = skills_dir / "rafter-security.md"
+    """Install Rafter Security skill to OpenClaw. Returns (ok, source, dest, error).
 
-    # Find source skill file
+    rf-zgwj: writes to the canonical ClawHub workspace location
+    (~/.openclaw/workspace/skills/rafter-security/SKILL.md) so OpenClaw
+    auto-discovers it at session start. Earlier versions wrote to
+    ~/.openclaw/skills/rafter-security.md — that file is removed on
+    reinstall as a migration step.
+    """
+    home = Path.home()
+    openclaw_root = home / ".openclaw"
+    skill_dir = openclaw_root / "workspace" / "skills" / "rafter-security"
+    dest_path = skill_dir / "SKILL.md"
+    legacy_path = openclaw_root / "skills" / "rafter-security.md"
+
     try:
         ref = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md")
         source_path = str(ref)
     except Exception:
         source_path = "(bundled resource)"
 
-    openclaw_dir = home / ".openclaw"
-    if not openclaw_dir.exists():
-        return False, source_path, str(dest_path), f"OpenClaw not found: {openclaw_dir}"
+    if not openclaw_root.exists():
+        return False, source_path, str(dest_path), f"OpenClaw not found: {openclaw_root}"
 
-    # Ensure skills directory exists (may not exist on fresh OpenClaw installs)
-    skills_dir.mkdir(parents=True, exist_ok=True)
+    skill_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         content = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md").read_text(encoding="utf-8")
@@ -360,9 +366,26 @@ def _install_openclaw_skill() -> tuple[bool, str, str, str]:
 
     try:
         dest_path.write_text(content, encoding="utf-8")
-        return True, source_path, str(dest_path), ""
     except Exception as e:
         return False, source_path, str(dest_path), str(e)
+
+    # Migration: strip the rafter ≤ 0.7.7 install path (rf-zgwj). OpenClaw
+    # never read that path; remove it on reinstall.
+    if legacy_path.exists():
+        try:
+            legacy_path.unlink()
+            rprint(fmt.success(f"Removed legacy {legacy_path} (superseded by ClawHub-shaped skill at {dest_path})"))
+            # Drop the empty parent if we just emptied it.
+            legacy_parent = legacy_path.parent
+            try:
+                if not any(legacy_parent.iterdir()):
+                    legacy_parent.rmdir()
+            except OSError:
+                pass
+        except OSError:
+            pass
+
+    return True, source_path, str(dest_path), ""
 
 
 def _install_codex_skills(root: Path) -> tuple[bool, str]:
@@ -880,13 +903,11 @@ def init(
 
     # Resolve opt-in flags. In --local scope, --all is restricted to platforms with
     # a project-local config story (claudeCode, codex, gemini, cursor).
-    # OpenClaw is excluded from --all (rf-0lig). The platform is highly
-    # active but the current rafter integration shape (a markdown file at
-    # ~/.openclaw/skills/rafter-security.md) doesn't match ClawHub's actual
-    # skill format — installing it under --all ships an integration we know
-    # isn't loaded by the platform. Require explicit --with-openclaw until
-    # a ClawHub-style rebuild lands.
-    want_openclaw = with_openclaw
+    # OpenClaw returns to --all in rf-zgwj — the integration was rebuilt to
+    # ship a ClawHub-shaped skill at the canonical workspace path
+    # (~/.openclaw/workspace/skills/rafter-security/SKILL.md), so OpenClaw
+    # actually auto-discovers it now. (User-scope only.)
+    want_openclaw = with_openclaw or (all_integrations and not local)
     want_claude_code = with_claude_code or all_integrations
     want_codex = with_codex or all_integrations
     want_gemini = with_gemini or all_integrations
@@ -2058,23 +2079,34 @@ def _check_claude_code() -> _CheckResult:
 
 
 def _check_openclaw() -> _CheckResult:
-    """Check if OpenClaw integration is healthy."""
+    """Check if OpenClaw integration is healthy.
+
+    rf-zgwj: ClawHub auto-discovers skills from
+    ~/.openclaw/workspace/skills/<name>/SKILL.md. Detect platform via
+    ~/.openclaw, then verify the skill at the canonical path.
+    """
     name = "OpenClaw"
     home = Path.home()
-    skills_dir = home / ".openclaw" / "skills"
+    openclaw_root = home / ".openclaw"
 
-    if not skills_dir.exists():
+    if not openclaw_root.exists():
         return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-openclaw' to enable", optional=True)
 
-    skill_path = skills_dir / "rafter-security.md"
+    skill_path = openclaw_root / "workspace" / "skills" / "rafter-security" / "SKILL.md"
     if not skill_path.exists():
+        legacy = openclaw_root / "skills" / "rafter-security.md"
+        if legacy.exists():
+            return _CheckResult(
+                name,
+                False,
+                f"Legacy skill at {legacy} (not loaded by OpenClaw) — re-run 'rafter agent init --with-openclaw' to migrate to {skill_path}",
+                optional=True,
+            )
         return _CheckResult(name, False, "Rafter skill not installed — run 'rafter agent init --with-openclaw'", optional=True)
 
-    # Try to extract version from frontmatter
     version = ""
     try:
         content = skill_path.read_text(encoding="utf-8")
-        import re
         match = re.search(r"^version:\s*(.+)$", content, re.MULTILINE)
         if match:
             version = match.group(1).strip()

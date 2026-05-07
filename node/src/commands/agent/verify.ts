@@ -96,6 +96,16 @@ function checkOpenClaw(): CheckResult {
   }
 
   if (!skillManager.isRafterSkillInstalled()) {
+    // rf-zgwj: surface the legacy install path so users on rafter ≤ 0.7.7
+    // know they need to re-run to migrate.
+    if (skillManager.hasLegacyRafterSkill()) {
+      return {
+        name,
+        passed: false,
+        optional: true,
+        detail: `Legacy skill at ${skillManager.getLegacyRafterSkillPath()} (not loaded by OpenClaw) — re-run 'rafter agent init --with-openclaw' to migrate to ${skillManager.getRafterSkillPath()}`,
+      };
+    }
     return { name, passed: false, optional: true, detail: `Rafter skill not installed — run 'rafter agent init --with-openclaw'` };
   }
 

@@ -8,7 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **`rafter agent init --all` no longer installs the OpenClaw integration** (Node + Python, rf-0lig). OpenClaw is highly active in 2026 (top GitHub repository, 4000+ ClawHub skills, regular releases) but the current rafter integration shape — a markdown file dropped at `~/.openclaw/skills/rafter-security.md` — doesn't match ClawHub's actual skill format. `--all` previously installed it unconditionally; that was shipping a wrong-shape no-op to users who hadn't asked for it. Demoted to explicit opt-in: still works via `rafter agent init --with-openclaw`. Filed `rf-zgwj` (P2) for the proper ClawHub-skill rebuild.
+- **OpenClaw integration rebuilt as a ClawHub-shaped skill** (Node + Python, rf-zgwj). Previously rafter wrote a single markdown file at `~/.openclaw/skills/rafter-security.md` — a path OpenClaw never read at runtime. ClawHub auto-discovers skills from `<workspace>/skills/<name>/SKILL.md`. The new install:
+  - Writes `~/.openclaw/workspace/skills/rafter-security/SKILL.md` (the canonical ClawHub path).
+  - Adds the ClawHub-required top-level frontmatter (`name`, `description`, `version`) alongside the existing `openclaw:` runtime block. Now passes ClawHub's metadata schema check.
+  - Migration: reinstall on top of the rafter ≤ 0.7.7 layout strips the legacy `~/.openclaw/skills/rafter-security.md`. Verify warns when only the legacy file is present and prints the migration command.
+  - **Re-included in `--all`**: the rf-0lig demote is reverted because the new shape is what OpenClaw actually consumes. `--with-openclaw` still works as explicit opt-in.
+  - Detection now uses `~/.openclaw/` (the platform root) instead of `~/.openclaw/skills/` (the no-longer-correct skills dir), so a fresh OpenClaw install is detected without needing a hand-installed skill.
+  - Backed by 5 new Node tests in `openclaw-integration.test.ts` (canonical-path install, ClawHub frontmatter, legacy-strip migration, plus the existing 14) and 5 new Python tests in `TestInstallOpenClawSkill` + `TestCheckOpenClaw`. Recipe rewritten to match the new shape.
 
 ### Added
 - **`docs/adding-a-platform.md` onboarding contract** (rf-o329 / rf-cia phase d). Single canonical doc for adding rafter integration to a new agent CLI / IDE: 5-question pre-flight (hooks, skills, instruction file, MCP, sub-agent), file-by-file checklist across both impls, decision tree per integration shape, dual-impl rule, verification gate (file-presence tests + `agent verify --probe`), and a worked example for a fictional "Cleo" platform. Documents known exceptions (OpenClaw category mismatch, Aider's read-only-context-only shape, no-hook-surface platforms). Linked from README "Documentation".
