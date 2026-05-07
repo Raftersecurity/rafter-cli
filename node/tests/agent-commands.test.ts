@@ -204,6 +204,14 @@ describe("agent init", () => {
     expect(cfg.agent.riskLevel).toBe("moderate");
   });
 
+  it("legacy --with-gitleaks alias is accepted (does not error out)", () => {
+    // Don't actually download — just confirm Commander accepts the option.
+    // Use --help to short-circuit before any action handler runs.
+    const r = runCli("agent init --with-gitleaks --help", home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).not.toMatch(/unknown option/i);
+  });
+
   it("creates bin and patterns directories", () => {
     runCli("agent init", home);
     expect(fs.existsSync(path.join(home, ".rafter", "bin"))).toBe(true);
@@ -393,6 +401,17 @@ describe("agent scan", () => {
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.length).toBeGreaterThan(0);
+  });
+
+  it("accepts legacy --engine gitleaks alias without rejecting as invalid", () => {
+    // gitleaks is no longer the engine name — betterleaks is — but the
+    // legacy spelling is preserved as an alias to avoid breaking existing
+    // configs/scripts. Should not exit 2 ("Invalid engine") at validation.
+    const f = path.join(tmpDir, "clean.txt");
+    fs.writeFileSync(f, "nothing\n");
+    const r = runCli(`agent scan ${f} --engine gitleaks --quiet`, home);
+    expect(r.exitCode).not.toBe(2);
+    expect(r.stderr).not.toMatch(/Invalid engine/i);
   });
 });
 
@@ -607,6 +626,17 @@ describe("agent status", () => {
     runCli('agent exec "echo test"', home);
     const r = runCli("agent status", home);
     expect(r.stdout).toContain("Total events:");
+  });
+
+  it("surfaces a legacy gitleaks install with an upgrade hint", () => {
+    runCli("agent init", home);
+    // Drop a fake legacy gitleaks binary in ~/.rafter/bin/gitleaks.
+    const binDir = path.join(home, ".rafter", "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, "gitleaks"), "#!/bin/sh\necho fake\n", { mode: 0o755 });
+    const r = runCli("agent status", home);
+    expect(r.stdout).toMatch(/legacy gitleaks/i);
+    expect(r.stdout).toMatch(/update-betterleaks/i);
   });
 });
 

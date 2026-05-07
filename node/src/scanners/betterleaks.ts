@@ -9,6 +9,11 @@ import path from "path";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Subset of betterleaks JSON report fields we actually consume.
+ * Git-history-only fields (Commit, Author, Email, Date, Message) are absent
+ * when scanning with the `dir` subcommand, so they're typed optional.
+ */
 interface BetterleaksResult {
   Description: string;
   StartLine: number;
@@ -18,16 +23,16 @@ interface BetterleaksResult {
   Match: string;
   Secret: string;
   File: string;
-  SymlinkFile: string;
-  Commit: string;
-  Entropy: number;
-  Author: string;
-  Email: string;
-  Date: string;
-  Message: string;
+  SymlinkFile?: string;
+  Commit?: string;
+  Entropy?: number;
+  Author?: string;
+  Email?: string;
+  Date?: string;
+  Message?: string;
   Tags: string[];
   RuleID: string;
-  Fingerprint: string;
+  Fingerprint?: string;
 }
 
 export interface BetterleaksScanResult {

@@ -348,6 +348,20 @@ describe("BinaryManager downloadBetterleaks error handling", () => {
 
     vi.restoreAllMocks();
   });
+
+  it("rejects malformed --version (URL injection guard)", async () => {
+    const bm = new BinaryManager();
+    // Should reject before any platform check / network call.
+    await expect(
+      bm.downloadBetterleaks(undefined, "1.1.2/../evil")
+    ).rejects.toThrow(/Invalid betterleaks version/);
+    await expect(
+      bm.downloadBetterleaks(undefined, "../etc/passwd")
+    ).rejects.toThrow(/Invalid betterleaks version/);
+    await expect(
+      bm.downloadBetterleaks(undefined, "1.1.2 && rm -rf /")
+    ).rejects.toThrow(/Invalid betterleaks version/);
+  });
 });
 
 // ── SHA256 computation ──────────────────────────────────────────────
