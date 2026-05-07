@@ -41,6 +41,27 @@ jobs:
           fi
           echo "Versions match: $NODE_VERSION"
 
+      - name: Ensure ClawHub skill version matches package version
+        # rf-zgwj — the SKILL.md frontmatter version is what ClawHub publishes
+        # under. Drift here would silently ship a stale version on the next
+        # `clawhub skill publish` (publish.yml). Both the Node and Python
+        # resource copies must match the package version exactly.
+        run: |
+          PACKAGE_VERSION="${{ steps.node-version.outputs.VERSION }}"
+          for skill_file in node/resources/rafter-security-skill.md python/rafter_cli/resources/rafter-security-skill.md; do
+            SKILL_VERSION=$(sed -n 's/^version: *\(.*\)$/\1/p' "$skill_file" | head -1 | tr -d ' ')
+            if [ -z "$SKILL_VERSION" ]; then
+              echo "FAIL: $skill_file has no top-level 'version:' field"
+              exit 1
+            fi
+            if [ "$SKILL_VERSION" != "$PACKAGE_VERSION" ]; then
+              echo "FAIL: $skill_file version=$SKILL_VERSION but package=$PACKAGE_VERSION"
+              echo "Update the version: line in $skill_file to match."
+              exit 1
+            fi
+            echo "OK: $skill_file version matches ($SKILL_VERSION)"
+          done
+
       - name: Check CHANGELOG updated
         run: |
           VERSION="${{ steps.node-version.outputs.VERSION }}"
