@@ -1,0 +1,12 @@
+{
+  "auths": {
+    "https://index.docker.io/v1/": {
+      "auth": "ZGVtby11c2VyOmZha2UtcGFzc3dvcmQ="
+    },
+    "ghcr.io": {
+      "auth": "Z2hjci11c2VyOmZha2UtcGFzc3dvcmQ=",
+      "identitytoken": "ghcr-identity-token-fake-12345"
+    }
+  },
+  "credsStore": "desktop"
+}

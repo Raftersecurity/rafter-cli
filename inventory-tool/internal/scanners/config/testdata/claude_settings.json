@@ -1,0 +1,12 @@
+{
+  "apiKeyHelper": "/usr/local/bin/get-anthropic-key.sh",
+  "model": "claude-opus-4-7",
+  "anthropicApiKey": "sk-ant-api03-FakeKeyForFixturesOnly0000",
+  "env": {
+    "OPENAI_API_KEY": "sk-fake-openai-key-for-fixtures-0000",
+    "SOME_NORMAL_VAR": "not-a-secret"
+  },
+  "permissions": {
+    "allow": ["Bash(ls:*)"]
+  }
+}
