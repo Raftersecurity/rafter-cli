@@ -36,6 +36,22 @@ type Result struct {
 	// continues past each one. A truly fatal error (e.g. nil doc) is
 	// returned from Run instead.
 	Errors []error
+
+	// Changes is the per-secret outcome list emitted by Upsert during
+	// this Run, in scan order. The drift watcher uses this to publish
+	// SSE events; CLI callers ignore it.
+	Changes []Change
+}
+
+// Change is the per-secret summary of one Upsert during a scan. It
+// mirrors storage.UpsertResult but copies the immutable fields so a
+// subsequent Upsert (which may reslice g.Secrets) cannot invalidate
+// data the watcher pipeline is about to publish.
+type Change struct {
+	Outcome  storage.Outcome
+	SecretID string
+	KeyName  string
+	Path     string
 }
 
 // Run walks every root in cfg, scans recognised files, and writes

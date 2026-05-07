@@ -142,13 +142,21 @@ func walkOne(
 		return
 	}
 	for _, fs := range found {
-		doc.Upsert(storage.Upsertable{
+		out := doc.Upsert(storage.Upsertable{
 			KeyName: fs.KeyName,
 			Value:   fs.Value,
 			Found:   fs.Source,
 			Now:     now,
 		})
 		r.SecretsFound++
+		if out.Secret != nil {
+			r.Changes = append(r.Changes, Change{
+				Outcome:  out.Outcome,
+				SecretID: out.Secret.ID,
+				KeyName:  out.Secret.KeyName,
+				Path:     fs.Source.Path,
+			})
+		}
 	}
 }
 

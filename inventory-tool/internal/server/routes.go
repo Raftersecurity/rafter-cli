@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -10,6 +11,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/heartbeat", s.handleHeartbeat)
 	mux.HandleFunc("/api/close", s.handleClose)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/events", s.handleEvents)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +50,58 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleEvents is the Server-Sent Events stream for drift updates.
+// The connection is held open until the client disconnects or the
+// server shuts down; events flow as `data: {json}\n\n` frames.
+//
+// SSE was chosen over WebSocket because every event is server→client
+// and the browser's native EventSource handles auto-reconnect with
+// no library code. CSP-wise it's a same-origin GET, no upgrade dance.
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if s.bus == nil {
+		http.Error(w, "event bus not configured", http.StatusServiceUnavailable)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Comment frame nudges proxies to flush the response head and gives
+	// the browser EventSource a definite "stream is open" signal.
+	_, _ = fmt.Fprintf(w, ": ok\n\n")
+	flusher.Flush()
+
+	ctx := r.Context()
+	ch, _ := s.bus.Subscribe(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			payload, err := json.Marshal(ev)
+			if err != nil {
+				continue
+			}
+			// One frame per event. The "event:" line lets clients use
+			// addEventListener(<type>, ...) to route by Type without
+			// parsing the JSON envelope.
+			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, payload); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
 const indexHTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -64,6 +118,8 @@ const indexHTML = `<!doctype html>
   <p>Runtime shell only. Scanners, storage, UI not implemented yet.</p>
   <p>Spec: Inventory Tool v1, Rafter 2.0 Secret Management.</p>
   <p>Status endpoint: <code>GET /api/status</code></p>
+  <h2>Live drift events</h2>
+  <ul id="events" aria-live="polite"></ul>
   <script>
     // Heartbeat every 30s so the binary knows the tab is open.
     setInterval(() => {
@@ -73,6 +129,18 @@ const indexHTML = `<!doctype html>
     window.addEventListener("pagehide", () => {
       navigator.sendBeacon("/api/close");
     });
+    // Subscribe to drift events. EventSource auto-reconnects on drop.
+    const list = document.getElementById("events");
+    const es = new EventSource("/api/events");
+    const log = (label, data) => {
+      const li = document.createElement("li");
+      li.textContent = label + ": " + data;
+      list.appendChild(li);
+      while (list.children.length > 100) list.removeChild(list.firstChild);
+    };
+    ["scan_started", "scan_complete",
+     "secret_created", "secret_refreshed", "secret_drifted"
+    ].forEach(t => es.addEventListener(t, e => log(t, e.data)));
   </script>
 </body>
 </html>
