@@ -53,11 +53,11 @@ func TestAWSCredentials_INI(t *testing.T) {
 
 	// Two profiles × (2 mandatory fields + 1 optional session token in default)
 	wantValues := map[string]string{
-		"default.aws_access_key_id":      "AKIAIOSFODNN7EXAMPLE",
-		"default.aws_secret_access_key":  "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-		"default.aws_session_token":      "FQoGZXIvYXdzEMK//FAKETOKEN",
-		"work.aws_access_key_id":         "AKIAWORKEXAMPLE0000",
-		"work.aws_secret_access_key":     "WorkSecretAccessKeyExampleValue000000000",
+		"default.aws_access_key_id":     "AKIAIOSFODNN7EXAMPLE",
+		"default.aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		"default.aws_session_token":     "FQoGZXIvYXdzEMK//FAKETOKEN",
+		"work.aws_access_key_id":        "AKIAWORKEXAMPLE0000",
+		"work.aws_secret_access_key":    "WorkSecretAccessKeyExampleValue000000000",
 	}
 	for k, want := range wantValues {
 		got := pickFound(t, out, k)
@@ -81,8 +81,8 @@ func TestNpmrc_AuthToken(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"//registry.npmjs.org/:_authToken":  "npm_FakeToken123abc456def789ghi",
-		"//npm.pkg.github.com/:_authToken":  "ghp_FakeGithubPackagesToken000",
+		"//registry.npmjs.org/:_authToken": "npm_FakeToken123abc456def789ghi",
+		"//npm.pkg.github.com/:_authToken": "ghp_FakeGithubPackagesToken000",
 	}
 	for k, v := range want {
 		got := pickFound(t, out, k)
@@ -124,7 +124,7 @@ func TestGhHosts_OAuthToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"github.com.oauth_token":     "gho_FakeGithubOAuthToken000abc123def456",
+		"github.com.oauth_token":      "gho_FakeGithubOAuthToken000abc123def456",
 		"ghe.example.com.oauth_token": "gho_FakeEnterpriseToken99988877766",
 	}
 	for k, v := range want {
@@ -151,9 +151,9 @@ func TestClaudeSettings_APIKeyHelper(t *testing.T) {
 	// Top-level apiKeyHelper plus token-bearing field names anywhere
 	// in the document.
 	must := map[string]string{
-		"apiKeyHelper":             "/usr/local/bin/get-anthropic-key.sh",
-		"anthropicApiKey":          "sk-ant-api03-FakeKeyForFixturesOnly0000",
-		"env.OPENAI_API_KEY":       "sk-fake-openai-key-for-fixtures-0000",
+		"apiKeyHelper":       "/usr/local/bin/get-anthropic-key.sh",
+		"anthropicApiKey":    "sk-ant-api03-FakeKeyForFixturesOnly0000",
+		"env.OPENAI_API_KEY": "sk-fake-openai-key-for-fixtures-0000",
 	}
 	for k, v := range must {
 		got := pickFound(t, out, k)
