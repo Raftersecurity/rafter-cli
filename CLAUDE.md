@@ -32,7 +32,7 @@ cd python && poetry install && pytest
 │   │   │   ├── audit-logger.ts         # JSONL audit trail
 │   │   │   └── config-manager.ts       # .rafter.yml + global config
 │   │   └── scanners/
-│   │       ├── gitleaks.ts             # Gitleaks binary integration
+│   │       ├── betterleaks.ts          # Betterleaks binary integration
 │   │       ├── secret-patterns.ts      # DEFAULT_SECRET_PATTERNS array (21+ patterns)
 │   │       └── regex-scanner.ts        # RegexScanner class (imports secret-patterns)
 │   └── tests/               # Vitest test files
@@ -40,7 +40,7 @@ cd python && poetry install && pytest
 │   ├── rafter_cli/
 │   │   ├── commands/        # CLI commands (typer)
 │   │   ├── core/            # Mirrors node/src/core/
-│   │   └── scanners/        # secret_patterns.py + regex_scanner.py + gitleaks.py
+│   │   └── scanners/        # secret_patterns.py + regex_scanner.py + betterleaks.py
 │   └── tests/               # pytest test files
 ├── shared-docs/             # Canonical specs (both implementations follow these)
 │   └── CLI_SPEC.md          # Output contracts, exit codes, JSON schemas
@@ -58,7 +58,7 @@ cd python && poetry install && pytest
 
 **Risk classification**: Commands are classified into 4 tiers (critical/high/medium/low) by pattern matching in `command-interceptor.ts`. Policy files (`.rafter.yml`) can override defaults.
 
-**Secret scanning**: Dual-engine — tries Gitleaks binary first (higher accuracy), falls back to built-in regex patterns (21+ patterns, zero dependencies). Deterministic for a given version.
+**Secret scanning**: Dual-engine — tries Betterleaks binary first (higher accuracy), falls back to built-in regex patterns (21+ patterns, zero dependencies). Deterministic for a given version. Betterleaks is the gitleaks successor maintained by the original gitleaks authors; the legacy `--engine gitleaks` and `--with-gitleaks` flags still work as aliases.
 
 **MCP server**: `rafter mcp serve` exposes 4 tools (`scan_secrets`, `evaluate_command`, `read_audit_log`, `get_config`) and 2 resources (`rafter://config`, `rafter://policy`) over stdio.
 
