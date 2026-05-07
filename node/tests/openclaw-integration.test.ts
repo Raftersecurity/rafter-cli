@@ -64,45 +64,47 @@ describe("OpenClaw Integration", () => {
     cleanupDir(testHomeDir);
   });
 
-  // ── 1. Skill installation ─────────────────────────────────────────
+  // ── 1. Skill installation (rf-zgwj — ClawHub-shaped) ─────────────
+  //
+  // Per docs.openclaw.ai/tools/skills, OpenClaw auto-discovers skills from
+  // <workspace>/skills/<name>/SKILL.md. Default workspace is
+  // ~/.openclaw/workspace/. Earlier rafter versions wrote to
+  // ~/.openclaw/skills/rafter-security.md (a path OpenClaw never read).
+  // Migrated in rf-zgwj.
+
+  const SKILL_DIR_REL = path.join(".openclaw", "workspace", "skills", "rafter-security");
+  const SKILL_FILE_REL = path.join(SKILL_DIR_REL, "SKILL.md");
+  const LEGACY_SKILL_REL = path.join(".openclaw", "skills", "rafter-security.md");
 
   describe("Skill installation (--with-openclaw)", () => {
-    it("should create rafter-security.md in ~/.openclaw/skills/", () => {
+    it("writes SKILL.md at the canonical workspace path", () => {
       fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
 
       const result = runCli("agent init --with-openclaw", testHomeDir);
       expect(result.exitCode).toBe(0);
 
-      const skillPath = path.join(
-        testHomeDir,
-        ".openclaw",
-        "skills",
-        "rafter-security.md"
-      );
+      const skillPath = path.join(testHomeDir, SKILL_FILE_REL);
       expect(fs.existsSync(skillPath)).toBe(true);
     });
 
-    it("skill should contain valid YAML frontmatter", () => {
+    it("skill SKILL.md contains required ClawHub frontmatter", () => {
       fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
       runCli("agent init --with-openclaw", testHomeDir);
 
       const skillContent = fs.readFileSync(
-        path.join(
-          testHomeDir,
-          ".openclaw",
-          "skills",
-          "rafter-security.md"
-        ),
-        "utf-8"
+        path.join(testHomeDir, SKILL_FILE_REL),
+        "utf-8",
       );
       expect(skillContent).toMatch(/^---\n/);
-      // OpenClaw uses openclaw.skillKey instead of name:
+      // ClawHub-required top-level fields (rf-zgwj).
+      expect(skillContent).toMatch(/^name:\s*rafter-security/m);
+      expect(skillContent).toMatch(/^description:\s+/m);
+      expect(skillContent).toMatch(/^version:\s+/m);
+      // OpenClaw runtime metadata block (under metadata.openclaw or alias).
       expect(skillContent).toContain("openclaw:");
       expect(skillContent).toContain("skillKey: rafter-security");
-      expect(skillContent).toContain("version:");
-      // Should end with proper content after frontmatter
       const parts = skillContent.split("---");
-      expect(parts.length).toBeGreaterThanOrEqual(3); // before, frontmatter, content
+      expect(parts.length).toBeGreaterThanOrEqual(3);
     });
 
     it("skill should contain rafter CLI references", () => {
@@ -110,28 +112,37 @@ describe("OpenClaw Integration", () => {
       runCli("agent init --with-openclaw", testHomeDir);
 
       const skillContent = fs.readFileSync(
-        path.join(
-          testHomeDir,
-          ".openclaw",
-          "skills",
-          "rafter-security.md"
-        ),
-        "utf-8"
+        path.join(testHomeDir, SKILL_FILE_REL),
+        "utf-8",
       );
       expect(skillContent).toContain("rafter");
     });
 
-    it("should create skills directory if it does not exist", () => {
-      // Only create .openclaw, not .openclaw/skills
+    it("creates the workspace skills dir tree if absent", () => {
+      // Only create .openclaw — not the workspace/skills/<name>/ tree.
       fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
 
       runCli("agent init --with-openclaw", testHomeDir);
 
       expect(
-        fs.statSync(
-          path.join(testHomeDir, ".openclaw", "skills")
-        ).isDirectory()
+        fs.statSync(path.join(testHomeDir, SKILL_DIR_REL)).isDirectory(),
       ).toBe(true);
+    });
+
+    it("strips the rafter ≤ 0.7.7 legacy file on reinstall (rf-zgwj migration)", () => {
+      // Pre-stage the legacy file as if from an old install.
+      fs.mkdirSync(path.join(testHomeDir, ".openclaw", "skills"), { recursive: true });
+      fs.writeFileSync(
+        path.join(testHomeDir, LEGACY_SKILL_REL),
+        "---\nname: rafter-security\nversion: 0.6.0\n---\n# Old content\n",
+      );
+
+      runCli("agent init --with-openclaw", testHomeDir);
+
+      // New shape exists at the canonical path.
+      expect(fs.existsSync(path.join(testHomeDir, SKILL_FILE_REL))).toBe(true);
+      // Legacy file removed.
+      expect(fs.existsSync(path.join(testHomeDir, LEGACY_SKILL_REL))).toBe(false);
     });
   });
 
@@ -150,16 +161,7 @@ describe("OpenClaw Integration", () => {
     it("should NOT install skill when ~/.openclaw is absent", () => {
       runCli("agent init --with-openclaw", testHomeDir);
 
-      expect(
-        fs.existsSync(
-          path.join(
-            testHomeDir,
-            ".openclaw",
-            "skills",
-            "rafter-security.md"
-          )
-        )
-      ).toBe(false);
+      expect(fs.existsSync(path.join(testHomeDir, SKILL_FILE_REL))).toBe(false);
     });
 
     it("should detect .openclaw and install when requested", () => {
@@ -182,27 +184,16 @@ describe("OpenClaw Integration", () => {
 
       runCli("agent init --with-openclaw", testHomeDir);
       const firstContent = fs.readFileSync(
-        path.join(
-          testHomeDir,
-          ".openclaw",
-          "skills",
-          "rafter-security.md"
-        ),
-        "utf-8"
+        path.join(testHomeDir, SKILL_FILE_REL),
+        "utf-8",
       );
 
       runCli("agent init --with-openclaw", testHomeDir);
       const secondContent = fs.readFileSync(
-        path.join(
-          testHomeDir,
-          ".openclaw",
-          "skills",
-          "rafter-security.md"
-        ),
-        "utf-8"
+        path.join(testHomeDir, SKILL_FILE_REL),
+        "utf-8",
       );
 
-      // Content should be identical after re-install
       expect(secondContent).toBe(firstContent);
     });
 
@@ -226,16 +217,7 @@ describe("OpenClaw Integration", () => {
       const result = runCli("agent init", testHomeDir);
       expect(result.exitCode).toBe(0);
 
-      expect(
-        fs.existsSync(
-          path.join(
-            testHomeDir,
-            ".openclaw",
-            "skills",
-            "rafter-security.md"
-          )
-        )
-      ).toBe(false);
+      expect(fs.existsSync(path.join(testHomeDir, SKILL_FILE_REL))).toBe(false);
     });
   });
 
@@ -299,25 +281,35 @@ describe("OpenClaw Integration", () => {
       );
     });
 
-    it("getOpenClawSkillsDir returns correct path", async () => {
+    it("getOpenClawSkillsDir returns the canonical workspace skills path (rf-zgwj)", async () => {
       const { SkillManager } = await import("../src/utils/skill-manager.js");
       const sm = new SkillManager();
 
-      const expected = path.join(os.homedir(), ".openclaw", "skills");
+      const expected = path.join(os.homedir(), ".openclaw", "workspace", "skills");
       expect(sm.getOpenClawSkillsDir()).toBe(expected);
     });
 
-    it("getRafterSkillPath returns correct path", async () => {
+    it("getRafterSkillPath returns the SKILL.md inside the skill directory (rf-zgwj)", async () => {
       const { SkillManager } = await import("../src/utils/skill-manager.js");
       const sm = new SkillManager();
 
       const expected = path.join(
         os.homedir(),
         ".openclaw",
+        "workspace",
         "skills",
-        "rafter-security.md"
+        "rafter-security",
+        "SKILL.md",
       );
       expect(sm.getRafterSkillPath()).toBe(expected);
+    });
+
+    it("getLegacyRafterSkillPath returns the rafter ≤ 0.7.7 path (rf-zgwj migration)", async () => {
+      const { SkillManager } = await import("../src/utils/skill-manager.js");
+      const sm = new SkillManager();
+
+      const expected = path.join(os.homedir(), ".openclaw", "skills", "rafter-security.md");
+      expect(sm.getLegacyRafterSkillPath()).toBe(expected);
     });
   });
 
@@ -334,17 +326,8 @@ describe("OpenClaw Integration", () => {
       );
       expect(result.exitCode).toBe(0);
 
-      // OpenClaw skill
-      expect(
-        fs.existsSync(
-          path.join(
-            testHomeDir,
-            ".openclaw",
-            "skills",
-            "rafter-security.md"
-          )
-        )
-      ).toBe(true);
+      // OpenClaw skill at the canonical ClawHub path (rf-zgwj).
+      expect(fs.existsSync(path.join(testHomeDir, SKILL_FILE_REL))).toBe(true);
 
       // Codex skills
       expect(
@@ -370,17 +353,8 @@ describe("OpenClaw Integration", () => {
       );
       expect(result.exitCode).toBe(0);
 
-      // OpenClaw skill
-      expect(
-        fs.existsSync(
-          path.join(
-            testHomeDir,
-            ".openclaw",
-            "skills",
-            "rafter-security.md"
-          )
-        )
-      ).toBe(true);
+      // OpenClaw skill at the canonical ClawHub path (rf-zgwj).
+      expect(fs.existsSync(path.join(testHomeDir, SKILL_FILE_REL))).toBe(true);
 
       // Gemini MCP
       expect(

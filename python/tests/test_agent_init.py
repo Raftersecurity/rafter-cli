@@ -524,7 +524,16 @@ from rafter_cli.commands.agent import _install_openclaw_skill
 
 
 class TestInstallOpenClawSkill:
-    def test_installs_skill_when_openclaw_dir_exists(self, tmp_path, monkeypatch):
+    """rf-zgwj — OpenClaw integration writes a ClawHub-shaped skill at the
+    canonical workspace path, not the legacy single-file path."""
+
+    def _canonical_path(self, root: Path) -> Path:
+        return root / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md"
+
+    def _legacy_path(self, root: Path) -> Path:
+        return root / ".openclaw" / "skills" / "rafter-security.md"
+
+    def test_installs_skill_at_clawhub_workspace_path(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         (tmp_path / ".openclaw").mkdir()
 
@@ -532,42 +541,56 @@ class TestInstallOpenClawSkill:
         assert ok, f"Expected success, got error: {error}"
         assert error == ""
 
-        dest_path = tmp_path / ".openclaw" / "skills" / "rafter-security.md"
-        assert dest_path.exists(), "Skill file should be installed"
-        assert dest_path.read_text().strip(), "Skill file should not be empty"
+        dest_path = self._canonical_path(tmp_path)
+        assert dest_path.exists(), "SKILL.md should be installed at canonical path"
+        assert dest_path.read_text().strip(), "SKILL.md should not be empty"
         assert str(dest_path) == dest
 
     def test_fails_when_openclaw_dir_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        # Do NOT create .openclaw directory
 
         ok, source, dest, error = _install_openclaw_skill()
-        assert not ok, "Should fail when .openclaw directory is missing"
+        assert not ok, "Should fail when .openclaw is missing"
         assert "not found" in error.lower()
 
-    def test_overwrites_existing_skill(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        openclaw_dir = tmp_path / ".openclaw"
-        openclaw_dir.mkdir()
-        skills_dir = openclaw_dir / "skills"
-        skills_dir.mkdir()
-        (skills_dir / "rafter-security.md").write_text("old content")
-
-        ok, source, dest, error = _install_openclaw_skill()
-        assert ok
-
-        content = (skills_dir / "rafter-security.md").read_text()
-        assert content != "old content", "Skill should be updated on reinstall"
-
-    def test_creates_skills_subdirectory(self, tmp_path, monkeypatch):
+    def test_overwrites_existing_clawhub_skill(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         (tmp_path / ".openclaw").mkdir()
-        # skills/ subdirectory does NOT exist yet
+        skill_dir = self._canonical_path(tmp_path).parent
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("old content")
 
         ok, source, dest, error = _install_openclaw_skill()
         assert ok
 
-        assert (tmp_path / ".openclaw" / "skills").is_dir(), "Should create skills subdirectory"
+        content = self._canonical_path(tmp_path).read_text()
+        assert content != "old content", "SKILL.md should be updated on reinstall"
+
+    def test_creates_workspace_skills_directory_tree(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".openclaw").mkdir()
+
+        ok, source, dest, error = _install_openclaw_skill()
+        assert ok
+
+        assert self._canonical_path(tmp_path).parent.is_dir(), (
+            "Should create workspace/skills/rafter-security/"
+        )
+
+    def test_strips_legacy_skill_on_reinstall(self, tmp_path, monkeypatch):
+        """rf-zgwj migration: the rafter ≤ 0.7.7 install left a file at
+        ~/.openclaw/skills/rafter-security.md. OpenClaw never read it.
+        Reinstall removes it and writes the canonical ClawHub-shaped skill."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        legacy = self._legacy_path(tmp_path)
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("---\nname: rafter-security\nversion: 0.6.0\n---\n# old\n")
+
+        ok, _src, _dest, _err = _install_openclaw_skill()
+        assert ok
+
+        assert self._canonical_path(tmp_path).exists()
+        assert not legacy.exists(), "Legacy file should be stripped on reinstall"
 
 
 # ── Codex AGENTS.md instruction file tests ──────────────────────────
