@@ -30,24 +30,56 @@ export class SkillManager {
   }
 
   /**
-   * Get path to OpenClaw skills directory
+   * Path to the OpenClaw root directory.
+   *
+   * The platform's presence is the platform root, not the skills dir — a
+   * fresh OpenClaw install has no skills written yet.
    */
-  getOpenClawSkillsDir(): string {
-    return path.join(os.homedir(), ".openclaw", "skills");
+  getOpenClawRoot(): string {
+    return path.join(os.homedir(), ".openclaw");
   }
 
   /**
-   * Get path to Rafter Security skill in OpenClaw
+   * Path to the OpenClaw default-workspace skills directory.
+   *
+   * Per docs.openclaw.ai/tools/skills, OpenClaw auto-discovers skills from
+   * `<workspace>/skills/<skill>/SKILL.md`. The default workspace lives at
+   * `~/.openclaw/workspace/`. ClawHub-style skills are directories
+   * containing a `SKILL.md`, not loose markdown files.
+   *
+   * Earlier rafter versions wrote to `~/.openclaw/skills/<name>.md` — that
+   * path was never read by OpenClaw at runtime. Migrated in rf-zgwj.
+   */
+  getOpenClawSkillsDir(): string {
+    return path.join(this.getOpenClawRoot(), "workspace", "skills");
+  }
+
+  /**
+   * Path to the Rafter Security skill directory (containing SKILL.md).
+   */
+  getRafterSkillDir(): string {
+    return path.join(this.getOpenClawSkillsDir(), "rafter-security");
+  }
+
+  /**
+   * Path to the Rafter Security SKILL.md file.
    */
   getRafterSkillPath(): string {
-    return path.join(this.getOpenClawSkillsDir(), "rafter-security.md");
+    return path.join(this.getRafterSkillDir(), "SKILL.md");
+  }
+
+  /**
+   * Legacy install path used by rafter ≤ 0.7.7. Removed on reinstall.
+   */
+  getLegacyRafterSkillPath(): string {
+    return path.join(this.getOpenClawRoot(), "skills", "rafter-security.md");
   }
 
   /**
    * Get path to old skill-auditor (for migration)
    */
   getOldSkillAuditorPath(): string {
-    return path.join(this.getOpenClawSkillsDir(), "rafter-skill-auditor.md");
+    return path.join(this.getOpenClawRoot(), "skills", "rafter-skill-auditor.md");
   }
 
   /**
@@ -66,10 +98,22 @@ export class SkillManager {
   }
 
   /**
-   * Check if OpenClaw is installed (skills directory exists)
+   * Check if OpenClaw is installed.
+   *
+   * Detects the platform root (~/.openclaw) — a fresh OpenClaw install
+   * doesn't have the workspace skills dir yet, so checking the skills dir
+   * gave a false-negative until at least one skill was written.
    */
   isOpenClawInstalled(): boolean {
-    return fs.existsSync(this.getOpenClawSkillsDir());
+    return fs.existsSync(this.getOpenClawRoot());
+  }
+
+  /**
+   * Check if the legacy skill file from rafter ≤ 0.7.7 is present.
+   * Used to print a migration note on reinstall (rf-zgwj).
+   */
+  hasLegacyRafterSkill(): boolean {
+    return fs.existsSync(this.getLegacyRafterSkillPath());
   }
 
   /**
@@ -173,6 +217,34 @@ export class SkillManager {
   }
 
   /**
+   * Remove the rafter ≤ 0.7.7 install path
+   * (`~/.openclaw/skills/rafter-security.md`). OpenClaw never read that
+   * path; we strip it on reinstall so the user is left with just the
+   * canonical ClawHub-shaped skill (rf-zgwj migration).
+   */
+  removeLegacyRafterSkill(): void {
+    const legacy = this.getLegacyRafterSkillPath();
+    if (!fs.existsSync(legacy)) return;
+    try {
+      fs.unlinkSync(legacy);
+      console.log(`✓ Removed legacy ${legacy} (superseded by ClawHub-shaped skill at ${this.getRafterSkillPath()})`);
+    } catch {
+      /* best-effort */
+    }
+    // Clean up empty parent if we just emptied it. Don't touch dirs that
+    // contain other user content.
+    const legacyDir = path.dirname(legacy);
+    try {
+      const entries = fs.readdirSync(legacyDir);
+      if (entries.length === 0) {
+        fs.rmdirSync(legacyDir);
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  /**
    * Migrate from old separate skill-auditor to combined Rafter Security skill
    */
   async migrateOldSkill(): Promise<void> {
@@ -188,28 +260,36 @@ export class SkillManager {
   }
 
   /**
-   * Install Rafter Security skill to OpenClaw (verbose result)
+   * Install Rafter Security skill to OpenClaw (verbose result).
+   *
+   * rf-zgwj: writes to the canonical ClawHub workspace location
+   * (`~/.openclaw/workspace/skills/rafter-security/SKILL.md`) so OpenClaw
+   * auto-discovers it at session start. Earlier versions wrote to
+   * `~/.openclaw/skills/rafter-security.md` — that file is removed on
+   * reinstall as a migration step.
    */
   async installRafterSkillVerbose(force: boolean = false): Promise<SkillInstallResult> {
     const skillPath = this.getRafterSkillPath();
     const sourcePath = this.getRafterSkillSourcePath();
 
-    // Check if ~/.openclaw exists (the parent dir), not just the skills subdir
-    const openclawDir = path.join(os.homedir(), ".openclaw");
-    if (!fs.existsSync(openclawDir)) {
-      return { ok: false, sourcePath, destPath: skillPath, error: `OpenClaw not found: ${openclawDir}` };
+    if (!this.isOpenClawInstalled()) {
+      return { ok: false, sourcePath, destPath: skillPath, error: `OpenClaw not found: ${this.getOpenClawRoot()}` };
     }
 
     // Check if already installed and not forcing
     if (!force && this.isRafterSkillInstalled()) {
+      // Still strip the legacy file on reinstall — a previous rafter
+      // version may have left it behind alongside a hand-installed skill.
+      this.removeLegacyRafterSkill();
       return { ok: true, sourcePath, destPath: skillPath };
     }
 
     try {
-      // Ensure skills directory exists (may not exist on fresh OpenClaw installs)
-      const skillsDir = this.getOpenClawSkillsDir();
-      if (!fs.existsSync(skillsDir)) {
-        fs.mkdirSync(skillsDir, { recursive: true });
+      // Ensure the skill dir (NOT just the parent skills dir) exists; the
+      // ClawHub format is one directory per skill.
+      const skillDir = this.getRafterSkillDir();
+      if (!fs.existsSync(skillDir)) {
+        fs.mkdirSync(skillDir, { recursive: true });
       }
 
       // Verify source exists
@@ -220,6 +300,9 @@ export class SkillManager {
       // Copy skill file
       const sourceContent = fs.readFileSync(sourcePath, "utf-8");
       fs.writeFileSync(skillPath, sourceContent, "utf-8");
+
+      // Migration: strip the rafter ≤ 0.7.7 install path (rf-zgwj).
+      this.removeLegacyRafterSkill();
 
       // Update config
       const version = this.getSourceVersion();

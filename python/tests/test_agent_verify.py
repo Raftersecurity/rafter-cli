@@ -154,28 +154,45 @@ class TestCheckClaudeCode:
 # ── _check_openclaw ───────────────────────────────────────────────────
 
 class TestCheckOpenClaw:
+    """rf-zgwj — OpenClaw verify reads the ClawHub-shaped skill at
+    ~/.openclaw/workspace/skills/rafter-security/SKILL.md."""
+
     def test_warns_when_openclaw_not_installed(self, tmp_path):
         with patch("pathlib.Path.home", return_value=tmp_path):
             r = _check_openclaw()
         assert not r.passed
-        assert r.optional  # must be optional
+        assert r.optional
         assert "Not detected" in r.detail
 
     def test_warns_when_rafter_skill_missing(self, tmp_path):
-        (tmp_path / ".openclaw" / "skills").mkdir(parents=True)
+        (tmp_path / ".openclaw").mkdir()
         with patch("pathlib.Path.home", return_value=tmp_path):
             r = _check_openclaw()
         assert not r.passed
         assert r.optional
+        assert "not installed" in r.detail.lower()
 
-    def test_passes_when_skill_installed(self, tmp_path):
-        skills_dir = tmp_path / ".openclaw" / "skills"
-        skills_dir.mkdir(parents=True)
-        (skills_dir / "rafter-security.md").write_text("# Rafter\nversion: 0.5.2\n")
+    def test_warns_with_legacy_path_when_only_legacy_present(self, tmp_path):
+        legacy_dir = tmp_path / ".openclaw" / "skills"
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "rafter-security.md").write_text("# old\nversion: 0.6.0\n")
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            r = _check_openclaw()
+        assert not r.passed
+        assert r.optional
+        assert "Legacy skill" in r.detail
+        assert "rafter-security/SKILL.md" in r.detail
+
+    def test_passes_when_clawhub_skill_installed(self, tmp_path):
+        skill_dir = tmp_path / ".openclaw" / "workspace" / "skills" / "rafter-security"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: rafter-security\nversion: 0.7.7\n---\n# body\n"
+        )
         with patch("pathlib.Path.home", return_value=tmp_path):
             r = _check_openclaw()
         assert r.passed
-        assert "0.5.2" in r.detail
+        assert "0.7.7" in r.detail
 
 
 # ── _check_codex ─────────────────────────────────────────────────────
