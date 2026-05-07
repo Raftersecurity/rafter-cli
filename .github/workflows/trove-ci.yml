@@ -1,0 +1,137 @@
+name: trove CI
+
+# CI for the trove inventory-tool (Go, lives under ./inventory-tool).
+#
+# Scope: runs only when files under inventory-tool/ or this workflow itself
+# change. The Node/Python CLI has its own pipelines — we don't want a
+# trove change to wait on (or mask) those, and vice versa.
+#
+# Three jobs:
+#   - lint:       gofmt cleanliness + go vet + the zero-mutation lint
+#                 (scripts/no-write-syscalls.sh) — fast, fail-fast.
+#   - test:       go test ./... on ubuntu and macos, go 1.22 and 1.23.
+#                 macOS catches darwin-only fsnotify behaviour the watcher
+#                 relies on; 1.23 catches forward-compat issues before the
+#                 toolchain bump.
+#   - build:      cross-compile the four release targets the Makefile
+#                 produces (darwin/amd64, darwin/arm64, linux/amd64,
+#                 linux/arm64) with the same -trimpath/-ldflags '-s -w'
+#                 flags. The Makefile is the source of truth; we shell out
+#                 to `make build-all` so the workflow can't drift from it.
+
+on:
+  push:
+    paths:
+      - 'inventory-tool/**'
+      - '.github/workflows/trove-ci.yml'
+  pull_request:
+    paths:
+      - 'inventory-tool/**'
+      - '.github/workflows/trove-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Every step runs from inventory-tool/ unless it overrides this. The
+    # go.mod, Makefile, and scripts/ all live here.
+    working-directory: ./inventory-tool
+
+jobs:
+  lint:
+    name: lint (gofmt, vet, no-write-syscalls)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          # The cache key needs the module file from inventory-tool/, not
+          # the repo root (which has no go.mod).
+          cache-dependency-path: inventory-tool/go.sum
+
+      - name: gofmt
+        # gofmt -l prints unformatted files and exits 0 either way.
+        # Treating non-empty output as failure is the standard idiom.
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "gofmt: the following files are not formatted:" >&2
+            echo "$out" >&2
+            echo >&2
+            echo "Run 'gofmt -w .' from inventory-tool/ to fix." >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: no-write-syscalls (zero-mutation lint)
+        run: bash scripts/no-write-syscalls.sh
+
+  test:
+    name: test (${{ matrix.os }}, go ${{ matrix.go }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go: ['1.22', '1.23']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: inventory-tool/go.sum
+
+      - name: go test
+        # -race surfaces the docstore mutex contract under concurrent
+        # rescan + HTTP handler load. -count=1 disables the test cache so
+        # CI never reports a stale pass.
+        run: go test -race -count=1 ./...
+
+  build:
+    name: build matrix (cross-compile)
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: inventory-tool/go.sum
+
+      - name: build-all (darwin/linux × amd64/arm64)
+        # Deferring to the Makefile keeps CI and `make build-all` in
+        # lockstep — flag drift between the two has bitten us before.
+        run: make build-all
+
+      - name: verify all four artifacts exist
+        run: |
+          for target in \
+            trove-darwin-amd64 \
+            trove-darwin-arm64 \
+            trove-linux-amd64 \
+            trove-linux-arm64; do
+            if [ ! -s "dist/$target" ]; then
+              echo "build: missing or empty artifact: dist/$target" >&2
+              exit 1
+            fi
+          done
+          ls -lh dist/
+
+      - name: upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trove-binaries
+          path: inventory-tool/dist/trove-*
+          # Short retention: this isn't a release artifact path. It's
+          # here so a failed downstream job (or a human) can grab the
+          # exact binary CI built without re-running the matrix.
+          retention-days: 7

@@ -6,10 +6,10 @@ import (
 )
 
 const (
-	cookieName  = "trove_session"
-	headerName  = "X-Trove-Token"
-	queryParam  = "token"
-	cookiePath  = "/"
+	cookieName   = "trove_session"
+	headerName   = "X-Trove-Token"
+	queryParam   = "token"
+	cookiePath   = "/"
 	cookieMaxAge = 0 // session cookie
 )
 
