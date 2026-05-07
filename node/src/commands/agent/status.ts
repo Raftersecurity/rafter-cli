@@ -34,6 +34,7 @@ export function createStatusCommand(): Command {
 
       // --- Betterleaks ---
       const localBetterleaks = path.join(getBinDir(), "betterleaks");
+      const localGitleaks = path.join(getBinDir(), "gitleaks");
       let betterleaksStatus = "not found — run: rafter agent init --with-betterleaks";
       try {
         const ver = execSync("betterleaks version", { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
@@ -46,6 +47,9 @@ export function createStatusCommand(): Command {
           } catch {
             betterleaksStatus = `${localBetterleaks} (binary error)`;
           }
+        } else if (fs.existsSync(localGitleaks)) {
+          // Legacy install — surface a hint instead of "not found"
+          betterleaksStatus = `not found — legacy gitleaks at ${localGitleaks}; run: rafter agent update-betterleaks`;
         }
       }
       console.log(`Betterleaks:  ${betterleaksStatus}`);

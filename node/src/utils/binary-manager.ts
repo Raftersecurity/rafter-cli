@@ -12,6 +12,27 @@ const execAsync = promisify(exec);
 
 export const BETTERLEAKS_VERSION = "1.1.2";
 
+/**
+ * Pinned SHA256 hashes for the bundled BETTERLEAKS_VERSION release artifacts.
+ * Pulled from the upstream `checksums.txt` at the time of vendoring; checked into
+ * source so we don't trust the release-page `checksums.txt` to authenticate
+ * itself when installing the version we ship by default.
+ *
+ * Whenever you bump BETTERLEAKS_VERSION, refresh these by downloading the new
+ * release's `checksums.txt`.
+ */
+const BETTERLEAKS_PINNED_HASHES: Record<string, string> = {
+  "betterleaks_1.1.2_darwin_arm64.tar.gz": "19cc2298463d7abf0aee9a03208a49834ab2e6f8411781c4cf1360827b3ded36",
+  "betterleaks_1.1.2_darwin_x64.tar.gz":   "d51904879ed77fabad157ec67cb8dd3f5548e975fc32082e6abc30a026e1bec1",
+  "betterleaks_1.1.2_linux_arm64.tar.gz":  "4d73dcbfe38c38878ee69e82b5aaa539398be8331f62b5640eb214ac04d890b0",
+  "betterleaks_1.1.2_linux_x64.tar.gz":    "648c20617178065072ff1791d383192a62c911d9b4427f0426a8c504a6d9ddad",
+  "betterleaks_1.1.2_windows_arm64.zip":   "8cc28068e8c7846027bc9b14f1c200cce64ff4198f90be5730510631c59f23ce",
+  "betterleaks_1.1.2_windows_x64.zip":     "e149c86d00fb99cce8d87def2cd1ff046c6889a0e912007d44668df5980cea3a",
+};
+
+/** Allowed shape for the optional `--version` flag (prevents URL injection). */
+const VERSION_PATTERN = /^[A-Za-z0-9._-]+$/;
+
 export class BinaryManager {
   private binDir: string;
 
@@ -161,6 +182,10 @@ export class BinaryManager {
   async downloadBetterleaks(onProgress?: (message: string) => void, version: string = BETTERLEAKS_VERSION): Promise<void> {
     const log = onProgress || (() => {});
 
+    if (!VERSION_PATTERN.test(version)) {
+      throw new Error(`Invalid betterleaks version: ${version} (expected /^[A-Za-z0-9._-]+$/)`);
+    }
+
     if (!this.isPlatformSupported()) {
       throw new Error(`Betterleaks not available for ${process.platform}/${process.arch}`);
     }
@@ -292,15 +317,27 @@ export class BinaryManager {
       const file = fs.createWriteStream(dest);
 
       https.get(url, (response) => {
+        // Follow redirects (HTTPS only — never follow into http://, mailto:, etc.)
         if (response.statusCode === 302 || response.statusCode === 301) {
           const redirectUrl = response.headers.location;
           if (!redirectUrl) {
             reject(new Error("Redirect without location"));
             return;
           }
+          let resolved: URL;
+          try {
+            resolved = new URL(redirectUrl, url);
+          } catch {
+            reject(new Error(`Invalid redirect URL: ${redirectUrl}`));
+            return;
+          }
+          if (resolved.protocol !== "https:") {
+            reject(new Error(`Refusing redirect to non-https URL: ${resolved.toString()}`));
+            return;
+          }
           file.close();
           fs.unlinkSync(dest);
-          this.downloadFile(redirectUrl, dest, onProgress).then(resolve).catch(reject);
+          this.downloadFile(resolved.toString(), dest, onProgress).then(resolve).catch(reject);
           return;
         }
 
@@ -345,10 +382,12 @@ export class BinaryManager {
   }
 
   /**
-   * Verify downloaded archive checksum against official betterleaks checksums file.
+   * Verify downloaded archive checksum.
    *
-   * Betterleaks publishes a single `checksums.txt` per release (unlike gitleaks which
-   * names it `gitleaks_<version>_checksums.txt`).
+   * For BETTERLEAKS_VERSION (the version we vendor), use the SHA256 pinned in
+   * source — this prevents a release-page compromise from re-signing both the
+   * tarball and `checksums.txt`. For an explicit `--version <other>`, fall back
+   * to the upstream `checksums.txt` (TOFU at that moment).
    */
   private async verifyChecksum(
     archivePath: string,
@@ -357,35 +396,45 @@ export class BinaryManager {
     version: string,
     _onProgress: (msg: string) => void
   ): Promise<void> {
-    const checksumsUrl = `https://github.com/betterleaks/betterleaks/releases/download/v${version}/checksums.txt`;
-    const checksumsPath = path.join(this.binDir, "checksums.txt");
+    const archiveFilename = platform === "windows"
+      ? `betterleaks_${version}_windows_${arch}.zip`
+      : `betterleaks_${version}_${platform}_${arch}.tar.gz`;
 
-    try {
-      await this.downloadFile(checksumsUrl, checksumsPath, () => {});
-      const checksumsContent = fs.readFileSync(checksumsPath, "utf-8");
+    let expectedHash: string | null = null;
+    let source = "";
 
-      const archiveFilename = platform === "windows"
-        ? `betterleaks_${version}_windows_${arch}.zip`
-        : `betterleaks_${version}_${platform}_${arch}.tar.gz`;
-
-      const expectedHash = this.parseChecksumFile(checksumsContent, archiveFilename);
-      if (!expectedHash) {
-        throw new Error(`Checksum not found for ${archiveFilename} in checksums file`);
+    if (version === BETTERLEAKS_VERSION && BETTERLEAKS_PINNED_HASHES[archiveFilename]) {
+      expectedHash = BETTERLEAKS_PINNED_HASHES[archiveFilename];
+      source = "pinned in source";
+    } else {
+      // Fetch the release's `checksums.txt`. This is TOFU — use the pinned table
+      // for the bundled default to avoid trusting the release page on every install.
+      const checksumsUrl = `https://github.com/betterleaks/betterleaks/releases/download/v${version}/checksums.txt`;
+      const checksumsPath = path.join(this.binDir, "checksums.txt");
+      try {
+        await this.downloadFile(checksumsUrl, checksumsPath, () => {});
+        const checksumsContent = fs.readFileSync(checksumsPath, "utf-8");
+        expectedHash = this.parseChecksumFile(checksumsContent, archiveFilename);
+      } finally {
+        if (fs.existsSync(checksumsPath)) {
+          fs.unlinkSync(checksumsPath);
+        }
       }
+      source = "release checksums.txt";
+    }
 
-      const actualHash = await this.computeSHA256(archivePath);
-      if (actualHash !== expectedHash) {
-        throw new Error(
-          `Checksum mismatch for ${archiveFilename}:\n` +
-          `  Expected: ${expectedHash}\n` +
-          `  Actual:   ${actualHash}\n` +
-          `The downloaded file may be corrupted or tampered with.`
-        );
-      }
-    } finally {
-      if (fs.existsSync(checksumsPath)) {
-        fs.unlinkSync(checksumsPath);
-      }
+    if (!expectedHash) {
+      throw new Error(`Checksum not found for ${archiveFilename} (${source})`);
+    }
+
+    const actualHash = await this.computeSHA256(archivePath);
+    if (actualHash !== expectedHash) {
+      throw new Error(
+        `Checksum mismatch for ${archiveFilename} (${source}):\n` +
+        `  Expected: ${expectedHash}\n` +
+        `  Actual:   ${actualHash}\n` +
+        `The downloaded file may be corrupted or tampered with.`
+      );
     }
   }
 
@@ -453,15 +502,32 @@ export class BinaryManager {
 
   /**
    * Extract tarball — binary only, strip packaging extras (LICENSE, README.md).
+   *
+   * Rejects symlinks, hardlinks, and absolute / `..` paths defensively. node-tar
+   * blocks `..`/absolute by default, but symlinks/hardlinks would otherwise pass
+   * the basename filter and let a malicious release point `betterleaks` at e.g.
+   * `~/.ssh/authorized_keys`, which the subsequent `chmod +x` would then mode-flip.
    */
   private async extractTarball(tarballPath: string): Promise<void> {
     await tar.extract({
       file: tarballPath,
       cwd: this.binDir,
-      filter: (p: string) => {
+      filter: (p: string, entry: any) => {
         const base = path.basename(p);
-        return base === "betterleaks" || base === "betterleaks.exe";
+        if (base !== "betterleaks" && base !== "betterleaks.exe") return false;
+        if (entry?.type && entry.type !== "File") return false;
+        return true;
       },
     });
+
+    // Post-extract belt-and-suspenders: ensure what landed is a regular file.
+    const installedPath = this.getBetterleaksPath();
+    if (fs.existsSync(installedPath)) {
+      const st = fs.lstatSync(installedPath);
+      if (!st.isFile() || st.isSymbolicLink()) {
+        fs.unlinkSync(installedPath);
+        throw new Error("Extracted betterleaks is not a regular file (symlink or special); aborting.");
+      }
+    }
   }
 }

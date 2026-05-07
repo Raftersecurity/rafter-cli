@@ -37,33 +37,58 @@ export interface BetterleaksScanResult {
 
 export class BetterleaksScanner {
   private binaryManager: BinaryManager;
+  private resolvedPath: string | null = null;
 
   constructor() {
     this.binaryManager = new BinaryManager();
   }
 
-  async isAvailable(): Promise<boolean> {
-    if (!this.binaryManager.isBetterleaksInstalled()) {
-      return false;
+  /**
+   * Resolve the betterleaks binary to use. Prefer the rafter-managed binary at
+   * ~/.rafter/bin/betterleaks; otherwise fall back to one on PATH (e.g. Homebrew).
+   * Cached after first lookup.
+   */
+  private async resolveBinary(): Promise<string | null> {
+    if (this.resolvedPath !== null) return this.resolvedPath || null;
+    if (this.binaryManager.isBetterleaksInstalled()) {
+      const managed = this.binaryManager.getBetterleaksPath();
+      if (await this.binaryManager.verifyBetterleaks()) {
+        this.resolvedPath = managed;
+        return managed;
+      }
     }
-    return await this.binaryManager.verifyBetterleaks();
+    const onPath = this.binaryManager.findBetterleaksOnPath();
+    if (onPath) {
+      const ok = await this.binaryManager.verifyBetterleaksVerbose(onPath);
+      if (ok.ok) {
+        this.resolvedPath = onPath;
+        return onPath;
+      }
+    }
+    this.resolvedPath = "";
+    return null;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return (await this.resolveBinary()) !== null;
   }
 
   /**
    * Scan a single file with Betterleaks (uses `dir` subcommand on a single path).
    */
   async scanFile(filePath: string): Promise<BetterleaksScanResult> {
-    if (!await this.isAvailable()) {
+    const blPath = await this.resolveBinary();
+    if (!blPath) {
       throw new Error("Betterleaks not available");
     }
 
-    const blPath = this.binaryManager.getBetterleaksPath();
     const tmpReport = path.join(os.tmpdir(), `betterleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
 
     try {
+      // `--` ensures a target path beginning with `-` isn't parsed as a flag by betterleaks.
       await execFileAsync(
-        blPath, ["dir", "-f", "json", "--report-path", tmpReport, filePath],
-        { timeout: 30000 }
+        blPath, ["dir", "-f", "json", "--report-path", tmpReport, "--", filePath],
+        { timeout: 60000 }
       );
 
       if (!fs.existsSync(tmpReport)) {
@@ -120,17 +145,18 @@ export class BetterleaksScanner {
    * otherwise scans the filesystem (`betterleaks dir`).
    */
   async scanDirectory(dirPath: string, opts?: { useGit?: boolean }): Promise<BetterleaksScanResult[]> {
-    if (!await this.isAvailable()) {
+    const blPath = await this.resolveBinary();
+    if (!blPath) {
       throw new Error("Betterleaks not available");
     }
 
-    const blPath = this.binaryManager.getBetterleaksPath();
     const tmpReport = path.join(os.tmpdir(), `betterleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
     const subcommand = opts?.useGit ? "git" : "dir";
 
     try {
+      // `--` ensures a target path beginning with `-` isn't parsed as a flag by betterleaks.
       await execFileAsync(
-        blPath, [subcommand, "-f", "json", "--report-path", tmpReport, dirPath],
+        blPath, [subcommand, "-f", "json", "--report-path", tmpReport, "--", dirPath],
         { timeout: 60000 }
       );
 
