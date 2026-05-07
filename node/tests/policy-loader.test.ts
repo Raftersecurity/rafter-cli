@@ -164,6 +164,52 @@ scan:
     expect(stderrSpy.mock.calls.some((c) => String(c[0]).includes("invalid regex"))).toBe(true);
   });
 
+  it("parses ignore rules with paths, rules, and reason", async () => {
+    const yml = `
+ignore:
+  - paths: ["tests/fixtures/**", "*.example.env"]
+    rules: ["AWS Access Key", "Generic API Key"]
+    reason: "test fixtures"
+  - paths: ["docs/**"]
+    reason: "documentation examples"
+`;
+    fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), yml);
+    const policy = await loadPolicyFresh();
+
+    expect(policy!.ignore).toBeDefined();
+    expect(policy!.ignore!.length).toBe(2);
+    expect(policy!.ignore![0].paths).toEqual(["tests/fixtures/**", "*.example.env"]);
+    expect(policy!.ignore![0].rules).toEqual(["AWS Access Key", "Generic API Key"]);
+    expect(policy!.ignore![0].reason).toBe("test fixtures");
+    expect(policy!.ignore![1].rules).toBeUndefined();
+    expect(policy!.ignore![1].reason).toBe("documentation examples");
+  });
+
+  it("ignore: rules without paths are skipped with a warning", async () => {
+    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const yml = `
+ignore:
+  - rules: ["AWS Access Key"]
+  - paths: ["valid/**"]
+    reason: "kept"
+`;
+    fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), yml);
+    const policy = await loadPolicyFresh();
+
+    expect(policy!.ignore!.length).toBe(1);
+    expect(policy!.ignore![0].paths).toEqual(["valid/**"]);
+    expect(stderrSpy.mock.calls.some((c) => String(c[0]).includes("paths"))).toBe(true);
+  });
+
+  it("ignore: empty array results in no ignore section", async () => {
+    const yml = `
+ignore: []
+`;
+    fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), yml);
+    const policy = await loadPolicyFresh();
+    expect(policy!.ignore).toBeUndefined();
+  });
+
   it("warns and strips invalid audit.retention_days (non-number)", async () => {
     const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const yml = `

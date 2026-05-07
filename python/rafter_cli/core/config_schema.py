@@ -34,6 +34,13 @@ class ScanCustomPattern:
 
 
 @dataclass
+class ScanIgnoreRule:
+    paths: list[str] = field(default_factory=list)
+    rules: list[str] | None = None
+    reason: str | None = None
+
+
+@dataclass
 class CommandPolicyConfig:
     mode: CommandPolicyMode = "approve-dangerous"
     blocked_patterns: list[str] = field(
@@ -62,6 +69,7 @@ class NotificationsConfig:
 class ScanConfig:
     exclude_paths: list[str] = field(default_factory=list)
     custom_patterns: list[ScanCustomPattern] = field(default_factory=list)
+    ignore: list[ScanIgnoreRule] = field(default_factory=list)
 
 
 @dataclass

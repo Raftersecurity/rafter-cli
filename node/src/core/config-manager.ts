@@ -289,6 +289,12 @@ export class ConfigManager {
       }
     }
 
+    // Ignore rules — top-level policy key, applied per finding at scan time
+    if (policy.ignore && config.agent) {
+      if (!config.agent.scan) config.agent.scan = {};
+      config.agent.scan.ignore = policy.ignore;
+    }
+
     // Audit settings
     if (policy.audit && config.agent) {
       if (policy.audit.retentionDays != null) {

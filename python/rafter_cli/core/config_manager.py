@@ -238,6 +238,18 @@ class ConfigManager:
                     ScanCustomPattern(**p) for p in scan["custom_patterns"]
                 ]
 
+        if policy.get("ignore"):
+            from .config_schema import ScanIgnoreRule
+
+            config.agent.scan.ignore = [
+                ScanIgnoreRule(
+                    paths=list(r.get("paths", [])),
+                    rules=list(r["rules"]) if r.get("rules") is not None else None,
+                    reason=r.get("reason"),
+                )
+                for r in policy["ignore"]
+            ]
+
         audit = policy.get("audit")
         if audit:
             if audit.get("retention_days") is not None:
@@ -309,6 +321,7 @@ class ConfigManager:
                     ScanCustomPattern(**cls._pick_fields(ScanCustomPattern, p))
                     for p in (agent_raw.get("scan") or {}).get("custom_patterns", (agent_raw.get("scan") or {}).get("customPatterns", []))
                 ],
+                ignore=cls._parse_ignore_rules((agent_raw.get("scan") or {}).get("ignore", [])),
             ),
             components=agent_raw.get("components") or {},
         )
@@ -319,6 +332,27 @@ class ConfigManager:
             backend=backend,
             agent=agent,
         )
+
+    @staticmethod
+    def _parse_ignore_rules(raw_rules) -> list:
+        from .config_schema import ScanIgnoreRule
+
+        if not isinstance(raw_rules, list):
+            return []
+        out = []
+        for r in raw_rules:
+            if not isinstance(r, dict):
+                continue
+            paths = r.get("paths")
+            if not isinstance(paths, list) or not paths:
+                continue
+            rules_list = r.get("rules") if isinstance(r.get("rules"), list) else None
+            out.append(ScanIgnoreRule(
+                paths=[str(p) for p in paths],
+                rules=[str(x) for x in rules_list] if rules_list is not None else None,
+                reason=r.get("reason") if isinstance(r.get("reason"), str) else None,
+            ))
+        return out
 
     @staticmethod
     def _deep_merge(target: dict, source: dict) -> dict:
