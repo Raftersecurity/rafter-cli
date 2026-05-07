@@ -1272,21 +1272,26 @@ def _output_scan_results(
     context: str | None = None,
     format: str = "text",
     exit_on_findings: bool = True,
+    suppressions: list | None = None,
 ) -> None:
+    from ..core.custom_patterns import apply_suppressions
+    suppressions = suppressions or []
+    kept_results, suppressed = apply_suppressions(results, suppressions)
+
     if format == "sarif":
-        _output_sarif(results)
+        _output_sarif(kept_results)
         return
 
     if json_output or format == "json":
-        results_out = [
+        files_out = [
             {"file": r.file, "matches": [
                 {"pattern": {"name": m.pattern.name, "severity": m.pattern.severity, "description": m.pattern.description or ""},
                  "line": m.line, "column": m.column, "redacted": m.redacted}
                 for m in r.matches
             ]}
-            for r in results
+            for r in kept_results
         ]
-        out = {
+        out: dict = {
             "_note": (
                 "Local-only scan: pattern-based detection without agentic-intelligence triage. "
                 "Findings have not been evaluated for context (public exposure, key validity, "
@@ -1295,14 +1300,20 @@ def _output_scan_results(
             ),
             "scan_mode": "local",
             "triage_applied": False,
-            "results": results_out,
+            "results": files_out,
         }
+        if suppressed:
+            from dataclasses import asdict
+            out["_suppressed"] = [asdict(s) for s in suppressed]
         print(json.dumps(out, indent=2))
         if exit_on_findings:
-            raise typer.Exit(code=1 if results else 0)
+            raise typer.Exit(code=1 if kept_results else 0)
         return
 
-    if not results:
+    if suppressed and not quiet:
+        print(f"({len(suppressed)} finding(s) hidden by .rafter.yml)", file=sys.stderr)
+
+    if not kept_results:
         if not quiet:
             msg = f"No secrets detected in {context}" if context else "No secrets detected"
             rprint(f"\n{fmt.success(msg)}\n")
@@ -1310,10 +1321,10 @@ def _output_scan_results(
             raise typer.Exit(code=0)
         return
 
-    rprint(f"\n{fmt.warning(f'Found secrets in {len(results)} file(s):')}\n")
+    rprint(f"\n{fmt.warning(f'Found secrets in {len(kept_results)} file(s):')}\n")
 
     total = 0
-    for r in results:
+    for r in kept_results:
         rprint(f"\n{fmt.info(r.file)}")
         for m in r.matches:
             total += 1
@@ -1324,7 +1335,7 @@ def _output_scan_results(
             rprint(f"     Redacted: {m.redacted}")
             rprint()
 
-    rprint(f"\n{fmt.warning(f'Total: {total} secret(s) detected in {len(results)} file(s)')}\n")
+    rprint(f"\n{fmt.warning(f'Total: {total} secret(s) detected in {len(kept_results)} file(s)')}\n")
 
     if context == "staged files":
         rprint(f"{fmt.error('Commit blocked. Remove secrets before committing.')}\n")
@@ -1343,6 +1354,7 @@ def _watch_and_scan(
     format: str,
     custom_patterns,
     scan_cfg,
+    suppressions: list | None = None,
 ) -> None:
     """Watch a path for changes and re-scan on each change. Ctrl+C exits."""
     try:
@@ -1366,7 +1378,7 @@ def _watch_and_scan(
 
     if initial_results:
         rprint(fmt.warning("\n[Initial scan] Found secrets:"))
-        _output_scan_results(initial_results, json_output, False, format=format, exit_on_findings=False)
+        _output_scan_results(initial_results, json_output, False, format=format, exit_on_findings=False, suppressions=suppressions)
         _log_watch_findings(logger, initial_results)
     elif not quiet:
         rprint(fmt.success("[Initial scan] No secrets detected"))
@@ -1389,7 +1401,7 @@ def _watch_and_scan(
                 print(f"\n[{ts}] Changed: {file_path}", file=sys.stderr)
             results = _scan_file(file_path, eng, custom_patterns)
             if results:
-                _output_scan_results(results, json_output, False, format=format, exit_on_findings=False)
+                _output_scan_results(results, json_output, False, format=format, exit_on_findings=False, suppressions=suppressions)
                 _log_watch_findings(logger, results)
             elif not quiet:
                 rprint(fmt.success("  No secrets detected"))
@@ -1499,6 +1511,9 @@ def scan(
         if scan_cfg.custom_patterns else None
     )
 
+    from ..core.custom_patterns import load_suppressions, policy_ignore_to_suppressions
+    suppressions = policy_ignore_to_suppressions(scan_cfg.ignore) + load_suppressions()
+
     baseline_entries = _load_baseline_entries() if baseline else []
 
     # --diff
@@ -1528,7 +1543,7 @@ def scan(
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
         filtered = _apply_baseline(all_results, baseline_entries)
-        _output_scan_results(filtered, json_output, quiet, f"files changed since {diff}", format=format)
+        _output_scan_results(filtered, json_output, quiet, f"files changed since {diff}", format=format, suppressions=suppressions)
         return
 
     # --staged
@@ -1558,7 +1573,7 @@ def scan(
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
         filtered = _apply_baseline(all_results, baseline_entries)
-        _output_scan_results(filtered, json_output, quiet, "staged files", format=format)
+        _output_scan_results(filtered, json_output, quiet, "staged files", format=format, suppressions=suppressions)
         return
 
     # Default: scan path
@@ -1569,7 +1584,7 @@ def scan(
 
     # --watch
     if watch:
-        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg)
+        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions)
         return
 
     eng = _select_engine(engine, quiet)
@@ -1584,7 +1599,7 @@ def scan(
         results = _scan_file(resolved_path, eng, custom_patterns)
 
     filtered = _apply_baseline(results, baseline_entries)
-    _output_scan_results(filtered, json_output, quiet, format=format)
+    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions)
 
 
 # ── audit ────────────────────────────────────────────────────────────
