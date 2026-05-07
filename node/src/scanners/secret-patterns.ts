@@ -2,7 +2,7 @@ import { Pattern } from "../core/pattern-engine.js";
 
 /**
  * Default secret detection patterns
- * Based on common secret formats and Gitleaks rules
+ * Based on common secret formats and Betterleaks rules
  */
 export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   // AWS

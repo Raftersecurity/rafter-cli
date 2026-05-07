@@ -570,9 +570,9 @@ describe("agent status", () => {
     expect(r.stdout).toContain("minimal");
   });
 
-  it("shows Gitleaks status", () => {
+  it("shows Betterleaks status", () => {
     const r = runCli("agent status", home);
-    expect(r.stdout).toContain("Gitleaks:");
+    expect(r.stdout).toContain("Betterleaks:");
   });
 
   it("shows Claude Code hook status", () => {
@@ -639,7 +639,7 @@ describe("agent verify", () => {
   it("config check passes after init", () => {
     runCli("agent init", home);
     const r = runCli("agent verify", home);
-    // Config should pass now (gitleaks may still fail)
+    // Config should pass now (betterleaks may still fail)
     expect(r.stdout).toContain("Config:");
   });
 

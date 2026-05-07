@@ -13,7 +13,7 @@ from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
 from ..core.config_manager import ConfigManager
 from ..core.docs_loader import fetch_doc, list_docs, resolve_doc_selector
-from ..scanners.gitleaks import GitleaksScanner
+from ..scanners.betterleaks import BetterleaksScanner
 from ..scanners.regex_scanner import RegexScanner
 
 mcp_app = typer.Typer(
@@ -28,12 +28,16 @@ mcp_app = typer.Typer(
 
 def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
     """Scan files or directories for hardcoded secrets."""
-    # Try gitleaks if requested or auto
-    if engine in ("gitleaks", "auto"):
-        gl = GitleaksScanner()
-        if gl.is_available():
+    # "gitleaks" accepted as legacy alias for "betterleaks"
+    if engine == "gitleaks":
+        engine = "betterleaks"
+
+    # Try betterleaks if requested or auto
+    if engine in ("betterleaks", "auto"):
+        bl = BetterleaksScanner()
+        if bl.is_available():
             try:
-                results = gl.scan_directory(path)
+                results = bl.scan_directory(path)
                 return [
                     {
                         "file": r.file,
@@ -50,13 +54,13 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
                     for r in results
                 ]
             except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
-                if engine == "gitleaks":
+                if engine == "betterleaks":
                     raise
-                print(f"rafter: gitleaks scan failed, falling back to patterns: {exc}", file=sys.stderr)
+                print(f"rafter: betterleaks scan failed, falling back to patterns: {exc}", file=sys.stderr)
                 # Fall through to patterns on auto
 
-        elif engine == "gitleaks":
-            raise RuntimeError("Gitleaks not installed")
+        elif engine == "betterleaks":
+            raise RuntimeError("Betterleaks not installed")
 
     # Pattern-based scan
     scanner = RegexScanner()
@@ -192,7 +196,7 @@ def create_mcp_server():
 
         Args:
             path: File or directory path to scan.
-            engine: Scan engine — auto (default), gitleaks, or patterns.
+            engine: Scan engine — auto (default), betterleaks, or patterns. "gitleaks" accepted as legacy alias.
         """
         return json.dumps(handle_scan_secrets(path, engine))
 

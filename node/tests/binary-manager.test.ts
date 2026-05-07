@@ -3,9 +3,9 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import * as tar from "tar";
-import { BinaryManager, GITLEAKS_VERSION } from "../src/utils/binary-manager.js";
+import { BinaryManager, BETTERLEAKS_VERSION } from "../src/utils/binary-manager.js";
 
-// ── Tarball extraction (existing tests) ─────────────────────────────
+// ── Tarball extraction ──────────────────────────────────────────────
 
 describe("BinaryManager extractTarball", () => {
   let tmpDir: string;
@@ -17,17 +17,17 @@ describe("BinaryManager extractTarball", () => {
     binDir = path.join(tmpDir, "bin");
     fs.mkdirSync(binDir, { recursive: true });
 
-    // Create a tarball mimicking gitleaks release: binary + LICENSE + README.md
+    // Create a tarball mimicking betterleaks release: binary + LICENSE + README.md
     const stageDir = path.join(tmpDir, "stage");
     fs.mkdirSync(stageDir);
-    fs.writeFileSync(path.join(stageDir, "gitleaks"), "#!/bin/sh\necho fake", { mode: 0o755 });
+    fs.writeFileSync(path.join(stageDir, "betterleaks"), "#!/bin/sh\necho fake", { mode: 0o755 });
     fs.writeFileSync(path.join(stageDir, "LICENSE"), "MIT License");
-    fs.writeFileSync(path.join(stageDir, "README.md"), "# Gitleaks");
+    fs.writeFileSync(path.join(stageDir, "README.md"), "# Betterleaks");
 
-    tarballPath = path.join(tmpDir, "gitleaks.tar.gz");
+    tarballPath = path.join(tmpDir, "betterleaks.tar.gz");
     tar.create(
       { gzip: true, file: tarballPath, cwd: stageDir, sync: true },
-      ["gitleaks", "LICENSE", "README.md"]
+      ["betterleaks", "LICENSE", "README.md"]
     );
   });
 
@@ -35,8 +35,8 @@ describe("BinaryManager extractTarball", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should extract only the gitleaks binary, not LICENSE or README", async () => {
-    const binaryName = process.platform === "win32" ? "gitleaks.exe" : "gitleaks";
+  it("should extract only the betterleaks binary, not LICENSE or README", async () => {
+    const binaryName = process.platform === "win32" ? "betterleaks.exe" : "betterleaks";
 
     await tar.extract({
       file: tarballPath,
@@ -46,7 +46,7 @@ describe("BinaryManager extractTarball", () => {
     });
 
     const files = fs.readdirSync(binDir);
-    expect(files).toContain("gitleaks");
+    expect(files).toContain("betterleaks");
     expect(files).not.toContain("LICENSE");
     expect(files).not.toContain("README.md");
     expect(files).toHaveLength(1);
@@ -60,7 +60,7 @@ describe("BinaryManager extractTarball", () => {
     });
 
     const files = fs.readdirSync(binDir);
-    expect(files).toContain("gitleaks");
+    expect(files).toContain("betterleaks");
     expect(files).toContain("LICENSE");
     expect(files).toContain("README.md");
     expect(files).toHaveLength(3);
@@ -101,46 +101,46 @@ describe("BinaryManager platform detection", () => {
   });
 });
 
-// ── Gitleaks path ───────────────────────────────────────────────────
+// ── Betterleaks path ────────────────────────────────────────────────
 
-describe("BinaryManager getGitleaksPath", () => {
+describe("BinaryManager getBetterleaksPath", () => {
   let bm: BinaryManager;
 
   beforeEach(() => {
     bm = new BinaryManager();
   });
 
-  it("returns a path ending in 'gitleaks' (or 'gitleaks.exe' on Windows)", () => {
-    const p = bm.getGitleaksPath();
+  it("returns a path ending in 'betterleaks' (or 'betterleaks.exe' on Windows)", () => {
+    const p = bm.getBetterleaksPath();
     const basename = path.basename(p);
     if (process.platform === "win32") {
-      expect(basename).toBe("gitleaks.exe");
+      expect(basename).toBe("betterleaks.exe");
     } else {
-      expect(basename).toBe("gitleaks");
+      expect(basename).toBe("betterleaks");
     }
   });
 
   it("path is inside ~/.rafter/bin", () => {
-    const p = bm.getGitleaksPath();
+    const p = bm.getBetterleaksPath();
     expect(p).toContain(path.join(".rafter", "bin"));
   });
 });
 
-// ── isGitleaksInstalled ─────────────────────────────────────────────
+// ── isBetterleaksInstalled ──────────────────────────────────────────
 
-describe("BinaryManager isGitleaksInstalled", () => {
+describe("BinaryManager isBetterleaksInstalled", () => {
   it("returns a boolean", () => {
     const bm = new BinaryManager();
-    expect(typeof bm.isGitleaksInstalled()).toBe("boolean");
+    expect(typeof bm.isBetterleaksInstalled()).toBe("boolean");
   });
 });
 
-// ── findGitleaksOnPath ──────────────────────────────────────────────
+// ── findBetterleaksOnPath ───────────────────────────────────────────
 
-describe("BinaryManager findGitleaksOnPath", () => {
+describe("BinaryManager findBetterleaksOnPath", () => {
   it("returns string or null", () => {
     const bm = new BinaryManager();
-    const result = bm.findGitleaksOnPath();
+    const result = bm.findBetterleaksOnPath();
     expect(result === null || typeof result === "string").toBe(true);
   });
 });
@@ -148,25 +148,24 @@ describe("BinaryManager findGitleaksOnPath", () => {
 // ── Version detection ───────────────────────────────────────────────
 
 describe("BinaryManager version detection", () => {
-  it("GITLEAKS_VERSION is a semver string", () => {
-    expect(GITLEAKS_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+  it("BETTERLEAKS_VERSION is a semver string", () => {
+    expect(BETTERLEAKS_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it("getGitleaksVersion returns a string", async () => {
+  it("getBetterleaksVersion returns a string", async () => {
     const bm = new BinaryManager();
-    const version = await bm.getGitleaksVersion();
+    const version = await bm.getBetterleaksVersion();
     expect(typeof version).toBe("string");
-    // Either a version string or "not installed" / "unknown"
     expect(version.length).toBeGreaterThan(0);
   });
 });
 
-// ── verifyGitleaksVerbose ───────────────────────────────────────────
+// ── verifyBetterleaksVerbose ────────────────────────────────────────
 
-describe("BinaryManager verifyGitleaksVerbose", () => {
+describe("BinaryManager verifyBetterleaksVerbose", () => {
   it("returns {ok, stdout, stderr} structure", async () => {
     const bm = new BinaryManager();
-    const result = await bm.verifyGitleaksVerbose();
+    const result = await bm.verifyBetterleaksVerbose();
     expect(result).toHaveProperty("ok");
     expect(result).toHaveProperty("stdout");
     expect(result).toHaveProperty("stderr");
@@ -177,7 +176,7 @@ describe("BinaryManager verifyGitleaksVerbose", () => {
 
   it("returns ok=false for a non-existent binary", async () => {
     const bm = new BinaryManager();
-    const result = await bm.verifyGitleaksVerbose("/tmp/nonexistent-gitleaks-binary-xyz");
+    const result = await bm.verifyBetterleaksVerbose("/tmp/nonexistent-betterleaks-binary-xyz");
     expect(result.ok).toBe(false);
   });
 });
@@ -211,7 +210,6 @@ describe("BinaryManager download URL construction", () => {
     bm = new BinaryManager();
   });
 
-  // Access private method for testing URL generation
   const getDownloadUrl = (bm: BinaryManager, platform: string, arch: string, version?: string) => {
     return (bm as any).getDownloadUrl(platform, arch, version);
   };
@@ -219,28 +217,28 @@ describe("BinaryManager download URL construction", () => {
   it("generates correct linux x64 URL", () => {
     const url = getDownloadUrl(bm, "linux", "x64");
     expect(url).toBe(
-      `https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz`
+      `https://github.com/betterleaks/betterleaks/releases/download/v${BETTERLEAKS_VERSION}/betterleaks_${BETTERLEAKS_VERSION}_linux_x64.tar.gz`
     );
   });
 
   it("generates correct darwin arm64 URL", () => {
     const url = getDownloadUrl(bm, "darwin", "arm64");
     expect(url).toBe(
-      `https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_darwin_arm64.tar.gz`
+      `https://github.com/betterleaks/betterleaks/releases/download/v${BETTERLEAKS_VERSION}/betterleaks_${BETTERLEAKS_VERSION}_darwin_arm64.tar.gz`
     );
   });
 
   it("generates correct windows x64 URL (zip)", () => {
     const url = getDownloadUrl(bm, "windows", "x64");
     expect(url).toBe(
-      `https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_windows_x64.zip`
+      `https://github.com/betterleaks/betterleaks/releases/download/v${BETTERLEAKS_VERSION}/betterleaks_${BETTERLEAKS_VERSION}_windows_x64.zip`
     );
   });
 
   it("uses custom version when provided", () => {
-    const url = getDownloadUrl(bm, "linux", "x64", "8.20.0");
-    expect(url).toContain("v8.20.0");
-    expect(url).toContain("gitleaks_8.20.0_linux_x64.tar.gz");
+    const url = getDownloadUrl(bm, "linux", "x64", "1.2.0");
+    expect(url).toContain("v1.2.0");
+    expect(url).toContain("betterleaks_1.2.0_linux_x64.tar.gz");
   });
 });
 
@@ -278,53 +276,52 @@ describe("BinaryManager checksum parsing", () => {
   };
 
   const sampleChecksums = [
-    "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890  gitleaks_8.18.2_linux_x64.tar.gz",
-    "1111111111111111111111111111111111111111111111111111111111111111  gitleaks_8.18.2_darwin_arm64.tar.gz",
-    "2222222222222222222222222222222222222222222222222222222222222222  gitleaks_8.18.2_windows_x64.zip",
+    "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890  betterleaks_1.1.2_linux_x64.tar.gz",
+    "1111111111111111111111111111111111111111111111111111111111111111  betterleaks_1.1.2_darwin_arm64.tar.gz",
+    "2222222222222222222222222222222222222222222222222222222222222222  betterleaks_1.1.2_windows_x64.zip",
   ].join("\n");
 
   it("finds the correct hash for a known filename", () => {
-    const hash = parseChecksumFile(bm, sampleChecksums, "gitleaks_8.18.2_linux_x64.tar.gz");
+    const hash = parseChecksumFile(bm, sampleChecksums, "betterleaks_1.1.2_linux_x64.tar.gz");
     expect(hash).toBe("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
   });
 
   it("finds the correct hash for windows zip", () => {
-    const hash = parseChecksumFile(bm, sampleChecksums, "gitleaks_8.18.2_windows_x64.zip");
+    const hash = parseChecksumFile(bm, sampleChecksums, "betterleaks_1.1.2_windows_x64.zip");
     expect(hash).toBe("2222222222222222222222222222222222222222222222222222222222222222");
   });
 
   it("returns null for unknown filename", () => {
-    const hash = parseChecksumFile(bm, sampleChecksums, "gitleaks_8.18.2_freebsd_x64.tar.gz");
+    const hash = parseChecksumFile(bm, sampleChecksums, "betterleaks_1.1.2_freebsd_x64.tar.gz");
     expect(hash).toBeNull();
   });
 
   it("handles empty content", () => {
-    const hash = parseChecksumFile(bm, "", "gitleaks_8.18.2_linux_x64.tar.gz");
+    const hash = parseChecksumFile(bm, "", "betterleaks_1.1.2_linux_x64.tar.gz");
     expect(hash).toBeNull();
   });
 
   it("handles content with blank lines", () => {
     const content = "\n\n" + sampleChecksums + "\n\n";
-    const hash = parseChecksumFile(bm, content, "gitleaks_8.18.2_darwin_arm64.tar.gz");
+    const hash = parseChecksumFile(bm, content, "betterleaks_1.1.2_darwin_arm64.tar.gz");
     expect(hash).toBe("1111111111111111111111111111111111111111111111111111111111111111");
   });
 
   it("lowercases hash values", () => {
-    const content = "ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890  gitleaks_8.18.2_linux_x64.tar.gz";
-    const hash = parseChecksumFile(bm, content, "gitleaks_8.18.2_linux_x64.tar.gz");
+    const content = "ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890  betterleaks_1.1.2_linux_x64.tar.gz";
+    const hash = parseChecksumFile(bm, content, "betterleaks_1.1.2_linux_x64.tar.gz");
     expect(hash).toBe("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
   });
 });
 
-// ── downloadGitleaks error handling ─────────────────────────────────
+// ── downloadBetterleaks error handling ──────────────────────────────
 
-describe("BinaryManager downloadGitleaks error handling", () => {
+describe("BinaryManager downloadBetterleaks error handling", () => {
   it("rejects on unsupported platform", async () => {
     const bm = new BinaryManager();
-    // Mock isPlatformSupported to return false
     vi.spyOn(bm, "isPlatformSupported").mockReturnValue(false);
 
-    await expect(bm.downloadGitleaks()).rejects.toThrow(/not available for/);
+    await expect(bm.downloadBetterleaks()).rejects.toThrow(/not available for/);
 
     vi.restoreAllMocks();
   });
@@ -335,7 +332,7 @@ describe("BinaryManager downloadGitleaks error handling", () => {
 
     const messages: string[] = [];
     await expect(
-      bm.downloadGitleaks((msg) => messages.push(msg))
+      bm.downloadBetterleaks((msg) => messages.push(msg))
     ).rejects.toThrow();
 
     vi.restoreAllMocks();
@@ -346,7 +343,7 @@ describe("BinaryManager downloadGitleaks error handling", () => {
     vi.spyOn(bm, "isPlatformSupported").mockReturnValue(false);
 
     await expect(
-      bm.downloadGitleaks(undefined, "9.99.99")
+      bm.downloadBetterleaks(undefined, "9.99.99")
     ).rejects.toThrow();
 
     vi.restoreAllMocks();

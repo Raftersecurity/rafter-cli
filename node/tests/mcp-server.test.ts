@@ -3,8 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ── Mocks ────────────────────────────────────────────────────────────────────
 // Must be declared before imports so vi.mock hoists correctly.
 
-vi.mock("../src/scanners/gitleaks.js", () => ({
-  GitleaksScanner: vi.fn().mockImplementation(function () {
+vi.mock("../src/scanners/betterleaks.js", () => ({
+  BetterleaksScanner: vi.fn().mockImplementation(function () {
     return {
       isAvailable: vi.fn().mockResolvedValue(false),
       scanDirectory: vi.fn().mockResolvedValue([]),
@@ -70,7 +70,7 @@ vi.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
   StdioServerTransport: vi.fn(),
 }));
 
-import { GitleaksScanner } from "../src/scanners/gitleaks.js";
+import { BetterleaksScanner } from "../src/scanners/betterleaks.js";
 import { RegexScanner } from "../src/scanners/regex-scanner.js";
 import { CommandInterceptor } from "../src/core/command-interceptor.js";
 import { AuditLogger } from "../src/core/audit-logger.js";
@@ -87,18 +87,20 @@ import { ConfigManager } from "../src/core/config-manager.js";
 /**
  * Simulate the scan_secrets tool handler from server.ts
  */
-async function handleScanSecrets(scanPath: string, engine: string = "auto") {
-  if (engine === "gitleaks" || engine === "auto") {
-    const gitleaks = new GitleaksScanner();
-    if (await gitleaks.isAvailable()) {
+async function handleScanSecrets(scanPath: string, engineRaw: string = "auto") {
+  // "gitleaks" accepted as legacy alias for "betterleaks"
+  const engine = engineRaw === "gitleaks" ? "betterleaks" : engineRaw;
+  if (engine === "betterleaks" || engine === "auto") {
+    const bl = new BetterleaksScanner();
+    if (await bl.isAvailable()) {
       try {
-        const results = await gitleaks.scanDirectory(scanPath);
+        const results = await bl.scanDirectory(scanPath);
         return formatScanResults(results);
       } catch {
-        if (engine === "gitleaks") throw new Error("Gitleaks scan failed");
+        if (engine === "betterleaks") throw new Error("Betterleaks scan failed");
       }
-    } else if (engine === "gitleaks") {
-      throw new Error("Gitleaks not installed");
+    } else if (engine === "betterleaks") {
+      throw new Error("Betterleaks not installed");
     }
   }
 
@@ -228,10 +230,10 @@ describe("MCP Server — scan_secrets", () => {
     expect(results[0].matches).toEqual([]);
   });
 
-  it("should fall back to regex when gitleaks unavailable in auto mode", async () => {
-    const glInstance = new GitleaksScanner() as any;
-    glInstance.isAvailable.mockResolvedValue(false);
-    (GitleaksScanner as any).mockImplementation(function () { return glInstance; });
+  it("should fall back to regex when betterleaks unavailable in auto mode", async () => {
+    const blInstance = new BetterleaksScanner() as any;
+    blInstance.isAvailable.mockResolvedValue(false);
+    (BetterleaksScanner as any).mockImplementation(function () { return blInstance; });
 
     const scannerInstance = new RegexScanner() as any;
     scannerInstance.scanDirectory.mockImplementation(() => {
@@ -249,20 +251,20 @@ describe("MCP Server — scan_secrets", () => {
     expect(scannerInstance.scanFile).toHaveBeenCalled();
   });
 
-  it("should throw when gitleaks explicitly requested but unavailable", async () => {
-    const glInstance = new GitleaksScanner() as any;
-    glInstance.isAvailable.mockResolvedValue(false);
-    (GitleaksScanner as any).mockImplementation(function () { return glInstance; });
+  it("should throw when betterleaks explicitly requested but unavailable", async () => {
+    const blInstance = new BetterleaksScanner() as any;
+    blInstance.isAvailable.mockResolvedValue(false);
+    (BetterleaksScanner as any).mockImplementation(function () { return blInstance; });
 
-    await expect(handleScanSecrets("/tmp", "gitleaks")).rejects.toThrow(
-      "Gitleaks not installed"
+    await expect(handleScanSecrets("/tmp", "betterleaks")).rejects.toThrow(
+      "Betterleaks not installed"
     );
   });
 
-  it("should use gitleaks when available in auto mode", async () => {
-    const glInstance = new GitleaksScanner() as any;
-    glInstance.isAvailable.mockResolvedValue(true);
-    glInstance.scanDirectory.mockResolvedValue([
+  it("should use betterleaks when available in auto mode", async () => {
+    const blInstance = new BetterleaksScanner() as any;
+    blInstance.isAvailable.mockResolvedValue(true);
+    blInstance.scanDirectory.mockResolvedValue([
       {
         file: "/tmp/secret.env",
         matches: [
@@ -275,11 +277,11 @@ describe("MCP Server — scan_secrets", () => {
         ],
       },
     ]);
-    (GitleaksScanner as any).mockImplementation(function () { return glInstance; });
+    (BetterleaksScanner as any).mockImplementation(function () { return blInstance; });
 
     const results = await handleScanSecrets("/tmp", "auto");
 
-    expect(glInstance.scanDirectory).toHaveBeenCalledWith("/tmp");
+    expect(blInstance.scanDirectory).toHaveBeenCalledWith("/tmp");
     expect(results).toHaveLength(1);
     expect(results[0].matches[0].pattern).toBe("generic-api-key");
   });

@@ -10,7 +10,7 @@ import * as tar from "tar";
 
 const execAsync = promisify(exec);
 
-export const GITLEAKS_VERSION = "8.18.2";
+export const BETTERLEAKS_VERSION = "1.1.2";
 
 export class BinaryManager {
   private binDir: string;
@@ -26,13 +26,13 @@ export class BinaryManager {
     const platform = process.platform;
     const arch = process.arch;
 
-    // Supported platforms
     const supported = [
       "darwin-x64",
       "darwin-arm64",
       "linux-x64",
       "linux-arm64",
-      "win32-x64"
+      "win32-x64",
+      "win32-arm64",
     ];
 
     return supported.includes(`${platform}-${arch}`);
@@ -50,27 +50,26 @@ export class BinaryManager {
   }
 
   /**
-   * Get Gitleaks binary path
+   * Get Betterleaks binary path
    */
-  getGitleaksPath(): string {
+  getBetterleaksPath(): string {
     const platform = process.platform;
     const ext = platform === "win32" ? ".exe" : "";
-    return path.join(this.binDir, `gitleaks${ext}`);
+    return path.join(this.binDir, `betterleaks${ext}`);
   }
 
   /**
-   * Check if Gitleaks is installed
+   * Check if Betterleaks is installed
    */
-  isGitleaksInstalled(): boolean {
-    const gitleaksPath = this.getGitleaksPath();
-    return fs.existsSync(gitleaksPath);
+  isBetterleaksInstalled(): boolean {
+    return fs.existsSync(this.getBetterleaksPath());
   }
 
   /**
-   * Find gitleaks on system PATH (like Python's shutil.which)
+   * Find betterleaks on system PATH
    */
-  findGitleaksOnPath(): string | null {
-    const cmd = process.platform === "win32" ? "where gitleaks" : "which gitleaks";
+  findBetterleaksOnPath(): string | null {
+    const cmd = process.platform === "win32" ? "where betterleaks" : "which betterleaks";
     try {
       const result = execSync(cmd, { timeout: 5000, encoding: "utf-8" });
       const found = result.trim().split("\n")[0].trim();
@@ -81,17 +80,15 @@ export class BinaryManager {
   }
 
   /**
-   * Verify Gitleaks binary works
+   * Verify Betterleaks binary works
    */
-  async verifyGitleaks(): Promise<boolean> {
-    if (!this.isGitleaksInstalled()) {
+  async verifyBetterleaks(): Promise<boolean> {
+    if (!this.isBetterleaksInstalled()) {
       return false;
     }
 
     try {
-      // execAsync rejects on non-zero exit, so reaching here means exit code 0.
-      // Accept any successful exit — don't require specific stdout content.
-      await execAsync(`"${this.getGitleaksPath()}" version`, { timeout: 5000 });
+      await execAsync(`"${this.getBetterleaksPath()}" version`, { timeout: 5000 });
       return true;
     } catch {
       return false;
@@ -99,14 +96,12 @@ export class BinaryManager {
   }
 
   /**
-   * Run gitleaks version and return {ok, stdout, stderr}
+   * Run betterleaks version and return {ok, stdout, stderr}
    */
-  async verifyGitleaksVerbose(binaryPath?: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
-    const gitleaksPath = binaryPath ?? this.getGitleaksPath();
+  async verifyBetterleaksVerbose(binaryPath?: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    const blPath = binaryPath ?? this.getBetterleaksPath();
     try {
-      const { stdout, stderr } = await execAsync(`"${gitleaksPath}" version`, { timeout: 5000 });
-      // execAsync rejects on non-zero exit, so reaching here means exit code 0.
-      // Accept any successful exit — don't require specific stdout content.
+      const { stdout, stderr } = await execAsync(`"${blPath}" version`, { timeout: 5000 });
       return { ok: true, stdout: stdout.trim(), stderr: stderr.trim() };
     } catch (e: unknown) {
       const err = e as { stdout?: string; stderr?: string };
@@ -122,11 +117,11 @@ export class BinaryManager {
    * Collect diagnostic context for a failed binary (file type, uname, glibc/musl)
    */
   async collectBinaryDiagnostics(binaryPath?: string): Promise<string> {
-    const gitleaksPath = binaryPath ?? this.getGitleaksPath();
+    const blPath = binaryPath ?? this.getBetterleaksPath();
     const lines: string[] = [];
 
     try {
-      const { stdout: fileOut } = await execAsync(`file "${gitleaksPath}"`, { timeout: 5000 });
+      const { stdout: fileOut } = await execAsync(`file "${blPath}"`, { timeout: 5000 });
       lines.push(`  file: ${fileOut.trim()}`);
     } catch {
       lines.push(`  file: (unavailable)`);
@@ -141,12 +136,11 @@ export class BinaryManager {
 
     lines.push(`  node arch: ${process.arch}, platform: ${process.platform}`);
 
-    // Detect glibc vs musl on Linux
     if (process.platform === "linux") {
       try {
         const { stdout: ldd } = await execAsync("ldd --version 2>&1 || true", { timeout: 5000 });
         if (ldd.includes("musl")) {
-          lines.push("  libc: musl (gitleaks linux builds target glibc; musl systems need a musl build or static binary)");
+          lines.push("  libc: musl (betterleaks linux builds target glibc; musl systems need a musl build or static binary)");
         } else if (ldd.includes("GLIBC") || ldd.includes("GNU")) {
           const match = ldd.match(/(\d+\.\d+)/);
           lines.push(`  libc: glibc ${match ? match[1] : "(version unknown)"}`);
@@ -162,19 +156,15 @@ export class BinaryManager {
   }
 
   /**
-   * Download and install Gitleaks.
-   * @param onProgress  Optional progress callback.
-   * @param version     Gitleaks version to install (defaults to GITLEAKS_VERSION).
+   * Download and install Betterleaks.
    */
-  async downloadGitleaks(onProgress?: (message: string) => void, version: string = GITLEAKS_VERSION): Promise<void> {
+  async downloadBetterleaks(onProgress?: (message: string) => void, version: string = BETTERLEAKS_VERSION): Promise<void> {
     const log = onProgress || (() => {});
 
-    // Check platform support
     if (!this.isPlatformSupported()) {
-      throw new Error(`Gitleaks not available for ${process.platform}/${process.arch}`);
+      throw new Error(`Betterleaks not available for ${process.platform}/${process.arch}`);
     }
 
-    // Ensure bin directory exists
     if (!fs.existsSync(this.binDir)) {
       fs.mkdirSync(this.binDir, { recursive: true });
     }
@@ -183,25 +173,21 @@ export class BinaryManager {
     const arch = this.getArchString();
     const url = this.getDownloadUrl(platform, arch, version);
 
-    log(`Downloading Gitleaks v${version} for ${platform}/${arch}...`);
+    log(`Downloading Betterleaks v${version} for ${platform}/${arch}...`);
     log(`  URL: ${url}`);
 
-    const archivePath = path.join(this.binDir, platform === "windows" ? "gitleaks.zip" : "gitleaks.tar.gz");
+    const archivePath = path.join(this.binDir, platform === "windows" ? "betterleaks.zip" : "betterleaks.tar.gz");
 
     try {
-      // Download archive
       await this.downloadFile(url, archivePath, log);
 
-      // Log downloaded file size as basic integrity signal
       const stats = fs.statSync(archivePath);
       log(`  Downloaded: ${(stats.size / 1024).toFixed(1)} KB`);
 
-      // Verify SHA256 checksum against official checksums file
       log("Verifying checksum...");
       await this.verifyChecksum(archivePath, platform, arch, version, log);
       log("  ✓ Checksum verified");
 
-      // Extract binary
       log("Extracting binary...");
       if (platform === "windows") {
         await this.extractZip(archivePath);
@@ -209,59 +195,55 @@ export class BinaryManager {
         await this.extractTarball(archivePath);
       }
 
-      // Make executable (Unix systems)
       if (process.platform !== "win32") {
-        await execAsync(`chmod +x "${this.getGitleaksPath()}"`);
+        await execAsync(`chmod +x "${this.getBetterleaksPath()}"`);
         log("  chmod +x applied");
       }
 
-      // Verify it works — capture output for diagnostics
-      const { ok, stdout: verOut, stderr: verErr } = await this.verifyGitleaksVerbose();
+      const { ok, stdout: verOut, stderr: verErr } = await this.verifyBetterleaksVerbose();
       if (!ok) {
         const diag = await this.collectBinaryDiagnostics();
-        const binaryPath = this.getGitleaksPath();
+        const binaryPath = this.getBetterleaksPath();
         throw new Error(
-          `Gitleaks binary failed to execute.\n` +
+          `Betterleaks binary failed to execute.\n` +
           `  Binary: ${binaryPath}\n` +
           `  URL: ${url}\n` +
-          (verOut ? `  gitleaks version stdout: ${verOut}\n` : "") +
-          (verErr ? `  gitleaks version stderr: ${verErr}\n` : "") +
+          (verOut ? `  betterleaks version stdout: ${verOut}\n` : "") +
+          (verErr ? `  betterleaks version stderr: ${verErr}\n` : "") +
           `Diagnostics:\n${diag}\n` +
-          `Fix: ensure the binary matches your OS/arch, or install gitleaks manually and ensure it is on PATH.`
+          `Fix: ensure the binary matches your OS/arch, or install betterleaks manually and ensure it is on PATH.`
         );
       }
 
       log(`  Verified: ${verOut}`);
 
-      // Clean up archive
       if (fs.existsSync(archivePath)) {
         fs.unlinkSync(archivePath);
       }
 
-      log("✓ Gitleaks installed successfully");
+      log("✓ Betterleaks installed successfully");
     } catch (e) {
-      // Clean up on failure
       if (fs.existsSync(archivePath)) {
         fs.unlinkSync(archivePath);
       }
-      const gitleaksPath = this.getGitleaksPath();
-      if (fs.existsSync(gitleaksPath)) {
-        fs.unlinkSync(gitleaksPath);
+      const blPath = this.getBetterleaksPath();
+      if (fs.existsSync(blPath)) {
+        fs.unlinkSync(blPath);
       }
       throw e;
     }
   }
 
   /**
-   * Get Gitleaks version
+   * Get Betterleaks version
    */
-  async getGitleaksVersion(): Promise<string> {
-    if (!this.isGitleaksInstalled()) {
+  async getBetterleaksVersion(): Promise<string> {
+    if (!this.isBetterleaksInstalled()) {
       return "not installed";
     }
 
     try {
-      const { stdout } = await execAsync(`"${this.getGitleaksPath()}" version`);
+      const { stdout } = await execAsync(`"${this.getBetterleaksPath()}" version`);
       return stdout.trim();
     } catch {
       return "unknown";
@@ -292,13 +274,13 @@ export class BinaryManager {
   /**
    * Get download URL for platform/arch/version
    */
-  private getDownloadUrl(platform: string, arch: string, version: string = GITLEAKS_VERSION): string {
-    const baseUrl = `https://github.com/gitleaks/gitleaks/releases/download/v${version}`;
+  private getDownloadUrl(platform: string, arch: string, version: string = BETTERLEAKS_VERSION): string {
+    const baseUrl = `https://github.com/betterleaks/betterleaks/releases/download/v${version}`;
 
     if (platform === "windows") {
-      return `${baseUrl}/gitleaks_${version}_windows_${arch}.zip`;
+      return `${baseUrl}/betterleaks_${version}_windows_${arch}.zip`;
     } else {
-      return `${baseUrl}/gitleaks_${version}_${platform}_${arch}.tar.gz`;
+      return `${baseUrl}/betterleaks_${version}_${platform}_${arch}.tar.gz`;
     }
   }
 
@@ -310,7 +292,6 @@ export class BinaryManager {
       const file = fs.createWriteStream(dest);
 
       https.get(url, (response) => {
-        // Follow redirects
         if (response.statusCode === 302 || response.statusCode === 301) {
           const redirectUrl = response.headers.location;
           if (!redirectUrl) {
@@ -364,16 +345,19 @@ export class BinaryManager {
   }
 
   /**
-   * Verify downloaded archive checksum against official gitleaks checksums file.
+   * Verify downloaded archive checksum against official betterleaks checksums file.
+   *
+   * Betterleaks publishes a single `checksums.txt` per release (unlike gitleaks which
+   * names it `gitleaks_<version>_checksums.txt`).
    */
   private async verifyChecksum(
     archivePath: string,
     platform: string,
     arch: string,
     version: string,
-    onProgress: (msg: string) => void
+    _onProgress: (msg: string) => void
   ): Promise<void> {
-    const checksumsUrl = `https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_checksums.txt`;
+    const checksumsUrl = `https://github.com/betterleaks/betterleaks/releases/download/v${version}/checksums.txt`;
     const checksumsPath = path.join(this.binDir, "checksums.txt");
 
     try {
@@ -381,8 +365,8 @@ export class BinaryManager {
       const checksumsContent = fs.readFileSync(checksumsPath, "utf-8");
 
       const archiveFilename = platform === "windows"
-        ? `gitleaks_${version}_windows_${arch}.zip`
-        : `gitleaks_${version}_${platform}_${arch}.tar.gz`;
+        ? `betterleaks_${version}_windows_${arch}.zip`
+        : `betterleaks_${version}_${platform}_${arch}.tar.gz`;
 
       const expectedHash = this.parseChecksumFile(checksumsContent, archiveFilename);
       if (!expectedHash) {
@@ -412,7 +396,6 @@ export class BinaryManager {
     for (const line of content.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      // Format: "<sha256>  <filename>" (two spaces between hash and filename)
       const parts = trimmed.split(/\s+/);
       if (parts.length >= 2 && parts[1] === filename) {
         return parts[0].toLowerCase();
@@ -436,13 +419,11 @@ export class BinaryManager {
 
   /**
    * Extract zip (Windows) — uses PowerShell's Expand-Archive, then copies
-   * only the gitleaks.exe binary to binDir. Cleans up the temp extract dir.
+   * only the betterleaks.exe binary to binDir. Cleans up the temp extract dir.
    */
   private async extractZip(zipPath: string): Promise<void> {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gitleaks-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-betterleaks-"));
     try {
-      // PowerShell 5+ ships on all supported Windows versions
-      // Escape single quotes to prevent shell injection ('' is the PS escape for ')
       const safeZipPath = zipPath.replace(/'/g, "''");
       const safeTempDir = tempDir.replace(/'/g, "''");
       await execAsync(
@@ -450,11 +431,10 @@ export class BinaryManager {
         { timeout: 30000 }
       );
 
-      // Find gitleaks.exe — may be at root or inside a subdirectory
       const findBinary = (dir: string): string | null => {
         for (const entry of fs.readdirSync(dir)) {
           const full = path.join(dir, entry);
-          if (entry === "gitleaks.exe") return full;
+          if (entry === "betterleaks.exe") return full;
           if (fs.statSync(full).isDirectory()) {
             const found = findBinary(full);
             if (found) return found;
@@ -464,8 +444,8 @@ export class BinaryManager {
       };
 
       const found = findBinary(tempDir);
-      if (!found) throw new Error("gitleaks.exe not found in archive");
-      fs.copyFileSync(found, path.join(this.binDir, "gitleaks.exe"));
+      if (!found) throw new Error("betterleaks.exe not found in archive");
+      fs.copyFileSync(found, path.join(this.binDir, "betterleaks.exe"));
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -473,11 +453,6 @@ export class BinaryManager {
 
   /**
    * Extract tarball — binary only, strip packaging extras (LICENSE, README.md).
-   *
-   * The gitleaks release tarball has all files at the archive root (no top-level
-   * directory), so strip: 0 (the default). With strip: 1, node-tar reduces the
-   * single-component paths to empty strings; the filter never matches "gitleaks"
-   * and nothing is extracted. The filter alone is sufficient.
    */
   private async extractTarball(tarballPath: string): Promise<void> {
     await tar.extract({
@@ -485,9 +460,8 @@ export class BinaryManager {
       cwd: this.binDir,
       filter: (p: string) => {
         const base = path.basename(p);
-        return base === "gitleaks" || base === "gitleaks.exe";
+        return base === "betterleaks" || base === "betterleaks.exe";
       },
     });
   }
 }
-

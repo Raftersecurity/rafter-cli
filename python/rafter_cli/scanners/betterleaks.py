@@ -1,10 +1,9 @@
-"""Gitleaks scanner — wraps system gitleaks binary."""
+"""Betterleaks scanner — wraps system betterleaks binary."""
 from __future__ import annotations
 
 import json
 import os
 import platform
-import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -15,36 +14,36 @@ from ..utils.binary_manager import BinaryManager
 
 
 @dataclass
-class GitleaksScanResult:
+class BetterleaksScanResult:
     file: str
     matches: list[PatternMatch] = field(default_factory=list)
 
 
-class GitleaksCheckResult(NamedTuple):
+class BetterleaksCheckResult(NamedTuple):
     available: bool
     stdout: str
     stderr: str
     error: str  # OSError / timeout message, empty on success
 
 
-class GitleaksScanner:
+class BetterleaksScanner:
     def __init__(self) -> None:
         self._binary_manager = BinaryManager()
         # Prefer managed binary, fall back to system PATH
-        if self._binary_manager.is_gitleaks_installed():
-            self._path: str | None = str(self._binary_manager.get_gitleaks_path())
+        if self._binary_manager.is_betterleaks_installed():
+            self._path: str | None = str(self._binary_manager.get_betterleaks_path())
         else:
-            self._path = self._binary_manager.find_gitleaks_on_path()
+            self._path = self._binary_manager.find_betterleaks_on_path()
 
     def is_available(self) -> bool:
         return self.check().available
 
-    def check(self) -> GitleaksCheckResult:
-        """Run 'gitleaks version' and return structured result with captured output."""
+    def check(self) -> BetterleaksCheckResult:
+        """Run 'betterleaks version' and return structured result with captured output."""
         if not self._path:
-            return GitleaksCheckResult(
+            return BetterleaksCheckResult(
                 available=False, stdout="", stderr="",
-                error="gitleaks not found (not installed via rafter and not on PATH)",
+                error="betterleaks not found (not installed via rafter and not on PATH)",
             )
         try:
             result = subprocess.run(
@@ -52,16 +51,16 @@ class GitleaksScanner:
                 capture_output=True, text=True, timeout=5,
             )
             ok = result.returncode == 0
-            return GitleaksCheckResult(
+            return BetterleaksCheckResult(
                 available=ok,
                 stdout=result.stdout.strip(),
                 stderr=result.stderr.strip(),
                 error="" if ok else f"exit code {result.returncode}",
             )
         except subprocess.TimeoutExpired:
-            return GitleaksCheckResult(available=False, stdout="", stderr="", error="timed out")
+            return BetterleaksCheckResult(available=False, stdout="", stderr="", error="timed out")
         except (OSError, FileNotFoundError) as exc:
-            return GitleaksCheckResult(available=False, stdout="", stderr="", error=str(exc))
+            return BetterleaksCheckResult(available=False, stdout="", stderr="", error=str(exc))
 
     @staticmethod
     def collect_diagnostics(binary_path: str | None = None) -> str:
@@ -88,7 +87,6 @@ class GitleaksScanner:
         lines.append(f"  python arch: {platform.machine()}, system: {platform.system()}")
 
         if platform.system() == "Linux":
-            # Detect glibc vs musl
             try:
                 result = subprocess.run(
                     "ldd --version 2>&1 || true", shell=True, capture_output=True, text=True, timeout=5
@@ -96,7 +94,7 @@ class GitleaksScanner:
                 ldd_out = result.stdout + result.stderr
                 if "musl" in ldd_out:
                     lines.append(
-                        "  libc: musl (gitleaks Linux releases target glibc; "
+                        "  libc: musl (betterleaks Linux releases target glibc; "
                         "musl systems need a static/musl build)"
                     )
                 elif "GLIBC" in ldd_out or "GNU" in ldd_out:
@@ -110,33 +108,34 @@ class GitleaksScanner:
 
         return "\n".join(lines)
 
-    def scan_file(self, file_path: str) -> GitleaksScanResult:
+    def scan_file(self, file_path: str) -> BetterleaksScanResult:
         results = self._run_scan(file_path)
-        return GitleaksScanResult(
+        return BetterleaksScanResult(
             file=file_path,
             matches=[self._convert(r) for r in results],
         )
 
-    def scan_directory(self, dir_path: str, *, use_git: bool = False) -> list[GitleaksScanResult]:
+    def scan_directory(self, dir_path: str, *, use_git: bool = False) -> list[BetterleaksScanResult]:
         results = self._run_scan(dir_path, use_git=use_git)
         grouped: dict[str, list[PatternMatch]] = {}
         for r in results:
             f = r.get("File", "unknown")
             grouped.setdefault(f, []).append(self._convert(r))
-        return [GitleaksScanResult(file=f, matches=m) for f, m in grouped.items()]
+        return [BetterleaksScanResult(file=f, matches=m) for f, m in grouped.items()]
 
     # ------------------------------------------------------------------
 
     def _run_scan(self, target: str, *, use_git: bool = False) -> list[dict]:
         if not self._path:
-            raise RuntimeError("Gitleaks not available")
+            raise RuntimeError("Betterleaks not available")
 
-        with tempfile.TemporaryDirectory(prefix="gitleaks-") as tmp_dir:
+        with tempfile.TemporaryDirectory(prefix="betterleaks-") as tmp_dir:
             report_path = os.path.join(tmp_dir, "report.json")
             try:
-                cmd = [self._path, "detect", "-f", "json", "-r", report_path, "-s", target]
-                if not use_git:
-                    cmd.insert(2, "--no-git")
+                # betterleaks uses subcommands: `dir <path>` for filesystem,
+                # `git <path>` for git history; report destination is --report-path.
+                subcommand = "git" if use_git else "dir"
+                cmd = [self._path, subcommand, "-f", "json", "--report-path", report_path, target]
                 subprocess.run(
                     cmd,
                     capture_output=True, timeout=60,
@@ -154,7 +153,7 @@ class GitleaksScanner:
     @staticmethod
     def _convert(result: dict) -> PatternMatch:
         rule_id = result.get("RuleID", result.get("Description", "unknown"))
-        severity = GitleaksScanner._get_severity(rule_id, result.get("Tags", []))
+        severity = BetterleaksScanner._get_severity(rule_id, result.get("Tags", []))
         secret = result.get("Secret", result.get("Match", ""))
         return PatternMatch(
             pattern=Pattern(
@@ -166,7 +165,7 @@ class GitleaksScanner:
             match=secret,
             line=result.get("StartLine"),
             column=result.get("StartColumn"),
-            redacted=GitleaksScanner._redact(secret),
+            redacted=BetterleaksScanner._redact(secret),
         )
 
     @staticmethod

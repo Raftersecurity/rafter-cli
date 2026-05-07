@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 from rafter_cli.commands.agent import (
     agent_app,
     _check_config,
-    _check_gitleaks,
+    _check_betterleaks,
     _check_claude_code,
     _check_openclaw,
     _check_codex,
@@ -63,45 +63,45 @@ class TestCheckConfig:
         assert "Invalid" in r.detail
 
 
-# ── _check_gitleaks ────────────────────────────────────────────────────
+# ── _check_betterleaks ────────────────────────────────────────────────────
 
-class TestCheckGitleaks:
-    def test_passes_when_gitleaks_on_path(self):
-        verify_result = {"ok": True, "stdout": "gitleaks version 8.18.2", "stderr": ""}
-        with patch("shutil.which", return_value="/usr/local/bin/gitleaks"), \
+class TestCheckBetterleaks:
+    def test_passes_when_betterleaks_on_path(self):
+        verify_result = {"ok": True, "stdout": "betterleaks 1.1.2", "stderr": ""}
+        with patch("shutil.which", return_value="/usr/local/bin/betterleaks"), \
              patch("rafter_cli.commands.agent.BinaryManager") as MockBM:
-            MockBM.return_value.verify_gitleaks_verbose.return_value = verify_result
-            r = _check_gitleaks()
+            MockBM.return_value.verify_betterleaks_verbose.return_value = verify_result
+            r = _check_betterleaks()
         assert r.passed
-        assert "gitleaks version" in r.detail
+        assert "betterleaks" in r.detail
 
-    def test_passes_when_gitleaks_in_rafter_bin(self, tmp_path):
-        rafter_bin = tmp_path / ".rafter" / "bin" / "gitleaks"
+    def test_passes_when_betterleaks_in_rafter_bin(self, tmp_path):
+        rafter_bin = tmp_path / ".rafter" / "bin" / "betterleaks"
         rafter_bin.parent.mkdir(parents=True)
         rafter_bin.touch()
-        verify_result = {"ok": True, "stdout": "gitleaks version 8.18.2", "stderr": ""}
+        verify_result = {"ok": True, "stdout": "betterleaks 1.1.2", "stderr": ""}
         with patch("shutil.which", return_value=None), \
              patch("pathlib.Path.home", return_value=tmp_path), \
              patch("rafter_cli.commands.agent.BinaryManager") as MockBM:
-            MockBM.return_value.verify_gitleaks_verbose.return_value = verify_result
-            r = _check_gitleaks()
+            MockBM.return_value.verify_betterleaks_verbose.return_value = verify_result
+            r = _check_betterleaks()
         assert r.passed
 
     def test_fails_when_not_found_anywhere(self, tmp_path):
         with patch("shutil.which", return_value=None), \
              patch("pathlib.Path.home", return_value=tmp_path):
-            r = _check_gitleaks()
+            r = _check_betterleaks()
         assert not r.passed
         assert not r.optional  # hard failure
         assert "Not found" in r.detail
 
     def test_fails_with_diagnostics_when_binary_broken(self):
         verify_result = {"ok": False, "stdout": "", "stderr": "exec format error"}
-        with patch("shutil.which", return_value="/usr/local/bin/gitleaks"), \
+        with patch("shutil.which", return_value="/usr/local/bin/betterleaks"), \
              patch("rafter_cli.commands.agent.BinaryManager") as MockBM:
-            MockBM.return_value.verify_gitleaks_verbose.return_value = verify_result
+            MockBM.return_value.verify_betterleaks_verbose.return_value = verify_result
             MockBM.return_value.collect_binary_diagnostics.return_value = "  file: ELF 64-bit"
-            r = _check_gitleaks()
+            r = _check_betterleaks()
         assert not r.passed
         assert not r.optional
         assert "failed to execute" in r.detail
@@ -371,8 +371,8 @@ class TestVerifyCommand:
         """All core checks pass, optional absent → exit 0."""
         with patch("rafter_cli.commands.agent._check_config",
                    return_value=_CheckResult("Config", True, "ok")), \
-             patch("rafter_cli.commands.agent._check_gitleaks",
-                   return_value=_CheckResult("Gitleaks", True, "ok")), \
+             patch("rafter_cli.commands.agent._check_betterleaks",
+                   return_value=_CheckResult("Betterleaks", True, "ok")), \
              patch("rafter_cli.commands.agent._check_claude_code",
                    return_value=_CheckResult("Claude Code", False, "not configured", optional=True)), \
              patch("rafter_cli.commands.agent._check_openclaw",
@@ -386,8 +386,8 @@ class TestVerifyCommand:
         """All checks pass → exit 0, no warnings."""
         with patch("rafter_cli.commands.agent._check_config",
                    return_value=_CheckResult("Config", True, "ok")), \
-             patch("rafter_cli.commands.agent._check_gitleaks",
-                   return_value=_CheckResult("Gitleaks", True, "ok")), \
+             patch("rafter_cli.commands.agent._check_betterleaks",
+                   return_value=_CheckResult("Betterleaks", True, "ok")), \
              patch("rafter_cli.commands.agent._check_claude_code",
                    return_value=_CheckResult("Claude Code", True, "ok")), \
              patch("rafter_cli.commands.agent._check_openclaw",
@@ -401,8 +401,8 @@ class TestVerifyCommand:
         """Config failure (hard) → exit 1."""
         with patch("rafter_cli.commands.agent._check_config",
                    return_value=_CheckResult("Config", False, "Not found")), \
-             patch("rafter_cli.commands.agent._check_gitleaks",
-                   return_value=_CheckResult("Gitleaks", True, "ok")), \
+             patch("rafter_cli.commands.agent._check_betterleaks",
+                   return_value=_CheckResult("Betterleaks", True, "ok")), \
              patch("rafter_cli.commands.agent._check_claude_code",
                    return_value=_CheckResult("Claude Code", False, "not configured", optional=True)), \
              patch("rafter_cli.commands.agent._check_openclaw",
@@ -412,12 +412,12 @@ class TestVerifyCommand:
             result = runner.invoke(agent_app, ["verify"])
         assert result.exit_code == 1
 
-    def test_exits_1_when_gitleaks_broken(self):
-        """Gitleaks failure (hard) → exit 1."""
+    def test_exits_1_when_betterleaks_broken(self):
+        """Betterleaks failure (hard) → exit 1."""
         with patch("rafter_cli.commands.agent._check_config",
                    return_value=_CheckResult("Config", True, "ok")), \
-             patch("rafter_cli.commands.agent._check_gitleaks",
-                   return_value=_CheckResult("Gitleaks", False, "binary broken")), \
+             patch("rafter_cli.commands.agent._check_betterleaks",
+                   return_value=_CheckResult("Betterleaks", False, "binary broken")), \
              patch("rafter_cli.commands.agent._check_claude_code",
                    return_value=_CheckResult("Claude Code", False, "absent", optional=True)), \
              patch("rafter_cli.commands.agent._check_openclaw",
@@ -431,8 +431,8 @@ class TestVerifyCommand:
         """Only optional checks absent → exit 0 (WARN not FAIL)."""
         with patch("rafter_cli.commands.agent._check_config",
                    return_value=_CheckResult("Config", True, "ok")), \
-             patch("rafter_cli.commands.agent._check_gitleaks",
-                   return_value=_CheckResult("Gitleaks", True, "ok")), \
+             patch("rafter_cli.commands.agent._check_betterleaks",
+                   return_value=_CheckResult("Betterleaks", True, "ok")), \
              patch("rafter_cli.commands.agent._check_claude_code",
                    return_value=_CheckResult("Claude Code", False, "absent", optional=True)), \
              patch("rafter_cli.commands.agent._check_openclaw",
