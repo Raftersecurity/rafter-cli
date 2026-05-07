@@ -42,6 +42,9 @@ class RegexScanner:
                     name=cp.get("name", "Custom"),
                     regex=cp.get("regex", ""),
                     severity=cp.get("severity", "high"),
+                    confidence=cp.get("confidence", "high"),
+                    remediation=cp.get("remediation", ""),
+                    min_entropy=cp.get("min_entropy"),
                 ))
         self._engine = PatternEngine(patterns)
         self._suppressions = load_suppressions()
@@ -51,8 +54,11 @@ class RegexScanner:
             content = Path(file_path).read_text(errors="ignore")
         except (OSError, UnicodeDecodeError):
             return ScanResult(file=file_path)
-        raw = self._engine.scan_with_position(content)
-        matches = [m for m in raw if not is_suppressed(file_path, m.pattern.name, self._suppressions)]
+        raw = self._engine.scan_with_position(content, file_path)
+        matches = [
+            m for m in raw
+            if not is_suppressed(file_path, m.pattern.name, self._suppressions, m.fingerprint)
+        ]
         return ScanResult(file=file_path, matches=matches)
 
     def scan_files(self, file_paths: list[str]) -> list[ScanResult]:

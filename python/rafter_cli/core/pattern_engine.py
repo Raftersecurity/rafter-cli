@@ -1,8 +1,11 @@
 """Regex pattern engine for secret detection."""
 from __future__ import annotations
 
+import hashlib
+import math
 import re
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from typing import Sequence
 
 
@@ -12,6 +15,9 @@ class Pattern:
     regex: str
     severity: str  # low | medium | high | critical
     description: str = ""
+    confidence: str = "high"  # low | medium | high
+    remediation: str = ""
+    min_entropy: float | None = None
 
 
 @dataclass
@@ -21,6 +27,28 @@ class PatternMatch:
     line: int | None = None
     column: int | None = None
     redacted: str = ""
+    fingerprint: str = ""
+    entropy: float = 0.0
+
+
+def shannon_entropy(s: str) -> float:
+    """Shannon entropy (log base 2). 0.0 for empty strings."""
+    if not s:
+        return 0.0
+    counts = Counter(s)
+    n = len(s)
+    return -sum((c / n) * math.log2(c / n) for c in counts.values())
+
+
+def fingerprint_for(file_path: str, rule_name: str, redacted: str) -> str:
+    """Stable suppression fingerprint. Never includes raw secret value."""
+    h = hashlib.sha256()
+    h.update(file_path.encode("utf-8"))
+    h.update(b"\0")
+    h.update(rule_name.encode("utf-8"))
+    h.update(b"\0")
+    h.update(redacted.encode("utf-8"))
+    return h.hexdigest()[:16]
 
 
 _GENERIC_PATTERN_NAMES = frozenset({"Generic API Key", "Generic Secret"})
@@ -34,7 +62,7 @@ class PatternEngine:
     def __init__(self, patterns: Sequence[Pattern]):
         self._patterns = list(patterns)
 
-    def scan(self, text: str) -> list[PatternMatch]:
+    def scan(self, text: str, file_path: str = "") -> list[PatternMatch]:
         """Scan text for pattern matches (no line info)."""
         matches: list[PatternMatch] = []
         for pattern in self._patterns:
@@ -42,16 +70,23 @@ class PatternEngine:
             if compiled is None:
                 continue
             for m in compiled.finditer(text):
-                if self._is_false_positive(pattern, m.group(0)):
+                value = m.group(0)
+                if self._is_false_positive(pattern, value):
                     continue
+                entropy = shannon_entropy(value)
+                if pattern.min_entropy is not None and entropy < pattern.min_entropy:
+                    continue
+                redacted = self._redact(value)
                 matches.append(PatternMatch(
                     pattern=pattern,
-                    match=m.group(0),
-                    redacted=self._redact(m.group(0)),
+                    match=value,
+                    redacted=redacted,
+                    entropy=entropy,
+                    fingerprint=fingerprint_for(file_path, pattern.name, redacted),
                 ))
         return matches
 
-    def scan_with_position(self, text: str) -> list[PatternMatch]:
+    def scan_with_position(self, text: str, file_path: str = "") -> list[PatternMatch]:
         """Scan text with line/column information."""
         matches: list[PatternMatch] = []
         for line_num, line in enumerate(text.split("\n"), start=1):
@@ -60,14 +95,21 @@ class PatternEngine:
                 if compiled is None:
                     continue
                 for m in compiled.finditer(line):
-                    if self._is_false_positive(pattern, m.group(0)):
+                    value = m.group(0)
+                    if self._is_false_positive(pattern, value):
                         continue
+                    entropy = shannon_entropy(value)
+                    if pattern.min_entropy is not None and entropy < pattern.min_entropy:
+                        continue
+                    redacted = self._redact(value)
                     matches.append(PatternMatch(
                         pattern=pattern,
-                        match=m.group(0),
+                        match=value,
                         line=line_num,
                         column=m.start() + 1,
-                        redacted=self._redact(m.group(0)),
+                        redacted=redacted,
+                        entropy=entropy,
+                        fingerprint=fingerprint_for(file_path, pattern.name, redacted),
                     ))
         return matches
 

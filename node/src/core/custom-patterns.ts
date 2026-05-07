@@ -108,6 +108,8 @@ export interface Suppression {
   pathGlob: string;
   /** Optional pattern name to suppress, e.g. "generic-api-key". Empty = suppress all patterns for matching files. */
   patternName?: string;
+  /** Optional fingerprint hash (16-hex-char prefix from PatternEngine fingerprintFor). */
+  fingerprint?: string;
 }
 
 /**
@@ -129,6 +131,14 @@ export function loadSuppressions(projectRoot: string = process.cwd()): Suppressi
     for (const raw of lines) {
       const line = raw.trim();
       if (!line || line.startsWith("#")) continue;
+      // fingerprint:<16hex> → suppress by fingerprint hash, regardless of path/pattern
+      if (line.toLowerCase().startsWith("fingerprint:")) {
+        const fp = line.slice("fingerprint:".length).trim();
+        if (/^[0-9a-f]{16}$/i.test(fp)) {
+          suppressions.push({ pathGlob: "**", fingerprint: fp.toLowerCase() });
+        }
+        continue;
+      }
       const colonIdx = line.indexOf(":");
       if (colonIdx === -1) {
         suppressions.push({ pathGlob: line });
@@ -151,9 +161,16 @@ export function loadSuppressions(projectRoot: string = process.cwd()): Suppressi
 export function isSuppressed(
   filePath: string,
   patternName: string,
-  suppressions: Suppression[]
+  suppressions: Suppression[],
+  fingerprint?: string
 ): boolean {
   for (const s of suppressions) {
+    if (s.fingerprint) {
+      if (fingerprint && s.fingerprint.toLowerCase() === fingerprint.toLowerCase()) {
+        return true;
+      }
+      continue;
+    }
     if (matchGlob(s.pathGlob, filePath)) {
       if (!s.patternName || s.patternName.toLowerCase() === patternName.toLowerCase()) {
         return true;
