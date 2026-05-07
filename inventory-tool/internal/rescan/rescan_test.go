@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/docstore"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/eventbus"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/storage"
 )
@@ -63,7 +64,8 @@ func TestRescan_EmitsCreatedThenDriftEvents(t *testing.T) {
 		return nil
 	}
 
-	r, err := New(Config{Doc: doc, Saver: saver, Bus: bus})
+	store := docstore.New(doc, saver)
+	r, err := New(Config{Store: store, Bus: bus})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -132,15 +134,13 @@ func TestRescan_EmitsCreatedThenDriftEvents(t *testing.T) {
 func TestRescan_RequiresAllConfig(t *testing.T) {
 	doc := storage.Empty()
 	saver := func(*storage.Global) error { return nil }
+	store := docstore.New(doc, saver)
 	bus := eventbus.New()
 
-	if _, err := New(Config{Saver: saver, Bus: bus}); err == nil {
-		t.Error("expected error for nil doc")
+	if _, err := New(Config{Bus: bus}); err == nil {
+		t.Error("expected error for nil store")
 	}
-	if _, err := New(Config{Doc: doc, Bus: bus}); err == nil {
-		t.Error("expected error for nil saver")
-	}
-	if _, err := New(Config{Doc: doc, Saver: saver}); err == nil {
+	if _, err := New(Config{Store: store}); err == nil {
 		t.Error("expected error for nil bus")
 	}
 }
