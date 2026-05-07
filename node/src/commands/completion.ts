@@ -16,7 +16,7 @@ _rafter_completions() {
       return 0
       ;;
     agent)
-      COMPREPLY=( $(compgen -W "scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "scan init audit config exec audit-skill install-hook verify status update-betterleaks baseline --help" -- "\${cur}") )
       return 0
       ;;
     brief)
@@ -67,7 +67,7 @@ _rafter_completions() {
       ;;
     init)
       if [[ "\${COMP_WORDS[1]}" == "agent" ]]; then
-        COMPREPLY=( $(compgen -W "--risk-level --with-openclaw --with-claude-code --with-codex --with-gemini --with-aider --with-cursor --with-windsurf --with-continue --with-gitleaks --all --help" -- "\${cur}") )
+        COMPREPLY=( $(compgen -W "--risk-level --with-openclaw --with-claude-code --with-codex --with-gemini --with-aider --with-cursor --with-windsurf --with-continue --with-betterleaks --with-gitleaks --all --help" -- "\${cur}") )
       elif [[ "\${COMP_WORDS[1]}" == "ci" ]]; then
         COMPREPLY=( $(compgen -W "--platform --output --with-remote --with-backend --help" -- "\${cur}") )
       fi
@@ -108,7 +108,7 @@ _rafter() {
     'install-hook:Install git hook (pre-commit or pre-push)'
     'verify:Check integration status'
     'status:Show agent status'
-    'update-gitleaks:Update gitleaks binary'
+    'update-betterleaks:Update betterleaks binary'
     'baseline:Manage findings baseline'
   )
 
@@ -168,7 +168,7 @@ _rafter() {
                     '--json[Output as JSON]' \\
                     '--staged[Scan only staged files]' \\
                     '--diff[Scan files changed since ref]:ref:' \\
-                    '--engine[Scanner engine]:engine:(gitleaks patterns)' \\
+                    '--engine[Scanner engine]:engine:(betterleaks patterns)' \\
                     '1:path:_files'
                   ;;
                 init)
@@ -182,7 +182,7 @@ _rafter() {
                     '--with-cursor[Install Cursor integration]' \\
                     '--with-windsurf[Install Windsurf integration]' \\
                     '--with-continue[Install Continue.dev integration]' \\
-                    '--with-gitleaks[Download Gitleaks binary]' \\
+                    '--with-betterleaks[Download Betterleaks binary]' \\
                     '--all[Install all detected integrations]'
                   ;;
                 audit)
@@ -317,21 +317,21 @@ complete -c rafter -n '__fish_seen_subcommand_from usage' -s k -l api-key -d 'AP
 complete -c rafter -n '__fish_seen_subcommand_from brief' -a 'security scanning commands setup setup/claude-code setup/codex setup/gemini setup/cursor setup/windsurf setup/aider setup/openclaw setup/continue setup/generic all' -d 'Topic'
 
 # agent subcommands
-complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline' -a scan -d 'Scan files for secrets'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline' -a init -d 'Initialize agent security'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline' -a audit -d 'View audit log'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline' -a config -d 'Manage configuration'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline' -a exec -d 'Execute with security'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline' -a audit-skill -d 'Audit a skill file'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline' -a install-hook -d 'Install pre-commit hook'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-gitleaks baseline' -a verify -d 'Check integration status'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-betterleaks baseline' -a scan -d 'Scan files for secrets'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-betterleaks baseline' -a init -d 'Initialize agent security'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-betterleaks baseline' -a audit -d 'View audit log'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-betterleaks baseline' -a config -d 'Manage configuration'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-betterleaks baseline' -a exec -d 'Execute with security'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-betterleaks baseline' -a audit-skill -d 'Audit a skill file'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-betterleaks baseline' -a install-hook -d 'Install pre-commit hook'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from scan init audit config exec audit-skill install-hook verify status update-betterleaks baseline' -a verify -d 'Check integration status'
 
 # agent scan options
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from scan' -s q -l quiet -d 'Only output if secrets found'
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from scan' -l json -d 'Output as JSON'
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from scan' -l staged -d 'Scan only staged files'
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from scan' -l diff -d 'Scan changed since ref' -r
-complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from scan' -l engine -d 'Scanner engine' -ra 'gitleaks patterns'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from scan' -l engine -d 'Scanner engine' -ra 'betterleaks patterns'
 
 # agent init options
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l risk-level -d 'Risk level' -ra 'minimal moderate aggressive'
@@ -343,7 +343,7 @@ complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcom
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-cursor -d 'Install Cursor'
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-windsurf -d 'Install Windsurf'
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-continue -d 'Install Continue.dev'
-complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-gitleaks -d 'Install Gitleaks'
+complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l with-betterleaks -d 'Install Betterleaks'
 complete -c rafter -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from init' -l all -d 'Install all detected'
 
 # agent audit options

@@ -1,4 +1,4 @@
-"""Binary manager: download, extract, and verify the gitleaks binary."""
+"""Binary manager: download, extract, and verify the betterleaks binary."""
 from __future__ import annotations
 
 import hashlib
@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path
 from typing import Callable, Optional
 
-GITLEAKS_VERSION = "8.18.2"
+BETTERLEAKS_VERSION = "1.1.2"
 
 _SUPPORTED = {
     ("darwin", "x86_64"),
@@ -24,6 +24,7 @@ _SUPPORTED = {
     ("linux", "arm64"),
     ("linux", "aarch64"),
     ("win32", "x86_64"),
+    ("win32", "arm64"),
 }
 
 _PLATFORM_MAP = {
@@ -72,40 +73,40 @@ class BinaryManager:
     def is_platform_supported(self) -> bool:
         return (self._sys_platform(), self._machine()) in _SUPPORTED
 
-    def get_gitleaks_path(self) -> Path:
+    def get_betterleaks_path(self) -> Path:
         ext = ".exe" if self._sys_platform() == "win32" else ""
-        return self.bin_dir / f"gitleaks{ext}"
+        return self.bin_dir / f"betterleaks{ext}"
 
-    def is_gitleaks_installed(self) -> bool:
-        return self.get_gitleaks_path().exists()
+    def is_betterleaks_installed(self) -> bool:
+        return self.get_betterleaks_path().exists()
 
-    def find_gitleaks_on_path(self) -> str | None:
-        """Find gitleaks on system PATH (like Node's which/where)."""
-        return shutil.which("gitleaks")
+    def find_betterleaks_on_path(self) -> str | None:
+        """Find betterleaks on system PATH (like Node's which/where)."""
+        return shutil.which("betterleaks")
 
-    def verify_gitleaks(self) -> bool:
-        """Check if the managed gitleaks binary works (simple bool)."""
-        if not self.is_gitleaks_installed():
+    def verify_betterleaks(self) -> bool:
+        """Check if the managed betterleaks binary works (simple bool)."""
+        if not self.is_betterleaks_installed():
             return False
-        result = self.verify_gitleaks_verbose()
+        result = self.verify_betterleaks_verbose()
         return result["ok"]
 
-    def get_gitleaks_version(self) -> str:
-        """Return installed gitleaks version string, or 'not installed'/'unknown'."""
-        if not self.is_gitleaks_installed():
+    def get_betterleaks_version(self) -> str:
+        """Return installed betterleaks version string, or 'not installed'/'unknown'."""
+        if not self.is_betterleaks_installed():
             return "not installed"
-        result = self.verify_gitleaks_verbose()
+        result = self.verify_betterleaks_verbose()
         if result["ok"] and result["stdout"]:
             return result["stdout"]
         return "unknown"
 
-    def verify_gitleaks_verbose(self, binary_path: Optional[Path] = None) -> dict:
-        """Run 'gitleaks version' and return {ok, stdout, stderr}.
+    def verify_betterleaks_verbose(self, binary_path: Optional[Path] = None) -> dict:
+        """Run 'betterleaks version' and return {ok, stdout, stderr}.
 
         Accept any successful exit (code 0) rather than requiring specific
-        stdout content — some gitleaks builds output to stderr or vary format.
+        stdout content.
         """
-        path = binary_path or self.get_gitleaks_path()
+        path = binary_path or self.get_betterleaks_path()
         try:
             result = subprocess.run(
                 [str(path), "version"],
@@ -120,7 +121,7 @@ class BinaryManager:
 
     def collect_binary_diagnostics(self, binary_path: Optional[Path] = None) -> str:
         """Return diagnostic string: file type, uname, libc detection."""
-        path = binary_path or self.get_gitleaks_path()
+        path = binary_path or self.get_betterleaks_path()
         lines: list[str] = []
 
         # file(1) output
@@ -155,7 +156,7 @@ class BinaryManager:
                 out = r.stdout + r.stderr
                 if "musl" in out:
                     lines.append(
-                        "  libc: musl (gitleaks linux builds target glibc; "
+                        "  libc: musl (betterleaks linux builds target glibc; "
                         "musl systems need a musl build or static binary)"
                     )
                 elif "GLIBC" in out or "GNU" in out:
@@ -169,22 +170,22 @@ class BinaryManager:
 
         return "\n".join(lines)
 
-    def download_gitleaks(
+    def download_betterleaks(
         self,
         on_progress: Optional[Callable[[str], None]] = None,
-        version: str = GITLEAKS_VERSION,
+        version: str = BETTERLEAKS_VERSION,
     ) -> None:
-        """Download, extract, chmod, and verify the gitleaks binary.
+        """Download, extract, chmod, and verify the betterleaks binary.
 
         Args:
             on_progress: Optional callback for progress messages.
-            version: Gitleaks version to install (defaults to GITLEAKS_VERSION).
+            version: Betterleaks version to install (defaults to BETTERLEAKS_VERSION).
         """
         log = on_progress or (lambda _: None)
 
         if not self.is_platform_supported():
             raise RuntimeError(
-                f"Gitleaks not available for {self._sys_platform()}/{self._machine()}"
+                f"Betterleaks not available for {self._sys_platform()}/{self._machine()}"
             )
 
         self.bin_dir.mkdir(parents=True, exist_ok=True)
@@ -193,10 +194,10 @@ class BinaryManager:
         arch = self._arch_string()
         url = self._build_download_url(plat, arch, version)
 
-        log(f"Downloading Gitleaks v{version} for {plat}/{arch}...")
+        log(f"Downloading Betterleaks v{version} for {plat}/{arch}...")
         log(f"  URL: {url}")
 
-        archive_name = "gitleaks.zip" if plat == "windows" else "gitleaks.tar.gz"
+        archive_name = "betterleaks.zip" if plat == "windows" else "betterleaks.tar.gz"
         archive_path = self.bin_dir / archive_name
 
         try:
@@ -205,10 +206,9 @@ class BinaryManager:
             size_kb = archive_path.stat().st_size / 1024
             log(f"  Downloaded: {size_kb:.1f} KB")
 
-            # Verify SHA256 checksum against official checksums file
             log("Verifying checksum...")
             self._verify_checksum(archive_path, plat, arch, version, log)
-            log("  \u2713 Checksum verified")
+            log("  ✓ Checksum verified")
 
             log("Extracting binary...")
             if plat == "windows":
@@ -217,21 +217,21 @@ class BinaryManager:
                 self._extract_tarball(archive_path)
 
             if self._sys_platform() != "win32":
-                gitleaks_path = self.get_gitleaks_path()
-                gitleaks_path.chmod(gitleaks_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                bl_path = self.get_betterleaks_path()
+                bl_path.chmod(bl_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
                 log("  chmod +x applied")
 
-            result = self.verify_gitleaks_verbose()
+            result = self.verify_betterleaks_verbose()
             if not result["ok"]:
                 diag = self.collect_binary_diagnostics()
                 raise RuntimeError(
-                    f"Gitleaks binary failed to execute.\n"
-                    f"  Binary: {self.get_gitleaks_path()}\n"
+                    f"Betterleaks binary failed to execute.\n"
+                    f"  Binary: {self.get_betterleaks_path()}\n"
                     f"  URL: {url}\n"
-                    + (f"  gitleaks version stdout: {result['stdout']}\n" if result["stdout"] else "")
-                    + (f"  gitleaks version stderr: {result['stderr']}\n" if result["stderr"] else "")
+                    + (f"  betterleaks version stdout: {result['stdout']}\n" if result["stdout"] else "")
+                    + (f"  betterleaks version stderr: {result['stderr']}\n" if result["stderr"] else "")
                     + f"Diagnostics:\n{diag}\n"
-                    + "Fix: ensure the binary matches your OS/arch, or install gitleaks manually and ensure it is on PATH."
+                    + "Fix: ensure the binary matches your OS/arch, or install betterleaks manually and ensure it is on PATH."
                 )
 
             log(f"  Verified: {result['stdout']}")
@@ -239,23 +239,23 @@ class BinaryManager:
             if archive_path.exists():
                 archive_path.unlink()
 
-            log("Gitleaks installed successfully")
+            log("Betterleaks installed successfully")
 
         except Exception:
             if archive_path.exists():
                 archive_path.unlink()
-            binary = self.get_gitleaks_path()
+            binary = self.get_betterleaks_path()
             if binary.exists():
                 binary.unlink()
             raise
 
     # ── private helpers ───────────────────────────────────────────────
 
-    def _build_download_url(self, platform_str: str, arch_str: str, version: str = GITLEAKS_VERSION) -> str:
-        base = f"https://github.com/gitleaks/gitleaks/releases/download/v{version}"
+    def _build_download_url(self, platform_str: str, arch_str: str, version: str = BETTERLEAKS_VERSION) -> str:
+        base = f"https://github.com/betterleaks/betterleaks/releases/download/v{version}"
         if platform_str == "windows":
-            return f"{base}/gitleaks_{version}_windows_{arch_str}.zip"
-        return f"{base}/gitleaks_{version}_{platform_str}_{arch_str}.tar.gz"
+            return f"{base}/betterleaks_{version}_windows_{arch_str}.zip"
+        return f"{base}/betterleaks_{version}_{platform_str}_{arch_str}.tar.gz"
 
     def _verify_checksum(
         self,
@@ -265,10 +265,14 @@ class BinaryManager:
         version: str,
         on_progress: Callable[[str], None],
     ) -> None:
-        """Verify downloaded archive checksum against official gitleaks checksums file."""
+        """Verify downloaded archive checksum against official betterleaks checksums file.
+
+        Betterleaks publishes a single `checksums.txt` per release (unlike gitleaks
+        which names it `gitleaks_<version>_checksums.txt`).
+        """
         checksums_url = (
-            f"https://github.com/gitleaks/gitleaks/releases/download/v{version}"
-            f"/gitleaks_{version}_checksums.txt"
+            f"https://github.com/betterleaks/betterleaks/releases/download/v{version}"
+            f"/checksums.txt"
         )
         checksums_path = self.bin_dir / "checksums.txt"
 
@@ -277,9 +281,9 @@ class BinaryManager:
             checksums_content = checksums_path.read_text()
 
             if platform_str == "windows":
-                archive_filename = f"gitleaks_{version}_windows_{arch_str}.zip"
+                archive_filename = f"betterleaks_{version}_windows_{arch_str}.zip"
             else:
-                archive_filename = f"gitleaks_{version}_{platform_str}_{arch_str}.tar.gz"
+                archive_filename = f"betterleaks_{version}_{platform_str}_{arch_str}.tar.gz"
 
             expected_hash = self._parse_checksum_file(checksums_content, archive_filename)
             if not expected_hash:
@@ -306,7 +310,6 @@ class BinaryManager:
             line = line.strip()
             if not line:
                 continue
-            # Format: "<sha256>  <filename>" (two spaces between hash and filename)
             parts = line.split()
             if len(parts) >= 2 and parts[1] == filename:
                 return parts[0].lower()
@@ -337,7 +340,7 @@ class BinaryManager:
 
         request = urllib.request.Request(
             url,
-            headers={"User-Agent": f"rafter-cli/{GITLEAKS_VERSION}"},
+            headers={"User-Agent": f"rafter-cli/{BETTERLEAKS_VERSION}"},
         )
 
         with urllib.request.urlopen(request, timeout=60) as response:
@@ -359,9 +362,9 @@ class BinaryManager:
                             last_pct = pct
 
     def _extract_zip(self, archive_path: Path) -> None:
-        """Extract only the gitleaks binary from a Windows zip archive."""
-        allowed = {"gitleaks", "gitleaks.exe"}
-        with tempfile.TemporaryDirectory(prefix="rafter-gitleaks-") as tmp:
+        """Extract only the betterleaks binary from a Windows zip archive."""
+        allowed = {"betterleaks", "betterleaks.exe"}
+        with tempfile.TemporaryDirectory(prefix="rafter-betterleaks-") as tmp:
             tmp_path = Path(tmp)
             with zipfile.ZipFile(archive_path, "r") as zf:
                 for info in zf.infolist():
@@ -371,11 +374,9 @@ class BinaryManager:
                     basename = os.path.basename(info.filename)
                     if basename not in allowed:
                         continue
-                    # Extract only the matching binary, flattened into tmp
                     info.filename = basename
                     zf.extract(info, tmp_path)
 
-            # Locate extracted binary
             found: Path | None = None
             for name in allowed:
                 candidate = tmp_path / name
@@ -384,13 +385,13 @@ class BinaryManager:
                     break
 
             if found is None:
-                raise RuntimeError("gitleaks binary not found in archive")
+                raise RuntimeError("betterleaks binary not found in archive")
 
             target = self.bin_dir / found.name
             shutil.copy2(str(found), str(target))
 
     def _extract_tarball(self, archive_path: Path) -> None:
-        """Extract only the gitleaks binary from the tarball."""
+        """Extract only the betterleaks binary from the tarball."""
         # filter="data" was added in Python 3.12; fall back gracefully on older runtimes.
         _extract_kwargs: dict = {}
         if sys.version_info >= (3, 12):
@@ -399,7 +400,6 @@ class BinaryManager:
         with tarfile.open(archive_path, "r:gz") as tf:
             for member in tf.getmembers():
                 base = os.path.basename(member.name)
-                if base in ("gitleaks", "gitleaks.exe"):
-                    # Flatten: extract directly to bin_dir with just the binary name
+                if base in ("betterleaks", "betterleaks.exe"):
                     member.name = base
                     tf.extract(member, path=self.bin_dir, **_extract_kwargs)

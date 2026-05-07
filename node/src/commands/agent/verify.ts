@@ -16,20 +16,20 @@ interface CheckResult {
   optional?: boolean;  // optional checks warn but don't fail exit code
 }
 
-async function checkGitleaks(): Promise<CheckResult> {
+async function checkBetterleaks(): Promise<CheckResult> {
   const binaryManager = new BinaryManager();
-  const name = "Gitleaks";
+  const name = "Betterleaks";
 
   // Check PATH first (e.g. Homebrew), then fall back to ~/.rafter/bin
-  const pathBinary = binaryManager.findGitleaksOnPath();
-  const hasBinary = pathBinary !== null || binaryManager.isGitleaksInstalled();
+  const pathBinary = binaryManager.findBetterleaksOnPath();
+  const hasBinary = pathBinary !== null || binaryManager.isBetterleaksInstalled();
 
   if (!hasBinary) {
-    return { name, passed: false, detail: `Not found on PATH or at ${binaryManager.getGitleaksPath()}` };
+    return { name, passed: false, detail: `Not found on PATH or at ${binaryManager.getBetterleaksPath()}` };
   }
 
-  const binaryPath = pathBinary ?? binaryManager.getGitleaksPath();
-  const { ok, stdout, stderr } = await binaryManager.verifyGitleaksVerbose(binaryPath);
+  const binaryPath = pathBinary ?? binaryManager.getBetterleaksPath();
+  const { ok, stdout, stderr } = await binaryManager.verifyBetterleaksVerbose(binaryPath);
   if (!ok) {
     const diag = await binaryManager.collectBinaryDiagnostics(binaryPath);
     return { name, passed: false, detail: `Binary found at ${binaryPath} but failed to execute\n${stdout ? `  stdout: ${stdout}\n` : ""}${stderr ? `  stderr: ${stderr}\n` : ""}${diag}` };
@@ -386,7 +386,7 @@ export function createVerifyCommand(): Command {
 
       const results: CheckResult[] = [
         checkConfig(),
-        await checkGitleaks(),
+        await checkBetterleaks(),
         checkClaudeCode(),
         checkOpenClaw(),
         checkCodex(),

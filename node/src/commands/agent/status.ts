@@ -32,23 +32,23 @@ export function createStatusCommand(): Command {
         console.log(`\nConfig:       not found — run: rafter agent init`);
       }
 
-      // --- Gitleaks ---
-      const localGitleaks = path.join(getBinDir(), "gitleaks");
-      let gitleaksStatus = "not found — run: rafter agent init --with-gitleaks";
+      // --- Betterleaks ---
+      const localBetterleaks = path.join(getBinDir(), "betterleaks");
+      let betterleaksStatus = "not found — run: rafter agent init --with-betterleaks";
       try {
-        const ver = execSync("gitleaks version", { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
-        gitleaksStatus = `${ver} (PATH)`;
+        const ver = execSync("betterleaks version", { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+        betterleaksStatus = `${ver} (PATH)`;
       } catch {
-        if (fs.existsSync(localGitleaks)) {
+        if (fs.existsSync(localBetterleaks)) {
           try {
-            const ver = execSync(`"${localGitleaks}" version`, { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
-            gitleaksStatus = `${ver} (local)`;
+            const ver = execSync(`"${localBetterleaks}" version`, { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+            betterleaksStatus = `${ver} (local)`;
           } catch {
-            gitleaksStatus = `${localGitleaks} (binary error)`;
+            betterleaksStatus = `${localBetterleaks} (binary error)`;
           }
         }
       }
-      console.log(`Gitleaks:     ${gitleaksStatus}`);
+      console.log(`Betterleaks:  ${betterleaksStatus}`);
 
       // --- Claude Code hooks ---
       const settingsPath = path.join(home, ".claude", "settings.json");

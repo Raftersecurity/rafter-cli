@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { GitleaksScanner } from "../src/scanners/gitleaks.js";
+import { BetterleaksScanner } from "../src/scanners/betterleaks.js";
 
 // getSeverity is private, so we test it through the convertToPatternMatch flow
 // by calling the static-accessible prototype method via a workaround.
-const scanner = new GitleaksScanner();
+const scanner = new BetterleaksScanner();
 const getSeverity = (scanner as any).getSeverity.bind(scanner);
 
-describe("GitleaksScanner.getSeverity", () => {
+describe("BetterleaksScanner.getSeverity", () => {
   // ── Critical tier ───────────────────────────────────────────────
   describe("critical", () => {
     it.each([

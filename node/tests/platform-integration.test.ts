@@ -936,7 +936,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
         "# config\n"
       );
 
-      // --all also triggers gitleaks download, so allow extra time
+      // --all also triggers betterleaks download, so allow extra time
       const result = runCli("agent init --all", testHomeDir, 90_000);
       expect(result.exitCode).toBe(0);
 

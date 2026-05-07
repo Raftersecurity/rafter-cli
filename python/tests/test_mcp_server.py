@@ -44,19 +44,19 @@ class TestScanSecrets:
         results = handle_scan_secrets(str(f), engine="patterns")
         assert results[0]["matches"] == []
 
-    def test_gitleaks_not_available_falls_back(self, tmp_path):
+    def test_betterleaks_not_available_falls_back(self, tmp_path):
         f = tmp_path / "test.txt"
         f.write_text("AKIAIOSFODNN7EXAMPLE1\n")
-        with patch("rafter_cli.commands.mcp_server.GitleaksScanner") as mock_gl:
-            mock_gl.return_value.is_available.return_value = False
+        with patch("rafter_cli.commands.mcp_server.BetterleaksScanner") as mock_bl:
+            mock_bl.return_value.is_available.return_value = False
             results = handle_scan_secrets(str(f), engine="auto")
             assert len(results) == 1
 
-    def test_gitleaks_only_raises_when_unavailable(self):
-        with patch("rafter_cli.commands.mcp_server.GitleaksScanner") as mock_gl:
-            mock_gl.return_value.is_available.return_value = False
+    def test_betterleaks_only_raises_when_unavailable(self):
+        with patch("rafter_cli.commands.mcp_server.BetterleaksScanner") as mock_bl:
+            mock_bl.return_value.is_available.return_value = False
             with pytest.raises(RuntimeError, match="not installed"):
-                handle_scan_secrets("/tmp", engine="gitleaks")
+                handle_scan_secrets("/tmp", engine="betterleaks")
 
 
 class TestEvaluateCommand:
