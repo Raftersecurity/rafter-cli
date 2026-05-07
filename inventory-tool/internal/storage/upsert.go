@@ -23,6 +23,33 @@ type Upsertable struct {
 	Now     time.Time
 }
 
+// Outcome is the kind of change Upsert applied to the global store.
+// Used by the scan orchestrator to emit per-secret SSE events without
+// rebuilding the diff itself.
+type Outcome int
+
+const (
+	// OutcomeCreated: a brand-new Secret entry was appended.
+	OutcomeCreated Outcome = iota
+	// OutcomeRefreshed: an existing observation was re-confirmed at
+	// the same path/keystore key with the same fingerprint, OR a known
+	// fingerprint was newly observed at an additional location.
+	OutcomeRefreshed
+	// OutcomeDrifted: an existing path/keystore key now reports a
+	// different fingerprint. The previous fingerprint was pushed onto
+	// ValueHistory; the secret's ID is the new fingerprint.
+	OutcomeDrifted
+)
+
+// Result is the per-Upsert summary returned to callers. Secret is a
+// pointer into g.Secrets and is only valid until the next Upsert
+// reslices the underlying array; copy fields out if you need to
+// outlive the next call.
+type UpsertResult struct {
+	Outcome Outcome
+	Secret  *Secret
+}
+
 // Upsert merges u into g. Behaviour:
 //
 //   - If a Secret with the same KeyName already has a FoundIn at u's
@@ -40,7 +67,10 @@ type Upsertable struct {
 //
 // The full Value is never written back into g — only its fingerprint
 // and the rune-bounded Preview.
-func (g *Global) Upsert(u Upsertable) {
+//
+// Returns an UpsertResult describing what changed. Existing call sites
+// that ignore the return value continue to work unchanged.
+func (g *Global) Upsert(u Upsertable) UpsertResult {
 	newFP := fingerprint.Compute(u.KeyName, u.Value)
 	uKey, uHasKey := upsertKey(u.Found)
 
@@ -63,7 +93,7 @@ func (g *Global) Upsert(u Upsertable) {
 					// bump LastSeen.
 					s.FoundIn[j] = u.Found
 					s.LastSeen = u.Now
-					return
+					return UpsertResult{Outcome: OutcomeRefreshed, Secret: s}
 				}
 				// DRIFT.
 				s.ValueHistory = append(s.ValueHistory, ValueHistoryEntry{
@@ -75,7 +105,7 @@ func (g *Global) Upsert(u Upsertable) {
 				s.ValuePreview = fingerprint.Preview(u.Value)
 				s.FoundIn[j] = u.Found
 				s.LastSeen = u.Now
-				return
+				return UpsertResult{Outcome: OutcomeDrifted, Secret: s}
 			}
 		}
 	}
@@ -93,13 +123,13 @@ func (g *Global) Upsert(u Upsertable) {
 				if k, ok := upsertKey(s.FoundIn[j]); ok && k == uKey {
 					s.FoundIn[j] = u.Found
 					s.LastSeen = u.Now
-					return
+					return UpsertResult{Outcome: OutcomeRefreshed, Secret: s}
 				}
 			}
 		}
 		s.FoundIn = append(s.FoundIn, u.Found)
 		s.LastSeen = u.Now
-		return
+		return UpsertResult{Outcome: OutcomeRefreshed, Secret: s}
 	}
 
 	// New secret.
@@ -114,6 +144,7 @@ func (g *Global) Upsert(u Upsertable) {
 		LastSeen:         u.Now,
 		ValueHistory:     []ValueHistoryEntry{},
 	})
+	return UpsertResult{Outcome: OutcomeCreated, Secret: &g.Secrets[len(g.Secrets)-1]}
 }
 
 // MarkStale sets Annotation.Stale = true on the Secret with the given
