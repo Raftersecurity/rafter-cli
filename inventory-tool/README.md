@@ -25,11 +25,19 @@ Plus the storage and fingerprint internals the rest of v1 builds on:
 
 - `internal/storage`: typed schema for the `~/.config/trove/global.json`
   document, atomic `Save` (temp-file + fsync + rename, mode `0600`), `Load`
-  with first-run-as-empty semantics, XDG-aware default path
+  with first-run-as-empty semantics, XDG-aware default path, plus
+  `Upsert` / `MarkStale` / `MarkRotated` (fingerprint-based dedup, drift
+  records value rotations to `value_history`, annotations survive drift)
 - `internal/fingerprint`: `BLAKE3(key_name + 0x00 + value)` cross-source
   dedup ids and the rune-safe `value_preview` formatter
+- `internal/scanners/file`, `internal/scanners/config`,
+  `internal/scanners/shellrc`: read-only parsers for the v1 file
+  surfaces — dotenv files, AWS shared credentials, npmrc auth tokens,
+  docker config, gh hosts.yml, Claude settings, and shell rc files.
+  Every scanner opens `O_RDONLY`, captures the file's mode in
+  `FoundIn.Permissions`, and never writes/renames/deletes the source.
 
-Scanners, the file watcher, the keystore reader, and the real UI land in
+The file watcher, the keystore reader, and the real UI land in
 subsequent commits.
 
 ## Hard rules (carried in from the spec)
@@ -58,8 +66,12 @@ inventory-tool/
 └── internal/
     ├── server/        # localhost HTTP + token auth + lifecycle watchdog
     ├── browser/       # cross-platform default-browser opener
-    ├── storage/       # global.json schema + atomic Load/Save
-    └── fingerprint/   # BLAKE3 dedup ids and value previews
+    ├── storage/       # global.json schema, atomic Load/Save, Upsert/dedup/drift
+    ├── fingerprint/   # BLAKE3 dedup ids and value previews
+    └── scanners/      # per-source secret scanners (read-only)
+        ├── file/      # .env, .env.*, .envrc parsers
+        ├── config/    # ~/.aws/credentials, .npmrc, docker, gh, claude
+        └── shellrc/   # .zshrc, .bashrc, .profile, .zshenv, .bash_profile
 ```
 
 ## Pointers
