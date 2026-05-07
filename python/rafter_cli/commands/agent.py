@@ -2017,6 +2017,19 @@ def _check_betterleaks() -> _CheckResult:
         if rafter_bin.exists():
             bl_path = str(rafter_bin)
     if not bl_path:
+        # Soft-degrade if a legacy gitleaks install is still present.
+        legacy = shutil.which("gitleaks") or (
+            str(Path.home() / ".rafter" / "bin" / "gitleaks")
+            if (Path.home() / ".rafter" / "bin" / "gitleaks").exists()
+            else None
+        )
+        if legacy:
+            return _CheckResult(
+                name,
+                False,
+                f"Not installed; found legacy gitleaks at {legacy}. Run: rafter agent update-betterleaks",
+                optional=True,
+            )
         return _CheckResult(name, False, f"Not found on PATH or at {Path.home() / '.rafter' / 'bin' / 'betterleaks'}")
 
     # Verify the found binary actually works
@@ -2745,6 +2758,11 @@ def status():
 
     # --- Betterleaks ---
     bl_path = shutil.which("betterleaks") or str(rafter_dir / "bin" / "betterleaks")
+    legacy_gitleaks = shutil.which("gitleaks") or (
+        str(rafter_dir / "bin" / "gitleaks")
+        if (rafter_dir / "bin" / "gitleaks").exists()
+        else None
+    )
     if shutil.which("betterleaks"):
         try:
             ver = subprocess.run(["betterleaks", "version"], capture_output=True, text=True, timeout=5)
@@ -2753,6 +2771,8 @@ def status():
             print("Betterleaks:  on PATH (version check failed)")
     elif Path(bl_path).exists():
         print(f"Betterleaks:  {bl_path} (local)")
+    elif legacy_gitleaks:
+        print(f"Betterleaks:  not found — legacy gitleaks at {legacy_gitleaks}; run: rafter agent update-betterleaks")
     else:
         print("Betterleaks:  not found — run: rafter agent init --with-betterleaks")
 

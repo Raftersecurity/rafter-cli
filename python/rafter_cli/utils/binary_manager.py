@@ -17,6 +17,24 @@ from typing import Callable, Optional
 
 BETTERLEAKS_VERSION = "1.1.2"
 
+# Pinned SHA256 hashes for the bundled BETTERLEAKS_VERSION release artifacts.
+# Pulled from upstream `checksums.txt` at vendoring time. Pinning in source
+# means we don't rely on the release-page `checksums.txt` to authenticate
+# itself when installing the version we ship by default. Refresh whenever
+# BETTERLEAKS_VERSION changes.
+BETTERLEAKS_PINNED_HASHES: dict[str, str] = {
+    "betterleaks_1.1.2_darwin_arm64.tar.gz": "19cc2298463d7abf0aee9a03208a49834ab2e6f8411781c4cf1360827b3ded36",
+    "betterleaks_1.1.2_darwin_x64.tar.gz":   "d51904879ed77fabad157ec67cb8dd3f5548e975fc32082e6abc30a026e1bec1",
+    "betterleaks_1.1.2_linux_arm64.tar.gz":  "4d73dcbfe38c38878ee69e82b5aaa539398be8331f62b5640eb214ac04d890b0",
+    "betterleaks_1.1.2_linux_x64.tar.gz":    "648c20617178065072ff1791d383192a62c911d9b4427f0426a8c504a6d9ddad",
+    "betterleaks_1.1.2_windows_arm64.zip":   "8cc28068e8c7846027bc9b14f1c200cce64ff4198f90be5730510631c59f23ce",
+    "betterleaks_1.1.2_windows_x64.zip":     "e149c86d00fb99cce8d87def2cd1ff046c6889a0e912007d44668df5980cea3a",
+}
+
+# Allowed shape for the optional `--version` flag (prevents URL injection).
+import re as _re
+_VERSION_RE = _re.compile(r"^[A-Za-z0-9._-]+$")
+
 _SUPPORTED = {
     ("darwin", "x86_64"),
     ("darwin", "arm64"),
@@ -183,6 +201,11 @@ class BinaryManager:
         """
         log = on_progress or (lambda _: None)
 
+        if not _VERSION_RE.match(version):
+            raise ValueError(
+                f"Invalid betterleaks version: {version} (expected /^[A-Za-z0-9._-]+$/)"
+            )
+
         if not self.is_platform_supported():
             raise RuntimeError(
                 f"Betterleaks not available for {self._sys_platform()}/{self._machine()}"
@@ -265,43 +288,50 @@ class BinaryManager:
         version: str,
         on_progress: Callable[[str], None],
     ) -> None:
-        """Verify downloaded archive checksum against official betterleaks checksums file.
+        """Verify downloaded archive checksum.
 
-        Betterleaks publishes a single `checksums.txt` per release (unlike gitleaks
-        which names it `gitleaks_<version>_checksums.txt`).
+        For BETTERLEAKS_VERSION (the version we vendor), use the SHA256 pinned
+        in source — this prevents a release-page compromise from re-signing both
+        the tarball and `checksums.txt`. For an explicit `--version <other>`,
+        fall back to the upstream `checksums.txt` (TOFU at that moment).
         """
-        checksums_url = (
-            f"https://github.com/betterleaks/betterleaks/releases/download/v{version}"
-            f"/checksums.txt"
-        )
-        checksums_path = self.bin_dir / "checksums.txt"
+        if platform_str == "windows":
+            archive_filename = f"betterleaks_{version}_windows_{arch_str}.zip"
+        else:
+            archive_filename = f"betterleaks_{version}_{platform_str}_{arch_str}.tar.gz"
 
-        try:
-            self._download_file(checksums_url, checksums_path, lambda _: None)
-            checksums_content = checksums_path.read_text()
+        expected_hash: str | None = None
+        source = ""
 
-            if platform_str == "windows":
-                archive_filename = f"betterleaks_{version}_windows_{arch_str}.zip"
-            else:
-                archive_filename = f"betterleaks_{version}_{platform_str}_{arch_str}.tar.gz"
+        if version == BETTERLEAKS_VERSION and archive_filename in BETTERLEAKS_PINNED_HASHES:
+            expected_hash = BETTERLEAKS_PINNED_HASHES[archive_filename]
+            source = "pinned in source"
+        else:
+            checksums_url = (
+                f"https://github.com/betterleaks/betterleaks/releases/download/v{version}"
+                f"/checksums.txt"
+            )
+            checksums_path = self.bin_dir / "checksums.txt"
+            try:
+                self._download_file(checksums_url, checksums_path, lambda _: None)
+                checksums_content = checksums_path.read_text()
+                expected_hash = self._parse_checksum_file(checksums_content, archive_filename)
+            finally:
+                if checksums_path.exists():
+                    checksums_path.unlink()
+            source = "release checksums.txt"
 
-            expected_hash = self._parse_checksum_file(checksums_content, archive_filename)
-            if not expected_hash:
-                raise RuntimeError(
-                    f"Checksum not found for {archive_filename} in checksums file"
-                )
+        if not expected_hash:
+            raise RuntimeError(f"Checksum not found for {archive_filename} ({source})")
 
-            actual_hash = self._compute_sha256(archive_path)
-            if actual_hash != expected_hash:
-                raise RuntimeError(
-                    f"Checksum mismatch for {archive_filename}:\n"
-                    f"  Expected: {expected_hash}\n"
-                    f"  Actual:   {actual_hash}\n"
-                    f"The downloaded file may be corrupted or tampered with."
-                )
-        finally:
-            if checksums_path.exists():
-                checksums_path.unlink()
+        actual_hash = self._compute_sha256(archive_path)
+        if actual_hash != expected_hash:
+            raise RuntimeError(
+                f"Checksum mismatch for {archive_filename} ({source}):\n"
+                f"  Expected: {expected_hash}\n"
+                f"  Actual:   {actual_hash}\n"
+                f"The downloaded file may be corrupted or tampered with."
+            )
 
     @staticmethod
     def _parse_checksum_file(content: str, filename: str) -> str | None:
@@ -332,11 +362,13 @@ class BinaryManager:
         url: str,
         dest: Path,
         on_progress: Callable[[str], None],
-        *,
-        _redirects: int = 0,
     ) -> None:
-        if _redirects > 10:
-            raise RuntimeError("Too many redirects")
+        # Refuse to download non-https URLs (defends against an http:// initial
+        # URL or against `urlopen` quietly accepting a downgrade in some configs).
+        # `urlopen` already restricts redirects to http(s) and will raise on
+        # http→https mixes, but we want a hard floor before the request goes out.
+        if not url.lower().startswith("https://"):
+            raise RuntimeError(f"Refusing non-https download URL: {url}")
 
         request = urllib.request.Request(
             url,
@@ -344,6 +376,12 @@ class BinaryManager:
         )
 
         with urllib.request.urlopen(request, timeout=60) as response:
+            # urllib resolves redirects internally; verify the final URL is
+            # still https (defense in depth — strips any pathological mixed
+            # http/https redirect chain).
+            final_url = response.geturl()
+            if not final_url.lower().startswith("https://"):
+                raise RuntimeError(f"Refusing non-https final URL after redirects: {final_url}")
             total = int(response.headers.get("Content-Length", 0))
             downloaded = 0
             last_pct = 0
@@ -362,7 +400,12 @@ class BinaryManager:
                             last_pct = pct
 
     def _extract_zip(self, archive_path: Path) -> None:
-        """Extract only the betterleaks binary from a Windows zip archive."""
+        """Extract only the betterleaks binary from a Windows zip archive.
+
+        Defensively rejects symlink/hardlink-style entries — zip can encode
+        these via Unix-mode external attrs, and we don't want a malicious
+        release pointing the binary at e.g. `~/.ssh/authorized_keys`.
+        """
         allowed = {"betterleaks", "betterleaks.exe"}
         with tempfile.TemporaryDirectory(prefix="rafter-betterleaks-") as tmp:
             tmp_path = Path(tmp)
@@ -370,6 +413,9 @@ class BinaryManager:
                 for info in zf.infolist():
                     # Reject path-traversal entries (zip-slip)
                     if info.filename.startswith("/") or ".." in info.filename:
+                        continue
+                    # Reject symlinks/hardlinks (Unix mode bits in external_attr)
+                    if (info.external_attr >> 16) & 0o170000 in (0o120000, 0o140000):
                         continue
                     basename = os.path.basename(info.filename)
                     if basename not in allowed:
@@ -380,19 +426,27 @@ class BinaryManager:
             found: Path | None = None
             for name in allowed:
                 candidate = tmp_path / name
-                if candidate.exists():
+                if candidate.exists() and not candidate.is_symlink() and candidate.is_file():
                     found = candidate
                     break
 
             if found is None:
-                raise RuntimeError("betterleaks binary not found in archive")
+                raise RuntimeError("betterleaks binary not found in archive (or is symlink/special)")
 
             target = self.bin_dir / found.name
             shutil.copy2(str(found), str(target))
 
     def _extract_tarball(self, archive_path: Path) -> None:
-        """Extract only the betterleaks binary from the tarball."""
-        # filter="data" was added in Python 3.12; fall back gracefully on older runtimes.
+        """Extract only the betterleaks binary from the tarball.
+
+        Defensively rejects symlinks/hardlinks/devices and absolute / `..` paths.
+        Without the symlink reject a malicious release could ship a `betterleaks`
+        entry that's a symlink to e.g. `~/.ssh/authorized_keys`; the subsequent
+        `chmod +x` (which follows symlinks) would then mode-flip the target.
+
+        Uses `filter="data"` on Python 3.12+ which adds a second layer of
+        defense (rejects unsafe member kinds at the stdlib level).
+        """
         _extract_kwargs: dict = {}
         if sys.version_info >= (3, 12):
             _extract_kwargs["filter"] = "data"
@@ -400,6 +454,23 @@ class BinaryManager:
         with tarfile.open(archive_path, "r:gz") as tf:
             for member in tf.getmembers():
                 base = os.path.basename(member.name)
-                if base in ("betterleaks", "betterleaks.exe"):
-                    member.name = base
-                    tf.extract(member, path=self.bin_dir, **_extract_kwargs)
+                if base not in ("betterleaks", "betterleaks.exe"):
+                    continue
+                if member.issym() or member.islnk() or member.isdev():
+                    raise RuntimeError(
+                        f"Refusing to extract non-regular tar entry: {member.name} "
+                        f"(type={member.type!r})"
+                    )
+                if member.name.startswith("/") or ".." in member.name.split("/"):
+                    raise RuntimeError(f"Refusing path-traversal tar entry: {member.name}")
+                member.name = base
+                tf.extract(member, path=self.bin_dir, **_extract_kwargs)
+
+        # Belt-and-suspenders: confirm what landed is a regular file.
+        installed = self.get_betterleaks_path()
+        if installed.exists():
+            if installed.is_symlink() or not installed.is_file():
+                installed.unlink()
+                raise RuntimeError(
+                    "Extracted betterleaks is not a regular file (symlink/special); aborting."
+                )

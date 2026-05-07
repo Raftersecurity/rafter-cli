@@ -25,6 +25,17 @@ async function checkBetterleaks(): Promise<CheckResult> {
   const hasBinary = pathBinary !== null || binaryManager.isBetterleaksInstalled();
 
   if (!hasBinary) {
+    // Soft-degrade if a legacy gitleaks install is still present — the user
+    // upgraded rafter but hasn't rerun `agent init --with-betterleaks` yet.
+    const legacy = await detectLegacyGitleaks();
+    if (legacy) {
+      return {
+        name,
+        passed: false,
+        optional: true,
+        detail: `Not installed; found legacy gitleaks at ${legacy}. Run: rafter agent update-betterleaks`,
+      };
+    }
     return { name, passed: false, detail: `Not found on PATH or at ${binaryManager.getBetterleaksPath()}` };
   }
 
@@ -36,6 +47,19 @@ async function checkBetterleaks(): Promise<CheckResult> {
   }
 
   return { name, passed: true, detail: `${stdout} (${binaryPath})` };
+}
+
+/** Look for a leftover gitleaks binary on PATH or in ~/.rafter/bin. */
+async function detectLegacyGitleaks(): Promise<string | null> {
+  const { execSync } = await import("child_process");
+  try {
+    const cmd = process.platform === "win32" ? "where gitleaks" : "which gitleaks";
+    const out = execSync(cmd, { timeout: 5000, encoding: "utf-8" }).trim().split("\n")[0].trim();
+    if (out) return out;
+  } catch { /* not on PATH */ }
+  const ext = process.platform === "win32" ? ".exe" : "";
+  const local = path.join(os.homedir(), ".rafter", "bin", `gitleaks${ext}`);
+  return fs.existsSync(local) ? local : null;
 }
 
 function checkConfig(): CheckResult {

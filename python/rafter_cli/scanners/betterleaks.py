@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from typing import NamedTuple
@@ -134,8 +135,9 @@ class BetterleaksScanner:
             try:
                 # betterleaks uses subcommands: `dir <path>` for filesystem,
                 # `git <path>` for git history; report destination is --report-path.
+                # `--` ensures a target path beginning with `-` isn't parsed as a flag.
                 subcommand = "git" if use_git else "dir"
-                cmd = [self._path, subcommand, "-f", "json", "--report-path", report_path, target]
+                cmd = [self._path, subcommand, "-f", "json", "--report-path", report_path, "--", target]
                 subprocess.run(
                     cmd,
                     capture_output=True, timeout=60,
@@ -146,8 +148,19 @@ class BetterleaksScanner:
                     content = f.read().strip()
                 if not content:
                     return []
-                return json.loads(content)
-            except (subprocess.TimeoutExpired, json.JSONDecodeError):
+                parsed = json.loads(content)
+                if not isinstance(parsed, list):
+                    print(
+                        "[rafter] Warning: Betterleaks output is not an array — possible version mismatch",
+                        file=sys.stderr,
+                    )
+                    return []
+                return parsed
+            except subprocess.TimeoutExpired:
+                print(f"[rafter] Warning: Betterleaks scan of {target} timed out", file=sys.stderr)
+                return []
+            except json.JSONDecodeError as exc:
+                print(f"[rafter] Warning: Failed to parse Betterleaks report: {exc}", file=sys.stderr)
                 return []
 
     @staticmethod
