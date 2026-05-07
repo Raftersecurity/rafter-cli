@@ -184,11 +184,24 @@ class BetterleaksScanner:
     @staticmethod
     def _get_severity(rule_id: str, tags: list) -> str:
         lower = rule_id.lower()
-        if any(k in lower for k in ("private-key", "password", "database", "access-token", "secret-key")) or lower.endswith("-pat"):
+        tags = tags or []
+        # Critical: private keys, passwords, db credentials, access tokens,
+        # personal access tokens, or anything tagged as both key+secret.
+        if (
+            any(k in lower for k in ("private-key", "password", "database", "access-token", "secret-key"))
+            or lower.endswith("-pat")
+            or ("key" in tags and "secret" in tags)
+        ):
             return "critical"
-        if any(k in lower for k in ("api-key", "-token", "token-")):
+        # High: api keys, generic tokens, or anything tagged 'api'.
+        if (
+            any(k in lower for k in ("api-key", "-token"))
+            or lower.startswith("token-")
+            or "api" in tags
+        ):
             return "high"
-        if "generic" in lower:
+        # Medium: anything advertised as generic.
+        if "generic" in lower or "generic" in tags:
             return "medium"
         return "high"
 

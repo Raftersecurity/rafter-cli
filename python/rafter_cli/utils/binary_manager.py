@@ -62,6 +62,16 @@ def _get_bin_dir() -> Path:
     return Path.home() / ".rafter" / "bin"
 
 
+def _user_agent() -> str:
+    """User-Agent for outbound HTTP. Identifies the rafter-cli release that's
+    making the request — distinct from the BETTERLEAKS_VERSION being installed."""
+    try:
+        from .. import __version__ as _v
+        return f"rafter-cli/{_v}"
+    except Exception:
+        return "rafter-cli"
+
+
 class BinaryManager:
     def __init__(self) -> None:
         self.bin_dir = _get_bin_dir()
@@ -372,7 +382,7 @@ class BinaryManager:
 
         request = urllib.request.Request(
             url,
-            headers={"User-Agent": f"rafter-cli/{BETTERLEAKS_VERSION}"},
+            headers={"User-Agent": _user_agent()},
         )
 
         with urllib.request.urlopen(request, timeout=60) as response:

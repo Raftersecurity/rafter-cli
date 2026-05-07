@@ -57,3 +57,17 @@ class TestGetSeverity:
         """'tokenizer' doesn't contain '-token' or start with 'token-', falls to default."""
         sev = BetterleaksScanner._get_severity("tokenizer-config", [])
         assert sev == "high"  # default for unknown rules, not via token match
+
+    # ── Tag-based classification (parity with Node) ──────────────
+
+    def test_tag_key_plus_secret_is_critical(self):
+        sev = BetterleaksScanner._get_severity("some-unknown-rule", ["key", "secret"])
+        assert sev == "critical"
+
+    def test_tag_api_is_high(self):
+        sev = BetterleaksScanner._get_severity("some-unknown-rule", ["api"])
+        assert sev == "high"
+
+    def test_tag_generic_is_medium(self):
+        sev = BetterleaksScanner._get_severity("some-unknown-rule", ["generic"])
+        assert sev == "medium"
