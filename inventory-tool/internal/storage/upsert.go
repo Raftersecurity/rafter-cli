@@ -8,7 +8,6 @@
 package storage
 
 import (
-	"errors"
 	"time"
 
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/fingerprint"
@@ -24,26 +23,97 @@ type Upsertable struct {
 	Now     time.Time
 }
 
-var errUpsertNotImplemented = errors.New("storage: Upsert not implemented")
-
 // Upsert merges u into g. Behaviour:
 //
-//   - If a Secret with the same fingerprint(KeyName,Value) already
-//     exists and its FoundIn list does NOT yet include u.Found's
-//     identifying location, u.Found is appended; LastSeen is bumped.
-//   - If a Secret with the same KeyName has a FoundIn at u.Found's
-//     identifying location but a DIFFERENT fingerprint, the entry is
+//   - If a Secret with the same KeyName already has a FoundIn at u's
+//     identifying location and a DIFFERENT fingerprint, the entry is
 //     treated as a value rotation (drift). The old fingerprint is
-//     pushed onto ValueHistory; the entry's ID, ValueFingerprint, and
-//     ValuePreview are updated; the matching FoundIn is replaced;
+//     pushed onto ValueHistory; ID, ValueFingerprint, and ValuePreview
+//     are updated; the matching FoundIn is replaced with u.Found;
 //     Annotation and FirstSeen are preserved.
+//   - Otherwise, if a Secret with the same fingerprint(KeyName,Value)
+//     already exists, u.Found is appended to its FoundIn list (or, if
+//     that location is already present, the entry there is refreshed).
+//     LastSeen is bumped.
 //   - Otherwise a fresh Secret is created with FirstSeen = LastSeen =
 //     u.Now and a single FoundIn.
 //
 // The full Value is never written back into g — only its fingerprint
 // and the rune-bounded Preview.
 func (g *Global) Upsert(u Upsertable) {
-	_ = errUpsertNotImplemented
+	newFP := fingerprint.Compute(u.KeyName, u.Value)
+	uKey, uHasKey := upsertKey(u.Found)
+
+	// Drift check: same KeyName + same identifying location + different fingerprint.
+	// We have to scan because there's no secondary index on (key, path).
+	if uHasKey {
+		for i := range g.Secrets {
+			s := &g.Secrets[i]
+			if s.KeyName != u.KeyName {
+				continue
+			}
+			for j := range s.FoundIn {
+				k, ok := upsertKey(s.FoundIn[j])
+				if !ok || k != uKey {
+					continue
+				}
+				if s.ValueFingerprint == newFP {
+					// Same path, same value: re-observation. Refresh
+					// the FoundIn (line/permissions may change) and
+					// bump LastSeen.
+					s.FoundIn[j] = u.Found
+					s.LastSeen = u.Now
+					return
+				}
+				// DRIFT.
+				s.ValueHistory = append(s.ValueHistory, ValueHistoryEntry{
+					Fingerprint: s.ValueFingerprint,
+					SeenAt:      u.Now,
+				})
+				s.ID = newFP
+				s.ValueFingerprint = newFP
+				s.ValuePreview = fingerprint.Preview(u.Value)
+				s.FoundIn[j] = u.Found
+				s.LastSeen = u.Now
+				return
+			}
+		}
+	}
+
+	// Dedup by fingerprint: same (key, value) seen elsewhere → add a
+	// FoundIn rather than create a new entry.
+	for i := range g.Secrets {
+		s := &g.Secrets[i]
+		if s.ValueFingerprint != newFP {
+			continue
+		}
+		// If this exact location is already recorded, refresh it.
+		if uHasKey {
+			for j := range s.FoundIn {
+				if k, ok := upsertKey(s.FoundIn[j]); ok && k == uKey {
+					s.FoundIn[j] = u.Found
+					s.LastSeen = u.Now
+					return
+				}
+			}
+		}
+		s.FoundIn = append(s.FoundIn, u.Found)
+		s.LastSeen = u.Now
+		return
+	}
+
+	// New secret.
+	g.Secrets = append(g.Secrets, Secret{
+		ID:               newFP,
+		KeyName:          u.KeyName,
+		ValueFingerprint: newFP,
+		ValuePreview:     fingerprint.Preview(u.Value),
+		FoundIn:          []FoundIn{u.Found},
+		Annotation:       Annotation{Tags: []string{}},
+		FirstSeen:        u.Now,
+		LastSeen:         u.Now,
+		ValueHistory:     []ValueHistoryEntry{},
+	})
 }
 
 // MarkStale sets Annotation.Stale = true on the Secret with the given
@@ -51,6 +121,12 @@ func (g *Global) Upsert(u Upsertable) {
 // stay intact so the audit UI can show "previously seen at X". Returns
 // true iff a Secret with that id was found.
 func (g *Global) MarkStale(id string) bool {
+	for i := range g.Secrets {
+		if g.Secrets[i].ID == id {
+			g.Secrets[i].Annotation.Stale = true
+			return true
+		}
+	}
 	return false
 }
 
@@ -60,6 +136,17 @@ func (g *Global) MarkStale(id string) bool {
 // out-of-band; the next scan that observes the new value will land as
 // a drift Upsert. Returns true iff a Secret with that id was found.
 func (g *Global) MarkRotated(id string, now time.Time) bool {
+	for i := range g.Secrets {
+		s := &g.Secrets[i]
+		if s.ID != id {
+			continue
+		}
+		s.ValueHistory = append(s.ValueHistory, ValueHistoryEntry{
+			Fingerprint: s.ValueFingerprint,
+			SeenAt:      now,
+		})
+		return true
+	}
 	return false
 }
 
@@ -77,7 +164,3 @@ func upsertKey(f FoundIn) (string, bool) {
 	}
 	return "", false
 }
-
-// _ ensures fingerprint is referenced from this file even when Upsert
-// is unimplemented — keeps `go vet` happy on the stub commit.
-var _ = fingerprint.Compute
