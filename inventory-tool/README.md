@@ -66,8 +66,23 @@ on launch when `ScanConfig.Roots` is empty.
   surface. Clients connect with the existing session token, receive
   `scan_started`, `secret_created`, `secret_refreshed`,
   `secret_drifted`, and `scan_complete` frames as they happen.
+- `internal/docstore`: a single-mutex wrapper around the on-disk
+  `*storage.Global` that the rescanner and the HTTP handlers share.
+  Every doc mutation (scanner upserts, annotations, mark-stale,
+  mark-rotated) goes through the same lock, so a click in the UI
+  during a rescan blocks briefly rather than racing the scanner.
+- `internal/server/secrets.go`: `GET /api/secrets` returns the live
+  inventory; `POST /api/secrets/{id}/reveal` reads the value from
+  disk on demand (via `scan.ResolveValue`), `PUT /api/secrets/{id}/annotation`
+  edits the user metadata, and `POST /api/secrets/{id}/{stale,rotated}`
+  expose the two action buttons from the spec. Keystore and source-code
+  reveals return 422 (not yet supported).
+- `internal/server/static/`: the embedded inventory UI. List grouped
+  by source, side panel for annotation, click-to-reveal for plaintext
+  sources, debounced auto-save on annotation edits, live SSE updates
+  when the drift watcher fires.
 
-The keystore reader and the real UI land in subsequent commits.
+The keystore reader lands in subsequent commits.
 
 ## Hard rules (carried in from the spec)
 
@@ -93,11 +108,13 @@ make run         # build + launch
 inventory-tool/
 ├── cmd/trove/         # entry point
 └── internal/
-    ├── server/        # localhost HTTP + token auth + lifecycle watchdog + SSE
+    ├── server/        # localhost HTTP + token auth + lifecycle + SSE + inventory API + UI
+    │   └── static/    # embedded HTML/JS for the inventory browser UI
     ├── browser/       # cross-platform default-browser opener
+    ├── docstore/      # shared *storage.Global + lock + saver (rescan + server)
     ├── storage/       # global.json schema, atomic Load/Save, Upsert/dedup/drift
     ├── fingerprint/   # BLAKE3 dedup ids and value previews
-    ├── scan/          # walk orchestrator + scanner dispatch + symlink/cycle rules
+    ├── scan/          # walk orchestrator + scanner dispatch + ResolveValue (reveal)
     ├── watch/         # fsnotify drift watcher + debounced rescan trigger
     ├── eventbus/      # in-process pub/sub for drift events
     ├── rescan/        # watch+scan+bus glue for live drift updates
