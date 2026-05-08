@@ -404,8 +404,8 @@ describe("E2E: git --staged scanning", () => {
     expect(r.exitCode).toBe(1);
 
     const parsed = JSON.parse(r.stdout);
-    expect(parsed.length).toBeGreaterThan(0);
-    expect(parsed[0].matches[0].pattern.name).toBe("AWS Access Key ID");
+    expect(parsed.results.length).toBeGreaterThan(0);
+    expect(parsed.results[0].matches[0].pattern.name).toBe("AWS Access Key ID");
   });
 
   it("exits 0 when staged files are clean", () => {
@@ -485,8 +485,8 @@ describe("E2E: git --diff scanning", () => {
     expect(r.exitCode).toBe(1);
 
     const parsed = JSON.parse(r.stdout);
-    expect(parsed.length).toBeGreaterThan(0);
-    expect(parsed[0].matches[0].pattern.name).toBe("AWS Access Key ID");
+    expect(parsed.results.length).toBeGreaterThan(0);
+    expect(parsed.results[0].matches[0].pattern.name).toBe("AWS Access Key ID");
   });
 
   it("exits 0 when changed files are clean", () => {
@@ -551,9 +551,9 @@ describe("E2E: CLI JSON output structure", () => {
     expect(r.exitCode).toBe(1);
 
     const parsed = JSON.parse(r.stdout);
-    expect(parsed).toHaveLength(1);
+    expect(parsed.results).toHaveLength(1);
 
-    const entry = parsed[0];
+    const entry = parsed.results[0];
     expect(entry.file).toContain("test.ts");
     expect(entry.matches).toHaveLength(1);
 
@@ -585,9 +585,9 @@ describe("E2E: CLI JSON output structure", () => {
     expect(r.exitCode).toBe(1);
 
     const parsed = JSON.parse(r.stdout);
-    expect(parsed).toHaveLength(2);
+    expect(parsed.results).toHaveLength(2);
 
-    const fileNames = parsed.map((e: any) => path.basename(e.file)).sort();
+    const fileNames = parsed.results.map((e: any) => path.basename(e.file)).sort();
     expect(fileNames).toEqual(["a.ts", "b.ts"]);
   });
 });
@@ -679,10 +679,10 @@ describe("E2E: baseline filtering", () => {
     expect(r.exitCode).toBe(1);
 
     const parsed = JSON.parse(r.stdout);
-    expect(parsed).toHaveLength(1);
+    expect(parsed.results).toHaveLength(1);
 
     // Only the GitHub token should remain (AWS key was baselined)
-    const names = parsed[0].matches.map((m: any) => m.pattern.name);
+    const names = parsed.results[0].matches.map((m: any) => m.pattern.name);
     expect(names).toContain("GitHub Personal Access Token");
     expect(names).not.toContain("AWS Access Key ID");
   });
@@ -711,7 +711,7 @@ describe("E2E: baseline filtering", () => {
     expect(r.exitCode).toBe(1);
 
     const parsed = JSON.parse(r.stdout);
-    const names = parsed[0].matches.map((m: any) => m.pattern.name);
+    const names = parsed.results[0].matches.map((m: any) => m.pattern.name);
     // Both should be present since --baseline was not passed
     expect(names).toContain("AWS Access Key ID");
     expect(names).toContain("GitHub Personal Access Token");

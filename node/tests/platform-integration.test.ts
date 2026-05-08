@@ -1655,8 +1655,10 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       const result = runCli("agent init --all", testHomeDir, 90_000);
       expect(result.exitCode).toBe(0);
 
-      // ── OpenClaw: skill file ──
-      const openclawSkill = path.join(testHomeDir, ".openclaw", "skills", "rafter-security.md");
+      // ── OpenClaw: ClawHub-shaped skill (rf-zgwj) ──
+      const openclawSkill = path.join(
+        testHomeDir, ".openclaw", "workspace", "skills", "rafter-security", "SKILL.md"
+      );
       expect(fs.existsSync(openclawSkill)).toBe(true);
       expect(fs.readFileSync(openclawSkill, "utf-8")).toContain("rafter");
 
