@@ -10,8 +10,10 @@ from rafter_cli.commands.agent import (
     _install_gemini_mcp,
     _install_cursor_mcp,
     _install_windsurf_mcp,
+    _install_windsurf_rules,
     _install_continue_dev_mcp,
-    _install_aider_mcp,
+    _install_continue_dev_rules,
+    _install_aider_read,
 )
 
 
@@ -147,6 +149,72 @@ class TestInstallWindsurfMcp:
         assert config["mcpServers"]["rafter"]["command"] == "rafter"
 
 
+class TestInstallWindsurfRules:
+    """rf-0vr3 — per-skill rules at .windsurf/rules/<skill>.md replace
+    the broken ~/.windsurf/hooks.json install (Windsurf has no hook surface)."""
+
+    SKILL_NAMES = ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review")
+
+    def test_writes_one_rule_per_skill(self, tmp_path):
+        _install_windsurf_rules(tmp_path)
+        rules_dir = tmp_path / ".windsurf" / "rules"
+        for name in self.SKILL_NAMES:
+            assert (rules_dir / f"{name}.md").exists(), f"missing rule: {name}"
+
+    def test_rules_have_windsurf_frontmatter(self, tmp_path):
+        _install_windsurf_rules(tmp_path)
+        rules_dir = tmp_path / ".windsurf" / "rules"
+        for name in self.SKILL_NAMES:
+            body = (rules_dir / f"{name}.md").read_text()
+            assert body.startswith("---\ntrigger: model_decision"), (
+                f"{name}.md missing Windsurf trigger frontmatter"
+            )
+            assert "description:" in body.split("---")[1]
+
+    def test_does_not_write_hooks_json(self, tmp_path):
+        _install_windsurf_rules(tmp_path)
+        # hooks.json explicitly not created — Windsurf has no hook surface (rf-0vr3).
+        assert not (tmp_path / ".windsurf" / "hooks.json").exists()
+
+    def test_idempotent_on_reinstall(self, tmp_path):
+        _install_windsurf_rules(tmp_path)
+        _install_windsurf_rules(tmp_path)
+        rules_dir = tmp_path / ".windsurf" / "rules"
+        # Still exactly the four files; no duplicates appended to filenames.
+        files = sorted(p.name for p in rules_dir.iterdir())
+        assert files == sorted(f"{n}.md" for n in self.SKILL_NAMES)
+
+
+class TestInstallContinueDevRules:
+    """rf-acz0 — per-skill rules at .continue/rules/<skill>.md (workspace-scope).
+    Continue.dev's only persistent-rule surface; previously rafter shipped
+    nothing here, only MCP."""
+
+    SKILL_NAMES = ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review")
+
+    def test_writes_one_rule_per_skill(self, tmp_path):
+        _install_continue_dev_rules(tmp_path)
+        rules_dir = tmp_path / ".continue" / "rules"
+        for name in self.SKILL_NAMES:
+            assert (rules_dir / f"{name}.md").exists(), f"missing rule: {name}"
+
+    def test_rules_have_continue_frontmatter(self, tmp_path):
+        _install_continue_dev_rules(tmp_path)
+        rules_dir = tmp_path / ".continue" / "rules"
+        for name in self.SKILL_NAMES:
+            body = (rules_dir / f"{name}.md").read_text()
+            assert body.startswith("---\nname: "), f"{name}.md missing Continue.dev `name:` field"
+            assert "description:" in body.split("---")[1]
+            assert "alwaysApply: false" in body.split("---")[1]
+
+    def test_idempotent_on_reinstall(self, tmp_path):
+        _install_continue_dev_rules(tmp_path)
+        _install_continue_dev_rules(tmp_path)
+        rules_dir = tmp_path / ".continue" / "rules"
+        files = sorted(p.name for p in rules_dir.iterdir())
+        assert files == sorted(f"{n}.md" for n in self.SKILL_NAMES)
+
+
 class TestInstallContinueDevMcp:
     def test_creates_config_with_array_format(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -186,36 +254,74 @@ class TestInstallContinueDevMcp:
         assert config["mcpServers"]["other"]["command"] == "other"
 
 
-class TestInstallAiderMcp:
-    def test_creates_config_from_scratch(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        assert _install_aider_mcp(tmp_path)
+class TestInstallAiderRead:
+    """rf-du2o — replaces broken `mcp-server-command:` install. Aider has no
+    native MCP support; its only persistent-context primitive is the `read:`
+    flag in `.aider.conf.yml`."""
 
-        config_path = tmp_path / ".aider.conf.yml"
-        assert config_path.exists()
-        content = config_path.read_text()
-        assert "rafter mcp serve" in content
+    def test_writes_rafter_md(self, tmp_path):
+        assert _install_aider_read(tmp_path)
+        rafter_md = tmp_path / "RAFTER.md"
+        assert rafter_md.exists()
+        body = rafter_md.read_text()
+        assert "<!-- rafter:start -->" in body
+        assert "<!-- rafter:end -->" in body
 
-    def test_skips_if_already_configured(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        config_path = tmp_path / ".aider.conf.yml"
-        config_path.write_text("mcp-server-command: rafter mcp serve\n")
-
-        assert _install_aider_mcp(tmp_path)
-
-        content = config_path.read_text()
-        assert content.count("rafter mcp serve") == 1
-
-    def test_appends_to_existing_config(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    def test_adds_rafter_md_to_read_list(self, tmp_path):
         config_path = tmp_path / ".aider.conf.yml"
         config_path.write_text("model: gpt-4\n")
 
-        _install_aider_mcp(tmp_path)
+        _install_aider_read(tmp_path)
 
         content = config_path.read_text()
         assert "model: gpt-4" in content
-        assert "rafter mcp serve" in content
+        assert "RAFTER.md" in content
+
+    def test_does_not_write_legacy_mcp_line(self, tmp_path):
+        config_path = tmp_path / ".aider.conf.yml"
+        config_path.write_text("# fresh\n")
+
+        _install_aider_read(tmp_path)
+
+        content = config_path.read_text()
+        assert "mcp-server-command" not in content
+        assert "rafter mcp serve" not in content
+
+    def test_strips_legacy_mcp_block_on_reinstall(self, tmp_path):
+        """Migration path: pre-existing legacy line must be removed."""
+        config_path = tmp_path / ".aider.conf.yml"
+        config_path.write_text(
+            "model: gpt-5\n\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n"
+        )
+
+        _install_aider_read(tmp_path)
+
+        content = config_path.read_text()
+        assert "mcp-server-command" not in content
+        assert "Rafter security MCP server" not in content
+        assert "model: gpt-5" in content
+        assert "RAFTER.md" in content
+
+    def test_preserves_existing_read_entries(self, tmp_path):
+        config_path = tmp_path / ".aider.conf.yml"
+        config_path.write_text("read:\n  - CONVENTIONS.md\n  - DESIGN.md\n")
+
+        _install_aider_read(tmp_path)
+
+        content = config_path.read_text()
+        assert "CONVENTIONS.md" in content
+        assert "DESIGN.md" in content
+        assert "RAFTER.md" in content
+
+    def test_idempotent_on_repeated_installs(self, tmp_path):
+        config_path = tmp_path / ".aider.conf.yml"
+        config_path.write_text("model: gpt-5\n")
+
+        _install_aider_read(tmp_path)
+        _install_aider_read(tmp_path)
+
+        content = config_path.read_text()
+        assert content.count("RAFTER.md") == 1
 
 
 # ── Flag rejection tests ─────────────────────────────────────────────
@@ -294,9 +400,10 @@ class TestOptInGating:
         continue_config = tmp_path / ".continue" / "config.json"
         assert not continue_config.exists(), "Continue config.json should not be created without --with-continue"
 
-        # Aider MCP should NOT be appended
+        # Aider read: should NOT be appended (rf-du2o); RAFTER.md not written.
         aider_content = (tmp_path / ".aider.conf.yml").read_text()
-        assert "rafter" not in aider_content, "Aider config should not be modified without --with-aider"
+        assert "RAFTER.md" not in aider_content, "Aider config should not be modified without --with-aider"
+        assert not (tmp_path / "RAFTER.md").exists()
 
 
 # ── Codex skill installation tests ───────────────────────────────────
@@ -417,7 +524,16 @@ from rafter_cli.commands.agent import _install_openclaw_skill
 
 
 class TestInstallOpenClawSkill:
-    def test_installs_skill_when_openclaw_dir_exists(self, tmp_path, monkeypatch):
+    """rf-zgwj — OpenClaw integration writes a ClawHub-shaped skill at the
+    canonical workspace path, not the legacy single-file path."""
+
+    def _canonical_path(self, root: Path) -> Path:
+        return root / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md"
+
+    def _legacy_path(self, root: Path) -> Path:
+        return root / ".openclaw" / "skills" / "rafter-security.md"
+
+    def test_installs_skill_at_clawhub_workspace_path(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         (tmp_path / ".openclaw").mkdir()
 
@@ -425,42 +541,56 @@ class TestInstallOpenClawSkill:
         assert ok, f"Expected success, got error: {error}"
         assert error == ""
 
-        dest_path = tmp_path / ".openclaw" / "skills" / "rafter-security.md"
-        assert dest_path.exists(), "Skill file should be installed"
-        assert dest_path.read_text().strip(), "Skill file should not be empty"
+        dest_path = self._canonical_path(tmp_path)
+        assert dest_path.exists(), "SKILL.md should be installed at canonical path"
+        assert dest_path.read_text().strip(), "SKILL.md should not be empty"
         assert str(dest_path) == dest
 
     def test_fails_when_openclaw_dir_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        # Do NOT create .openclaw directory
 
         ok, source, dest, error = _install_openclaw_skill()
-        assert not ok, "Should fail when .openclaw directory is missing"
+        assert not ok, "Should fail when .openclaw is missing"
         assert "not found" in error.lower()
 
-    def test_overwrites_existing_skill(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        openclaw_dir = tmp_path / ".openclaw"
-        openclaw_dir.mkdir()
-        skills_dir = openclaw_dir / "skills"
-        skills_dir.mkdir()
-        (skills_dir / "rafter-security.md").write_text("old content")
-
-        ok, source, dest, error = _install_openclaw_skill()
-        assert ok
-
-        content = (skills_dir / "rafter-security.md").read_text()
-        assert content != "old content", "Skill should be updated on reinstall"
-
-    def test_creates_skills_subdirectory(self, tmp_path, monkeypatch):
+    def test_overwrites_existing_clawhub_skill(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         (tmp_path / ".openclaw").mkdir()
-        # skills/ subdirectory does NOT exist yet
+        skill_dir = self._canonical_path(tmp_path).parent
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("old content")
 
         ok, source, dest, error = _install_openclaw_skill()
         assert ok
 
-        assert (tmp_path / ".openclaw" / "skills").is_dir(), "Should create skills subdirectory"
+        content = self._canonical_path(tmp_path).read_text()
+        assert content != "old content", "SKILL.md should be updated on reinstall"
+
+    def test_creates_workspace_skills_directory_tree(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".openclaw").mkdir()
+
+        ok, source, dest, error = _install_openclaw_skill()
+        assert ok
+
+        assert self._canonical_path(tmp_path).parent.is_dir(), (
+            "Should create workspace/skills/rafter-security/"
+        )
+
+    def test_strips_legacy_skill_on_reinstall(self, tmp_path, monkeypatch):
+        """rf-zgwj migration: the rafter ≤ 0.7.7 install left a file at
+        ~/.openclaw/skills/rafter-security.md. OpenClaw never read it.
+        Reinstall removes it and writes the canonical ClawHub-shaped skill."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        legacy = self._legacy_path(tmp_path)
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("---\nname: rafter-security\nversion: 0.6.0\n---\n# old\n")
+
+        ok, _src, _dest, _err = _install_openclaw_skill()
+        assert ok
+
+        assert self._canonical_path(tmp_path).exists()
+        assert not legacy.exists(), "Legacy file should be stripped on reinstall"
 
 
 # ── Codex AGENTS.md instruction file tests ──────────────────────────
@@ -688,3 +818,277 @@ class TestInstallClaudeCodeMcp:
 
         config = json.loads((tmp_path / ".mcp.json").read_text())
         assert config["mcpServers"]["rafter"]["command"] == "rafter"
+
+
+# ── Continue.dev hooks pruned (rf-cia phase b) ─────────────────────────
+#
+# Continue.dev does not read ~/.continue/settings.json and has no
+# hooks.PreToolUse / PostToolUse field in its config schema (config.yaml
+# in current versions, config.json in legacy). The hook installer was a
+# silent no-op at runtime. These tests pin the new behavior.
+
+
+class TestContinueDevHooksPruned:
+    def test_install_does_not_write_continue_settings_json(self, tmp_path):
+        # MCP install is the only Continue.dev install path and must not
+        # produce a settings.json file.
+        _install_continue_dev_mcp(tmp_path)
+
+        settings_path = tmp_path / ".continue" / "settings.json"
+        assert not settings_path.exists(), \
+            "Continue.dev does not read settings.json — rafter must not write it"
+
+    def test_install_preserves_existing_continue_settings_json(self, tmp_path):
+        # If the user has their own Continue.dev settings.json, rafter
+        # must leave it alone (older rafter versions stomped it with a
+        # hooks block Continue.dev couldn't parse).
+        continue_dir = tmp_path / ".continue"
+        continue_dir.mkdir(parents=True)
+        settings_path = continue_dir / "settings.json"
+        user_content = '{"theme":"dark"}'
+        settings_path.write_text(user_content, encoding="utf-8")
+
+        _install_continue_dev_mcp(tmp_path)
+
+        assert settings_path.read_text(encoding="utf-8") == user_content
+
+    def test_install_still_writes_mcp_config(self, tmp_path):
+        # Pruning hooks must not regress MCP install.
+        _install_continue_dev_mcp(tmp_path)
+
+        config_path = tmp_path / ".continue" / "config.json"
+        assert config_path.exists()
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        servers = cfg.get("mcpServers")
+        if isinstance(servers, list):
+            assert any(s.get("name") == "rafter" for s in servers)
+        else:
+            assert "rafter" in (servers or {})
+
+
+# ── Cursor deep support (rf-svn3) ────────────────────────────────────
+
+# Skills shipped as both Cursor rules and skills package — must mirror
+# AGENT_SKILLS_CURSOR in rafter_cli/commands/agent.py.
+_CURSOR_SHIPPED_SKILLS = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+class TestInstallCursorHooks:
+    """Cursor hooks must cover preToolUse, postToolUse, and beforeShellExecution."""
+
+    def test_writes_all_three_events_from_scratch(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_hooks
+        _install_cursor_hooks(tmp_path)
+
+        hooks_path = tmp_path / ".cursor" / "hooks.json"
+        assert hooks_path.exists()
+        cfg = json.loads(hooks_path.read_text())
+        assert cfg["version"] == 1
+        for event in ("preToolUse", "postToolUse", "beforeShellExecution"):
+            entries = cfg["hooks"][event]
+            assert isinstance(entries, list) and entries, f"missing {event}"
+
+        pre = next(e for e in cfg["hooks"]["preToolUse"] if "rafter" in e.get("command", ""))
+        assert pre["command"] == "rafter hook pretool --format cursor"
+        post = next(e for e in cfg["hooks"]["postToolUse"] if "rafter" in e.get("command", ""))
+        assert post["command"] == "rafter hook posttool --format cursor"
+
+    def test_idempotent_no_duplicates(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_hooks
+        _install_cursor_hooks(tmp_path)
+        _install_cursor_hooks(tmp_path)
+        _install_cursor_hooks(tmp_path)
+
+        cfg = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+        for event in ("preToolUse", "postToolUse", "beforeShellExecution"):
+            rafter_hooks = [
+                e for e in cfg["hooks"][event] if "rafter" in e.get("command", "")
+            ]
+            assert len(rafter_hooks) == 1, f"event {event} duplicated"
+
+    def test_preserves_non_rafter_entries(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_hooks
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "hooks.json").write_text(json.dumps({
+            "version": 1,
+            "hooks": {
+                "preToolUse": [{"command": "other pre", "type": "command"}],
+                "postToolUse": [{"command": "other post", "type": "command"}],
+                "beforeShellExecution": [{"command": "other shell", "type": "command"}],
+                "afterFileEdit": [{"command": "other edit", "type": "command"}],
+            },
+        }))
+
+        _install_cursor_hooks(tmp_path)
+
+        cfg = json.loads((cursor_dir / "hooks.json").read_text())
+        commands = lambda ev: [e.get("command") for e in cfg["hooks"][ev]]
+        assert "other pre" in commands("preToolUse")
+        assert "other post" in commands("postToolUse")
+        assert "other shell" in commands("beforeShellExecution")
+        # Unrelated event preserved untouched.
+        assert commands("afterFileEdit") == ["other edit"]
+
+
+class TestInstallCursorRules:
+    """Per-skill .mdc rules — one file per shipped skill."""
+
+    def test_writes_one_mdc_per_shipped_skill(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_rules
+        _install_cursor_rules(tmp_path)
+
+        rules_dir = tmp_path / ".cursor" / "rules"
+        for name in _CURSOR_SHIPPED_SKILLS:
+            assert (rules_dir / f"{name}.mdc").exists(), f"missing {name}.mdc"
+
+    def test_each_rule_has_alwaysApply_false_and_description(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_rules
+        _install_cursor_rules(tmp_path)
+
+        rules_dir = tmp_path / ".cursor" / "rules"
+        for name in _CURSOR_SHIPPED_SKILLS:
+            content = (rules_dir / f"{name}.mdc").read_text()
+            assert content.startswith("---\n"), f"{name}: missing frontmatter"
+            fm_end = content.find("\n---", 4)
+            assert fm_end > 0, f"{name}: missing closing frontmatter"
+            frontmatter = content[4:fm_end]
+            assert "alwaysApply: false" in frontmatter, f"{name}: alwaysApply must be false"
+            assert "description:" in frontmatter, f"{name}: description must exist"
+
+    def test_descriptions_are_action_forcing(self, tmp_path):
+        import re
+        from rafter_cli.commands.agent import _install_cursor_rules
+        _install_cursor_rules(tmp_path)
+
+        rules_dir = tmp_path / ".cursor" / "rules"
+        for name in _CURSOR_SHIPPED_SKILLS:
+            content = (rules_dir / f"{name}.mdc").read_text()
+            m = re.search(r'description:\s*"([^"]+)"', content)
+            assert m, f"{name}: cannot extract description"
+            desc = m.group(1)
+            assert len(desc) > 20, f"{name}: description too short"
+            assert re.match(r"^(REQUIRED|Use|Invoke|Entry|Run|Read|Stop)", desc), (
+                f"{name}: description must be action-forcing, got: {desc[:40]}"
+            )
+
+    def test_does_not_write_legacy_rafter_security_mdc(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_rules
+        _install_cursor_rules(tmp_path)
+        legacy = tmp_path / ".cursor" / "rules" / "rafter-security.mdc"
+        assert not legacy.exists(), "legacy consolidated rule must not be written"
+
+    def test_idempotent(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_rules
+        _install_cursor_rules(tmp_path)
+        rules_dir = tmp_path / ".cursor" / "rules"
+        before = {n: (rules_dir / f"{n}.mdc").read_text() for n in _CURSOR_SHIPPED_SKILLS}
+        _install_cursor_rules(tmp_path)
+        after = {n: (rules_dir / f"{n}.mdc").read_text() for n in _CURSOR_SHIPPED_SKILLS}
+        assert after == before
+
+
+class TestInstallCursorSubAgent:
+    """Cursor sub-agent — .cursor/agents/rafter.md."""
+
+    def test_writes_subagent_file(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_subagents
+        _install_cursor_subagents(tmp_path)
+        agent_path = tmp_path / ".cursor" / "agents" / "rafter.md"
+        assert agent_path.exists()
+
+    def test_frontmatter_has_name_description_no_tools(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_subagents
+        _install_cursor_subagents(tmp_path)
+
+        content = (tmp_path / ".cursor" / "agents" / "rafter.md").read_text()
+        assert content.startswith("---\n")
+        fm_end = content.find("\n---", 4)
+        frontmatter = content[4:fm_end]
+        assert "name: rafter" in frontmatter
+        assert "description:" in frontmatter
+        # Cursor frontmatter has no tools: field.
+        for line in frontmatter.splitlines():
+            assert not line.startswith("tools:"), \
+                "Cursor sub-agent frontmatter must not include tools:"
+
+    def test_body_references_all_three_cli_tiers(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_subagents
+        _install_cursor_subagents(tmp_path)
+        content = (tmp_path / ".cursor" / "agents" / "rafter.md").read_text()
+        assert "rafter run" in content
+        assert "--mode plus" in content
+        assert "rafter secrets" in content
+
+    def test_idempotent(self, tmp_path):
+        from rafter_cli.commands.agent import _install_cursor_subagents
+        _install_cursor_subagents(tmp_path)
+        agent_path = tmp_path / ".cursor" / "agents" / "rafter.md"
+        before = agent_path.read_text()
+        _install_cursor_subagents(tmp_path)
+        assert agent_path.read_text() == before
+
+
+# ── Claude Code rafter sub-agent install ─────────────────────────────
+
+from rafter_cli.commands.agent import _install_claude_code_subagents
+
+
+class TestInstallClaudeCodeSubAgents:
+    def test_creates_subagent_from_scratch(self, tmp_path):
+        _install_claude_code_subagents(tmp_path)
+
+        subagent_path = tmp_path / ".claude" / "agents" / "rafter.md"
+        assert subagent_path.exists(), "rafter.md sub-agent should be installed"
+
+    def test_subagent_has_required_frontmatter(self, tmp_path):
+        _install_claude_code_subagents(tmp_path)
+        content = (tmp_path / ".claude" / "agents" / "rafter.md").read_text()
+
+        # Frontmatter delimited
+        assert content.startswith("---\n"), "must start with YAML frontmatter"
+        closing = content.find("\n---\n", 4)
+        assert closing > 0, "must have closing frontmatter delimiter"
+
+        frontmatter = content[4:closing]
+        assert "name: rafter" in frontmatter
+        assert "description:" in frontmatter
+        assert "tools:" in frontmatter and "Bash" in frontmatter
+
+    def test_subagent_body_references_tier_hierarchy(self, tmp_path):
+        _install_claude_code_subagents(tmp_path)
+        content = (tmp_path / ".claude" / "agents" / "rafter.md").read_text()
+
+        # Trigger phrasing
+        assert "safe / secure / production worthy" in content
+        # Tier hierarchy
+        assert "rafter run" in content
+        assert "--mode plus" in content
+        assert "rafter secrets" in content
+        # Honest about scope of secrets
+        assert "NOT a code security scan" in content
+
+    def test_idempotent_on_reinstall(self, tmp_path):
+        _install_claude_code_subagents(tmp_path)
+        first = (tmp_path / ".claude" / "agents" / "rafter.md").read_text()
+
+        _install_claude_code_subagents(tmp_path)
+        second = (tmp_path / ".claude" / "agents" / "rafter.md").read_text()
+
+        assert first == second
+
+    def test_overwrites_stale_subagent_content(self, tmp_path):
+        agents_dir = tmp_path / ".claude" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "rafter.md").write_text("stale content from previous version")
+
+        _install_claude_code_subagents(tmp_path)
+
+        content = (agents_dir / "rafter.md").read_text()
+        assert content != "stale content from previous version"
+        assert "name: rafter" in content

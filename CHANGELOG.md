@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-05-08
+
+### Fixed
+- **GitHub Action `@v1` tag YAML parse error** (rf-zfhj). The `v1` major-version tag was stuck at a commit whose root `action.yml` had unquoted descriptions with embedded colons (`description: Path to scan for secrets (default: repository root)`), causing GitHub Actions to fail every PR run with `Mapping values are not allowed in this context`. `v1` now points at current main HEAD, which has the description-quoting fix and the `--fail-with-body` curl rewrite from PR #76.
+- **CI `Validate Release` test-build job green** (rf-6s9l, rf-b9l8, rf-blvo). 13 Node tests across 4 files updated to match shape changes that already landed on main: rf-0pch (`rafter scan local --json` now wraps results in `{_note, scan_mode, triage_applied, results, _suppressed?}`), rf-d8s (`Suppression` gained a `source: ".rafterignore" | ".rafter.yml"` field), and rf-zgwj (OpenClaw skill install path moved to the canonical ClawHub `~/.openclaw/workspace/skills/rafter-security/SKILL.md`). Test-only changes; no production behavior shift.
+
+### Changed
+- **OpenClaw integration rebuilt as a ClawHub-shaped skill** (Node + Python, rf-zgwj). Previously rafter wrote a single markdown file at `~/.openclaw/skills/rafter-security.md` — a path OpenClaw never read at runtime. ClawHub auto-discovers skills from `<workspace>/skills/<name>/SKILL.md`. The new install:
+  - Writes `~/.openclaw/workspace/skills/rafter-security/SKILL.md` (the canonical ClawHub path).
+  - Adds the ClawHub-required top-level frontmatter (`name`, `description`, `version`) alongside the existing `openclaw:` runtime block. Now passes ClawHub's metadata schema check.
+  - Migration: reinstall on top of the rafter ≤ 0.7.7 layout strips the legacy `~/.openclaw/skills/rafter-security.md`. Verify warns when only the legacy file is present and prints the migration command.
+  - **Re-included in `--all`**: the rf-0lig demote is reverted because the new shape is what OpenClaw actually consumes. `--with-openclaw` still works as explicit opt-in.
+  - Detection now uses `~/.openclaw/` (the platform root) instead of `~/.openclaw/skills/` (the no-longer-correct skills dir), so a fresh OpenClaw install is detected without needing a hand-installed skill.
+  - Backed by 5 new Node tests in `openclaw-integration.test.ts` (canonical-path install, ClawHub frontmatter, legacy-strip migration, plus the existing 14) and 5 new Python tests in `TestInstallOpenClawSkill` + `TestCheckOpenClaw`. Recipe rewritten to match the new shape.
+
+### Added
+- **`docs/adding-a-platform.md` onboarding contract** (rf-o329 / rf-cia phase d). Single canonical doc for adding rafter integration to a new agent CLI / IDE: 5-question pre-flight (hooks, skills, instruction file, MCP, sub-agent), file-by-file checklist across both impls, decision tree per integration shape, dual-impl rule, verification gate (file-presence tests + `agent verify --probe`), and a worked example for a fictional "Cleo" platform. Documents known exceptions (OpenClaw category mismatch, Aider's read-only-context-only shape, no-hook-surface platforms). Linked from README "Documentation".
+
+- **`rafter agent verify` — Python parity, Continue/Aider coverage, `--json`, and `--probe` runtime mode** (Node + Python, rf-65zg / rf-cia phase d). Verify is now 10 checks across all 8 supported platforms in both implementations:
+  - **Python parity:** added `_check_gemini`, `_check_cursor`, `_check_windsurf` so Python now covers everything Node covers (was MCP-only / Claude-only before).
+  - **Continue.dev + Aider:** new `checkContinueDev` (Node) / `_check_continue_dev` (Python) verifies the MCP entry. New `checkAider` / `_check_aider` reads `.aider.conf.yml` and confirms `RAFTER.md` is in `read:` AND on disk (rf-du2o-aware).
+  - **`--json`:** emits a single JSON object (`checks[]` + `summary`) with stable `pass | warn | fail` status — intended for CI consumption. Schema documented in `shared-docs/CLI_SPEC.md`.
+  - **`--probe`:** runtime probe for Claude Code that synthesizes a `PreToolUse` stdin payload with a known-dangerous sentinel command, invokes `rafter hook pretool`, and asserts `~/.rafter/audit.jsonl` recorded a `command_intercepted` entry for the sentinel. Catches the rf-luk-style "wrote file but the hook never fires" failure mode without driving Claude Code itself. Codex/Cursor/Gemini probes can be added in follow-ups using each platform's documented payload format.
+  - The `Claude Code` and Python claude-hook check now substring-match the hook command, so `rafter hook pretool` and `<abs-path>/rafter hook pretool` (Python install style) both verify clean.
+
+### Changed
+- **Codex hook matchers now intercept `apply_patch` (file edits) in addition to `Bash`** (Node + Python, rf-ovql / rf-cia phase c). Schema verified against `developers.openai.com/codex/hooks` — Codex's `PreToolUse` documents support for Bash, `apply_patch` file edits, and MCP tool calls; we previously only matched `Bash`. Updated `~/.codex/hooks.json` `PreToolUse.matcher` from `"Bash"` to `"Bash|apply_patch"` so file edits actually fire the rafter pretool hook. The known Codex limitation that hooks don't fire for every shell call (per upstream issues #16732 / #20204) is unchanged from our side.
+- **Gemini hook matchers now use the documented Gemini built-in tool names** (Node + Python, rf-044o / rf-cia phase c). Schema verified against `geminicli.com/docs/hooks/reference` — `BeforeTool`/`AfterTool` are the canonical events, `matcher` is a regex against the built-in tool name. Updated `~/.gemini/settings.json` `BeforeTool.matcher` from the implicit-substring `"shell|write_file"` to the explicit `"run_shell_command|write_file|replace|edit"` so the install reads cleanly against current docs and is robust if Gemini ever tightens the matcher to exact-name.
+
+### Added
+- **`rafter agent init --with-claude-code` installs a first-class `.claude/agents/rafter.md` sub-agent** (Node + Python, rf-q7j): alongside the existing skills install, drops a Claude Code sub-agent definition that the calling agent can invoke via `Agent(subagent_type="rafter")`. Sub-agents appear in the main agent's tool list (skills only surface in the activation prompt), making delegation the natural motion for "is this safe / secure / production worthy?" questions. Sub-agent body documents the tier hierarchy — `rafter run` (default, SAST+SCA, needs `RAFTER_API_KEY`), `rafter run --mode plus` (agentic deep-dive), `rafter secrets` (offline secrets-only fallback) — and is hard-restricted to `Bash`, `Read`, `Grep` (no code modification, no commits, no non-rafter scanners).
+
+- **Continue.dev per-skill workspace rules + project-scope (`--local`) install** (Node + Python, rf-acz0 / rf-cia phase c). `rafter agent init --with-continue` now ships:
+  - 4 per-skill rule files at `.continue/rules/<skill>.md` with Continue.dev YAML frontmatter (`name:`, `description:`, `alwaysApply: false`) — `rafter`, `rafter-secure-design`, `rafter-code-review`, `rafter-skill-review`.
+  - `--local` (project) scope install, in addition to user scope. Project install ships rules only; user install additionally registers the MCP entry under `~/.continue/config.json`.
+  - New `continue.rules` ComponentSpec, manageable via `rafter agent enable/disable`.
+  - Backed by 2 new Node tests + 3 new Python tests; combined-platforms integration test asserts the rules ship; recipe rewritten to match.
+
+- **Aider read-only context: `RAFTER.md` + `.aider.conf.yml read:` entry** (Node + Python, rf-du2o / rf-cia phase c). Aider has no plugin/hook system and no native MCP support — `read:` in `.aider.conf.yml` is its only documented persistent-context primitive. `rafter agent init --with-aider` now writes:
+  - `RAFTER.md` at workspace root with the rafter security context block (`<!-- rafter:start --> ... <!-- rafter:end -->`).
+  - Adds `RAFTER.md` to the `read:` list in `.aider.conf.yml` (preserves existing keys and existing `read:` entries; idempotent across reinstalls).
+  - Reinstalls on top of older layouts strip the legacy `mcp-server-command: rafter mcp serve` line (silent no-op — Aider ignored unknown YAML keys per its docs).
+  - Now installs at `--local` (project) scope. Backed by 6 new Node tests + 6 new Python tests; recipe rewritten to match.
+
+- **Windsurf deep support: per-skill workspace rules + AGENTS.md + project-scope (`--local`) install** (Node + Python, rf-0vr3 / rf-cia phase c). `rafter agent init --with-windsurf` now ships Windsurf the way it actually consumes context:
+  - Writes 4 per-skill rules under `.windsurf/rules/<skill>.md` with Windsurf YAML frontmatter (`trigger: model_decision`, `description:`) so the agent fetches the right rule per task description.
+  - Writes `AGENTS.md` at workspace root — Windsurf reads it natively (so does Codex; one file covers both). `<!-- rafter:start --> ... <!-- rafter:end -->` marker preserves user content.
+  - Now installs at `--local` (project) scope as well as user scope. Project install ships rules + AGENTS.md; user install additionally registers the MCP entry under `~/.codeium/windsurf/mcp_config.json`.
+  - Backed by 5 new Node tests + 4 new Python tests, plus updates to the existing combined-platforms integration test.
+
+- **Cursor deep support: per-skill rules + sub-agent + full pre/post-tool hooks** (Node + Python, rf-svn3 / rf-cia phase c). `rafter agent init --with-cursor` now ships Cursor to Claude-Code parity:
+  - Hooks at `~/.cursor/hooks.json` cover `preToolUse` + `postToolUse` + `beforeShellExecution` (was `beforeShellExecution` only). Idempotent across all three events; non-rafter entries preserved.
+  - Replaces the single consolidated `.cursor/rules/rafter-security.mdc` with **four per-skill rules** (`rafter.mdc`, `rafter-secure-design.mdc`, `rafter-code-review.mdc`, `rafter-skill-review.mdc`). Each rule's frontmatter description is reused verbatim from the skill's `SKILL.md` (trigger-first), `alwaysApply: false`. The legacy file is auto-removed on reinstall.
+  - Drops the rafter sub-agent at `.cursor/agents/rafter.md`, reusing the rf-q7j Claude-Code sub-agent body with the `tools:` line stripped (Cursor's frontmatter doesn't have it; tools inherit from parent).
+  - Backed by 13 new Node tests and 12 new Python tests. The `cursor.instructions` component now manages rules + sub-agent together for `rafter agent enable/disable`.
+
+### Removed
+- **`rafter agent init --with-aider` no longer appends `mcp-server-command: rafter mcp serve` to `.aider.conf.yml`** (Node + Python, rf-du2o): Aider has no native MCP support; the unknown YAML key was silently ignored at runtime (independently flagged by gap reports rf-p1ri / rf-vayl and research bead rf-s1n3). Removed `installAiderMcp` from the Node init flow, `_aider_mcp` ComponentSpec from both Node and Python registries (replaced by `aider.read`), and the matching test expectations. Reinstalling on top of an older `.aider.conf.yml` strips the legacy line as a migration step.
+
+- **`rafter agent init --with-windsurf` no longer writes `~/.windsurf/hooks.json`** (Node + Python, rf-0vr3): Windsurf has no documented hook surface in current versions — `pre_run_command` / `pre_write_code` were not consumed by the IDE at runtime. The install was a silent no-op (independently flagged by gap reports rf-p1ri / rf-vayl and research bead rf-s1n3). Pruned along the same pattern as the Continue.dev hooks prune. Removed `installWindsurfHooks` from the Node init flow, `_windsurf_hooks` ComponentSpec from both registries, and the matching test expectations. The MCP install at `~/.codeium/windsurf/mcp_config.json` is unchanged.
+
+- **`rafter agent init --with-continue` no longer writes `~/.continue/settings.json`** (Node + Python, rf-cia): Continue.dev does not read `settings.json` and has no `hooks.PreToolUse`/`PostToolUse` field in its config schema (current versions use `config.yaml`, legacy uses `config.json`). The hook install was a silent no-op at runtime — files written, never consumed. Removed `installContinueDevHooks` from the Node init flow, `_continue_hooks` ComponentSpec from both Node and Python `rafter agent enable/disable` registries, and the matching test expectations. MCP install (`.continue/config.json` mcpServers entry) is unchanged. Continue.dev integration is now MCP-only — matches what `recipes/continue-dev.md` always claimed.
+
 ## [0.7.4] - 2026-04-21
 
 ### Added

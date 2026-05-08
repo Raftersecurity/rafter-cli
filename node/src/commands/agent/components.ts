@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import yaml from "js-yaml";
 import {
   RAFTER_MARKER_START,
   RAFTER_MARKER_END,
@@ -343,7 +344,8 @@ function codexHooks(): ComponentSpec {
         cfg.hooks.PostToolUse,
         (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
       );
-      cfg.hooks.PreToolUse.push({ matcher: "Bash", hooks: [pre] });
+      // Bash + apply_patch per Codex hook docs (rf-ovql verification).
+      cfg.hooks.PreToolUse.push({ matcher: "Bash|apply_patch", hooks: [pre] });
       cfg.hooks.PostToolUse.push({ matcher: ".*", hooks: [post] });
       writeJson(hooksPath, cfg);
     },
@@ -410,6 +412,13 @@ function claudeCodeMcp(): ComponentSpec {
   };
 }
 
+/** Cursor hook events covered by rafter (rf-svn3). */
+const CURSOR_HOOK_EVENTS: { event: string; command: string }[] = [
+  { event: "preToolUse", command: "rafter hook pretool --format cursor" },
+  { event: "postToolUse", command: "rafter hook posttool --format cursor" },
+  { event: "beforeShellExecution", command: "rafter hook pretool --format cursor" },
+];
+
 function cursorHooks(): ComponentSpec {
   const home = os.homedir();
   const hooksPath = path.join(home, ".cursor", "hooks.json");
@@ -417,14 +426,16 @@ function cursorHooks(): ComponentSpec {
     id: "cursor.hooks",
     platform: "cursor",
     kind: "hooks",
-    description: "Cursor hooks (~/.cursor/hooks.json)",
+    description: "Cursor hooks: preToolUse + postToolUse + beforeShellExecution (~/.cursor/hooks.json)",
     detectDir: path.join(home, ".cursor"),
     path: hooksPath,
     isInstalled: () => {
       if (!fs.existsSync(hooksPath)) return false;
       const cfg = readJson(hooksPath);
-      for (const entry of cfg.hooks?.beforeShellExecution ?? []) {
-        if (String(entry?.command ?? "").includes("rafter hook pretool")) return true;
+      for (const { event } of CURSOR_HOOK_EVENTS) {
+        for (const entry of cfg.hooks?.[event] ?? []) {
+          if (String(entry?.command ?? "").includes("rafter hook")) return true;
+        }
       }
       return false;
     },
@@ -434,50 +445,127 @@ function cursorHooks(): ComponentSpec {
       const cfg: Record<string, any> = fs.existsSync(hooksPath) ? readJson(hooksPath) : {};
       cfg.version ??= 1;
       cfg.hooks ??= {};
-      cfg.hooks.beforeShellExecution ??= [];
-      cfg.hooks.beforeShellExecution = filterOutRafter(
-        cfg.hooks.beforeShellExecution,
-        (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-      );
-      cfg.hooks.beforeShellExecution.push({
-        command: "rafter hook pretool --format cursor",
-        type: "command",
-        timeout: 5000,
-      });
+      for (const { event, command } of CURSOR_HOOK_EVENTS) {
+        cfg.hooks[event] ??= [];
+        cfg.hooks[event] = filterOutRafter(
+          cfg.hooks[event],
+          (e) => String(e?.command ?? "").includes("rafter hook"),
+        );
+        cfg.hooks[event].push({ command, type: "command", timeout: 5000 });
+      }
       writeJson(hooksPath, cfg);
     },
     uninstall: () => {
       if (!fs.existsSync(hooksPath)) return;
       const cfg = readJson(hooksPath);
-      if (cfg.hooks?.beforeShellExecution) {
-        cfg.hooks.beforeShellExecution = filterOutRafter(
-          cfg.hooks.beforeShellExecution,
-          (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-        );
+      for (const { event } of CURSOR_HOOK_EVENTS) {
+        if (cfg.hooks?.[event]) {
+          cfg.hooks[event] = filterOutRafter(
+            cfg.hooks[event],
+            (e) => String(e?.command ?? "").includes("rafter hook"),
+          );
+        }
       }
       writeJson(hooksPath, cfg);
     },
   };
 }
 
+const CURSOR_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
+function cursorRuleSourceDir(): string | null {
+  // After build: dist/commands/agent/components.js -> ../../../resources/cursor-rules
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "cursor-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "cursor-rules"),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) ?? null;
+}
+
+function cursorAgentSourceFile(): string | null {
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "agents", "rafter.md"),
+    path.resolve(__dirname, "..", "..", "resources", "agents", "rafter.md"),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) ?? null;
+}
+
+/**
+ * Cursor instructions = per-skill rules under .cursor/rules/ + the rafter
+ * sub-agent at .cursor/agents/rafter.md (rf-svn3). The legacy consolidated
+ * rafter-security.mdc was retired.
+ *
+ * `path` reports the rules dir for diagnostics; install/uninstall manage
+ * both rules and the sub-agent file together.
+ */
 function cursorInstructions(): ComponentSpec {
   const home = os.homedir();
-  const filePath = path.join(home, ".cursor", "rules", "rafter-security.mdc");
+  const rulesDir = path.join(home, ".cursor", "rules");
+  const agentPath = path.join(home, ".cursor", "agents", "rafter.md");
+  const legacyPath = path.join(rulesDir, "rafter-security.mdc");
   return {
     id: "cursor.instructions",
     platform: "cursor",
     kind: "instructions",
-    description: "Cursor global rule block (~/.cursor/rules/rafter-security.mdc)",
+    description: "Cursor per-skill rules + rafter sub-agent (~/.cursor/rules/, ~/.cursor/agents/rafter.md)",
     detectDir: path.join(home, ".cursor"),
-    path: filePath,
-    isInstalled: () => hasMarkerBlock(filePath),
-    install: () => injectInstructionFile(filePath),
+    path: rulesDir,
+    isInstalled: () => {
+      const rulesPresent = CURSOR_RULE_SKILLS.every((n) =>
+        fs.existsSync(path.join(rulesDir, `${n}.mdc`)),
+      );
+      return rulesPresent && fs.existsSync(agentPath);
+    },
+    install: () => {
+      fs.mkdirSync(rulesDir, { recursive: true });
+      const ruleSrc = cursorRuleSourceDir();
+      if (ruleSrc) {
+        for (const name of CURSOR_RULE_SKILLS) {
+          const src = path.join(ruleSrc, `${name}.mdc`);
+          if (fs.existsSync(src)) {
+            fs.copyFileSync(src, path.join(rulesDir, `${name}.mdc`));
+          }
+        }
+      }
+      // Migrate away from the legacy consolidated rule.
+      if (fs.existsSync(legacyPath)) {
+        try { fs.unlinkSync(legacyPath); } catch { /* best-effort */ }
+      }
+
+      const agentSrc = cursorAgentSourceFile();
+      if (agentSrc) {
+        fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+        const raw = fs.readFileSync(agentSrc, "utf-8");
+        const cursored = stripFrontmatterField(raw, "tools");
+        fs.writeFileSync(agentPath, cursored, "utf-8");
+      }
+    },
     uninstall: () => {
-      if (!fs.existsSync(filePath)) return;
-      // This file is ours — delete it rather than editing around the block.
-      fs.rmSync(filePath, { force: true });
+      for (const name of CURSOR_RULE_SKILLS) {
+        const p = path.join(rulesDir, `${name}.mdc`);
+        if (fs.existsSync(p)) fs.rmSync(p, { force: true });
+      }
+      if (fs.existsSync(legacyPath)) fs.rmSync(legacyPath, { force: true });
+      if (fs.existsSync(agentPath)) fs.rmSync(agentPath, { force: true });
     },
   };
+}
+
+/** Strip a single-line frontmatter field from a markdown file's frontmatter. */
+function stripFrontmatterField(content: string, field: string): string {
+  if (!content.startsWith("---\n")) return content;
+  const fmEnd = content.indexOf("\n---", 4);
+  if (fmEnd === -1) return content;
+  const frontmatter = content.slice(4, fmEnd);
+  const body = content.slice(fmEnd);
+  const re = new RegExp(`^${field}:\\s.*$`, "m");
+  const cleaned = frontmatter.replace(re, "").replace(/\n\n+/g, "\n").replace(/^\n/, "");
+  return `---\n${cleaned}${body}`;
 }
 
 function cursorMcp(): ComponentSpec {
@@ -544,8 +632,10 @@ function geminiHooks(): ComponentSpec {
         s.hooks.AfterTool,
         (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
       );
+      // Explicit Gemini built-in tool names per geminicli.com/docs/hooks/reference
+      // (rf-044o verification).
       s.hooks.BeforeTool.push({
-        matcher: "shell|write_file",
+        matcher: "run_shell_command|write_file|replace|edit",
         hooks: [{ type: "command", command: "rafter hook pretool --format gemini", timeout: 5000 }],
       });
       s.hooks.AfterTool.push({
@@ -605,65 +695,61 @@ function geminiMcp(): ComponentSpec {
   };
 }
 
-function windsurfHooks(): ComponentSpec {
+/** Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3). */
+const WINDSURF_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
+function windsurfRuleSourceDir(): string | null {
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "windsurf-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "windsurf-rules"),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) ?? null;
+}
+
+/**
+ * Windsurf rules component: per-skill files at .windsurf/rules/<skill>.md.
+ *
+ * Project/workspace-scope by design — Windsurf reads workspace rules from
+ * .windsurf/rules/ (12KB cap per file). The cwd at the time install runs is
+ * what gets the rules. Shown in the registry as resolved to the current
+ * working directory.
+ *
+ * Replaces the prior `windsurf.hooks` component, pruned in rf-0vr3 because
+ * Windsurf has no documented hook surface.
+ */
+function windsurfRules(): ComponentSpec {
   const home = os.homedir();
-  const hooksPath = path.join(home, ".windsurf", "hooks.json");
+  const rulesDir = path.join(process.cwd(), ".windsurf", "rules");
   return {
-    id: "windsurf.hooks",
+    id: "windsurf.rules",
     platform: "windsurf",
-    kind: "hooks",
-    description: "Windsurf hooks (~/.windsurf/hooks.json)",
+    kind: "instructions",
+    description: "Windsurf per-skill rules (.windsurf/rules/*.md, workspace-scope)",
     detectDir: path.join(home, ".codeium", "windsurf"),
-    path: hooksPath,
-    isInstalled: () => {
-      if (!fs.existsSync(hooksPath)) return false;
-      const cfg = readJson(hooksPath);
-      for (const entry of cfg.hooks?.pre_run_command ?? []) {
-        if (String(entry?.command ?? "").includes("rafter hook pretool")) return true;
-      }
-      return false;
-    },
+    path: rulesDir,
+    isInstalled: () =>
+      WINDSURF_RULE_SKILLS.every((n) => fs.existsSync(path.join(rulesDir, `${n}.md`))),
     install: () => {
-      const dir = path.join(home, ".windsurf");
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const cfg: Record<string, any> = fs.existsSync(hooksPath) ? readJson(hooksPath) : {};
-      cfg.hooks ??= {};
-      cfg.hooks.pre_run_command ??= [];
-      cfg.hooks.pre_write_code ??= [];
-      cfg.hooks.pre_run_command = filterOutRafter(
-        cfg.hooks.pre_run_command,
-        (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-      );
-      cfg.hooks.pre_write_code = filterOutRafter(
-        cfg.hooks.pre_write_code,
-        (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-      );
-      cfg.hooks.pre_run_command.push({
-        command: "rafter hook pretool --format windsurf",
-        show_output: true,
-      });
-      cfg.hooks.pre_write_code.push({
-        command: "rafter hook pretool --format windsurf",
-        show_output: true,
-      });
-      writeJson(hooksPath, cfg);
+      fs.mkdirSync(rulesDir, { recursive: true });
+      const src = windsurfRuleSourceDir();
+      if (!src) return;
+      for (const name of WINDSURF_RULE_SKILLS) {
+        const from = path.join(src, `${name}.md`);
+        if (fs.existsSync(from)) {
+          fs.copyFileSync(from, path.join(rulesDir, `${name}.md`));
+        }
+      }
     },
     uninstall: () => {
-      if (!fs.existsSync(hooksPath)) return;
-      const cfg = readJson(hooksPath);
-      if (cfg.hooks?.pre_run_command) {
-        cfg.hooks.pre_run_command = filterOutRafter(
-          cfg.hooks.pre_run_command,
-          (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-        );
+      for (const name of WINDSURF_RULE_SKILLS) {
+        const p = path.join(rulesDir, `${name}.md`);
+        if (fs.existsSync(p)) fs.rmSync(p, { force: true });
       }
-      if (cfg.hooks?.pre_write_code) {
-        cfg.hooks.pre_write_code = filterOutRafter(
-          cfg.hooks.pre_write_code,
-          (e) => String(e?.command ?? "").includes("rafter hook pretool"),
-        );
-      }
-      writeJson(hooksPath, cfg);
     },
   };
 }
@@ -699,64 +785,51 @@ function windsurfMcp(): ComponentSpec {
   };
 }
 
-function continueHooks(): ComponentSpec {
+/** Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0). */
+const CONTINUE_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
+function continueRuleSourceDir(): string | null {
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "continue-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "continue-rules"),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) ?? null;
+}
+
+/** Continue.dev rules component: .continue/rules/<skill>.md, workspace-scope (rf-acz0). */
+function continueRules(): ComponentSpec {
   const home = os.homedir();
-  const settingsPath = path.join(home, ".continue", "settings.json");
+  const rulesDir = path.join(process.cwd(), ".continue", "rules");
   return {
-    id: "continue.hooks",
+    id: "continue.rules",
     platform: "continue",
-    kind: "hooks",
-    description: "Continue.dev PreToolUse + PostToolUse hooks",
+    kind: "instructions",
+    description: "Continue.dev per-skill rules (.continue/rules/*.md, workspace-scope)",
     detectDir: path.join(home, ".continue"),
-    path: settingsPath,
-    isInstalled: () => {
-      if (!fs.existsSync(settingsPath)) return false;
-      const s = readJson(settingsPath);
-      for (const entry of s.hooks?.PreToolUse ?? []) {
-        if (hookEntryMatchesRafter(entry, "rafter hook pretool")) return true;
-      }
-      return false;
-    },
+    path: rulesDir,
+    isInstalled: () =>
+      CONTINUE_RULE_SKILLS.every((n) => fs.existsSync(path.join(rulesDir, `${n}.md`))),
     install: () => {
-      const dir = path.join(home, ".continue");
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const s: Record<string, any> = fs.existsSync(settingsPath) ? readJson(settingsPath) : {};
-      s.hooks ??= {};
-      s.hooks.PreToolUse ??= [];
-      s.hooks.PostToolUse ??= [];
-      const pre = { type: "command", command: "rafter hook pretool" };
-      const post = { type: "command", command: "rafter hook posttool" };
-      s.hooks.PreToolUse = filterOutRafter(
-        s.hooks.PreToolUse,
-        (e) => hookEntryMatchesRafter(e, "rafter hook pretool"),
-      );
-      s.hooks.PostToolUse = filterOutRafter(
-        s.hooks.PostToolUse,
-        (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
-      );
-      s.hooks.PreToolUse.push(
-        { matcher: "Bash", hooks: [pre] },
-        { matcher: "Write|Edit", hooks: [pre] },
-      );
-      s.hooks.PostToolUse.push({ matcher: ".*", hooks: [post] });
-      writeJson(settingsPath, s);
+      fs.mkdirSync(rulesDir, { recursive: true });
+      const src = continueRuleSourceDir();
+      if (!src) return;
+      for (const name of CONTINUE_RULE_SKILLS) {
+        const from = path.join(src, `${name}.md`);
+        if (fs.existsSync(from)) {
+          fs.copyFileSync(from, path.join(rulesDir, `${name}.md`));
+        }
+      }
     },
     uninstall: () => {
-      if (!fs.existsSync(settingsPath)) return;
-      const s = readJson(settingsPath);
-      if (s.hooks?.PreToolUse) {
-        s.hooks.PreToolUse = filterOutRafter(
-          s.hooks.PreToolUse,
-          (e) => hookEntryMatchesRafter(e, "rafter hook pretool"),
-        );
+      for (const name of CONTINUE_RULE_SKILLS) {
+        const p = path.join(rulesDir, `${name}.md`);
+        if (fs.existsSync(p)) fs.rmSync(p, { force: true });
       }
-      if (s.hooks?.PostToolUse) {
-        s.hooks.PostToolUse = filterOutRafter(
-          s.hooks.PostToolUse,
-          (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
-        );
-      }
-      writeJson(settingsPath, s);
     },
   };
 }
@@ -808,41 +881,94 @@ function continueMcp(): ComponentSpec {
   };
 }
 
-function aiderMcp(): ComponentSpec {
+/**
+ * Aider read-only context: writes RAFTER.md and adds it to .aider.conf.yml `read:`.
+ *
+ * Replaces the prior `aider.mcp` component, pruned in rf-du2o because Aider
+ * has no native MCP support — the legacy `mcp-server-command: rafter mcp serve`
+ * line was a silent no-op (Aider ignores unknown YAML keys per its docs).
+ *
+ * Project-scope by design — RAFTER.md and the read entry land in cwd.
+ */
+function aiderRead(): ComponentSpec {
   const home = os.homedir();
-  const configPath = path.join(home, ".aider.conf.yml");
-  const mcpLineHeader = "# Rafter security MCP server";
+  const cwd = process.cwd();
+  const configPath = path.join(cwd, ".aider.conf.yml");
+  const rafterMdPath = path.join(cwd, "RAFTER.md");
+  const READ_ENTRY = "RAFTER.md";
+
   return {
-    id: "aider.mcp",
+    id: "aider.read",
     platform: "aider",
-    kind: "mcp",
-    description: "Aider MCP server entry (~/.aider.conf.yml)",
-    // Aider has no config dir — its presence is the file itself. Point detectDir
-    // at $HOME so the platform is always considered "present enough to install into".
+    kind: "instructions",
+    description: "Aider read-only context (RAFTER.md + .aider.conf.yml read:)",
     detectDir: home,
-    path: configPath,
+    path: rafterMdPath,
     isInstalled: () => {
+      if (!fs.existsSync(rafterMdPath)) return false;
       if (!fs.existsSync(configPath)) return false;
-      return fs.readFileSync(configPath, "utf-8").includes("rafter mcp serve");
+      const raw = fs.readFileSync(configPath, "utf-8");
+      try {
+        const parsed = yaml.load(raw) as any;
+        const reads = Array.isArray(parsed?.read)
+          ? parsed.read.map(String)
+          : typeof parsed?.read === "string" ? [parsed.read] : [];
+        return reads.includes(READ_ENTRY);
+      } catch {
+        return raw.includes(READ_ENTRY);
+      }
     },
     install: () => {
-      const content = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : "";
-      if (content.includes("rafter mcp serve")) return;
-      const block = `\n${mcpLineHeader}\nmcp-server-command: rafter mcp serve\n`;
-      fs.writeFileSync(configPath, content + block, "utf-8");
+      injectInstructionFile(rafterMdPath);
+      let raw = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : "";
+      // Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
+      raw = raw.replace(
+        /\n?#\s*Rafter security MCP server\s*\nmcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?/g,
+        "\n",
+      );
+      raw = raw.replace(/^mcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?/gm, "");
+
+      let parsed: Record<string, any> = {};
+      if (raw.trim().length > 0) {
+        try {
+          const loaded = yaml.load(raw);
+          if (loaded && typeof loaded === "object" && !Array.isArray(loaded)) {
+            parsed = loaded as Record<string, any>;
+          }
+        } catch {
+          // Unparseable YAML — append safely without touching existing content.
+          if (!new RegExp(`\\b${READ_ENTRY}\\b`).test(raw)) {
+            const sep = raw.length > 0 && !raw.endsWith("\n") ? "\n" : "";
+            fs.writeFileSync(configPath, `${raw}${sep}read:\n  - ${READ_ENTRY}\n`, "utf-8");
+          }
+          return;
+        }
+      }
+      let reads: string[] = [];
+      if (Array.isArray(parsed.read)) reads = parsed.read.map(String);
+      else if (typeof parsed.read === "string") reads = [parsed.read];
+      if (!reads.includes(READ_ENTRY)) reads.push(READ_ENTRY);
+      parsed.read = reads;
+      fs.writeFileSync(configPath, yaml.dump(parsed), "utf-8");
     },
     uninstall: () => {
+      if (fs.existsSync(rafterMdPath)) {
+        try { fs.rmSync(rafterMdPath, { force: true }); } catch { /* best-effort */ }
+      }
       if (!fs.existsSync(configPath)) return;
-      const content = fs.readFileSync(configPath, "utf-8");
-      // Remove both the comment marker and the command line; preserve everything else.
-      const lines = content.split("\n");
-      const next = lines.filter((l) => {
-        const t = l.trim();
-        if (t === mcpLineHeader) return false;
-        if (t.startsWith("mcp-server-command:") && t.includes("rafter mcp serve")) return false;
-        return true;
-      });
-      fs.writeFileSync(configPath, next.join("\n"), "utf-8");
+      const raw = fs.readFileSync(configPath, "utf-8");
+      try {
+        const parsed = yaml.load(raw) as any;
+        if (parsed && Array.isArray(parsed.read)) {
+          parsed.read = parsed.read.filter((p: any) => String(p) !== READ_ENTRY);
+          if (parsed.read.length === 0) delete parsed.read;
+        } else if (parsed && parsed.read === READ_ENTRY) {
+          delete parsed.read;
+        }
+        fs.writeFileSync(configPath, yaml.dump(parsed ?? {}), "utf-8");
+      } catch {
+        /* preserve unparseable file */
+      }
     },
   };
 }
@@ -890,11 +1016,11 @@ export function getComponentRegistry(): ComponentSpec[] {
       cursorMcp(),
       geminiHooks(),
       geminiMcp(),
-      windsurfHooks(),
+      windsurfRules(),
       windsurfMcp(),
-      continueHooks(),
+      continueRules(),
       continueMcp(),
-      aiderMcp(),
+      aiderRead(),
       openclawSkill(),
     ];
   }

@@ -259,8 +259,8 @@ describe(".rafterignore loading", () => {
     fs.writeFileSync(path.join(tmpDir, ".rafterignore"), "node_modules/\ntest/fixtures/\n");
     const suppressions = loadSuppressions(tmpDir);
     expect(suppressions).toHaveLength(2);
-    expect(suppressions[0]).toEqual({ pathGlob: "node_modules/", patternName: undefined });
-    expect(suppressions[1]).toEqual({ pathGlob: "test/fixtures/", patternName: undefined });
+    expect(suppressions[0]).toEqual({ pathGlob: "node_modules/", source: ".rafterignore" });
+    expect(suppressions[1]).toEqual({ pathGlob: "test/fixtures/", source: ".rafterignore" });
   });
 
   it("parses pattern-specific suppressions", () => {
@@ -273,10 +273,12 @@ describe(".rafterignore loading", () => {
     expect(suppressions[0]).toEqual({
       pathGlob: ".env",
       patternName: "AWS Access Key ID",
+      source: ".rafterignore",
     });
     expect(suppressions[1]).toEqual({
       pathGlob: "vendor/**",
       patternName: "Generic API Key",
+      source: ".rafterignore",
     });
   });
 
@@ -305,7 +307,7 @@ describe(".rafterignore loading", () => {
     fs.writeFileSync(path.join(tmpDir, ".rafterignore"), "vendor/**:*\n");
     const suppressions = loadSuppressions(tmpDir);
     expect(suppressions).toHaveLength(1);
-    expect(suppressions[0]).toEqual({ pathGlob: "vendor/**", patternName: "*" });
+    expect(suppressions[0]).toEqual({ pathGlob: "vendor/**", patternName: "*", source: ".rafterignore" });
   });
 });
 

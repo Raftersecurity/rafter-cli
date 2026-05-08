@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+import yaml
 
 from ..core.config_manager import ConfigManager
 
@@ -339,7 +342,8 @@ def _codex_hooks() -> ComponentSpec:
         post = {"type": "command", "command": "rafter hook posttool"}
         h["PreToolUse"] = _filter_hooks(h["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         h["PostToolUse"] = _filter_hooks(h["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
-        h["PreToolUse"].append({"matcher": "Bash", "hooks": [pre]})
+        # Bash + apply_patch per Codex hook docs (rf-ovql verification).
+        h["PreToolUse"].append({"matcher": "Bash|apply_patch", "hooks": [pre]})
         h["PostToolUse"].append({"matcher": ".*", "hooks": [post]})
         _write_json(hooks_path, cfg)
 
@@ -556,8 +560,10 @@ def _gemini_hooks() -> ComponentSpec:
         h.setdefault("AfterTool", [])
         h["BeforeTool"] = _filter_hooks(h["BeforeTool"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         h["AfterTool"] = _filter_hooks(h["AfterTool"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
+        # Explicit Gemini built-in tool names per geminicli.com/docs/hooks/reference
+        # (rf-044o verification).
         h["BeforeTool"].append({
-            "matcher": "shell|write_file",
+            "matcher": "run_shell_command|write_file|replace|edit",
             "hooks": [{"type": "command", "command": "rafter hook pretool --format gemini", "timeout": 5000}],
         })
         h["AfterTool"].append({
@@ -627,48 +633,55 @@ def _gemini_mcp() -> ComponentSpec:
     )
 
 
-def _windsurf_hooks() -> ComponentSpec:
+# Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3).
+_WINDSURF_RULE_SKILLS: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+def _windsurf_rules() -> ComponentSpec:
+    """Windsurf per-skill workspace rules at .windsurf/rules/<skill>.md.
+
+    Replaces the prior `windsurf.hooks` component (pruned in rf-0vr3 — Windsurf
+    has no documented hook surface). Workspace-scope by design; the rules dir
+    is resolved against the cwd at registry-build time.
+    """
     home = Path.home()
     detect_dir = home / ".codeium" / "windsurf"
-    hooks_path = home / ".windsurf" / "hooks.json"
+    rules_dir = Path.cwd() / ".windsurf" / "rules"
 
     def is_installed() -> bool:
-        if not hooks_path.exists():
-            return False
-        cfg = _read_json(hooks_path)
-        for entry in cfg.get("hooks", {}).get("pre_run_command", []) or []:
-            if "rafter hook pretool" in str(entry.get("command", "") if isinstance(entry, dict) else ""):
-                return True
-        return False
+        return all((rules_dir / f"{n}.md").exists() for n in _WINDSURF_RULE_SKILLS)
 
     def install() -> None:
-        hooks_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg = _read_json(hooks_path) if hooks_path.exists() else {}
-        cfg.setdefault("hooks", {})
-        h = cfg["hooks"]
-        for k in ("pre_run_command", "pre_write_code"):
-            h.setdefault(k, [])
-            h[k] = [e for e in h[k] if "rafter hook pretool" not in str(e.get("command", "") if isinstance(e, dict) else "")]
-            h[k].append({"command": "rafter hook pretool --format windsurf", "show_output": True})
-        _write_json(hooks_path, cfg)
+        rules_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            res = importlib.resources.files("rafter_cli.resources")
+        except Exception:
+            return
+        for name in _WINDSURF_RULE_SKILLS:
+            try:
+                content = res.joinpath("windsurf-rules", f"{name}.md").read_text(encoding="utf-8")
+            except Exception:
+                continue
+            (rules_dir / f"{name}.md").write_text(content, encoding="utf-8")
 
     def uninstall() -> None:
-        if not hooks_path.exists():
-            return
-        cfg = _read_json(hooks_path)
-        h = cfg.get("hooks") or {}
-        for k in ("pre_run_command", "pre_write_code"):
-            if k in h:
-                h[k] = [e for e in h[k] if "rafter hook pretool" not in str(e.get("command", "") if isinstance(e, dict) else "")]
-        _write_json(hooks_path, cfg)
+        for name in _WINDSURF_RULE_SKILLS:
+            p = rules_dir / f"{name}.md"
+            if p.exists():
+                p.unlink()
 
     return ComponentSpec(
-        id="windsurf.hooks",
+        id="windsurf.rules",
         platform="windsurf",
-        kind="hooks",
-        description="Windsurf hooks (~/.windsurf/hooks.json)",
+        kind="instructions",
+        description="Windsurf per-skill rules (.windsurf/rules/*.md, workspace-scope)",
         detect_dir=detect_dir,
-        path=hooks_path,
+        path=rules_dir,
         is_installed=is_installed,
         install=install,
         uninstall=uninstall,
@@ -712,56 +725,57 @@ def _windsurf_mcp() -> ComponentSpec:
     )
 
 
-def _continue_hooks() -> ComponentSpec:
+# Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0).
+_CONTINUE_RULE_SKILLS: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+def _continue_rules() -> ComponentSpec:
+    """Continue.dev per-skill workspace rules at .continue/rules/<skill>.md.
+
+    Workspace-scope (cwd at registry-build time). Replaces the shape gap
+    flagged by rf-acz0 / the rf-cia gap reports — Continue.dev shipped
+    MCP-only support before this; rules + MCP are the only intercepts
+    (Continue has no documented hook surface; the prior hooks install was
+    pruned in rf-cia phase b).
+    """
     home = Path.home()
     detect_dir = home / ".continue"
-    settings_path = detect_dir / "settings.json"
+    rules_dir = Path.cwd() / ".continue" / "rules"
 
     def is_installed() -> bool:
-        if not settings_path.exists():
-            return False
-        s = _read_json(settings_path)
-        for entry in s.get("hooks", {}).get("PreToolUse", []) or []:
-            if _hook_entry_has_rafter(entry, "rafter hook pretool"):
-                return True
-        return False
+        return all((rules_dir / f"{n}.md").exists() for n in _CONTINUE_RULE_SKILLS)
 
     def install() -> None:
-        detect_dir.mkdir(parents=True, exist_ok=True)
-        s = _read_json(settings_path) if settings_path.exists() else {}
-        s.setdefault("hooks", {})
-        h = s["hooks"]
-        h.setdefault("PreToolUse", [])
-        h.setdefault("PostToolUse", [])
-        pre = {"type": "command", "command": "rafter hook pretool"}
-        post = {"type": "command", "command": "rafter hook posttool"}
-        h["PreToolUse"] = _filter_hooks(h["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
-        h["PostToolUse"] = _filter_hooks(h["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
-        h["PreToolUse"].extend([
-            {"matcher": "Bash", "hooks": [pre]},
-            {"matcher": "Write|Edit", "hooks": [pre]},
-        ])
-        h["PostToolUse"].append({"matcher": ".*", "hooks": [post]})
-        _write_json(settings_path, s)
+        rules_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            res = importlib.resources.files("rafter_cli.resources")
+        except Exception:
+            return
+        for name in _CONTINUE_RULE_SKILLS:
+            try:
+                content = res.joinpath("continue-rules", f"{name}.md").read_text(encoding="utf-8")
+            except Exception:
+                continue
+            (rules_dir / f"{name}.md").write_text(content, encoding="utf-8")
 
     def uninstall() -> None:
-        if not settings_path.exists():
-            return
-        s = _read_json(settings_path)
-        h = s.get("hooks") or {}
-        if "PreToolUse" in h:
-            h["PreToolUse"] = _filter_hooks(h["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
-        if "PostToolUse" in h:
-            h["PostToolUse"] = _filter_hooks(h["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
-        _write_json(settings_path, s)
+        for name in _CONTINUE_RULE_SKILLS:
+            p = rules_dir / f"{name}.md"
+            if p.exists():
+                p.unlink()
 
     return ComponentSpec(
-        id="continue.hooks",
+        id="continue.rules",
         platform="continue",
-        kind="hooks",
-        description="Continue.dev PreToolUse + PostToolUse hooks",
+        kind="instructions",
+        description="Continue.dev per-skill rules (.continue/rules/*.md, workspace-scope)",
         detect_dir=detect_dir,
-        path=settings_path,
+        path=rules_dir,
         is_installed=is_installed,
         install=install,
         uninstall=uninstall,
@@ -825,43 +839,104 @@ def _continue_mcp() -> ComponentSpec:
     )
 
 
-def _aider_mcp() -> ComponentSpec:
+_AIDER_LEGACY_MCP_BLOCK_RE = re.compile(
+    r"\n?#\s*Rafter security MCP server\s*\nmcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?",
+)
+_AIDER_LEGACY_MCP_LINE_RE = re.compile(
+    r"^mcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?",
+    flags=re.MULTILINE,
+)
+_AIDER_READ_ENTRY = "RAFTER.md"
+
+
+def _aider_read() -> ComponentSpec:
+    """Aider read-only context: writes RAFTER.md and adds it to .aider.conf.yml `read:`.
+
+    Replaces the prior `aider.mcp` component, pruned in rf-du2o because Aider
+    has no native MCP support — the legacy `mcp-server-command: rafter mcp serve`
+    line was a silent no-op (Aider ignores unknown YAML keys per its docs).
+
+    Project-scope by design — RAFTER.md and the read entry land in cwd.
+    """
     home = Path.home()
-    config_path = home / ".aider.conf.yml"
-    header = "# Rafter security MCP server"
+    cwd = Path.cwd()
+    config_path = cwd / ".aider.conf.yml"
+    rafter_md_path = cwd / "RAFTER.md"
 
     def is_installed() -> bool:
-        return config_path.exists() and "rafter mcp serve" in config_path.read_text(encoding="utf-8")
+        if not rafter_md_path.exists() or not config_path.exists():
+            return False
+        try:
+            parsed = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            return _AIDER_READ_ENTRY in config_path.read_text(encoding="utf-8")
+        reads = parsed.get("read")
+        if isinstance(reads, list):
+            return _AIDER_READ_ENTRY in [str(p) for p in reads]
+        if isinstance(reads, str):
+            return reads == _AIDER_READ_ENTRY
+        return False
 
     def install() -> None:
-        existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
-        if "rafter mcp serve" in existing:
-            return
-        block = f"\n{header}\nmcp-server-command: rafter mcp serve\n"
-        config_path.write_text(existing + block, encoding="utf-8")
+        _inject_instruction_file(rafter_md_path)
+        raw = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+        # Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
+        raw = _AIDER_LEGACY_MCP_BLOCK_RE.sub("\n", raw)
+        raw = _AIDER_LEGACY_MCP_LINE_RE.sub("", raw)
+
+        parsed: dict[str, Any] = {}
+        if raw.strip():
+            try:
+                loaded = yaml.safe_load(raw)
+                if isinstance(loaded, dict):
+                    parsed = loaded
+            except yaml.YAMLError:
+                if _AIDER_READ_ENTRY not in raw:
+                    sep = "" if not raw or raw.endswith("\n") else "\n"
+                    config_path.write_text(f"{raw}{sep}read:\n  - {_AIDER_READ_ENTRY}\n", encoding="utf-8")
+                else:
+                    config_path.write_text(raw, encoding="utf-8")
+                return
+
+        reads: list[str] = []
+        raw_read = parsed.get("read")
+        if isinstance(raw_read, list):
+            reads = [str(p) for p in raw_read]
+        elif isinstance(raw_read, str):
+            reads = [raw_read]
+        if _AIDER_READ_ENTRY not in reads:
+            reads.append(_AIDER_READ_ENTRY)
+        parsed["read"] = reads
+        config_path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
 
     def uninstall() -> None:
+        if rafter_md_path.exists():
+            try:
+                rafter_md_path.unlink()
+            except OSError:
+                pass
         if not config_path.exists():
             return
-        lines = config_path.read_text(encoding="utf-8").split("\n")
-        filtered = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped == header:
-                continue
-            if stripped.startswith("mcp-server-command:") and "rafter mcp serve" in stripped:
-                continue
-            filtered.append(line)
-        config_path.write_text("\n".join(filtered), encoding="utf-8")
+        try:
+            parsed = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            return
+        reads = parsed.get("read")
+        if isinstance(reads, list):
+            parsed["read"] = [str(p) for p in reads if str(p) != _AIDER_READ_ENTRY]
+            if not parsed["read"]:
+                del parsed["read"]
+        elif isinstance(reads, str) and reads == _AIDER_READ_ENTRY:
+            del parsed["read"]
+        config_path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
 
-    # Aider has no config dir; treat $HOME as always present so detection is true.
     return ComponentSpec(
-        id="aider.mcp",
+        id="aider.read",
         platform="aider",
-        kind="mcp",
-        description="Aider MCP server entry (~/.aider.conf.yml)",
+        kind="instructions",
+        description="Aider read-only context (RAFTER.md + .aider.conf.yml read:)",
         detect_dir=home,
-        path=config_path,
+        path=rafter_md_path,
         is_installed=is_installed,
         install=install,
         uninstall=uninstall,
@@ -917,11 +992,11 @@ def get_registry() -> list[ComponentSpec]:
             _cursor_mcp(),
             _gemini_hooks(),
             _gemini_mcp(),
-            _windsurf_hooks(),
+            _windsurf_rules(),
             _windsurf_mcp(),
-            _continue_hooks(),
+            _continue_rules(),
             _continue_mcp(),
-            _aider_mcp(),
+            _aider_read(),
             _openclaw_skill(),
         ]
     return _REGISTRY

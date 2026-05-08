@@ -27,7 +27,7 @@ The CLI follows UNIX principles:
 | 3 | Quota exhausted (HTTP 429 or 403 scan-mode limit) |
 | 4 | Insufficient scope / forbidden (HTTP 403) |
 
-### Local Secret Scan (`rafter scan local` / `rafter agent scan`)
+### Local Secret Scan (`rafter secrets`)
 
 | Code | Meaning |
 |------|---------|
@@ -310,42 +310,90 @@ Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
 
 #### JSON Output (`--json`)
 
-When `--json` is passed, output is a JSON array to stdout. Both Node and Python produce identical schema:
+When `--json` is passed, output is a JSON object to stdout with a `results` array and scan-mode metadata. Both Node and Python produce identical schema:
 
 ```json
-[
-  {
-    "file": "/absolute/path/to/file.ts",
-    "matches": [
-      {
-        "pattern": {
-          "name": "AWS Access Key",
-          "severity": "critical",
-          "description": "Detects AWS access key IDs"
-        },
-        "line": 42,
-        "column": 7,
-        "redacted": "AKIA************MPLE"
-      }
-    ]
-  }
-]
+{
+  "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
+  "scan_mode": "local",
+  "triage_applied": false,
+  "results": [
+    {
+      "file": "/absolute/path/to/file.ts",
+      "matches": [
+        {
+          "pattern": {
+            "name": "AWS Access Key",
+            "severity": "critical",
+            "description": "Detects AWS access key IDs"
+          },
+          "line": 42,
+          "column": 7,
+          "redacted": "AKIA************MPLE"
+        }
+      ]
+    }
+  ]
+}
 ```
 
-**Field reference:**
+**Top-level field reference:**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `file` | string | Absolute path to the scanned file |
-| `matches` | array | List of secret matches in this file |
-| `matches[].pattern.name` | string | Human-readable pattern name |
-| `matches[].pattern.severity` | string | `"low"`, `"medium"`, `"high"`, or `"critical"` |
-| `matches[].pattern.description` | string | Pattern description (may be empty) |
-| `matches[].line` | number\|null | 1-based line number, null if unknown |
-| `matches[].column` | number\|null | 1-based column number, null if unknown |
-| `matches[].redacted` | string | Redacted secret value (first/last 4 chars visible for values >8 chars, fully masked otherwise) |
+| `_note` | string | Human-readable scan-mode note. JSON has no comments — this `_*` key is the convention. Surface it to users when reporting findings. |
+| `scan_mode` | string | Always `"local"` for local secret scans. Programmatic flag for agents to detect that no agentic-intelligence triage was applied. |
+| `triage_applied` | boolean | Always `false` for local scans. `true` would indicate backend agentic context evaluation (i.e., `rafter run`). |
+| `results` | array | Per-file findings. |
+
+**Per-file field reference:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `results[].file` | string | Absolute path to the scanned file |
+| `results[].matches` | array | List of secret matches in this file |
+| `results[].matches[].pattern.name` | string | Human-readable pattern name |
+| `results[].matches[].pattern.severity` | string | `"low"`, `"medium"`, `"high"`, or `"critical"` |
+| `results[].matches[].pattern.description` | string | Pattern description (may be empty) |
+| `results[].matches[].line` | number\|null | 1-based line number, null if unknown |
+| `results[].matches[].column` | number\|null | 1-based column number, null if unknown |
+| `results[].matches[].redacted` | string | Redacted secret value (first/last 4 chars visible for values >8 chars, fully masked otherwise) |
 
 The raw secret value is never included in JSON output.
+
+**Why `_note`?** Local scans are pattern-only — they cannot tell whether a finding is in a public-facing file, whether the key is still valid, or whether it ever shipped. Backend scans (`rafter run`) apply agentic context. The `_note` exists so agents and reviewers don't treat local findings as final verdicts — they should investigate each, but the absence of agentic triage is *not* an excuse to dismiss findings.
+
+##### Suppression-aware output shape
+
+When `.rafter.yml` `ignore:` rules (or `.rafterignore`) hide one or more findings, an `_suppressed` field is added to the wrapper so the consumer can see what was suppressed and why. The field is omitted when no findings are hidden.
+
+```json
+{
+  "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. ...",
+  "scan_mode": "local",
+  "triage_applied": false,
+  "results": [ /* same shape as without suppression */ ],
+  "_suppressed": [
+    {
+      "file": "/abs/path/tests/fixtures/fake.env",
+      "line": 3,
+      "column": 7,
+      "rule": "AWS Access Key",
+      "severity": "critical",
+      "reason": "test fixtures with fake AWS keys",
+      "source": ".rafter.yml"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `_suppressed` | array (optional) | Each hidden finding, with file/line/column, rule name, severity, reason, and source. Absent when no suppression occurred. |
+| `_suppressed[].source` | string | `".rafter.yml"` for policy ignore rules, `".rafterignore"` for the legacy file |
+| `_suppressed[].reason` | string\|null | The `reason:` from the matching ignore rule, or `null` for `.rafterignore` lines |
+
+Exit code is unaffected by suppression — exit `1` is returned only when at least one *non-suppressed* finding remains.
 
 ### rafter agent exec COMMAND [OPTIONS]
 
@@ -706,9 +754,55 @@ Generate project-level instruction files so AI agents discover Rafter at session
 
 Node only. Not yet implemented in Python.
 
-### rafter agent verify
+### rafter agent verify [OPTIONS]
 
-Check agent security integration status. Reports whether config files, hooks, and platform integrations are properly installed.
+Check agent security integration status. Reports whether config files, hooks, and platform integrations are properly installed across all 8 supported platforms.
+
+**Options:**
+- `--json` — emit results as a single JSON object (one entry per check + a summary). Stable schema; intended for CI consumption.
+- `--probe` — runtime probe: synthesize a known-dangerous tool-call payload, pipe it to `rafter hook pretool`, and assert the resulting `command_intercepted` entry landed in `~/.rafter/audit.jsonl`. Catches the failure mode where rafter wrote the right files but the hook command itself doesn't actually fire (rf-65zg). Currently covers Claude Code; Codex/Cursor/Gemini probes are planned follow-ups.
+
+**Checks (10 total, in order):**
+
+| Name | Severity | Detection | Pass criterion |
+|---|---|---|---|
+| `Config` | hard (exit 1 on fail) | `~/.rafter/config.json` exists and parses | valid JSON |
+| `Gitleaks` | hard | binary on PATH or at `~/.rafter/bin/gitleaks` | `--version` succeeds |
+| `Claude Code` | optional | `~/.claude/` exists | `settings.json` PreToolUse contains `rafter hook pretool` |
+| `OpenClaw` | optional | `~/.openclaw/skills/` exists | `rafter-security.md` skill present |
+| `Codex CLI` | optional | `~/.codex/` exists | `~/.agents/skills/rafter/SKILL.md` present |
+| `Gemini CLI` | optional | `~/.gemini/` exists | `settings.json` `mcpServers.rafter` set |
+| `Cursor` | optional | `~/.cursor/` exists | `mcp.json` `mcpServers.rafter` set |
+| `Windsurf` | optional | `~/.codeium/windsurf/` exists | `mcp_config.json` `mcpServers.rafter` set |
+| `Continue.dev` | optional | `~/.continue/` exists | `config.json` `mcpServers` contains rafter (array or object format) |
+| `Aider` | optional | `<cwd>/.aider.conf.yml` or `~/.aider.conf.yml` exists | `read:` list includes `RAFTER.md` AND `RAFTER.md` exists on disk |
+
+With `--probe`, an additional `Claude Code (probe)` check appears as the last entry.
+
+**Exit codes:**
+- `0` — all hard checks passed (optional checks may be unconfigured / warning)
+- `1` — at least one hard check failed
+
+**JSON schema (`--json`):**
+
+```json
+{
+  "checks": [
+    { "name": "Config",      "status": "pass",  "detail": "/home/u/.rafter/config.json" },
+    { "name": "Gitleaks",    "status": "fail",  "detail": "Not found on PATH or at ..." },
+    { "name": "Claude Code", "status": "warn",  "detail": "Not detected — run 'rafter agent init --with-claude-code' to enable" }
+  ],
+  "summary": {
+    "passed": 1,
+    "warned": 1,
+    "failed": 1,
+    "total": 3,
+    "probe": false
+  }
+}
+```
+
+`status` is one of `pass | warn | fail`. `warn` is reserved for optional integrations that aren't installed; `fail` is reserved for hard failures (Config, Gitleaks, or any failing `--probe` check).
 
 ### rafter agent status
 
@@ -900,7 +994,7 @@ GitHub Issues integration — create issues from scan findings or natural text.
 Create GitHub issues from scan results.
 
 - `--scan-id <id>` — remote scan ID to create issues from
-- `--from-local <path>` — path to local scan JSON (from `rafter scan local --format json`)
+- `--from-local <path>` — path to local scan JSON (from `rafter secrets --format json`)
 - `-r, --repo <repo>` — target GitHub repo (`org/repo`)
 - `-k, --api-key <key>` — Rafter API key (required with `--scan-id`)
 - `--no-dedup` — skip deduplication check (create even if matching issue exists)
@@ -957,6 +1051,12 @@ scan:
     - name: "Internal API Key"
       regex: "INTERNAL_[A-Z0-9]{32}"
       severity: critical
+ignore:
+  - paths: ["tests/fixtures/**", "*.example.env"]
+    rules: ["AWS Access Key", "Generic API Key"]
+    reason: "test fixtures with fake credentials"
+  - paths: ["docs/**"]
+    reason: "documentation examples"
 audit:
   retention_days: 90
   log_level: info
@@ -983,6 +1083,8 @@ Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not a
 - Unknown keys per-entry are ignored with a warning.
 
 **URL caching:** URL-backed docs are cached at `~/.rafter/docs-cache/` keyed by `sha256(url)[:32]`. Default TTL is 86400 seconds. On network failure, a stale cached copy is served and a warning is printed. `docs list` never fetches; `docs show` fetches on miss/expired or when `--refresh` is set.
+
+**Ignore rules (`ignore:`):** suppress findings without removing them from the audit trail. Each entry needs `paths:` (a non-empty list of globs); `rules:` is optional (omitting it suppresses every rule on the matched paths) and `reason:` is surfaced verbatim in the JSON `_suppressed` output. Path globs are matched anywhere along absolute scan paths — `tests/fixtures/**` matches `/abs/project/tests/fixtures/foo`. Rule-name matching is case-insensitive; non-existent rule names are harmless (they just never match). First entry that matches wins, so put more specific entries earlier.
 
 ---
 
@@ -1050,11 +1152,12 @@ fi
 rafter agent init
 
 # Scan for secrets
-rafter scan local .
-rafter scan local --staged --quiet  # CI-friendly
+rafter secrets .
+rafter secrets --staged --quiet  # CI-friendly
 
-# Old command still works (deprecated)
-# rafter agent scan .  — deprecated, use rafter scan local
+# Aliases still work (deprecated)
+# rafter scan local .   — deprecated, use rafter secrets
+# rafter agent scan .   — deprecated, use rafter secrets
 
 # Pre-commit hook
 rafter agent install-hook --global

@@ -139,44 +139,6 @@ function buildTopics(): Record<string, TopicEntry> {
       description: "Setup instructions for unsupported / generic agents",
       render: () => renderPlatformSetup("generic"),
     },
-    pricing: {
-      description: "What's free, what's paid, and the philosophy behind it",
-      render: () =>
-        [
-          "# Rafter Pricing",
-          "",
-          "**Free forever for individuals and open source. No account required. No telemetry.**",
-          "",
-          "## What's Free",
-          "",
-          "All local agent security features are free with no limits:",
-          "",
-          "- Secret scanning (21+ patterns, Gitleaks integration)",
-          "- Pre-commit hooks (local and global)",
-          "- Command interception with risk-tiered approval",
-          "- Skill/extension auditing",
-          "- Audit logging",
-          "- MCP server for tool integration",
-          "- CI/CD pipeline generation",
-          "- All supported agent integrations (Claude Code, Codex, Gemini, Cursor, Windsurf, Aider, OpenClaw, Continue.dev)",
-          "",
-          "No API key. No sign-up. No telemetry. No data collection. No network access required.",
-          "Everything runs locally on your machine. MIT licensed.",
-          "",
-          "## Remote Code Analysis (API)",
-          "",
-          "Remote SAST/SCA scanning via the Rafter API has a free tier.",
-          "Sign up at rafter.so for an API key. Enterprise plans offer higher",
-          "limits, dashboards, policy management, and compliance reporting.",
-          "",
-          "## Philosophy",
-          "",
-          "Security tooling should be free for the people writing code.",
-          "Generous free tiers drive bottom-up adoption. Enterprise value",
-          "comes from dashboards, policy, and compliance — not from gating",
-          "the tools developers use every day.",
-        ].join("\n"),
-    },
     ...Object.fromEntries(
       RAFTER_SUBDOCS.map(({ slug, desc }): [string, TopicEntry] => [
         slug,
@@ -346,7 +308,9 @@ Add to Windsurf's MCP config (\`~/.codeium/windsurf/mcp_config.json\`):
 
   aider: `# Rafter Setup — Aider
 
-Aider uses MCP for tool integration.
+Aider has no plugin/hook system and no native MCP support. Its only intercept
+for persistent context is the \`read:\` flag in \`.aider.conf.yml\`, which
+injects read-only files into every session.
 
 ## Automated Setup
 
@@ -354,18 +318,21 @@ Aider uses MCP for tool integration.
 rafter agent init --with-aider
 \`\`\`
 
+This writes \`RAFTER.md\` at the workspace root and adds it to \`read:\` in
+\`.aider.conf.yml\`.
+
 ## Manual Setup
 
-Add to \`~/.aider.conf.yml\`:
-\`\`\`yaml
-mcp-servers:
-  - name: rafter
-    command: rafter mcp serve
-\`\`\`
+1. Create \`RAFTER.md\` at the workspace root with rafter's security context.
+2. Add to \`.aider.conf.yml\`:
+   \`\`\`yaml
+   read:
+     - RAFTER.md
+   \`\`\`
 
 ## Supplementing with Brief
 
-Aider doesn't have persistent memory, so run before each session:
+Aider doesn't have persistent memory beyond \`read:\`, so run before each session:
 \`\`\`bash
 rafter brief commands    # quick command reference
 \`\`\``,

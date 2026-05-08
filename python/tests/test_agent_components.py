@@ -59,11 +59,11 @@ class TestAgentList:
             "cursor.mcp",
             "gemini.hooks",
             "gemini.mcp",
-            "windsurf.hooks",
+            "windsurf.rules",
             "windsurf.mcp",
-            "continue.hooks",
+            "continue.rules",
             "continue.mcp",
-            "aider.mcp",
+            "aider.read",
             "codex.hooks",
             "codex.skills",
             "openclaw.skills",
@@ -83,7 +83,7 @@ class TestAgentList:
         assert by_id["cursor.mcp"]["state"] == "not-detected"
         assert by_id["gemini.mcp"]["state"] == "not-detected"
         # aider's "platform detected" is HOME — always exists
-        assert by_id["aider.mcp"]["detected"] is True
+        assert by_id["aider.read"]["detected"] is True
 
     def test_installed_filter_only_returns_installed(self, home: Path):
         (home / ".cursor").mkdir()
@@ -191,20 +191,35 @@ class TestAgentEnableDisable:
         # Installer adds 2 PreToolUse entries; idempotent install stays at 2 (not 4).
         assert rafter_pre_count == 2
 
-    def test_aider_mcp_appends_once_and_disable_strips_block(self, home: Path):
+    def test_aider_read_writes_rafter_md_and_strips_legacy_mcp(self, home: Path):
+        """rf-du2o — `aider.read` writes RAFTER.md + read: entry; idempotent;
+        strips the silent-no-op `mcp-server-command:` line that earlier
+        rafter versions wrote.
+
+        _run_cli runs with cwd=home, so the cwd-relative writes (RAFTER.md and
+        .aider.conf.yml as the project root) land inside the fake HOME.
+        """
         conf = home / ".aider.conf.yml"
-        conf.write_text("# pre-existing line\nmodel: gpt-5\n")
+        # Pre-existing config including the legacy silent-no-op MCP line.
+        conf.write_text(
+            "model: gpt-5\n\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n"
+        )
 
-        _run_cli("agent enable aider.mcp", home)
-        _run_cli("agent enable aider.mcp", home)  # idempotent
+        _run_cli("agent enable aider.read", home)
+        _run_cli("agent enable aider.read", home)  # idempotent
+
         after = conf.read_text()
-        assert after.count("rafter mcp serve") == 1
+        assert "rafter mcp serve" not in after
         assert "model: gpt-5" in after
+        assert after.count("RAFTER.md") == 1
+        # RAFTER.md was written at cwd (== home).
+        assert (home / "RAFTER.md").exists()
 
-        _run_cli("agent disable aider.mcp", home)
+        _run_cli("agent disable aider.read", home)
         cleaned = conf.read_text()
-        assert "rafter mcp serve" not in cleaned
+        assert "RAFTER.md" not in cleaned
         assert "model: gpt-5" in cleaned
+        assert not (home / "RAFTER.md").exists()
 
     def test_records_enabled_state_in_global_config(self, home: Path):
         (home / ".cursor").mkdir()

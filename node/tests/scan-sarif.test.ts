@@ -102,12 +102,14 @@ describe("scan --format sarif", () => {
     const jsonResult = runScan(`${tmpDir} --json`);
     const formatResult = runScan(`${tmpDir} --format json`);
 
-    // Both should produce valid JSON arrays
+    // Both should produce equivalent JSON objects with a results array
     const jsonParsed = JSON.parse(jsonResult.stdout);
     const formatParsed = JSON.parse(formatResult.stdout);
 
-    expect(Array.isArray(jsonParsed)).toBe(true);
-    expect(Array.isArray(formatParsed)).toBe(true);
+    expect(Array.isArray(jsonParsed.results)).toBe(true);
+    expect(Array.isArray(formatParsed.results)).toBe(true);
+    expect(jsonParsed.scan_mode).toBe("local");
+    expect(formatParsed.scan_mode).toBe("local");
   });
 
   it("should reject invalid format values", { timeout: 20000 }, () => {
