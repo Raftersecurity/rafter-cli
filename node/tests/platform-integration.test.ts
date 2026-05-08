@@ -577,7 +577,40 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
-  // ── 5. Continue.dev MCP install ────────────────────────────────────
+  // ── 5. Continue.dev rules + MCP install (rf-acz0) ─────────────────
+
+  describe("Continue.dev rules (--with-continue)", () => {
+    it("writes per-skill rules under .continue/rules/<skill>.md", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
+
+      runCli("agent init --with-continue", testHomeDir);
+
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        const rulePath = path.join(testHomeDir, ".continue", "rules", `${name}.md`);
+        expect(fs.existsSync(rulePath), `continue rule missing: ${name}`).toBe(true);
+        const body = fs.readFileSync(rulePath, "utf-8");
+        expect(body).toMatch(/^---\nname:\s+/m);
+        expect(body).toMatch(/^description:\s+"/m);
+        expect(body).toMatch(/^alwaysApply:\s+false$/m);
+      }
+    });
+
+    it("is idempotent on repeat installs", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
+
+      runCli("agent init --with-continue", testHomeDir);
+      runCli("agent init --with-continue", testHomeDir);
+
+      const rulesDir = path.join(testHomeDir, ".continue", "rules");
+      const files = fs.readdirSync(rulesDir).sort();
+      expect(files).toEqual([
+        "rafter-code-review.md",
+        "rafter-secure-design.md",
+        "rafter-skill-review.md",
+        "rafter.md",
+      ]);
+    });
+  });
 
   describe("Continue.dev MCP install (--with-continue)", () => {
     it("should create config.json with mcpServers containing rafter (fresh)", () => {
@@ -739,74 +772,96 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
-  // ── 6. Aider MCP install ───────────────────────────────────────────
+  // ── 6. Aider read-only context (rf-du2o) ──────────────────────────
+  //
+  // Earlier rafter versions appended `mcp-server-command: rafter mcp serve`
+  // to .aider.conf.yml — Aider has no native MCP support and silently
+  // ignores unknown YAML keys per its docs. That install was a no-op.
+  //
+  // Replaced by RAFTER.md + .aider.conf.yml `read:` entry, Aider's only
+  // documented persistent-context primitive.
 
-  describe("Aider MCP install (--with-aider)", () => {
-    it("should create .aider.conf.yml with rafter mcp serve", () => {
-      // Aider detection checks for the file itself, not a directory
-      fs.writeFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        "# existing aider config\n"
-      );
+  describe("Aider read-only context (--with-aider)", () => {
+    it("writes RAFTER.md at workspace root with the rafter marker block", () => {
+      fs.writeFileSync(path.join(testHomeDir, ".aider.conf.yml"), "# existing aider config\n");
 
       const result = runCli("agent init --with-aider", testHomeDir);
       expect(result.exitCode).toBe(0);
 
-      const configPath = path.join(testHomeDir, ".aider.conf.yml");
-      expect(fs.existsSync(configPath)).toBe(true);
-
-      const content = fs.readFileSync(configPath, "utf-8");
-      expect(content).toContain("rafter mcp serve");
-      expect(content).toContain("mcp-server-command: rafter mcp serve");
-      // Should preserve existing content
-      expect(content).toContain("# existing aider config");
-    });
-  });
-
-  // ── 6b. Aider idempotency and preservation ────────────────────────
-
-  describe("Aider MCP idempotency", () => {
-    it("should not duplicate mcp-server-command on repeated installs", () => {
-      fs.writeFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        "# aider config\n"
-      );
-
-      runCli("agent init --with-aider", testHomeDir);
-      runCli("agent init --with-aider", testHomeDir);
-
-      const content = fs.readFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        "utf-8"
-      );
-      // Count occurrences of the mcp line
-      const matches = content.match(/mcp-server-command: rafter mcp serve/g);
-      expect(matches).toHaveLength(1);
+      const rafterMd = path.join(testHomeDir, "RAFTER.md");
+      expect(fs.existsSync(rafterMd)).toBe(true);
+      const body = fs.readFileSync(rafterMd, "utf-8");
+      expect(body).toContain("<!-- rafter:start -->");
+      expect(body).toContain("<!-- rafter:end -->");
     });
 
-    it("should preserve all existing YAML config", () => {
+    it("adds RAFTER.md to .aider.conf.yml `read:` list (preserving existing keys)", () => {
       const existingConfig = [
         "model: gpt-4-turbo",
         "auto-commits: false",
         "dark-mode: true",
         "map-tokens: 1024",
       ].join("\n") + "\n";
-      fs.writeFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        existingConfig
-      );
+      fs.writeFileSync(path.join(testHomeDir, ".aider.conf.yml"), existingConfig);
 
       runCli("agent init --with-aider", testHomeDir);
 
-      const content = fs.readFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        "utf-8"
-      );
+      const content = fs.readFileSync(path.join(testHomeDir, ".aider.conf.yml"), "utf-8");
       expect(content).toContain("model: gpt-4-turbo");
       expect(content).toContain("auto-commits: false");
       expect(content).toContain("dark-mode: true");
       expect(content).toContain("map-tokens: 1024");
-      expect(content).toContain("rafter mcp serve");
+      expect(content).toContain("RAFTER.md");
+    });
+
+    it("does NOT write the legacy mcp-server-command (silent no-op pruned)", () => {
+      fs.writeFileSync(path.join(testHomeDir, ".aider.conf.yml"), "# fresh\n");
+
+      runCli("agent init --with-aider", testHomeDir);
+
+      const content = fs.readFileSync(path.join(testHomeDir, ".aider.conf.yml"), "utf-8");
+      expect(content).not.toContain("mcp-server-command");
+      expect(content).not.toContain("rafter mcp serve");
+    });
+
+    it("strips a pre-existing legacy mcp-server-command on reinstall (rf-du2o migration)", () => {
+      fs.writeFileSync(
+        path.join(testHomeDir, ".aider.conf.yml"),
+        "model: gpt-5\n\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n",
+      );
+
+      runCli("agent init --with-aider", testHomeDir);
+
+      const content = fs.readFileSync(path.join(testHomeDir, ".aider.conf.yml"), "utf-8");
+      expect(content).not.toContain("mcp-server-command");
+      expect(content).not.toContain("Rafter security MCP server");
+      expect(content).toContain("model: gpt-5");
+      expect(content).toContain("RAFTER.md");
+    });
+
+    it("is idempotent across repeated installs (RAFTER.md listed once)", () => {
+      fs.writeFileSync(path.join(testHomeDir, ".aider.conf.yml"), "model: gpt-5\n");
+
+      runCli("agent init --with-aider", testHomeDir);
+      runCli("agent init --with-aider", testHomeDir);
+
+      const content = fs.readFileSync(path.join(testHomeDir, ".aider.conf.yml"), "utf-8");
+      const matches = content.match(/RAFTER\.md/g) || [];
+      expect(matches).toHaveLength(1);
+    });
+
+    it("preserves existing read: entries", () => {
+      fs.writeFileSync(
+        path.join(testHomeDir, ".aider.conf.yml"),
+        "read:\n  - CONVENTIONS.md\n  - DESIGN.md\n",
+      );
+
+      runCli("agent init --with-aider", testHomeDir);
+
+      const content = fs.readFileSync(path.join(testHomeDir, ".aider.conf.yml"), "utf-8");
+      expect(content).toContain("CONVENTIONS.md");
+      expect(content).toContain("DESIGN.md");
+      expect(content).toContain("RAFTER.md");
     });
   });
 
@@ -855,11 +910,12 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(
         fs.existsSync(path.join(testHomeDir, ".continue", "config.json"))
       ).toBe(false);
-      // Aider file existed before but should NOT have rafter appended
+      // Aider file existed before but should NOT have rafter touch it.
       const aiderContent = fs.readFileSync(
         path.join(testHomeDir, ".aider.conf.yml"),
         "utf-8"
       );
+      expect(aiderContent).not.toContain("RAFTER.md");
       expect(aiderContent).not.toContain("rafter mcp serve");
     });
   });
@@ -923,12 +979,14 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       );
       expect(continueDev.mcpServers).toBeDefined();
 
-      // Aider
+      // Aider — RAFTER.md + read: entry (rf-du2o; legacy mcp line removed)
       const aiderContent = fs.readFileSync(
         path.join(testHomeDir, ".aider.conf.yml"),
         "utf-8"
       );
-      expect(aiderContent).toContain("rafter mcp serve");
+      expect(aiderContent).not.toContain("rafter mcp serve");
+      expect(aiderContent).toContain("RAFTER.md");
+      expect(fs.existsSync(path.join(testHomeDir, "RAFTER.md"))).toBe(true);
     });
   });
 
@@ -976,6 +1034,8 @@ describe("Platform Integration — MCP Installs via CLI", () => {
         path.join(testHomeDir, ".aider.conf.yml"),
         "utf-8"
       );
+      // Aider not requested — its config file remains untouched.
+      expect(aiderContent).not.toContain("RAFTER.md");
       expect(aiderContent).not.toContain("rafter mcp serve");
     });
 
@@ -1000,11 +1060,13 @@ describe("Platform Integration — MCP Installs via CLI", () => {
           path.join(testHomeDir, ".codeium", "windsurf", "mcp_config.json")
         )
       ).toBe(true);
+      // Aider — RAFTER.md + read: entry (rf-du2o)
       const aiderContent = fs.readFileSync(
         path.join(testHomeDir, ".aider.conf.yml"),
         "utf-8"
       );
-      expect(aiderContent).toContain("rafter mcp serve");
+      expect(aiderContent).toContain("RAFTER.md");
+      expect(fs.existsSync(path.join(testHomeDir, "RAFTER.md"))).toBe(true);
     });
   });
 
@@ -1283,11 +1345,12 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(config.hooks.PreToolUse).toBeDefined();
       expect(config.hooks.PostToolUse).toBeDefined();
 
-      // Codex has Bash matcher for PreToolUse
+      // Codex matchers per developers.openai.com/codex/hooks (rf-ovql verified):
+      // PreToolUse intercepts Bash + apply_patch (file edits via apply_patch).
+      // PostToolUse is catch-all so all completed events land in audit.jsonl.
       const preMatchers = config.hooks.PreToolUse.map((e: any) => e.matcher);
-      expect(preMatchers).toContain("Bash");
+      expect(preMatchers).toContain("Bash|apply_patch");
 
-      // PostToolUse has catch-all
       const postMatchers = config.hooks.PostToolUse.map((e: any) => e.matcher);
       expect(postMatchers).toContain(".*");
     });
@@ -1326,9 +1389,10 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(settings.hooks.BeforeTool).toBeDefined();
       expect(settings.hooks.AfterTool).toBeDefined();
 
-      // BeforeTool matcher targets shell and write_file
+      // BeforeTool matcher targets the mutating Gemini built-in tools by
+      // exact name (rf-044o verified against geminicli.com/docs/hooks/reference).
       const beforeMatchers = settings.hooks.BeforeTool.map((e: any) => e.matcher);
-      expect(beforeMatchers).toContain("shell|write_file");
+      expect(beforeMatchers).toContain("run_shell_command|write_file|replace|edit");
 
       // Commands use --format gemini
       const beforeCommands = settings.hooks.BeforeTool.flatMap(
@@ -1382,21 +1446,20 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(hook.timeout).toBe(5000);
     });
 
-    it("should install global instruction file to ~/.cursor/rules/rafter-security.mdc", () => {
+    it("should install per-skill rule files under ~/.cursor/rules/ (rf-svn3)", () => {
       fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
 
       runCli("agent init --with-cursor", testHomeDir);
 
-      const instructionPath = path.join(
-        testHomeDir, ".cursor", "rules", "rafter-security.mdc"
-      );
-      expect(fs.existsSync(instructionPath)).toBe(true);
+      // The legacy consolidated rafter-security.mdc was retired in rf-svn3 in
+      // favor of per-skill rules with trigger-first descriptions.
+      const legacy = path.join(testHomeDir, ".cursor", "rules", "rafter-security.mdc");
+      expect(fs.existsSync(legacy)).toBe(false);
 
-      const content = fs.readFileSync(instructionPath, "utf-8");
-      expect(content).toContain("<!-- rafter:start -->");
-      expect(content).toContain("<!-- rafter:end -->");
-      expect(content).toContain("rafter-secure-design");
-      expect(content).toContain("rafter-code-review");
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        const p = path.join(testHomeDir, ".cursor", "rules", `${name}.mdc`);
+        expect(fs.existsSync(p), `missing ${p}`).toBe(true);
+      }
     });
 
     it("should deduplicate hooks on repeated installs", () => {
@@ -1415,100 +1478,129 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
-  // ── 15. Windsurf hooks ────────────────────────────────────────────
+  // ── 15. Windsurf integration (rf-0vr3) ─────────────────────────────
+  //
+  // The prior install wrote ~/.windsurf/hooks.json with pre_run_command /
+  // pre_write_code entries — Windsurf has no documented hook surface, so
+  // that file was a silent no-op (research bead rf-s1n3, gap reports
+  // rf-p1ri / rf-vayl). Pruned in rf-0vr3 along the same pattern as the
+  // Continue.dev prune (rf-cia phase b).
+  //
+  // Replaced by per-skill rules at .windsurf/rules/<skill>.md (workspace
+  // scope per Windsurf docs) + AGENTS.md (Windsurf reads it natively).
 
-  describe("Windsurf hooks (--with-windsurf)", () => {
-    it("should install pre_run_command/pre_write_code hooks to ~/.windsurf/hooks.json", () => {
+  describe("Windsurf integration (--with-windsurf)", () => {
+    it("does NOT write ~/.windsurf/hooks.json (Windsurf has no hook surface)", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
 
       runCli("agent init --with-windsurf", testHomeDir);
 
-      const hooksPath = path.join(testHomeDir, ".windsurf", "hooks.json");
-      expect(fs.existsSync(hooksPath)).toBe(true);
-
-      const config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
-      expect(config.hooks).toBeDefined();
-      expect(config.hooks.pre_run_command).toBeDefined();
-      expect(config.hooks.pre_write_code).toBeDefined();
-
-      // Both hook arrays should have rafter entries
-      const runCmd = config.hooks.pre_run_command.find(
-        (e: any) => e.command?.includes("rafter")
-      );
-      expect(runCmd).toBeDefined();
-      expect(runCmd.command).toContain("--format windsurf");
-      expect(runCmd.show_output).toBe(true);
-
-      const writeCmd = config.hooks.pre_write_code.find(
-        (e: any) => e.command?.includes("rafter")
-      );
-      expect(writeCmd).toBeDefined();
-      expect(writeCmd.command).toContain("--format windsurf");
+      expect(fs.existsSync(path.join(testHomeDir, ".windsurf", "hooks.json"))).toBe(false);
     });
 
-    it("should deduplicate hooks on repeated installs", () => {
+    it("writes per-skill rules under .windsurf/rules/<skill>.md", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
+
+      runCli("agent init --with-windsurf", testHomeDir);
+
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        const rulePath = path.join(testHomeDir, ".windsurf", "rules", `${name}.md`);
+        expect(fs.existsSync(rulePath), `windsurf rule missing: ${name}`).toBe(true);
+
+        const body = fs.readFileSync(rulePath, "utf-8");
+        expect(body, `windsurf rule ${name} missing trigger`).toMatch(/^---\ntrigger:\s*model_decision/m);
+        expect(body, `windsurf rule ${name} missing description`).toMatch(/^description:\s*"/m);
+      }
+    });
+
+    it("writes AGENTS.md at workspace root (read natively by Windsurf)", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
+
+      runCli("agent init --with-windsurf", testHomeDir);
+
+      const agentsMd = path.join(testHomeDir, "AGENTS.md");
+      expect(fs.existsSync(agentsMd)).toBe(true);
+      const body = fs.readFileSync(agentsMd, "utf-8");
+      expect(body).toContain("<!-- rafter:start -->");
+      expect(body).toContain("<!-- rafter:end -->");
+    });
+
+    it("still installs MCP entry under ~/.codeium/windsurf/mcp_config.json", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
+
+      runCli("agent init --with-windsurf", testHomeDir);
+
+      const mcpPath = path.join(testHomeDir, ".codeium", "windsurf", "mcp_config.json");
+      expect(fs.existsSync(mcpPath)).toBe(true);
+      const cfg = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
+      expect(cfg.mcpServers?.rafter).toBeDefined();
+    });
+
+    it("is idempotent across repeat installs", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), { recursive: true });
 
       runCli("agent init --with-windsurf", testHomeDir);
       runCli("agent init --with-windsurf", testHomeDir);
 
-      const config = JSON.parse(
-        fs.readFileSync(path.join(testHomeDir, ".windsurf", "hooks.json"), "utf-8")
-      );
-      const rafterRun = config.hooks.pre_run_command.filter(
-        (e: any) => e.command?.includes("rafter")
-      );
-      expect(rafterRun).toHaveLength(1);
-      const rafterWrite = config.hooks.pre_write_code.filter(
-        (e: any) => e.command?.includes("rafter")
-      );
-      expect(rafterWrite).toHaveLength(1);
+      // Rules still present, AGENTS.md still has exactly one rafter block.
+      const agentsMd = fs.readFileSync(path.join(testHomeDir, "AGENTS.md"), "utf-8");
+      expect((agentsMd.match(/<!-- rafter:start -->/g) ?? []).length).toBe(1);
+
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        expect(
+          fs.existsSync(path.join(testHomeDir, ".windsurf", "rules", `${name}.md`)),
+        ).toBe(true);
+      }
     });
   });
 
-  // ── 16. Continue.dev hooks ────────────────────────────────────────
+  // ── 16. Continue.dev hooks (PRUNED in rf-cia phase b) ─────────────
+  //
+  // Continue.dev does NOT read ~/.continue/settings.json and has no
+  // hooks.PreToolUse / PostToolUse field in its config schema. Earlier
+  // versions of rafter wrote that file silently; the install was a no-op
+  // at runtime. These tests pin the new behavior: NO hook file is written
+  // for --with-continue. MCP install (.continue/config.json) is unchanged.
 
-  describe("Continue.dev hooks (--with-continue)", () => {
-    it("should install PreToolUse/PostToolUse hooks to ~/.continue/settings.json", () => {
+  describe("Continue.dev hooks pruned (--with-continue)", () => {
+    it("does NOT write ~/.continue/settings.json (Continue.dev doesn't read it)", () => {
       fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
 
-      runCli("agent init --with-continue", testHomeDir);
+      const result = runCli("agent init --with-continue", testHomeDir);
+      expect(result.exitCode).toBe(0);
 
       const settingsPath = path.join(testHomeDir, ".continue", "settings.json");
-      expect(fs.existsSync(settingsPath)).toBe(true);
-
-      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-      expect(settings.hooks).toBeDefined();
-      expect(settings.hooks.PreToolUse).toBeDefined();
-      expect(settings.hooks.PostToolUse).toBeDefined();
-
-      // PreToolUse should have Bash and Write|Edit matchers
-      const preMatchers = settings.hooks.PreToolUse.map((e: any) => e.matcher);
-      expect(preMatchers).toContain("Bash");
-      expect(preMatchers).toContain("Write|Edit");
-
-      // PostToolUse should have catch-all
-      const postMatchers = settings.hooks.PostToolUse.map((e: any) => e.matcher);
-      expect(postMatchers).toContain(".*");
+      expect(fs.existsSync(settingsPath)).toBe(false);
     });
 
-    it("should deduplicate hooks on repeated installs", () => {
+    it("does NOT touch a pre-existing .continue/settings.json", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
+      const settingsPath = path.join(testHomeDir, ".continue", "settings.json");
+      const userContent = '{"theme":"dark"}';
+      fs.writeFileSync(settingsPath, userContent, "utf-8");
+
+      runCli("agent init --with-continue", testHomeDir);
+
+      expect(fs.readFileSync(settingsPath, "utf-8")).toBe(userContent);
+    });
+
+    it("still installs MCP server to .continue/config.json", () => {
       fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
 
       runCli("agent init --with-continue", testHomeDir);
-      runCli("agent init --with-continue", testHomeDir);
 
-      const settings = JSON.parse(
-        fs.readFileSync(path.join(testHomeDir, ".continue", "settings.json"), "utf-8")
-      );
-      const rafterPre = settings.hooks.PreToolUse.filter(
-        (e: any) => (e.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
-      );
-      expect(rafterPre).toHaveLength(2); // Bash + Write|Edit
-      const rafterPost = settings.hooks.PostToolUse.filter(
-        (e: any) => (e.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
-      );
-      expect(rafterPost).toHaveLength(1);
+      const configPath = path.join(testHomeDir, ".continue", "config.json");
+      expect(fs.existsSync(configPath)).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      const servers = Array.isArray(config.mcpServers)
+        ? config.mcpServers
+        : Object.values(config.mcpServers || {}).concat(
+            Object.entries(config.mcpServers || {}).map(([k, v]: [string, any]) => ({ name: k, ...v }))
+          );
+      const hasRafter = Array.isArray(config.mcpServers)
+        ? config.mcpServers.some((s: any) => s.name === "rafter")
+        : !!(config.mcpServers && config.mcpServers.rafter);
+      expect(hasRafter).toBe(true);
     });
   });
 
@@ -1528,17 +1620,21 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(starts).toBe(1);
     });
 
-    it("should not duplicate rafter block in Cursor rules on repeated installs", () => {
+    it("should not duplicate per-skill rule files in Cursor rules on repeated installs (rf-svn3)", () => {
       fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
 
       runCli("agent init --with-cursor", testHomeDir);
       runCli("agent init --with-cursor", testHomeDir);
 
-      const content = fs.readFileSync(
-        path.join(testHomeDir, ".cursor", "rules", "rafter-security.mdc"), "utf-8"
-      );
-      const starts = (content.match(/<!-- rafter:start -->/g) || []).length;
-      expect(starts).toBe(1);
+      const rulesDir = path.join(testHomeDir, ".cursor", "rules");
+      const files = fs.readdirSync(rulesDir).sort();
+      // Exactly the four shipped per-skill rules — no duplicates, no legacy.
+      expect(files).toEqual([
+        "rafter-code-review.mdc",
+        "rafter-secure-design.mdc",
+        "rafter-skill-review.mdc",
+        "rafter.mdc",
+      ]);
     });
   });
 
@@ -1559,8 +1655,10 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       const result = runCli("agent init --all", testHomeDir, 90_000);
       expect(result.exitCode).toBe(0);
 
-      // ── OpenClaw: skill file ──
-      const openclawSkill = path.join(testHomeDir, ".openclaw", "skills", "rafter-security.md");
+      // ── OpenClaw: ClawHub-shaped skill (rf-zgwj) ──
+      const openclawSkill = path.join(
+        testHomeDir, ".openclaw", "workspace", "skills", "rafter-security", "SKILL.md"
+      );
       expect(fs.existsSync(openclawSkill)).toBe(true);
       expect(fs.readFileSync(openclawSkill, "utf-8")).toContain("rafter");
 
@@ -1589,25 +1687,48 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(geminiSettings.hooks.BeforeTool).toBeDefined();
       expect(geminiSettings.hooks.AfterTool).toBeDefined();
 
-      // ── Cursor: MCP + hooks + instructions ──
+      // ── Cursor: MCP + hooks + per-skill rules + sub-agent (rf-svn3) ──
       expect(fs.existsSync(path.join(testHomeDir, ".cursor", "mcp.json"))).toBe(true);
       expect(fs.existsSync(path.join(testHomeDir, ".cursor", "hooks.json"))).toBe(true);
-      const cursorInstructions = path.join(testHomeDir, ".cursor", "rules", "rafter-security.mdc");
-      expect(fs.existsSync(cursorInstructions)).toBe(true);
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        expect(
+          fs.existsSync(path.join(testHomeDir, ".cursor", "rules", `${name}.mdc`)),
+          `cursor rule missing: ${name}`,
+        ).toBe(true);
+      }
+      expect(
+        fs.existsSync(path.join(testHomeDir, ".cursor", "agents", "rafter.md")),
+      ).toBe(true);
 
-      // ── Windsurf: MCP + hooks ──
+      // ── Windsurf: MCP + per-skill rules + AGENTS.md (rf-0vr3) ──
+      // hooks.json is NOT written (Windsurf has no hook surface, pruned in rf-0vr3).
       expect(fs.existsSync(path.join(testHomeDir, ".codeium", "windsurf", "mcp_config.json"))).toBe(true);
-      expect(fs.existsSync(path.join(testHomeDir, ".windsurf", "hooks.json"))).toBe(true);
+      expect(fs.existsSync(path.join(testHomeDir, ".windsurf", "hooks.json"))).toBe(false);
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        expect(
+          fs.existsSync(path.join(testHomeDir, ".windsurf", "rules", `${name}.md`)),
+          `windsurf rule missing: ${name}`,
+        ).toBe(true);
+      }
+      expect(fs.existsSync(path.join(testHomeDir, "AGENTS.md"))).toBe(true);
 
-      // ── Continue.dev: MCP + hooks ──
+      // ── Continue.dev: MCP + per-skill rules (rf-acz0); hooks pruned in rf-cia phase b ──
       expect(fs.existsSync(path.join(testHomeDir, ".continue", "config.json"))).toBe(true);
-      expect(fs.existsSync(path.join(testHomeDir, ".continue", "settings.json"))).toBe(true);
+      expect(fs.existsSync(path.join(testHomeDir, ".continue", "settings.json"))).toBe(false);
+      for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+        expect(
+          fs.existsSync(path.join(testHomeDir, ".continue", "rules", `${name}.md`)),
+          `continue rule missing: ${name}`,
+        ).toBe(true);
+      }
 
-      // ── Aider: YAML config ──
+      // ── Aider: RAFTER.md + read: entry (rf-du2o; legacy mcp line not written) ──
       const aiderContent = fs.readFileSync(
         path.join(testHomeDir, ".aider.conf.yml"), "utf-8"
       );
-      expect(aiderContent).toContain("rafter mcp serve");
+      expect(aiderContent).not.toContain("rafter mcp serve");
+      expect(aiderContent).toContain("RAFTER.md");
+      expect(fs.existsSync(path.join(testHomeDir, "RAFTER.md"))).toBe(true);
     });
   });
 });

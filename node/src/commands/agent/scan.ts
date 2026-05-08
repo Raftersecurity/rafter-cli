@@ -3,6 +3,14 @@ import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { GitleaksScanner } from "../../scanners/gitleaks.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { AuditLogger } from "../../core/audit-logger.js";
+import {
+  Suppression,
+  SuppressedFinding,
+  applySuppressions,
+  loadSuppressions,
+  policyIgnoreToSuppressions,
+} from "../../core/custom-patterns.js";
+import type { ScanIgnoreRule } from "../../core/config-schema.js";
 import { execSync, execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
@@ -98,22 +106,23 @@ export function createScanCommand(): Command {
           "Warning: rafter agent scan is deprecated and will be removed in a future major version. Use rafter secrets instead.\n"
         );
       }
-      // Load policy-merged config for excludePaths/customPatterns
+      // Load policy-merged config for excludePaths/customPatterns/ignore
       const manager = new ConfigManager();
       const cfg = manager.loadWithPolicy();
       const scanCfg = cfg.agent?.scan;
+      const suppressions = collectSuppressions(scanCfg?.ignore);
 
       const baselineEntries = opts.baseline ? loadBaselineEntries() : [];
 
       // Handle --diff flag
       if (opts.diff) {
-        await scanDiffFiles(opts.diff, opts, scanCfg, baselineEntries, path.resolve(scanPath));
+        await scanDiffFiles(opts.diff, opts, scanCfg, baselineEntries, path.resolve(scanPath), suppressions);
         return;
       }
 
       // Handle --staged flag
       if (opts.staged) {
-        await scanStagedFiles(opts, scanCfg, baselineEntries, path.resolve(scanPath));
+        await scanStagedFiles(opts, scanCfg, baselineEntries, path.resolve(scanPath), suppressions);
         return;
       }
 
@@ -127,7 +136,7 @@ export function createScanCommand(): Command {
 
       // Handle --watch flag
       if (opts.watch) {
-        await watchAndScan(resolvedPath, opts, scanCfg);
+        await watchAndScan(resolvedPath, opts, scanCfg, suppressions);
         return;
       }
 
@@ -150,7 +159,7 @@ export function createScanCommand(): Command {
         results = await scanFile(resolvedPath, engine, scanCfg);
       }
 
-      outputScanResults(applyBaseline(results, baselineEntries), opts);
+      outputScanResults(applyBaseline(results, baselineEntries), opts, undefined, true, suppressions);
     });
 }
 
@@ -166,6 +175,15 @@ export function createSecretsCommand(): Command {
     "Scan files/directories for hardcoded secrets (regex + gitleaks). Secrets only — not a code analysis. For full SAST/SCA, use 'rafter run'.",
   );
   return cmd;
+}
+
+/**
+ * Combine .rafterignore + policy ignore rules into a single Suppression list.
+ * Order matters — first match wins, and policy rules are checked first so an
+ * explicit reason wins over a bare .rafterignore line covering the same finding.
+ */
+function collectSuppressions(policyIgnore?: ScanIgnoreRule[]): Suppression[] {
+  return [...policyIgnoreToSuppressions(policyIgnore), ...loadSuppressions()];
 }
 
 /**
@@ -231,6 +249,7 @@ function outputScanResults(
   opts: ScanOpts,
   context?: string,
   exitOnFindings: boolean = true,
+  suppressions: Suppression[] = [],
 ): void {
   const format = opts.format ?? (opts.json ? "json" : "text");
 
@@ -239,13 +258,17 @@ function outputScanResults(
     process.exit(2);
   }
 
+  // Split suppressed findings off the main result list. Both engines feed
+  // through here, so policy-driven suppression applies regardless of source.
+  const { results: keptResults, suppressed } = applySuppressions(results, suppressions);
+
   if (format === "sarif") {
-    outputSarif(results);
+    outputSarif(keptResults);
     return;
   }
 
   if (format === "json" || opts.json) {
-    const out = results.map((r) => ({
+    const filesOut = keptResults.map((r) => ({
       file: r.file,
       matches: r.matches.map((m) => ({
         pattern: { name: m.pattern.name, severity: m.pattern.severity, description: m.pattern.description || "" },
@@ -254,12 +277,30 @@ function outputScanResults(
         redacted: m.redacted || "",
       })),
     }));
+    const out: { _note: string; scan_mode: string; triage_applied: boolean; results: typeof filesOut; _suppressed?: SuppressedFinding[] } = {
+      _note:
+        "Local-only scan: pattern-based detection without agentic-intelligence triage. " +
+        "Findings have not been evaluated for context (public exposure, key validity, " +
+        "deployment environment). Investigate each before acting; do not dismiss. " +
+        "Run 'rafter run' for backend agentic analysis.",
+      scan_mode: "local",
+      triage_applied: false,
+      results: filesOut,
+    };
+    if (suppressed.length > 0) {
+      out._suppressed = suppressed;
+    }
     console.log(JSON.stringify(out, null, 2));
-    if (exitOnFindings) process.exit(results.length > 0 ? 1 : 0);
+    if (exitOnFindings) process.exit(keptResults.length > 0 ? 1 : 0);
     return;
   }
 
-  if (results.length === 0) {
+  // Text output — note suppression on stderr so stdout remains parseable.
+  if (suppressed.length > 0 && !opts.quiet) {
+    console.error(fmt.info(`(${suppressed.length} finding(s) hidden by .rafter.yml)`));
+  }
+
+  if (keptResults.length === 0) {
     if (!opts.quiet) {
       const msg = context ? `No secrets detected in ${context}` : "No secrets detected";
       console.log(`\n${fmt.success(msg)}\n`);
@@ -268,10 +309,10 @@ function outputScanResults(
     return;
   }
 
-  console.log(`\n${fmt.warning(`Found secrets in ${results.length} file(s):`)}\n`);
+  console.log(`\n${fmt.warning(`Found secrets in ${keptResults.length} file(s):`)}\n`);
 
   let totalMatches = 0;
-  for (const result of results) {
+  for (const result of keptResults) {
     console.log(`\n${fmt.info(result.file)}`);
 
     for (const match of result.matches) {
@@ -287,7 +328,7 @@ function outputScanResults(
     }
   }
 
-  console.log(`\n${fmt.warning(`Total: ${totalMatches} secret(s) detected in ${results.length} file(s)`)}\n`);
+  console.log(`\n${fmt.warning(`Total: ${totalMatches} secret(s) detected in ${keptResults.length} file(s)`)}\n`);
 
   if (context === "staged files") {
     console.log(`${fmt.error("Commit blocked. Remove secrets before committing.")}\n`);
@@ -304,9 +345,10 @@ function outputScanResults(
 async function scanDiffFiles(
   ref: string,
   opts: ScanOpts,
-  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[] },
   baselineEntries: BaselineEntry[] = [],
   scanPath?: string,
+  suppressions: Suppression[] = [],
 ): Promise<void> {
   const cwd = scanPath && fs.existsSync(scanPath) && fs.statSync(scanPath).isDirectory() ? scanPath : undefined;
   try {
@@ -317,7 +359,7 @@ async function scanDiffFiles(
     }).trim();
 
     if (!diffOutput) {
-      outputScanResults([], opts, `files changed since ${ref}`);
+      outputScanResults([], opts, `files changed since ${ref}`, true, suppressions);
       return;
     }
 
@@ -346,7 +388,7 @@ async function scanDiffFiles(
       allResults.push(...results);
     }
 
-    outputScanResults(applyBaseline(allResults, baselineEntries), opts, `files changed since ${ref}`);
+    outputScanResults(applyBaseline(allResults, baselineEntries), opts, `files changed since ${ref}`, true, suppressions);
   } catch (error: any) {
     if (error.status === 128) {
       console.error("Error: Not in a git repository or invalid ref");
@@ -361,9 +403,10 @@ async function scanDiffFiles(
  */
 async function scanStagedFiles(
   opts: ScanOpts,
-  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[] },
   baselineEntries: BaselineEntry[] = [],
   scanPath?: string,
+  suppressions: Suppression[] = [],
 ): Promise<void> {
   const cwd = scanPath && fs.existsSync(scanPath) && fs.statSync(scanPath).isDirectory() ? scanPath : undefined;
   try {
@@ -374,7 +417,7 @@ async function scanStagedFiles(
     }).trim();
 
     if (!stagedFilesOutput) {
-      outputScanResults([], opts, "staged files");
+      outputScanResults([], opts, "staged files", true, suppressions);
       return;
     }
 
@@ -403,7 +446,7 @@ async function scanStagedFiles(
       allResults.push(...results);
     }
 
-    outputScanResults(applyBaseline(allResults, baselineEntries), opts, "staged files");
+    outputScanResults(applyBaseline(allResults, baselineEntries), opts, "staged files", true, suppressions);
   } catch (error: any) {
     if (error.status === 128) {
       console.error("Error: Not in a git repository");
@@ -501,7 +544,8 @@ async function scanDirectory(
 async function watchAndScan(
   watchPath: string,
   opts: ScanOpts,
-  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[] },
+  suppressions: Suppression[] = [],
 ): Promise<void> {
   const { watch } = await import("chokidar");
   const logger = new AuditLogger();
@@ -520,7 +564,7 @@ async function watchAndScan(
 
   if (initialResults.length > 0) {
     console.log(fmt.warning(`\n[Initial scan] Found secrets:`));
-    outputScanResults(initialResults, { ...opts, quiet: false }, undefined, /* exitOnFindings= */ false);
+    outputScanResults(initialResults, { ...opts, quiet: false }, undefined, /* exitOnFindings= */ false, suppressions);
     logWatchFindings(logger, initialResults);
   } else if (!opts.quiet) {
     console.log(fmt.success(`[Initial scan] No secrets detected`));
@@ -545,7 +589,7 @@ async function watchAndScan(
 
     const results = await scanFile(filePath, engine, scanCfg);
     if (results.length > 0) {
-      outputScanResults(results, { ...opts, quiet: false }, undefined, /* exitOnFindings= */ false);
+      outputScanResults(results, { ...opts, quiet: false }, undefined, /* exitOnFindings= */ false, suppressions);
       logWatchFindings(logger, results);
     } else if (!opts.quiet) {
       console.log(fmt.success(`  No secrets detected`));
@@ -563,7 +607,7 @@ async function watchAndScan(
 
     const results = await scanFile(filePath, engine, scanCfg);
     if (results.length > 0) {
-      outputScanResults(results, { ...opts, quiet: false }, undefined, /* exitOnFindings= */ false);
+      outputScanResults(results, { ...opts, quiet: false }, undefined, /* exitOnFindings= */ false, suppressions);
       logWatchFindings(logger, results);
     } else if (!opts.quiet) {
       console.log(fmt.success(`  No secrets detected`));

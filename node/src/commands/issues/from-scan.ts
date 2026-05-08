@@ -181,7 +181,10 @@ async function draftsFromBackendScan(
 
 function draftsFromLocalScan(filePath: string): IssueDraft[] {
   const raw = fs.readFileSync(filePath, "utf-8");
-  const results: LocalScanResult[] = JSON.parse(raw);
+  const parsed = JSON.parse(raw);
+  // New shape: { _note, scan_mode, triage_applied, results: [...] }
+  // Legacy shape (pre-0.7.8): bare array. Accept both for forward-compat reading.
+  const results: LocalScanResult[] = Array.isArray(parsed) ? parsed : (parsed?.results ?? []);
   const drafts: IssueDraft[] = [];
 
   for (const result of results) {

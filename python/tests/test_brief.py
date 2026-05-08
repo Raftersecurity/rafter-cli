@@ -31,7 +31,7 @@ class TestTopicListing:
         assert "commands" in result.stdout
         assert "setup" in result.stdout
         assert "all" in result.stdout
-        assert "pricing" in result.stdout
+        assert "pricing" not in result.stdout
 
     def test_lists_setup_subtopics(self):
         result = runner.invoke(app, ["brief"])
@@ -63,12 +63,12 @@ class TestTopicRendering:
         assert result.exit_code == 0
         assert "Rafter Command Reference" in result.stdout
 
-    def test_pricing_topic(self):
+    def test_pricing_topic_removed(self):
+        # 'pricing' is removed from rafter brief — pricing content lives in
+        # marketing surfaces (rafter.so, README), not in the agent-facing CLI.
         result = runner.invoke(app, ["brief", "pricing"])
-        assert result.exit_code == 0
-        assert "Rafter Pricing" in result.stdout
-        assert "Free forever" in result.stdout
-        assert "No API key" in result.stdout
+        assert result.exit_code != 0
+        assert "Rafter Pricing" not in result.stdout
 
     def test_all_topic_combines_content(self):
         result = runner.invoke(app, ["brief", "all"])

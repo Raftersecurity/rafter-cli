@@ -11,6 +11,9 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
+
+import yaml
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -201,25 +204,73 @@ def _install_claude_code_hooks(root: Path) -> None:
 # ── init ─────────────────────────────────────────────────────────────
 
 
+def _copy_skill_tree(skill_name: str, dest_dir: Path, label: str) -> None:
+    """Copy the full skill source tree (SKILL.md + any docs/ etc.) into dest_dir.
+
+    Skills can ship a ``docs/`` subfolder of reference material referenced by
+    SKILL.md. Copying only SKILL.md would silently strip those resources.
+    """
+    res = importlib.resources.files("rafter_cli.resources").joinpath("skills", skill_name)
+    skill_md = res.joinpath("SKILL.md")
+    if not skill_md.is_file():
+        rprint(fmt.warning(f"{label} skill template not found in package resources"))
+        return
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    def _walk(node, target: Path) -> None:
+        for child in node.iterdir():
+            child_target = target / child.name
+            if child.is_dir():
+                # Skip Python package metadata that has no value at the install site.
+                if child.name in {"__pycache__"}:
+                    continue
+                child_target.mkdir(parents=True, exist_ok=True)
+                _walk(child, child_target)
+            elif child.is_file():
+                if child.name == "__init__.py":
+                    continue
+                child_target.write_bytes(child.read_bytes())
+
+    _walk(res, dest_dir)
+    rprint(fmt.success(f"Installed {label} skill to {dest_dir}"))
+
+
 def _install_skills_to(skills_dir: Path) -> None:
-    """Copy all four AGENT_SKILLS into <skills_dir>/<skill>/SKILL.md."""
+    """Install all _AGENT_SKILLS into <skills_dir>, including any docs/ trees."""
     skills_dir.mkdir(parents=True, exist_ok=True)
-    res = importlib.resources.files("rafter_cli.resources")
     for skill in _AGENT_SKILLS:
-        dest_dir = skills_dir / skill["name"]
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = dest_dir / "SKILL.md"
-        try:
-            content = res.joinpath("skills", skill["name"], "SKILL.md").read_text(encoding="utf-8")
-            dest_path.write_text(content, encoding="utf-8")
-            rprint(fmt.success(f"Installed {skill['description']} skill to {dest_path}"))
-        except Exception:
-            rprint(fmt.warning(f"{skill['description']} skill template not found in package resources"))
+        _copy_skill_tree(skill["name"], skills_dir / skill["name"], skill["description"])
 
 
 def _install_claude_code_skills(root: Path) -> None:
     """Copy all four Rafter skills into <root>/.claude/skills/."""
     _install_skills_to(root / ".claude" / "skills")
+
+
+# Sub-agents shipped by `rafter agent init --with-claude-code`. These land in
+# <root>/.claude/agents/<name>.md and become first-class delegation targets
+# (Agent(subagent_type='<name>')) in the calling Claude Code session — distinct
+# from skills, which only surface in the activation prompt. Source files live
+# in `rafter_cli/resources/agents/<name>.md`. Keep in sync with the Node installer.
+_CLAUDE_CODE_SUBAGENTS: list[dict[str, str]] = [
+    {"name": "rafter", "description": "Rafter Security"},
+]
+
+
+def _install_claude_code_subagents(root: Path) -> None:
+    """Copy sub-agent definitions into <root>/.claude/agents/<name>.md."""
+    agents_dir = root / ".claude" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    res = importlib.resources.files("rafter_cli.resources")
+    for sub in _CLAUDE_CODE_SUBAGENTS:
+        dest_path = agents_dir / f"{sub['name']}.md"
+        try:
+            content = res.joinpath("agents", f"{sub['name']}.md").read_text(encoding="utf-8")
+            dest_path.write_text(content, encoding="utf-8")
+            rprint(fmt.success(f"Installed {sub['description']} sub-agent to {dest_path}"))
+        except Exception:
+            rprint(fmt.warning(f"{sub['description']} sub-agent template not found in package resources"))
 
 
 def _install_global_instructions(
@@ -229,6 +280,7 @@ def _install_global_instructions(
     cursor: bool,
     root: Path,
     scope: str,
+    windsurf: bool = False,
 ) -> None:
     """Install Rafter instruction files for platforms that support them.
 
@@ -237,9 +289,11 @@ def _install_global_instructions(
         Codex CLI   — user: ~/.codex/AGENTS.md      project: <cwd>/AGENTS.md
         Gemini CLI  — user: ~/.gemini/GEMINI.md     project: <cwd>/GEMINI.md
         Cursor      — user: ~/.cursor/rules/*.mdc   project: <cwd>/.cursor/rules/*.mdc
+        Windsurf    — <cwd>/AGENTS.md (read natively, workspace scope)
 
-    Codex (AGENTS.md) and Gemini (GEMINI.md) each have the same filename at
-    user and project scope — only the location differs — so scope is explicit.
+    AGENTS.md is the cross-platform instruction file: Codex (project scope) and
+    Windsurf (any scope) both read it. When either is enabled we write it once
+    at the project root; only Codex at user scope gets its own ~/.codex/AGENTS.md.
     """
     if claude_code:
         try:
@@ -249,13 +303,19 @@ def _install_global_instructions(
         except Exception as e:
             rprint(fmt.warning(f"Failed to write Claude Code instructions: {e}"))
 
-    if codex:
+    if codex or windsurf:
         try:
-            file_path = root / ".codex" / "AGENTS.md" if scope == "user" else root / "AGENTS.md"
+            codex_user = scope == "user" and codex and not windsurf
+            file_path = (
+                root / ".codex" / "AGENTS.md" if codex_user else root / "AGENTS.md"
+            )
             _inject_instruction_file(file_path)
-            rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
+            readers = " + ".join(
+                name for name, on in [("Codex", codex), ("Windsurf", windsurf)] if on
+            )
+            rprint(fmt.success(f"Installed Rafter instructions for {readers} to {file_path}"))
         except Exception as e:
-            rprint(fmt.warning(f"Failed to write Codex instructions: {e}"))
+            rprint(fmt.warning(f"Failed to write AGENTS.md: {e}"))
 
     if gemini:
         try:
@@ -265,34 +325,39 @@ def _install_global_instructions(
         except Exception as e:
             rprint(fmt.warning(f"Failed to write Gemini instructions: {e}"))
 
-    if cursor:
-        try:
-            file_path = root / ".cursor" / "rules" / "rafter-security.mdc"
-            _inject_instruction_file(file_path)
-            rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
-        except Exception as e:
-            rprint(fmt.warning(f"Failed to write Cursor instructions: {e}"))
+    # Cursor uses per-skill rules at <root>/.cursor/rules/<skill>.mdc plus
+    # the rafter sub-agent at <root>/.cursor/agents/rafter.md. Both are
+    # installed in the Cursor branch of init() — see _install_cursor_rules
+    # and _install_cursor_subagents (rf-svn3). The legacy consolidated
+    # rafter-security.mdc was retired.
+    _ = cursor  # parameter kept for call-site compatibility
 
 
 def _install_openclaw_skill() -> tuple[bool, str, str, str]:
-    """Install Rafter Security skill to OpenClaw. Returns (ok, source, dest, error)."""
-    home = Path.home()
-    skills_dir = home / ".openclaw" / "skills"
-    dest_path = skills_dir / "rafter-security.md"
+    """Install Rafter Security skill to OpenClaw. Returns (ok, source, dest, error).
 
-    # Find source skill file
+    rf-zgwj: writes to the canonical ClawHub workspace location
+    (~/.openclaw/workspace/skills/rafter-security/SKILL.md) so OpenClaw
+    auto-discovers it at session start. Earlier versions wrote to
+    ~/.openclaw/skills/rafter-security.md — that file is removed on
+    reinstall as a migration step.
+    """
+    home = Path.home()
+    openclaw_root = home / ".openclaw"
+    skill_dir = openclaw_root / "workspace" / "skills" / "rafter-security"
+    dest_path = skill_dir / "SKILL.md"
+    legacy_path = openclaw_root / "skills" / "rafter-security.md"
+
     try:
         ref = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md")
         source_path = str(ref)
     except Exception:
         source_path = "(bundled resource)"
 
-    openclaw_dir = home / ".openclaw"
-    if not openclaw_dir.exists():
-        return False, source_path, str(dest_path), f"OpenClaw not found: {openclaw_dir}"
+    if not openclaw_root.exists():
+        return False, source_path, str(dest_path), f"OpenClaw not found: {openclaw_root}"
 
-    # Ensure skills directory exists (may not exist on fresh OpenClaw installs)
-    skills_dir.mkdir(parents=True, exist_ok=True)
+    skill_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         content = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md").read_text(encoding="utf-8")
@@ -301,9 +366,26 @@ def _install_openclaw_skill() -> tuple[bool, str, str, str]:
 
     try:
         dest_path.write_text(content, encoding="utf-8")
-        return True, source_path, str(dest_path), ""
     except Exception as e:
         return False, source_path, str(dest_path), str(e)
+
+    # Migration: strip the rafter ≤ 0.7.7 install path (rf-zgwj). OpenClaw
+    # never read that path; remove it on reinstall.
+    if legacy_path.exists():
+        try:
+            legacy_path.unlink()
+            rprint(fmt.success(f"Removed legacy {legacy_path} (superseded by ClawHub-shaped skill at {dest_path})"))
+            # Drop the empty parent if we just emptied it.
+            legacy_parent = legacy_path.parent
+            try:
+                if not any(legacy_parent.iterdir()):
+                    legacy_parent.rmdir()
+            except OSError:
+                pass
+        except OSError:
+            pass
+
+    return True, source_path, str(dest_path), ""
 
 
 def _install_codex_skills(root: Path) -> tuple[bool, str]:
@@ -435,6 +517,125 @@ def _install_gemini_mcp(root: Path) -> bool:
     return True
 
 
+# Cursor hook events covered by rafter (rf-svn3).
+_CURSOR_HOOK_EVENTS: tuple[tuple[str, str], ...] = (
+    ("preToolUse", "rafter hook pretool --format cursor"),
+    ("postToolUse", "rafter hook posttool --format cursor"),
+    ("beforeShellExecution", "rafter hook pretool --format cursor"),
+)
+
+# Skills shipped as both Cursor rules and Claude Code / Codex / Gemini skills.
+_CURSOR_RULE_SKILLS: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+def _install_cursor_hooks(root: Path) -> None:
+    """Install Cursor hooks at <root>/.cursor/hooks.json.
+
+    Covers preToolUse + postToolUse + beforeShellExecution. Idempotent —
+    repeated installs do not duplicate rafter entries. Non-rafter hook
+    entries are preserved.
+    """
+    cursor_dir = root / ".cursor"
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+    hooks_path = cursor_dir / "hooks.json"
+
+    config: dict[str, Any] = {}
+    if hooks_path.exists():
+        try:
+            config = json.loads(hooks_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Cursor hooks.json was unreadable, creating new one"))
+
+    config.setdefault("version", 1)
+    config.setdefault("hooks", {})
+
+    for event, command in _CURSOR_HOOK_EVENTS:
+        entries = config["hooks"].get(event)
+        if not isinstance(entries, list):
+            entries = []
+        entries = [
+            e for e in entries
+            if "rafter hook" not in (e or {}).get("command", "")
+        ]
+        entries.append({"command": command, "type": "command", "timeout": 5000})
+        config["hooks"][event] = entries
+
+    hooks_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed hooks to {hooks_path}"))
+
+
+def _install_cursor_rules(root: Path) -> None:
+    """Install per-skill Cursor rule files at <root>/.cursor/rules/<skill>.mdc.
+
+    Replaces the legacy consolidated `.cursor/rules/rafter-security.mdc`.
+    Each rule is a static template shipped under
+    `rafter_cli/resources/cursor-rules/`.
+    """
+    rules_dir = root / ".cursor" / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    res = importlib.resources.files("rafter_cli.resources")
+    for name in _CURSOR_RULE_SKILLS:
+        try:
+            content = res.joinpath("cursor-rules", f"{name}.mdc").read_text(encoding="utf-8")
+        except Exception:
+            rprint(fmt.warning(f"Cursor rule template missing: {name}.mdc"))
+            continue
+        dest = rules_dir / f"{name}.mdc"
+        dest.write_text(content, encoding="utf-8")
+        rprint(fmt.success(f"Installed Cursor rule to {dest}"))
+
+    # Migrate away from the legacy consolidated rule on reinstall.
+    legacy = rules_dir / "rafter-security.mdc"
+    if legacy.exists():
+        try:
+            legacy.unlink()
+            rprint(fmt.info(f"Removed legacy {legacy} (superseded by per-skill rules)"))
+        except OSError:
+            pass
+
+
+def _install_cursor_subagents(root: Path) -> None:
+    """Install the Cursor sub-agent at <root>/.cursor/agents/rafter.md.
+
+    Reuses the rf-q7j Claude-Code sub-agent body, with Cursor-shape
+    frontmatter (no `tools:` field — tools inherit from parent agent).
+    """
+    agents_dir = root / ".cursor" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    res = importlib.resources.files("rafter_cli.resources")
+    try:
+        raw = res.joinpath("agents", "rafter.md").read_text(encoding="utf-8")
+    except Exception:
+        rprint(fmt.warning("Rafter sub-agent template not found in resources/agents/"))
+        return
+
+    cursored = _strip_frontmatter_field(raw, "tools")
+    dest = agents_dir / "rafter.md"
+    dest.write_text(cursored, encoding="utf-8")
+    rprint(fmt.success(f"Installed Cursor sub-agent to {dest}"))
+
+
+def _strip_frontmatter_field(content: str, field: str) -> str:
+    """Strip a single-line frontmatter field from a markdown file's frontmatter."""
+    if not content.startswith("---\n"):
+        return content
+    fm_end = content.find("\n---", 4)
+    if fm_end == -1:
+        return content
+    frontmatter = content[4:fm_end]
+    body = content[fm_end:]
+    pattern = re.compile(rf"^{re.escape(field)}:\s.*$\n?", re.MULTILINE)
+    cleaned = pattern.sub("", frontmatter)
+    return f"---\n{cleaned}{body}"
+
+
 def _install_cursor_mcp(root: Path) -> bool:
     """Install MCP server config for Cursor (<root>/.cursor/mcp.json)."""
     cursor_dir = root / ".cursor"
@@ -481,6 +682,74 @@ def _install_windsurf_mcp(root: Path) -> bool:
     return True
 
 
+# Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3).
+_WINDSURF_RULE_SKILLS: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+def _install_windsurf_rules(root: Path) -> None:
+    """Install per-skill Windsurf rules at <root>/.windsurf/rules/<skill>.md.
+
+    Workspace-scope rules consumed by Windsurf's rules system (.windsurf/rules/*.md,
+    12KB cap per file per docs). Each rule uses Windsurf's YAML frontmatter
+    (`trigger: model_decision` + `description:`) so the agent fetches the rule
+    when the description matches the task.
+
+    Replaces the prior `~/.windsurf/hooks.json` install — Windsurf has no
+    documented hook surface (rf-0vr3 prune; same pattern as Continue.dev hooks
+    prune in rf-cia phase b).
+    """
+    rules_dir = root / ".windsurf" / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    res = importlib.resources.files("rafter_cli.resources")
+    for name in _WINDSURF_RULE_SKILLS:
+        try:
+            content = res.joinpath("windsurf-rules", f"{name}.md").read_text(encoding="utf-8")
+        except Exception:
+            rprint(fmt.warning(f"Windsurf rule template missing: {name}.md"))
+            continue
+        dest = rules_dir / f"{name}.md"
+        dest.write_text(content, encoding="utf-8")
+        rprint(fmt.success(f"Installed Windsurf rule to {dest}"))
+
+
+# Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0).
+_CONTINUE_RULE_SKILLS: tuple[str, ...] = (
+    "rafter",
+    "rafter-secure-design",
+    "rafter-code-review",
+    "rafter-skill-review",
+)
+
+
+def _install_continue_dev_rules(root: Path) -> None:
+    """Install per-skill Continue.dev rules at <root>/.continue/rules/<skill>.md.
+
+    Continue.dev reads workspace rules from .continue/rules/*.md (per-rule
+    files, lexicographic load order). YAML frontmatter: `name`, `description`,
+    `alwaysApply`. Each rule body mirrors the Cursor / Windsurf pointer-rule
+    pattern.
+    """
+    rules_dir = root / ".continue" / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    res = importlib.resources.files("rafter_cli.resources")
+    for name in _CONTINUE_RULE_SKILLS:
+        try:
+            content = res.joinpath("continue-rules", f"{name}.md").read_text(encoding="utf-8")
+        except Exception:
+            rprint(fmt.warning(f"Continue.dev rule template missing: {name}.md"))
+            continue
+        dest = rules_dir / f"{name}.md"
+        dest.write_text(content, encoding="utf-8")
+        rprint(fmt.success(f"Installed Continue.dev rule to {dest}"))
+
+
 def _install_continue_dev_mcp(root: Path) -> bool:
     """Install MCP server config for Continue.dev (<root>/.continue/config.json)."""
     continue_dir = root / ".continue"
@@ -514,21 +783,75 @@ def _install_continue_dev_mcp(root: Path) -> bool:
     return True
 
 
-def _install_aider_mcp(root: Path) -> bool:
-    """Install MCP config for Aider (<root>/.aider.conf.yml)."""
+_AIDER_LEGACY_MCP_BLOCK_RE = re.compile(
+    r"\n?#\s*Rafter security MCP server\s*\nmcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?",
+)
+_AIDER_LEGACY_MCP_LINE_RE = re.compile(
+    r"^mcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?",
+    flags=re.MULTILINE,
+)
+_AIDER_READ_ENTRY = "RAFTER.md"
+
+
+def _install_aider_read(root: Path) -> bool:
+    """Install Rafter context for Aider (rf-du2o).
+
+    Aider has no native MCP support and no plugin/hook surface. Its only
+    intercept-friendly persistent-context primitive is the `read:` flag in
+    `.aider.conf.yml`, which injects read-only files into every session.
+
+    Behavior:
+      1. Write `<root>/RAFTER.md` with the rafter instruction block.
+      2. Update `<root>/.aider.conf.yml` so `read:` includes `RAFTER.md`
+         (preserves any pre-existing `read:` entries; preserves other YAML keys).
+      3. Strip the legacy `mcp-server-command: rafter mcp serve` line(s) if
+         present — silent no-op in earlier versions (Aider has no MCP).
+    """
+    rafter_md_path = root / "RAFTER.md"
     config_path = root / ".aider.conf.yml"
 
-    content = ""
-    if config_path.exists():
-        content = config_path.read_text()
+    # 1. Write RAFTER.md (idempotent — marker block replaced in place).
+    _inject_instruction_file(rafter_md_path)
 
-    if "rafter mcp serve" in content:
-        rprint(fmt.success("Rafter MCP already configured in Aider config"))
-        return True
+    # 2. Update .aider.conf.yml read: list.
+    raw = config_path.read_text() if config_path.exists() else ""
 
-    mcp_line = "\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n"
-    config_path.write_text(content + mcp_line)
-    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    # 2a. Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
+    raw = _AIDER_LEGACY_MCP_BLOCK_RE.sub("\n", raw)
+    raw = _AIDER_LEGACY_MCP_LINE_RE.sub("", raw)
+
+    parsed: dict[str, Any] = {}
+    if raw.strip():
+        try:
+            loaded = yaml.safe_load(raw)
+            if isinstance(loaded, dict):
+                parsed = loaded
+        except yaml.YAMLError:
+            # Unparseable YAML — append a read: section without rewriting.
+            if _AIDER_READ_ENTRY not in raw:
+                sep = "" if not raw or raw.endswith("\n") else "\n"
+                config_path.write_text(f"{raw}{sep}read:\n  - {_AIDER_READ_ENTRY}\n")
+            else:
+                config_path.write_text(raw)
+            rprint(fmt.success(f"Installed Rafter read-only context to {config_path}"))
+            return True
+
+    # Normalize read: to a list of strings.
+    reads: list[str] = []
+    raw_read = parsed.get("read")
+    if isinstance(raw_read, list):
+        reads = [str(p) for p in raw_read]
+    elif isinstance(raw_read, str):
+        reads = [raw_read]
+
+    if _AIDER_READ_ENTRY not in reads:
+        reads.append(_AIDER_READ_ENTRY)
+    parsed["read"] = reads
+
+    config_path.write_text(yaml.safe_dump(parsed, sort_keys=False))
+    rprint(fmt.success(
+        f"Installed Rafter read-only context to {rafter_md_path} + {config_path}"
+    ))
     return True
 
 
@@ -580,14 +903,23 @@ def init(
 
     # Resolve opt-in flags. In --local scope, --all is restricted to platforms with
     # a project-local config story (claudeCode, codex, gemini, cursor).
+    # OpenClaw returns to --all in rf-zgwj — the integration was rebuilt to
+    # ship a ClawHub-shaped skill at the canonical workspace path
+    # (~/.openclaw/workspace/skills/rafter-security/SKILL.md), so OpenClaw
+    # actually auto-discovers it now. (User-scope only.)
     want_openclaw = with_openclaw or (all_integrations and not local)
     want_claude_code = with_claude_code or all_integrations
     want_codex = with_codex or all_integrations
     want_gemini = with_gemini or all_integrations
     want_cursor = with_cursor or all_integrations
-    want_windsurf = with_windsurf or (all_integrations and not local)
-    want_continue = with_continue or (all_integrations and not local)
-    want_aider = with_aider or (all_integrations and not local)
+    # Windsurf can install at --local scope (project rules + AGENTS.md) since
+    # rf-0vr3. User scope still also installs the MCP entry.
+    want_windsurf = with_windsurf or all_integrations
+    # Continue.dev can install at --local scope (project rules) since rf-acz0.
+    want_continue = with_continue or all_integrations
+    # Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
+    # in cwd) since rf-du2o.
+    want_aider = with_aider or all_integrations
     want_gitleaks = with_gitleaks or (all_integrations and not local)
 
     # Show detected environments
@@ -710,6 +1042,7 @@ def init(
     if (has_claude_code or with_claude_code or (local and want_claude_code)) and want_claude_code:
         try:
             _install_claude_code_skills(root)
+            _install_claude_code_subagents(root)
             _install_claude_code_hooks(root)
             if scope == "project":
                 components = manager.get("agent.components") or {}
@@ -757,51 +1090,69 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Gemini CLI integration: {e}"))
 
-    # Install Cursor MCP if opted in
+    # Install Cursor MCP + hooks + per-skill rules + sub-agent if opted in
     cursor_ok = False
     if (has_cursor or (local and want_cursor)) and want_cursor:
         try:
             cursor_ok = _install_cursor_mcp(root)
+            _install_cursor_hooks(root)
+            _install_cursor_rules(root)
+            _install_cursor_subagents(root)
             if cursor_ok and scope == "user":
                 manager.set("agent.environments.cursor.enabled", True)
         except Exception as e:
             rprint(fmt.error(f"Failed to install Cursor integration: {e}"))
 
-    # Install Windsurf MCP if opted in
+    # Install Windsurf integration if opted in (rf-0vr3).
+    # - User scope: MCP entry under ~/.codeium/windsurf/ + per-skill workspace
+    #   rules at .windsurf/rules/ + AGENTS.md (written below by
+    #   _install_global_instructions).
+    # - Project scope (--local): rules + AGENTS.md only.
+    # The previous ~/.windsurf/hooks.json install was pruned: Windsurf has no
+    # documented hook surface.
     windsurf_ok = False
-    if has_windsurf and want_windsurf:
+    if want_windsurf and (has_windsurf or local):
         try:
-            windsurf_ok = _install_windsurf_mcp(root)
-            if windsurf_ok:
-                manager.set("agent.environments.windsurf.enabled", True)
+            if has_windsurf:
+                windsurf_ok = _install_windsurf_mcp(root)
+                if windsurf_ok:
+                    manager.set("agent.environments.windsurf.enabled", True)
+            _install_windsurf_rules(root)
+            if not has_windsurf:
+                # Project-scope success: rules + AGENTS.md (written below).
+                windsurf_ok = True
         except Exception as e:
             rprint(fmt.error(f"Failed to install Windsurf integration: {e}"))
-    elif local and want_windsurf:
-        _local_unsupported("Windsurf")
 
-    # Install Continue.dev MCP if opted in
+    # Install Continue.dev integration if opted in (rf-acz0).
+    # - User scope: per-skill rules (.continue/rules/) + MCP entry under
+    #   ~/.continue/config.json.
+    # - Project scope (--local): rules only.
     continue_ok = False
-    if has_continue_dev and want_continue:
+    if want_continue and (has_continue_dev or local):
         try:
-            continue_ok = _install_continue_dev_mcp(root)
-            if continue_ok:
-                manager.set("agent.environments.continue_dev.enabled", True)
+            if has_continue_dev:
+                continue_ok = _install_continue_dev_mcp(root)
+                if continue_ok:
+                    manager.set("agent.environments.continue_dev.enabled", True)
+            _install_continue_dev_rules(root)
+            if not has_continue_dev:
+                continue_ok = True
         except Exception as e:
             rprint(fmt.error(f"Failed to install Continue.dev integration: {e}"))
-    elif local and want_continue:
-        _local_unsupported("Continue.dev")
 
-    # Install Aider MCP if opted in
+    # Install Aider integration if opted in (rf-du2o).
+    # Aider has no MCP and no hook surface — its only intercept is the
+    # `read:` flag in .aider.conf.yml. We write RAFTER.md and ensure the
+    # `read:` list includes it. Legacy mcp-server-command line is stripped.
     aider_ok = False
-    if has_aider and want_aider:
+    if want_aider and (has_aider or local):
         try:
-            aider_ok = _install_aider_mcp(root)
-            if aider_ok:
+            aider_ok = _install_aider_read(root)
+            if aider_ok and has_aider:
                 manager.set("agent.environments.aider.enabled", True)
         except Exception as e:
             rprint(fmt.error(f"Failed to install Aider integration: {e}"))
-    elif local and want_aider:
-        _local_unsupported("Aider")
 
     # Install global instruction files for platforms that support them
     _install_global_instructions(
@@ -809,6 +1160,7 @@ def init(
         codex=codex_ok,
         gemini=gemini_ok,
         cursor=cursor_ok,
+        windsurf=windsurf_ok,
         root=root,
         scope=scope,
     )
@@ -836,7 +1188,7 @@ def init(
         if continue_ok:
             rprint("  - Restart Continue.dev to load MCP server")
         if aider_ok:
-            rprint("  - Restart Aider to load MCP server")
+            rprint("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:")
     elif scope == "project":
         rprint("No integrations were installed. In --local mode, pass one or more opt-in flags:")
         rprint("  rafter agent init --local --with-claude-code")
@@ -941,26 +1293,48 @@ def _output_scan_results(
     context: str | None = None,
     format: str = "text",
     exit_on_findings: bool = True,
+    suppressions: list | None = None,
 ) -> None:
+    from ..core.custom_patterns import apply_suppressions
+    suppressions = suppressions or []
+    kept_results, suppressed = apply_suppressions(results, suppressions)
+
     if format == "sarif":
-        _output_sarif(results)
+        _output_sarif(kept_results)
         return
 
     if json_output or format == "json":
-        out = [
+        files_out = [
             {"file": r.file, "matches": [
                 {"pattern": {"name": m.pattern.name, "severity": m.pattern.severity, "description": m.pattern.description or ""},
                  "line": m.line, "column": m.column, "redacted": m.redacted}
                 for m in r.matches
             ]}
-            for r in results
+            for r in kept_results
         ]
+        out: dict = {
+            "_note": (
+                "Local-only scan: pattern-based detection without agentic-intelligence triage. "
+                "Findings have not been evaluated for context (public exposure, key validity, "
+                "deployment environment). Investigate each before acting; do not dismiss. "
+                "Run 'rafter run' for backend agentic analysis."
+            ),
+            "scan_mode": "local",
+            "triage_applied": False,
+            "results": files_out,
+        }
+        if suppressed:
+            from dataclasses import asdict
+            out["_suppressed"] = [asdict(s) for s in suppressed]
         print(json.dumps(out, indent=2))
         if exit_on_findings:
-            raise typer.Exit(code=1 if results else 0)
+            raise typer.Exit(code=1 if kept_results else 0)
         return
 
-    if not results:
+    if suppressed and not quiet:
+        print(f"({len(suppressed)} finding(s) hidden by .rafter.yml)", file=sys.stderr)
+
+    if not kept_results:
         if not quiet:
             msg = f"No secrets detected in {context}" if context else "No secrets detected"
             rprint(f"\n{fmt.success(msg)}\n")
@@ -968,10 +1342,10 @@ def _output_scan_results(
             raise typer.Exit(code=0)
         return
 
-    rprint(f"\n{fmt.warning(f'Found secrets in {len(results)} file(s):')}\n")
+    rprint(f"\n{fmt.warning(f'Found secrets in {len(kept_results)} file(s):')}\n")
 
     total = 0
-    for r in results:
+    for r in kept_results:
         rprint(f"\n{fmt.info(r.file)}")
         for m in r.matches:
             total += 1
@@ -982,7 +1356,7 @@ def _output_scan_results(
             rprint(f"     Redacted: {m.redacted}")
             rprint()
 
-    rprint(f"\n{fmt.warning(f'Total: {total} secret(s) detected in {len(results)} file(s)')}\n")
+    rprint(f"\n{fmt.warning(f'Total: {total} secret(s) detected in {len(kept_results)} file(s)')}\n")
 
     if context == "staged files":
         rprint(f"{fmt.error('Commit blocked. Remove secrets before committing.')}\n")
@@ -1001,6 +1375,7 @@ def _watch_and_scan(
     format: str,
     custom_patterns,
     scan_cfg,
+    suppressions: list | None = None,
 ) -> None:
     """Watch a path for changes and re-scan on each change. Ctrl+C exits."""
     try:
@@ -1024,7 +1399,7 @@ def _watch_and_scan(
 
     if initial_results:
         rprint(fmt.warning("\n[Initial scan] Found secrets:"))
-        _output_scan_results(initial_results, json_output, False, format=format, exit_on_findings=False)
+        _output_scan_results(initial_results, json_output, False, format=format, exit_on_findings=False, suppressions=suppressions)
         _log_watch_findings(logger, initial_results)
     elif not quiet:
         rprint(fmt.success("[Initial scan] No secrets detected"))
@@ -1047,7 +1422,7 @@ def _watch_and_scan(
                 print(f"\n[{ts}] Changed: {file_path}", file=sys.stderr)
             results = _scan_file(file_path, eng, custom_patterns)
             if results:
-                _output_scan_results(results, json_output, False, format=format, exit_on_findings=False)
+                _output_scan_results(results, json_output, False, format=format, exit_on_findings=False, suppressions=suppressions)
                 _log_watch_findings(logger, results)
             elif not quiet:
                 rprint(fmt.success("  No secrets detected"))
@@ -1157,6 +1532,9 @@ def scan(
         if scan_cfg.custom_patterns else None
     )
 
+    from ..core.custom_patterns import load_suppressions, policy_ignore_to_suppressions
+    suppressions = policy_ignore_to_suppressions(scan_cfg.ignore) + load_suppressions()
+
     baseline_entries = _load_baseline_entries() if baseline else []
 
     # --diff
@@ -1186,7 +1564,7 @@ def scan(
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
         filtered = _apply_baseline(all_results, baseline_entries)
-        _output_scan_results(filtered, json_output, quiet, f"files changed since {diff}", format=format)
+        _output_scan_results(filtered, json_output, quiet, f"files changed since {diff}", format=format, suppressions=suppressions)
         return
 
     # --staged
@@ -1216,7 +1594,7 @@ def scan(
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
         filtered = _apply_baseline(all_results, baseline_entries)
-        _output_scan_results(filtered, json_output, quiet, "staged files", format=format)
+        _output_scan_results(filtered, json_output, quiet, "staged files", format=format, suppressions=suppressions)
         return
 
     # Default: scan path
@@ -1227,7 +1605,7 @@ def scan(
 
     # --watch
     if watch:
-        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg)
+        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions)
         return
 
     eng = _select_engine(engine, quiet)
@@ -1242,7 +1620,7 @@ def scan(
         results = _scan_file(resolved_path, eng, custom_patterns)
 
     filtered = _apply_baseline(results, baseline_entries)
-    _output_scan_results(filtered, json_output, quiet, format=format)
+    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions)
 
 
 # ── audit ────────────────────────────────────────────────────────────
@@ -1687,9 +2065,12 @@ def _check_claude_code() -> _CheckResult:
     except (json.JSONDecodeError, OSError) as e:
         return _CheckResult(name, False, f"Cannot read settings: {e}", optional=True)
 
+    # Python install writes an absolute path (/home/foo/bin/rafter hook
+    # pretool), Node writes the bare `rafter hook pretool`. Substring match
+    # accepts both.
     hooks = settings.get("hooks", {}).get("PreToolUse", [])
     has_rafter = any(
-        any(h.get("command") == "rafter hook pretool" for h in (entry.get("hooks") or []))
+        any("rafter hook pretool" in str(h.get("command", "")) for h in (entry.get("hooks") or []))
         for entry in hooks
     )
     if not has_rafter:
@@ -1698,23 +2079,34 @@ def _check_claude_code() -> _CheckResult:
 
 
 def _check_openclaw() -> _CheckResult:
-    """Check if OpenClaw integration is healthy."""
+    """Check if OpenClaw integration is healthy.
+
+    rf-zgwj: ClawHub auto-discovers skills from
+    ~/.openclaw/workspace/skills/<name>/SKILL.md. Detect platform via
+    ~/.openclaw, then verify the skill at the canonical path.
+    """
     name = "OpenClaw"
     home = Path.home()
-    skills_dir = home / ".openclaw" / "skills"
+    openclaw_root = home / ".openclaw"
 
-    if not skills_dir.exists():
+    if not openclaw_root.exists():
         return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-openclaw' to enable", optional=True)
 
-    skill_path = skills_dir / "rafter-security.md"
+    skill_path = openclaw_root / "workspace" / "skills" / "rafter-security" / "SKILL.md"
     if not skill_path.exists():
+        legacy = openclaw_root / "skills" / "rafter-security.md"
+        if legacy.exists():
+            return _CheckResult(
+                name,
+                False,
+                f"Legacy skill at {legacy} (not loaded by OpenClaw) — re-run 'rafter agent init --with-openclaw' to migrate to {skill_path}",
+                optional=True,
+            )
         return _CheckResult(name, False, "Rafter skill not installed — run 'rafter agent init --with-openclaw'", optional=True)
 
-    # Try to extract version from frontmatter
     version = ""
     try:
         content = skill_path.read_text(encoding="utf-8")
-        import re
         match = re.search(r"^version:\s*(.+)$", content, re.MULTILINE)
         if match:
             version = match.group(1).strip()
@@ -1740,12 +2132,236 @@ def _check_codex() -> _CheckResult:
     return _CheckResult(name, True, f"Skills installed ({home / '.agents' / 'skills'})")
 
 
+def _check_gemini() -> _CheckResult:
+    """Check if Gemini CLI integration is healthy (rf-65zg Python parity)."""
+    name = "Gemini CLI"
+    home = Path.home()
+    gemini_dir = home / ".gemini"
+
+    if not gemini_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-gemini' to enable", optional=True)
+
+    settings_path = gemini_dir / "settings.json"
+    if not settings_path.exists():
+        return _CheckResult(name, False, f"Settings file not found: {settings_path} — run 'rafter agent init --with-gemini'", optional=True)
+
+    try:
+        settings = json.loads(settings_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return _CheckResult(name, False, f"Cannot read settings: {e}", optional=True)
+
+    if not settings.get("mcpServers", {}).get("rafter"):
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-gemini'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
+def _check_cursor() -> _CheckResult:
+    """Check if Cursor integration is healthy (rf-65zg Python parity)."""
+    name = "Cursor"
+    home = Path.home()
+    cursor_dir = home / ".cursor"
+
+    if not cursor_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-cursor' to enable", optional=True)
+
+    mcp_path = cursor_dir / "mcp.json"
+    if not mcp_path.exists():
+        return _CheckResult(name, False, f"MCP config not found: {mcp_path} — run 'rafter agent init --with-cursor'", optional=True)
+
+    try:
+        cfg = json.loads(mcp_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    if not cfg.get("mcpServers", {}).get("rafter"):
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-cursor'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
+def _check_windsurf() -> _CheckResult:
+    """Check if Windsurf integration is healthy (rf-65zg Python parity)."""
+    name = "Windsurf"
+    home = Path.home()
+    windsurf_dir = home / ".codeium" / "windsurf"
+
+    if not windsurf_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-windsurf' to enable", optional=True)
+
+    mcp_path = windsurf_dir / "mcp_config.json"
+    if not mcp_path.exists():
+        return _CheckResult(name, False, f"MCP config not found: {mcp_path} — run 'rafter agent init --with-windsurf'", optional=True)
+
+    try:
+        cfg = json.loads(mcp_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    if not cfg.get("mcpServers", {}).get("rafter"):
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-windsurf'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
+def _check_continue_dev() -> _CheckResult:
+    """Check if Continue.dev integration is healthy (rf-65zg)."""
+    name = "Continue.dev"
+    home = Path.home()
+    continue_dir = home / ".continue"
+
+    if not continue_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-continue' to enable", optional=True)
+
+    config_path = continue_dir / "config.json"
+    if not config_path.exists():
+        return _CheckResult(name, False, f"MCP config not found: {config_path} — run 'rafter agent init --with-continue'", optional=True)
+
+    try:
+        cfg = json.loads(config_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    servers = cfg.get("mcpServers")
+    has_rafter = False
+    if isinstance(servers, list):
+        has_rafter = any(s.get("name") == "rafter" for s in servers if isinstance(s, dict))
+    elif isinstance(servers, dict):
+        has_rafter = "rafter" in servers
+    if not has_rafter:
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-continue'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
+def _check_aider() -> _CheckResult:
+    """Check if Aider integration is healthy (rf-65zg).
+
+    Aider has no platform dir; presence of .aider.conf.yml is the signal. We
+    prefer a project-local config (rf-du2o ships at --local scope too); fall
+    back to ~/.aider.conf.yml.
+    """
+    name = "Aider"
+    home = Path.home()
+    user_conf = home / ".aider.conf.yml"
+    project_conf = Path.cwd() / ".aider.conf.yml"
+
+    conf = project_conf if project_conf.exists() else user_conf if user_conf.exists() else None
+    if conf is None:
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-aider' to enable", optional=True)
+
+    try:
+        raw = conf.read_text()
+    except OSError as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    try:
+        parsed = yaml.safe_load(raw) or {}
+    except yaml.YAMLError:
+        if "RAFTER.md" not in raw:
+            return _CheckResult(name, False, "RAFTER.md not in read: list — run 'rafter agent init --with-aider'", optional=True)
+        return _CheckResult(name, True, "RAFTER.md in read: list (config not strict-YAML)")
+
+    reads = parsed.get("read") if isinstance(parsed, dict) else None
+    read_list: list[str] = []
+    if isinstance(reads, list):
+        read_list = [str(p) for p in reads]
+    elif isinstance(reads, str):
+        read_list = [reads]
+    if "RAFTER.md" not in read_list:
+        return _CheckResult(name, False, f"RAFTER.md not in read: list ({conf}) — run 'rafter agent init --with-aider'", optional=True)
+
+    rafter_md = (project_conf.parent / "RAFTER.md") if conf == project_conf else (user_conf.parent / "RAFTER.md")
+    if not rafter_md.exists():
+        return _CheckResult(name, False, f"RAFTER.md missing at {rafter_md} — run 'rafter agent init --with-aider'", optional=True)
+
+    return _CheckResult(name, True, f"RAFTER.md + read: entry in {conf}")
+
+
+def _probe_claude_code() -> _CheckResult:
+    """Runtime probe of the Claude Code hook integration (rf-65zg).
+
+    Synthesizes a Claude PreToolUse stdin payload, invokes `rafter hook
+    pretool`, and asserts ~/.rafter/audit.jsonl received a
+    `command_intercepted` entry for the unique sentinel command. Catches
+    the rf-luk-style "wrote file but the command never fires" failure
+    without driving Claude Code itself.
+    """
+    name = "Claude Code (probe)"
+    home = Path.home()
+    settings_path = home / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return _CheckResult(name, False, "Not installed — skip", optional=True)
+
+    sentinel = f"rafter-probe-{os.getpid()}-{int(time.time() * 1000)}"
+    probe_command = f"rm -rf /tmp/{sentinel}"
+    payload = json.dumps({
+        "session_id": sentinel,
+        "transcript_path": "",
+        "cwd": str(Path.cwd()),
+        "permission_mode": "default",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": probe_command},
+    })
+
+    audit_path = home / ".rafter" / "audit.jsonl"
+    size_before = audit_path.stat().st_size if audit_path.exists() else 0
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "rafter_cli", "hook", "pretool"],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return _CheckResult(name, False, f"rafter hook pretool failed to spawn: {e}")
+
+    if not audit_path.exists():
+        return _CheckResult(name, False, f"Hook ran but {audit_path} was not created (exit={result.returncode})")
+
+    new_content = audit_path.read_text()[size_before:]
+    hit = False
+    for line in new_content.splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        # Audit logger nests the command under entry.action.command; older
+        # writers may flatten — accept either shape.
+        cmd = str((entry.get("action") or {}).get("command") or entry.get("command") or "")
+        if entry.get("eventType") == "command_intercepted" and sentinel in cmd:
+            hit = True
+            break
+
+    if not hit:
+        return _CheckResult(
+            name,
+            False,
+            f'Probe ran (exit={result.returncode}) but no command_intercepted entry for sentinel "{sentinel}" landed in {audit_path}',
+        )
+
+    return _CheckResult(name, True, f"Probe fired → command_intercepted recorded in {audit_path}")
+
+
 @agent_app.command()
-def verify():
+def verify(
+    json_output: bool = typer.Option(False, "--json", help="Emit results as JSON (one object per check + summary)"),
+    probe: bool = typer.Option(
+        False,
+        "--probe",
+        help=(
+            "Runtime probe: invoke rafter hook commands with synthetic platform-format "
+            "payloads and assert ~/.rafter/audit.jsonl recorded the interception. "
+            "Catches the 'wrote file but never fires' failure mode (rf-65zg)."
+        ),
+    ),
+):
     """Check agent security integration status."""
-    rprint(fmt.header("Rafter Agent Verify"))
-    rprint(fmt.divider())
-    rprint()
+    if not json_output:
+        rprint(fmt.header("Rafter Agent Verify"))
+        rprint(fmt.divider())
+        rprint()
 
     results = [
         _check_config(),
@@ -1753,27 +2369,57 @@ def verify():
         _check_claude_code(),
         _check_openclaw(),
         _check_codex(),
+        _check_gemini(),
+        _check_cursor(),
+        _check_windsurf(),
+        _check_continue_dev(),
+        _check_aider(),
     ]
 
-    for r in results:
-        if r.passed:
-            rprint(fmt.success(f"{r.name}: {r.detail}"))
-        elif r.optional:
-            rprint(fmt.warning(f"{r.name}: {r.detail}"))
-        else:
-            rprint(fmt.error(f"{r.name}: FAIL — {r.detail}"))
+    if probe:
+        # Only Claude Code has a probe today (rf-65zg). Codex/Cursor/Gemini
+        # hook payloads can be added in follow-ups.
+        results.append(_probe_claude_code())
 
-    rprint()
     hard_failed = [r for r in results if not r.passed and not r.optional]
     warned = [r for r in results if not r.passed and r.optional]
     passed = [r for r in results if r.passed]
 
-    if not hard_failed:
-        warn_note = f" ({len(warned)} optional check{'s' if len(warned) != 1 else ''} not configured)" if warned else ""
-        rprint(fmt.success(f"{len(passed)}/{len(results)} core checks passed{warn_note}"))
+    if json_output:
+        payload = {
+            "checks": [
+                {
+                    "name": r.name,
+                    "status": "pass" if r.passed else "warn" if r.optional else "fail",
+                    "detail": r.detail,
+                }
+                for r in results
+            ],
+            "summary": {
+                "passed": len(passed),
+                "warned": len(warned),
+                "failed": len(hard_failed),
+                "total": len(results),
+                "probe": probe,
+            },
+        }
+        sys.stdout.write(json.dumps(payload) + "\n")
     else:
-        rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
-    rprint()
+        for r in results:
+            if r.passed:
+                rprint(fmt.success(f"{r.name}: {r.detail}"))
+            elif r.optional:
+                rprint(fmt.warning(f"{r.name}: {r.detail}"))
+            else:
+                rprint(fmt.error(f"{r.name}: FAIL — {r.detail}"))
+
+        rprint()
+        if not hard_failed:
+            warn_note = f" ({len(warned)} optional check{'s' if len(warned) != 1 else ''} not configured)" if warned else ""
+            rprint(fmt.success(f"{len(passed)}/{len(results)} core checks passed{warn_note}"))
+        else:
+            rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
+        rprint()
 
     if hard_failed:
         raise typer.Exit(code=1)

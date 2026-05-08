@@ -85,6 +85,26 @@ def _map_policy(raw: dict) -> dict:
                 for p in scan["custom_patterns"]
             ]
 
+    ignore = raw.get("ignore")
+    if isinstance(ignore, list):
+        rules: list[dict] = []
+        for entry in ignore:
+            if not isinstance(entry, dict):
+                print('Warning: skipping malformed ignore entry — must be an object with paths.', file=sys.stderr)
+                continue
+            paths = entry.get("paths")
+            if not isinstance(paths, list) or not paths:
+                print('Warning: skipping ignore entry — "paths" must be a non-empty array of strings.', file=sys.stderr)
+                continue
+            rule: dict = {"paths": [str(p) for p in paths]}
+            if isinstance(entry.get("rules"), list):
+                rule["rules"] = [str(r) for r in entry["rules"]]
+            if isinstance(entry.get("reason"), str) and entry["reason"]:
+                rule["reason"] = entry["reason"]
+            rules.append(rule)
+        if rules:
+            policy["ignore"] = rules
+
     audit = raw.get("audit")
     if isinstance(audit, dict):
         policy["audit"] = {}
@@ -159,7 +179,7 @@ def _derive_doc_id(source: str, kind: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()[:8]
 
 
-_VALID_TOP_LEVEL_KEYS = {"version", "risk_level", "command_policy", "scan", "audit", "docs"}
+_VALID_TOP_LEVEL_KEYS = {"version", "risk_level", "command_policy", "scan", "ignore", "audit", "docs"}
 _VALID_RISK_LEVELS = {"minimal", "moderate", "aggressive"}
 _VALID_COMMAND_MODES = {"allow-all", "approve-dangerous", "deny-list"}
 _VALID_LOG_LEVELS = {"debug", "info", "warn", "error"}
@@ -218,6 +238,33 @@ def _validate_policy(policy: dict, raw: dict) -> dict:
                 scan["custom_patterns"] = valid_patterns
             else:
                 del scan["custom_patterns"]
+
+    ignore = policy.get("ignore")
+    if ignore is not None:
+        if not isinstance(ignore, list):
+            print('Warning: "ignore" must be an array — ignoring.', file=sys.stderr)
+            del policy["ignore"]
+        else:
+            valid_rules: list[dict] = []
+            for entry in ignore:
+                if not isinstance(entry, dict):
+                    print('Warning: skipping malformed ignore entry — must be an object with paths.', file=sys.stderr)
+                    continue
+                paths = entry.get("paths")
+                if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
+                    print('Warning: skipping ignore entry — "paths" must be a non-empty array of strings.', file=sys.stderr)
+                    continue
+                if "rules" in entry and (not isinstance(entry["rules"], list) or not all(isinstance(r, str) for r in entry["rules"])):
+                    print('Warning: skipping ignore entry — "rules" must be an array of strings.', file=sys.stderr)
+                    continue
+                if "reason" in entry and not isinstance(entry["reason"], str):
+                    print('Warning: ignore entry "reason" must be a string — dropping reason.', file=sys.stderr)
+                    del entry["reason"]
+                valid_rules.append(entry)
+            if valid_rules:
+                policy["ignore"] = valid_rules
+            else:
+                del policy["ignore"]
 
     audit = policy.get("audit")
     if isinstance(audit, dict):

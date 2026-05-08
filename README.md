@@ -1,12 +1,11 @@
 # Rafter CLI
 
-[![npm version](https://img.shields.io/npm/v/@rafter-security/cli)](https://www.npmjs.com/package/@rafter-security/cli) [![PyPI version](https://img.shields.io/pypi/v/rafter-cli)](https://pypi.org/project/rafter-cli/) [![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/@rafter-security/cli)](https://www.npmjs.com/package/@rafter-security/cli) [![PyPI version](https://img.shields.io/pypi/v/rafter-cli)](https://pypi.org/project/rafter-cli/) [![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/Raftersecurity/rafter-cli) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 <p>
   <a href="#supported-platforms"><img alt="Claude Code supported" src="https://img.shields.io/badge/Claude%20Code-supported-d97757?style=flat&labelColor=141413&logo=claude&logoColor=faf9f5"></a>
   <a href="#supported-platforms"><img alt="Codex supported" src="https://img.shields.io/badge/Codex-supported-f5f5f5?style=flat&labelColor=000000&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0iTGF5ZXJfMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB2ZXJzaW9uPSIxLjEiIHZpZXdCb3g9IjAgMCAxNTguNzEyOCAxNTcuMjk2Ij4KICA8IS0tIEdlbmVyYXRvcjogQWRvYmUgSWxsdXN0cmF0b3IgMjkuMi4xLCBTVkcgRXhwb3J0IFBsdWctSW4gLiBTVkcgVmVyc2lvbjogMi4xLjAgQnVpbGQgMTE2KSAgLS0%2BCiAgPHBhdGggZmlsbD0iI0ZGRkZGRiIgZD0iTTYwLjg3MzQsNTcuMjU1NnYtMTQuOTQzMmMwLTEuMjU4Ni40NzIyLTIuMjAyOSwxLjU3MjgtMi44MzE0bDMwLjA0NDMtMTcuMzAyM2M0LjA4OTktMi4zNTkzLDguOTY2Mi0zLjQ1OTksMTMuOTk4OC0zLjQ1OTksMTguODc1OSwwLDMwLjgzMDcsMTQuNjI4OSwzMC44MzA3LDMwLjIwMDYsMCwxLjEwMDcsMCwyLjM1OTMtLjE1OCwzLjYxNzhsLTMxLjE0NDYtMTguMjQ2N2MtMS44ODcyLTEuMTAwNi0zLjc3NTQtMS4xMDA2LTUuNjYyOSwwbC0zOS40ODEyLDIyLjk2NTFaTTEzMS4wMjc2LDExNS40NTYxdi0zNS43MDc0YzAtMi4yMDI4LS45NDQ2LTMuNzc1Ni0yLjgzMTgtNC44NzYzbC0zOS40ODEtMjIuOTY1MSwxMi44OTgyLTcuMzkzNGMxLjEwMDctLjYyODUsMi4wNDUzLS42Mjg1LDMuMTQ1OCwwbDMwLjA0NDEsMTcuMzAyNGM4LjY1MjMsNS4wMzQxLDE0LjQ3MDgsMTUuNzI5NiwxNC40NzA4LDI2LjExMDcsMCwxMS45NTM5LTcuMDc2OSwyMi45NjUtMTguMjQ2MSwyNy41Mjd2LjAwMjFaTTUxLjU5Myw4My45OTY0bC0xMi44OTgyLTcuNTQ5N2MtMS4xMDA3LS42Mjg1LTEuNTcyOC0xLjU3MjgtMS41NzI4LTIuODMxNHYtMzQuNjA0OGMwLTE2LjgzMDMsMTIuODk4Mi0yOS41NzIyLDMwLjM1ODUtMjkuNTcyMiw2LjYwNywwLDEyLjc0MDMsMi4yMDI5LDE3LjkzMjQsNi4xMzQ5bC0zMC45ODcsMTcuOTMyNGMtMS44ODcxLDEuMTAwNy0yLjgzMTQsMi42NzM1LTIuODMxNCw0Ljg3NjR2NDUuNjE1OWwtLjAwMTQtLjAwMTVaTTc5LjM1NjIsMTAwLjA0MDNsLTE4LjQ4MjktMTAuMzgxMXYtMjIuMDIwOWwxOC40ODI5LTEwLjM4MTEsMTguNDgxMiwxMC4zODExdjIyLjAyMDlsLTE4LjQ4MTIsMTAuMzgxMVpNOTEuMjMxOSwxNDcuODU5MWMtNi42MDcsMC0xMi43NDAzLTIuMjAzMS0xNy45MzI0LTYuMTM0NGwzMC45ODY2LTE3LjkzMzNjMS44ODcyLTEuMTAwNSwyLjgzMTgtMi42NzI4LDIuODMxOC00Ljg3NTl2LTQ1LjYxNmwxMy4wNTY0LDcuNTQ5OGMxLjEwMDUuNjI4NSwxLjU3MjMsMS41NzI4LDEuNTcyMywyLjgzMTR2MzQuNjA1MWMwLDE2LjgyOTctMTMuMDU2NCwyOS41NzIzLTMwLjUxNDcsMjkuNTcyM3YuMDAxWk01My45NTIyLDExMi43ODIybC0zMC4wNDQzLTE3LjMwMjRjLTguNjUyLTUuMDM0My0xNC40NzEtMTUuNzI5Ni0xNC40NzEtMjYuMTEwNywwLTEyLjExMTksNy4yMzU2LTIyLjk2NTIsMTguNDAzLTI3LjUyNzJ2MzUuODYzNGMwLDIuMjAyOC45NDQzLDMuNzc1NiwyLjgzMTQsNC44NzYzbDM5LjMyNDgsMjIuODA2OC0xMi44OTgyLDcuMzkzOGMtMS4xMDA3LjYyODctMi4wNDUuNjI4Ny0zLjE0NTYsMFpNNTIuMjIyOSwxMzguNTc5MWMtMTcuNzc0NSwwLTMwLjgzMDYtMTMuMzcxMy0zMC44MzA2LTI5Ljg4NzEsMC0xLjI1ODUuMTU3OC0yLjUxNjkuMzE0My0zLjc3NTRsMzAuOTg3LDE3LjkzMjNjMS44ODcxLDEuMTAwNSwzLjc3NTcsMS4xMDA1LDUuNjYyOCwwbDM5LjQ4MTEtMjIuODA3djE0Ljk0MzVjMCwxLjI1ODUtLjQ3MjEsMi4yMDIxLTEuNTcyOCwyLjgzMDhsLTMwLjA0NDMsMTcuMzAyNWMtNC4wODk4LDIuMzU5LTguOTY2MiwzLjQ2MDUtMTMuOTk4OSwzLjQ2MDVoLjAwMTRaTTkxLjIzMTksMTU3LjI5NmMxOS4wMzI3LDAsMzQuOTE4OC0xMy41MjcyLDM4LjUzODMtMzEuNDU5NCwxNy42MTY0LTQuNTYyLDI4Ljk0MjUtMjEuMDc3OSwyOC45NDI1LTM3LjkwOCwwLTExLjAxMTItNC43MTktMjEuNzA2Ni0xMy4yMTMzLTI5LjQxNDMuNzg2Ny0zLjMwMzUsMS4yNTk1LTYuNjA3LDEuMjU5NS05LjkwOSwwLTIyLjQ5MjktMTguMjQ3MS0zOS4zMjQ3LTM5LjMyNTEtMzkuMzI0Ny00LjI0NjEsMC04LjMzNjMuNjI4NS0xMi40MjYyLDIuMDQ1LTcuMDc5Mi02LjkyMTMtMTYuODMxOC0xMS4zMjU0LTI3LjUyNzEtMTEuMzI1NC0xOS4wMzMxLDAtMzQuOTE5MSwxMy41MjY4LTM4LjUzODQsMzEuNDU5MUMxMS4zMjU1LDM2LjAyMTIsMCw1Mi41MzczLDAsNjkuMzY3NWMwLDExLjAxMTIsNC43MTg0LDIxLjcwNjUsMTMuMjEyNSwyOS40MTQyLS43ODY1LDMuMzAzNS0xLjI1ODYsNi42MDY3LTEuMjU4Niw5LjkwOTIsMCwyMi40OTIzLDE4LjI0NjYsMzkuMzI0MSwzOS4zMjQ4LDM5LjMyNDEsNC4yNDYyLDAsOC4zMzYyLS42Mjc3LDEyLjQyNi0yLjA0NDEsNy4wNzc2LDYuOTIxLDE2LjgzMDIsMTEuMzI1MSwyNy41MjcxLDExLjMyNTFaIi8%2BCjwvc3ZnPg%3D%3D"></a>
   <a href="#supported-platforms"><img alt="Gemini CLI supported" src="https://img.shields.io/badge/Gemini%20CLI-supported-4285f4?style=flat&labelColor=202124&logo=googlegemini&logoColor=8e75b2"></a>
-  <a href="#supported-platforms"><img alt="OpenCode supported" src="https://img.shields.io/badge/OpenCode-supported-cfcecd?style=flat&labelColor=565656&logo=data%3Aimage%2Fpng%3Bbase64%2CiVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAABzUlEQVR4AeycQQrCQBAEF1%2Bg6J%2F0o5LPCXmCnnNx0E2nNqGEPciw024VffV0PZ%2FfHo7BqflBCSgAxd%2BaAhQAE4DjbYACYAJwvA1QAEwAjrcBCgAIDBRpA2AZClAATACOtwEKgAnA8TZAATABOD7egNc8tz2ftJ%2B4gPQD9r5fAbDBDQXALx00XgGwGAUoACYAx9sABcAE4HgboACYABxvAxSwJHC7XFryLNP4bzYg7KBar4CKUHiugDDgar0CKkLhuQLCgKv1CqgIhecKCAOu1iugIhSeKyAMuFqvgIpQeK6AMOBq%2FXAC7o9H6z5fdlRAtp4PJ2BrAHSeAmADClAATACOtwEKgAnA8TZAATABON4GKAAmAMev2AD4JTuNVwAsTgEKgAnA8TZAATABON4GKAAmAMfbAAXABOB4G9ApoPe6AnoJdt5XQCfA3uvDCXhOU0ueXmBr3x9OwNoPHH2fAmBDClAATACOtwEKgAnA8TZAAX8QONAVGwDLVIACYAJwfLwByf%2F%2B2WJ32k9cQPoBe9%2BvANigAhQAE4DjbYACYAJw%2FA8NgH%2FpQeMVAItVgAJgAnC8DVAATACOtwEKgAnA8TZAATABON4GFALS4w8AAAD%2F%2Fx7wkLQAAAAGSURBVAMAKj5LkLSa6SQAAAAASUVORK5CYII%3D"></a>
   <a href="#supported-platforms"><img alt="OpenClaw supported" src="https://img.shields.io/badge/OpenClaw-supported-e8662a?style=flat&labelColor=1a1a1a"></a>
   <a href="#supported-platforms"><img alt="Cursor supported" src="https://img.shields.io/badge/Cursor-supported-d4d4d4?style=flat&labelColor=1c1c1c&logo=cursor&logoColor=white"></a>
   <a href="#supported-platforms"><img alt="Windsurf supported" src="https://img.shields.io/badge/Windsurf-supported-00c4b4?style=flat&labelColor=0a0a0a"></a>
@@ -41,7 +40,7 @@ See what Rafter does before reading another word.
 # Drop a .env file with credentials in a test repo
 echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' > .env
 
-rafter scan local .
+rafter secrets .
 # → CRITICAL  .env:1  aws-access-key-id  AKIA***AMPLE
 # → exit 1
 ```
@@ -194,13 +193,13 @@ Use `rafter agent list/enable/disable` for granular per-component control after 
 Fast, reliable, and deterministic for a given CLI version. 21+ built-in patterns covering AWS, GitHub, Google, Slack, Stripe, Twilio, database connection strings, JWTs, private keys, npm/PyPI tokens, and generic API keys. Same inputs produce the same findings — no flaky CI, no phantom alerts.
 
 ```sh
-rafter agent scan .              # scan directory
-rafter agent scan ./config.js    # scan specific file
-rafter agent scan --staged       # scan git staged files only
-rafter agent scan --diff HEAD~1  # scan files changed since a git ref
-rafter agent scan --history      # scan full git history (requires gitleaks engine)
-rafter agent scan --json         # structured output
-rafter agent scan --quiet        # silent unless secrets found (CI-friendly)
+rafter secrets .              # scan directory
+rafter secrets ./config.js    # scan specific file
+rafter secrets --staged       # scan git staged files only
+rafter secrets --diff HEAD~1  # scan files changed since a git ref
+rafter secrets --history      # scan full git history (requires gitleaks engine)
+rafter secrets --json         # structured output
+rafter secrets --quiet        # silent unless secrets found (CI-friendly)
 ```
 
 Exit code 1 if secrets found, 0 if clean.
@@ -243,7 +242,7 @@ Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-c
 
 ```yaml
 repos:
-  - repo: https://github.com/raftersecurity/rafter-cli
+  - repo: https://github.com/Raftersecurity/rafter-cli
     rev: v0.7.1
     hooks:
       - id: rafter-scan-node
@@ -318,7 +317,7 @@ rafter agent audit --since 2026-02-01        # filter by date
 rafter agent audit --verify                  # verify hash chain (exit 1 if tampered)
 ```
 
-Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`, `scan_executed`, `config_changed`.
+Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`. `scan_executed` and `config_changed` are reserved for future use (defined in the type union but not yet emitted).
 
 Point the log at a repo-local path by setting `agent.audit.logPath` in `.rafter.yml` (e.g. `.rafter/audit.jsonl`) so every contributor can verify their own chain independently. Retention pruning rewrites the log atomically and re-seals the chain, preserving a sidecar manifest (`audit.jsonl.retention.log`) that records the hashes of pruned entries — verify still passes after legitimate cleanup, and fails on forgery.
 
@@ -397,7 +396,7 @@ rafter ci init --with-remote            # include remote security audit job
 Use as a reusable action in any GitHub Actions workflow:
 
 ```yaml
-- uses: raftersecurity/rafter-cli@v1
+- uses: Raftersecurity/rafter-cli@v1
   with:
     scan-path: '.'       # default
     args: '--quiet'      # default; override for verbose output
@@ -411,7 +410,7 @@ Inputs:
 | Input | Default | Description |
 |-------|---------|-------------|
 | `scan-path` | `.` | Path to scan |
-| `args` | `--quiet` | Additional args to `rafter scan local` |
+| `args` | `--quiet` | Additional args to `rafter secrets` |
 | `version` | `latest` | CLI version to install |
 | `install-method` | `npm` | `npm` or `pip` |
 | `format` | `json` | Output format: `json` or `text` |
@@ -430,7 +429,7 @@ Add to `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
-  - repo: https://github.com/raftersecurity/rafter-cli
+  - repo: https://github.com/Raftersecurity/rafter-cli
     rev: v0.7.1
     hooks:
       - id: rafter-scan-node      # auto-installs via npm
@@ -501,7 +500,7 @@ Install, remove, or audit them at any time with `rafter skill list/install/unins
 
 Exit codes are part of Rafter's output contract — CI pipelines and orchestrators can rely on these semantics across versions.
 
-### Local Secret Scan (`rafter scan local` / `rafter agent scan`)
+### Local Secret Scan (`rafter secrets`)
 
 | Code | Meaning | Action |
 |------|---------|--------|
@@ -548,21 +547,22 @@ Python package is in `python/` — see [`python/README.md`](python/README.md) fo
 - **Node.js CLI**: See [`node/README.md`](node/README.md) for complete command reference
 - **Python CLI**: See [`python/README.md`](python/README.md)
 - **CLI Spec**: See [`shared-docs/CLI_SPEC.md`](shared-docs/CLI_SPEC.md) for flags and output formats
+- **Adding a new agent platform**: See [`docs/adding-a-platform.md`](docs/adding-a-platform.md) for the contract any new platform integration must follow (Node + Python parity, recipe, verify check, probe).
 
 ## Badges
 
 Show that your project is protected by Rafter. Add one of these badges to your README:
 
-[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter) [![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/raftercli/rafter)
+[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/Raftersecurity/rafter-cli) [![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/Raftersecurity/rafter-cli)
 
 **Markdown (copy-paste):**
 
 ```markdown
-[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/raftercli/rafter)
+[![Scanned by Rafter](https://img.shields.io/badge/scanned_by-Rafter-2ea44f)](https://github.com/Raftersecurity/rafter-cli)
 ```
 
 ```markdown
-[![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/raftercli/rafter)
+[![Rafter policy: enforced](https://img.shields.io/badge/rafter_policy-enforced-2ea44f)](https://github.com/Raftersecurity/rafter-cli)
 ```
 
 More badge variants (HTML, reStructuredText) available in [`badges/`](badges/).

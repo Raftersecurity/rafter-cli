@@ -20,6 +20,15 @@ export interface PolicyDocEntry {
   };
 }
 
+export interface PolicyIgnoreRule {
+  /** Glob patterns matching files where findings should be suppressed. Required. */
+  paths: string[];
+  /** Pattern names to suppress (case-insensitive). Omitted = suppress all rules. */
+  rules?: string[];
+  /** Human-readable rationale, surfaced in the JSON `_suppressed` output. */
+  reason?: string;
+}
+
 export interface PolicyFile {
   version?: string;
   riskLevel?: string;
@@ -32,6 +41,7 @@ export interface PolicyFile {
     excludePaths?: string[];
     customPatterns?: PolicyCustomPattern[];
   };
+  ignore?: PolicyIgnoreRule[];
   audit?: {
     retentionDays?: number;
     logLevel?: string;
@@ -118,6 +128,32 @@ function mapPolicy(raw: Record<string, any>): PolicyFile {
     }
   }
 
+  if (Array.isArray(raw.ignore)) {
+    const rules: PolicyIgnoreRule[] = [];
+    for (const entry of raw.ignore) {
+      if (!entry || typeof entry !== "object") {
+        console.error(`Warning: skipping malformed ignore entry — must be an object with paths.`);
+        continue;
+      }
+      const paths = entry.paths;
+      if (!Array.isArray(paths) || paths.length === 0) {
+        console.error(`Warning: skipping ignore entry — "paths" must be a non-empty array of strings.`);
+        continue;
+      }
+      const rule: PolicyIgnoreRule = { paths: paths.map((p: any) => String(p)) };
+      if (Array.isArray(entry.rules)) {
+        rule.rules = entry.rules.map((r: any) => String(r));
+      }
+      if (typeof entry.reason === "string" && entry.reason) {
+        rule.reason = entry.reason;
+      }
+      rules.push(rule);
+    }
+    if (rules.length > 0) {
+      policy.ignore = rules;
+    }
+  }
+
   if (raw.audit && typeof raw.audit === "object") {
     policy.audit = {};
     if (raw.audit.retention_days != null) {
@@ -192,7 +228,7 @@ function deriveDocId(source: string, kind: "path" | "url"): string {
   return crypto.createHash("sha256").update(source).digest("hex").slice(0, 8);
 }
 
-const VALID_TOP_LEVEL_KEYS = new Set(["version", "risk_level", "command_policy", "scan", "audit", "docs"]);
+const VALID_TOP_LEVEL_KEYS = new Set(["version", "risk_level", "command_policy", "scan", "ignore", "audit", "docs"]);
 const VALID_RISK_LEVELS = new Set(["minimal", "moderate", "aggressive"]);
 const VALID_COMMAND_MODES = new Set(["allow-all", "approve-dangerous", "deny-list"]);
 const VALID_LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
@@ -270,6 +306,39 @@ function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFil
         } else {
           delete policy.scan.customPatterns;
         }
+      }
+    }
+  }
+
+  if (policy.ignore !== undefined) {
+    if (!Array.isArray(policy.ignore)) {
+      console.error(`Warning: "ignore" must be an array — ignoring.`);
+      delete policy.ignore;
+    } else {
+      const valid: PolicyIgnoreRule[] = [];
+      for (const entry of policy.ignore) {
+        if (!entry || typeof entry !== "object") {
+          console.error(`Warning: skipping malformed ignore entry — must be an object with paths.`);
+          continue;
+        }
+        if (!Array.isArray(entry.paths) || entry.paths.length === 0 || !entry.paths.every((p) => typeof p === "string" && p)) {
+          console.error(`Warning: skipping ignore entry — "paths" must be a non-empty array of strings.`);
+          continue;
+        }
+        if (entry.rules !== undefined && (!Array.isArray(entry.rules) || !entry.rules.every((r) => typeof r === "string"))) {
+          console.error(`Warning: skipping ignore entry — "rules" must be an array of strings.`);
+          continue;
+        }
+        if (entry.reason !== undefined && typeof entry.reason !== "string") {
+          console.error(`Warning: ignore entry "reason" must be a string — dropping reason.`);
+          delete entry.reason;
+        }
+        valid.push(entry);
+      }
+      if (valid.length > 0) {
+        policy.ignore = valid;
+      } else {
+        delete policy.ignore;
       }
     }
   }

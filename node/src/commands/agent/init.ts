@@ -12,6 +12,7 @@ import { createRequire } from "module";
 import { createInterface } from "readline";
 import { fmt } from "../../utils/formatter.js";
 import { injectInstructionFile } from "./instruction-block.js";
+import yaml from "js-yaml";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,7 +52,7 @@ function installGlobalInstructions(
     claudeCode?: boolean;
     codex?: boolean;
     gemini?: boolean;
-    cursor?: boolean;
+    windsurf?: boolean;
   },
   root: string,
   scope: "user" | "project",
@@ -67,16 +68,22 @@ function installGlobalInstructions(
     }
   }
 
-  // Codex — ~/.codex/AGENTS.md (user) or <cwd>/AGENTS.md (project)
-  if (platforms.codex) {
+  // AGENTS.md — read natively by Codex AND Windsurf. Codex at user scope keeps
+  // its own copy at ~/.codex/AGENTS.md; everything else (project scope, or any
+  // scope where Windsurf is in play) writes <root>/AGENTS.md once.
+  if (platforms.codex || platforms.windsurf) {
     try {
-      const filePath = scope === "user"
+      const codexUser = scope === "user" && platforms.codex && !platforms.windsurf;
+      const filePath = codexUser
         ? path.join(root, ".codex", "AGENTS.md")
         : path.join(root, "AGENTS.md");
       injectInstructionFile(filePath);
-      console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
+      const readers = [platforms.codex && "Codex", platforms.windsurf && "Windsurf"]
+        .filter(Boolean)
+        .join(" + ");
+      console.log(fmt.success(`Installed Rafter instructions for ${readers} to ${filePath}`));
     } catch (e) {
-      console.log(fmt.warning(`Failed to write Codex instructions: ${e}`));
+      console.log(fmt.warning(`Failed to write AGENTS.md: ${e}`));
     }
   }
 
@@ -93,16 +100,10 @@ function installGlobalInstructions(
     }
   }
 
-  // Cursor — <root>/.cursor/rules/rafter-security.mdc
-  if (platforms.cursor) {
-    try {
-      const filePath = path.join(root, ".cursor", "rules", "rafter-security.mdc");
-      injectInstructionFile(filePath);
-      console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
-    } catch (e) {
-      console.log(fmt.warning(`Failed to write Cursor instructions: ${e}`));
-    }
-  }
+  // Cursor uses per-skill rules at <root>/.cursor/rules/<skill>.mdc and the
+  // rafter sub-agent at <root>/.cursor/agents/rafter.md (installed in the
+  // Cursor branch above). The consolidated rafter-security.mdc was retired
+  // in rf-svn3 in favor of per-skill rules with trigger-first descriptions.
 }
 
 function installClaudeCodeHooks(root: string): void {
@@ -204,9 +205,16 @@ function installCodexHooks(root: string): void {
     (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
   );
 
+  // PreToolUse intercepts the tools Codex documents support for: Bash and
+  // apply_patch (file edits). Per developers.openai.com/codex/hooks PreToolUse
+  // also covers MCP tool calls via patterns like `mcp__<server>__<tool>` —
+  // when an MCP server is wired up, install a separate matcher for it.
+  // (rf-ovql verification 2026-05-03.)
   config.hooks.PreToolUse.push(
-    { matcher: "Bash", hooks: [preHook] },
+    { matcher: "Bash|apply_patch", hooks: [preHook] },
   );
+  // PostToolUse fires for the same tool surface; .* keeps all events in the
+  // audit log without filtering.
   config.hooks.PostToolUse.push(
     { matcher: ".*", hooks: [postHook] },
   );
@@ -215,6 +223,18 @@ function installCodexHooks(root: string): void {
   console.log(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
+/**
+ * Install Cursor hooks at <root>/.cursor/hooks.json.
+ *
+ * Covers the full pre/post-tool lifecycle plus shell-specific gating:
+ *   - preToolUse           — rafter classifies every tool call
+ *   - postToolUse          — rafter post-hook (audit, telemetry)
+ *   - beforeShellExecution — narrower complement; some Cursor versions
+ *                            fire this without firing preToolUse for shell.
+ *
+ * Idempotent — repeated installs do not duplicate rafter entries.
+ * Non-rafter entries (other tools' hooks, unrelated events) are preserved.
+ */
 function installCursorHooks(root: string): void {
   const cursorDir = path.join(root, ".cursor");
 
@@ -235,21 +255,126 @@ function installCursorHooks(root: string): void {
 
   if (!config.version) config.version = 1;
   if (!config.hooks) config.hooks = {};
-  if (!config.hooks.beforeShellExecution) config.hooks.beforeShellExecution = [];
 
-  // Remove existing rafter hooks
-  config.hooks.beforeShellExecution = config.hooks.beforeShellExecution.filter(
-    (entry: any) => !entry.command?.includes("rafter hook pretool")
-  );
+  const events: { event: string; command: string }[] = [
+    { event: "preToolUse", command: "rafter hook pretool --format cursor" },
+    { event: "postToolUse", command: "rafter hook posttool --format cursor" },
+    { event: "beforeShellExecution", command: "rafter hook pretool --format cursor" },
+  ];
 
-  config.hooks.beforeShellExecution.push({
-    command: "rafter hook pretool --format cursor",
-    type: "command",
-    timeout: 5000,
-  });
+  for (const { event, command } of events) {
+    if (!Array.isArray(config.hooks[event])) config.hooks[event] = [];
+    config.hooks[event] = config.hooks[event].filter(
+      (entry: any) => !entry?.command?.includes("rafter hook"),
+    );
+    config.hooks[event].push({ command, type: "command", timeout: 5000 });
+  }
 
   fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
   console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+}
+
+/** Skills shipped as both Cursor rules and (Claude Code / Codex / Gemini) skills. */
+const CURSOR_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
+/**
+ * Install per-skill Cursor rules at <root>/.cursor/rules/<skill>.mdc.
+ *
+ * One file per shipped skill. Each rule's frontmatter description is reused
+ * verbatim from the skill's SKILL.md frontmatter (trigger-first phrasing per
+ * rf-4ei / rf-8po) so Cursor surfaces it on the same triggers as Claude Code.
+ *
+ * Replaces the legacy consolidated `.cursor/rules/rafter-security.mdc` — that
+ * single file is no longer written by the Cursor install path.
+ */
+function installCursorRules(root: string): void {
+  const rulesDir = path.join(root, ".cursor", "rules");
+  fs.mkdirSync(rulesDir, { recursive: true });
+
+  // Resolve resources/cursor-rules relative to this module.
+  // After build: dist/commands/agent/init.js -> ../../../resources/cursor-rules
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "cursor-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "cursor-rules"),
+  ];
+  const sourceDir = candidates.find((p) => fs.existsSync(p));
+  if (!sourceDir) {
+    console.log(fmt.warning(`Cursor rule templates not found in resources/cursor-rules`));
+    return;
+  }
+
+  for (const name of CURSOR_RULE_SKILLS) {
+    const src = path.join(sourceDir, `${name}.mdc`);
+    const dest = path.join(rulesDir, `${name}.mdc`);
+    if (!fs.existsSync(src)) {
+      console.log(fmt.warning(`Cursor rule template missing: ${src}`));
+      continue;
+    }
+    fs.copyFileSync(src, dest);
+    console.log(fmt.success(`Installed Cursor rule to ${dest}`));
+  }
+
+  // Remove the legacy consolidated rule if present, so reinstall on top of
+  // an old layout migrates cleanly.
+  const legacy = path.join(rulesDir, "rafter-security.mdc");
+  if (fs.existsSync(legacy)) {
+    try {
+      fs.unlinkSync(legacy);
+      console.log(fmt.info(`Removed legacy ${legacy} (superseded by per-skill rules)`));
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+/**
+ * Install Cursor sub-agent at <root>/.cursor/agents/rafter.md.
+ *
+ * Reuses the Claude-Code sub-agent body (rf-q7j) with one shape difference:
+ * Cursor's frontmatter has no `tools:` field — tools inherit from the parent
+ * agent. The hard rules in the body (no code modification, no commits) still
+ * apply, since Cursor relies on prompt-level constraints rather than
+ * structural restriction.
+ */
+function installCursorSubAgents(root: string): void {
+  const agentsDir = path.join(root, ".cursor", "agents");
+  fs.mkdirSync(agentsDir, { recursive: true });
+
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "agents", "rafter.md"),
+    path.resolve(__dirname, "..", "..", "resources", "agents", "rafter.md"),
+  ];
+  const src = candidates.find((p) => fs.existsSync(p));
+  if (!src) {
+    console.log(fmt.warning(`Rafter sub-agent template not found in resources/agents`));
+    return;
+  }
+
+  const raw = fs.readFileSync(src, "utf-8");
+  const cursored = stripToolsFromFrontmatter(raw);
+
+  const dest = path.join(agentsDir, "rafter.md");
+  fs.writeFileSync(dest, cursored, "utf-8");
+  console.log(fmt.success(`Installed Cursor sub-agent to ${dest}`));
+}
+
+/** Strip the Claude-Code `tools:` line from sub-agent frontmatter — Cursor doesn't have it. */
+function stripToolsFromFrontmatter(content: string): string {
+  if (!content.startsWith("---\n")) return content;
+  const fmEnd = content.indexOf("\n---", 4);
+  if (fmEnd === -1) return content;
+  const frontmatter = content.slice(4, fmEnd);
+  const body = content.slice(fmEnd);
+  const cleaned = frontmatter
+    .split("\n")
+    .filter((line) => !/^tools:\s/.test(line))
+    .join("\n");
+  return `---\n${cleaned}${body}`;
 }
 
 function installGeminiHooks(root: string): void {
@@ -282,8 +407,12 @@ function installGeminiHooks(root: string): void {
     (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.includes("rafter hook posttool"))
   );
 
+  // Gemini matchers are regexes against built-in tool names per
+  // geminicli.com/docs/hooks/reference. Match the mutating tools by name
+  // explicitly: run_shell_command, write_file, replace, edit. (rf-044o
+  // verification 2026-05-03 — schema confirmed against current Gemini docs.)
   settings.hooks.BeforeTool.push({
-    matcher: "shell|write_file",
+    matcher: "run_shell_command|write_file|replace|edit",
     hooks: [{ type: "command", command: "rafter hook pretool --format gemini", timeout: 5000 }],
   });
   settings.hooks.AfterTool.push({
@@ -295,93 +424,52 @@ function installGeminiHooks(root: string): void {
   console.log(fmt.success(`Installed hooks to ${settingsPath}`));
 }
 
-function installWindsurfHooks(root: string): void {
-  const windsurfDir = path.join(root, ".windsurf");
+/** Skills shipped as Windsurf per-workspace rules at .windsurf/rules/<skill>.md (rf-0vr3). */
+const WINDSURF_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
 
-  if (!fs.existsSync(windsurfDir)) {
-    fs.mkdirSync(windsurfDir, { recursive: true });
+/**
+ * Install per-skill Windsurf rules at <root>/.windsurf/rules/<skill>.md.
+ *
+ * Windsurf reads workspace rules from .windsurf/rules/*.md (12KB cap per file
+ * per docs). Each file uses Windsurf YAML frontmatter (`trigger: model_decision`
+ * + `description:`) so the agent fetches the rule when its description matches
+ * the task. Body content mirrors the Cursor pointer-rule pattern.
+ *
+ * Replaces the prior `~/.windsurf/hooks.json` install, which was a silent
+ * no-op — Windsurf has no documented hook surface as of v1.x (research bead
+ * rf-s1n3, gap reports rf-p1ri / rf-vayl).
+ */
+function installWindsurfRules(root: string): void {
+  const rulesDir = path.join(root, ".windsurf", "rules");
+  fs.mkdirSync(rulesDir, { recursive: true });
+
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "windsurf-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "windsurf-rules"),
+  ];
+  const sourceDir = candidates.find((p) => fs.existsSync(p));
+  if (!sourceDir) {
+    console.log(fmt.warning(`Windsurf rule templates not found in resources/windsurf-rules`));
+    return;
   }
 
-  const hooksPath = path.join(windsurfDir, "hooks.json");
-
-  let config: Record<string, any> = {};
-  if (fs.existsSync(hooksPath)) {
-    try {
-      config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
-    } catch {
-      console.log(fmt.warning("Existing Windsurf hooks.json was unreadable, creating new one"));
+  for (const name of WINDSURF_RULE_SKILLS) {
+    const src = path.join(sourceDir, `${name}.md`);
+    const dest = path.join(rulesDir, `${name}.md`);
+    if (!fs.existsSync(src)) {
+      console.log(fmt.warning(`Windsurf rule template missing: ${src}`));
+      continue;
     }
+    fs.copyFileSync(src, dest);
+    console.log(fmt.success(`Installed Windsurf rule to ${dest}`));
   }
-
-  if (!config.hooks) config.hooks = {};
-  if (!config.hooks.pre_run_command) config.hooks.pre_run_command = [];
-  if (!config.hooks.pre_write_code) config.hooks.pre_write_code = [];
-
-  // Remove existing rafter hooks
-  config.hooks.pre_run_command = config.hooks.pre_run_command.filter(
-    (entry: any) => !entry.command?.includes("rafter hook pretool")
-  );
-  config.hooks.pre_write_code = config.hooks.pre_write_code.filter(
-    (entry: any) => !entry.command?.includes("rafter hook pretool")
-  );
-
-  config.hooks.pre_run_command.push({
-    command: "rafter hook pretool --format windsurf",
-    show_output: true,
-  });
-  config.hooks.pre_write_code.push({
-    command: "rafter hook pretool --format windsurf",
-    show_output: true,
-  });
-
-  fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
-function installContinueDevHooks(root: string): void {
-  const continueDir = path.join(root, ".continue");
-
-  if (!fs.existsSync(continueDir)) {
-    fs.mkdirSync(continueDir, { recursive: true });
-  }
-
-  const settingsPath = path.join(continueDir, "settings.json");
-
-  let settings: Record<string, any> = {};
-  if (fs.existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-    } catch {
-      console.log(fmt.warning("Existing Continue.dev settings.json was unreadable, creating new one"));
-    }
-  }
-
-  if (!settings.hooks) settings.hooks = {};
-  if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
-  if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
-
-  // Continue.dev uses the same protocol as Claude Code
-  const preHook = { type: "command", command: "rafter hook pretool" };
-  const postHook = { type: "command", command: "rafter hook posttool" };
-
-  settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
-    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
-  );
-  settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
-    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
-  );
-
-  settings.hooks.PreToolUse.push(
-    { matcher: "Bash", hooks: [preHook] },
-    { matcher: "Write|Edit", hooks: [preHook] },
-  );
-  settings.hooks.PostToolUse.push(
-    { matcher: ".*", hooks: [postHook] },
-  );
-
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
-  console.log(fmt.success(`Installed hooks to ${settingsPath}`));
-}
 
 /** MCP server entry for rafter — shared across MCP-native clients */
 const RAFTER_MCP_ENTRY = {
@@ -497,6 +585,50 @@ function installWindsurfMcp(root: string): boolean {
   return true;
 }
 
+/** Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0). */
+const CONTINUE_RULE_SKILLS = [
+  "rafter",
+  "rafter-secure-design",
+  "rafter-code-review",
+  "rafter-skill-review",
+] as const;
+
+/**
+ * Install per-skill Continue.dev rules at <root>/.continue/rules/<skill>.md.
+ *
+ * Continue.dev reads workspace rules from .continue/rules/*.md (per-rule files,
+ * lexicographic load order). Frontmatter: `name`, `description`, `alwaysApply`.
+ * Each rule body mirrors the Cursor / Windsurf pointer-rule pattern.
+ *
+ * Continue.dev has no documented hook surface (the prior hooks install was
+ * pruned in rf-cia phase b). Rules + MCP are the only intercepts.
+ */
+function installContinueDevRules(root: string): void {
+  const rulesDir = path.join(root, ".continue", "rules");
+  fs.mkdirSync(rulesDir, { recursive: true });
+
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "resources", "continue-rules"),
+    path.resolve(__dirname, "..", "..", "resources", "continue-rules"),
+  ];
+  const sourceDir = candidates.find((p) => fs.existsSync(p));
+  if (!sourceDir) {
+    console.log(fmt.warning(`Continue.dev rule templates not found in resources/continue-rules`));
+    return;
+  }
+
+  for (const name of CONTINUE_RULE_SKILLS) {
+    const src = path.join(sourceDir, `${name}.md`);
+    const dest = path.join(rulesDir, `${name}.md`);
+    if (!fs.existsSync(src)) {
+      console.log(fmt.warning(`Continue.dev rule template missing: ${src}`));
+      continue;
+    }
+    fs.copyFileSync(src, dest);
+    console.log(fmt.success(`Installed Continue.dev rule to ${dest}`));
+  }
+}
+
 /**
  * Install MCP server config for Continue.dev (~/.continue/config.json)
  */
@@ -540,55 +672,143 @@ function installContinueDevMcp(root: string): boolean {
 }
 
 /**
- * Install MCP config for Aider (~/.aider.conf.yml)
- * Aider uses YAML config with mcpServers list
+ * Install Rafter context for Aider (rf-du2o).
+ *
+ * Aider has no native MCP support and no plugin/hook surface. Its only
+ * intercept-friendly persistent-context primitive is the `read:` flag in
+ * `.aider.conf.yml`, which injects read-only files into every session.
+ *
+ * Behavior:
+ *   1. Write `<root>/RAFTER.md` with the rafter instruction block.
+ *   2. Update `<root>/.aider.conf.yml` so `read:` includes `RAFTER.md`
+ *      (preserves any pre-existing `read:` entries; preserves other YAML keys).
+ *   3. Strip the legacy `mcp-server-command: rafter mcp serve` line if present
+ *      — it was a silent no-op in earlier rafter versions (Aider has no MCP).
+ *
+ * Returns true on success.
  */
-function installAiderMcp(root: string): boolean {
+function installAiderRead(root: string): boolean {
+  const rafterMdPath = path.join(root, "RAFTER.md");
   const configPath = path.join(root, ".aider.conf.yml");
+  const RAFTER_READ_ENTRY = "RAFTER.md";
 
-  // Aider's YAML config is simple — we append the MCP flag if not present
-  let content = "";
+  // 1. Write RAFTER.md (idempotent — the marker block is replaced in place).
+  injectInstructionFile(rafterMdPath);
+
+  // 2. Update .aider.conf.yml read: list.
+  let raw = "";
   if (fs.existsSync(configPath)) {
-    content = fs.readFileSync(configPath, "utf-8");
+    raw = fs.readFileSync(configPath, "utf-8");
   }
 
-  // Check if rafter MCP is already configured
-  if (content.includes("rafter mcp serve")) {
-    console.log(fmt.success("Rafter MCP already configured in Aider config"));
-    return true;
+  // 2a. Strip the legacy mcp-server-command line(s). Match a contiguous block
+  // that may include the preceding `# Rafter security MCP server` comment.
+  raw = raw.replace(
+    /\n?#\s*Rafter security MCP server\s*\nmcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?/g,
+    "\n",
+  );
+  raw = raw.replace(/^mcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?/gm, "");
+
+  // 2b. Parse remaining YAML, normalize read:.
+  let parsed: Record<string, any> = {};
+  if (raw.trim().length > 0) {
+    try {
+      const loaded = yaml.load(raw);
+      if (loaded && typeof loaded === "object" && !Array.isArray(loaded)) {
+        parsed = loaded as Record<string, any>;
+      }
+    } catch {
+      console.log(fmt.warning(`Existing ${configPath} was not valid YAML — preserving raw content and appending read: entry`));
+      // Append the read: line at the bottom rather than rewriting an
+      // unparseable file. We still need to make sure RAFTER.md ends up in it.
+      if (!new RegExp(`^read:\\s*\\[?[^\\n]*\\b${RAFTER_READ_ENTRY}\\b`, "m").test(raw)) {
+        const sep = raw.length > 0 && !raw.endsWith("\n") ? "\n" : "";
+        raw = `${raw}${sep}read:\n  - ${RAFTER_READ_ENTRY}\n`;
+        fs.writeFileSync(configPath, raw, "utf-8");
+      }
+      console.log(fmt.success(`Installed Rafter read-only context to ${configPath}`));
+      return true;
+    }
   }
 
-  // Append MCP server config
-  const mcpLine = "\n# Rafter security MCP server\nmcp-server-command: rafter mcp serve\n";
-  fs.writeFileSync(configPath, content + mcpLine, "utf-8");
-  console.log(fmt.success(`Installed Rafter MCP server to ${configPath}`));
+  // Normalize `read:` to a string array.
+  let reads: string[] = [];
+  if (Array.isArray(parsed.read)) {
+    reads = parsed.read.map(String);
+  } else if (typeof parsed.read === "string") {
+    reads = [parsed.read];
+  }
+
+  if (!reads.includes(RAFTER_READ_ENTRY)) {
+    reads.push(RAFTER_READ_ENTRY);
+  }
+  parsed.read = reads;
+
+  fs.writeFileSync(configPath, yaml.dump(parsed), "utf-8");
+  console.log(fmt.success(`Installed Rafter read-only context to ${rafterMdPath} + ${configPath}`));
   return true;
 }
 
-function installSkillsTo(skillsDir: string): void {
-  if (!fs.existsSync(skillsDir)) {
-    fs.mkdirSync(skillsDir, { recursive: true });
+// Copies an entire skill source directory (SKILL.md + any subfolders like docs/)
+// into the destination. Without this, `docs/` reference material referenced from
+// SKILL.md would never reach users — only SKILL.md would.
+function installSkillDir(sourceSkillDir: string, destSkillDir: string, label: string): void {
+  const sourceSkillFile = path.join(sourceSkillDir, "SKILL.md");
+  if (!fs.existsSync(sourceSkillFile)) {
+    console.log(fmt.warning(`${label} skill template not found at ${sourceSkillFile}`));
+    return;
   }
+  fs.mkdirSync(destSkillDir, { recursive: true });
+  fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true });
+  console.log(fmt.success(`Installed ${label} skill to ${destSkillDir}`));
+}
+
+function skillResourceDir(name: string): string {
+  return path.join(__dirname, "..", "..", "..", "resources", "skills", name);
+}
+
+function installSkillsTo(skillsDir: string): void {
+  fs.mkdirSync(skillsDir, { recursive: true });
   for (const skill of AGENT_SKILLS) {
-    const destDir = path.join(skillsDir, skill.name);
-    const destPath = path.join(destDir, "SKILL.md");
-    const srcPath = path.join(
-      __dirname, "..", "..", "..", "resources", "skills", skill.name, "SKILL.md",
-    );
-    if (!fs.existsSync(destDir)) {
-      fs.mkdirSync(destDir, { recursive: true });
-    }
-    if (fs.existsSync(srcPath)) {
-      fs.copyFileSync(srcPath, destPath);
-      console.log(fmt.success(`Installed ${skill.description} skill to ${destPath}`));
-    } else {
-      console.log(fmt.warning(`${skill.description} skill template not found at ${srcPath}`));
-    }
+    installSkillDir(skillResourceDir(skill.name), path.join(skillsDir, skill.name), skill.description);
   }
 }
 
 async function installClaudeCodeSkills(root: string): Promise<void> {
   installSkillsTo(path.join(root, ".claude", "skills"));
+}
+
+/**
+ * Sub-agents shipped by `rafter agent init --with-claude-code`.
+ *
+ * These land in <root>/.claude/agents/<name>.md and become first-class
+ * delegation targets (Agent(subagent_type='<name>')) in the calling Claude
+ * Code session — distinct from skills, which only surface in the activation
+ * prompt. Source files live in `resources/agents/<name>.md`.
+ *
+ * Keep this list in sync with the Python installer.
+ */
+const CLAUDE_CODE_SUBAGENTS: { name: string; description: string }[] = [
+  { name: "rafter", description: "Rafter Security" },
+];
+
+function installClaudeCodeSubAgents(root: string): void {
+  const agentsDir = path.join(root, ".claude", "agents");
+  if (!fs.existsSync(agentsDir)) {
+    fs.mkdirSync(agentsDir, { recursive: true });
+  }
+  for (const sub of CLAUDE_CODE_SUBAGENTS) {
+    const destPath = path.join(agentsDir, `${sub.name}.md`);
+    const srcPath = path.join(
+      __dirname, "..", "..", "..", "resources", "agents", `${sub.name}.md`,
+    );
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, destPath);
+      console.log(fmt.success(`Installed ${sub.description} sub-agent to ${destPath}`));
+    } else {
+      console.log(fmt.warning(`${sub.description} sub-agent template not found at ${srcPath}`));
+    }
+  }
 }
 
 function installCodexSkills(root: string): void {
@@ -711,14 +931,25 @@ export function createInitCommand(): Command {
       // Resolve opt-in flags (--all enables all detected, --interactive prompts).
       // In --local scope, --all is restricted to platforms that have a project-local
       // config story (claudeCode, codex, gemini, cursor). The rest require user scope.
+      // OpenClaw returns to --all in rf-zgwj — the integration was rebuilt
+      // to ship a ClawHub-shaped skill at the canonical workspace path
+      // (~/.openclaw/workspace/skills/rafter-security/SKILL.md), so OpenClaw
+      // actually auto-discovers it now. (User-scope only; --local doesn't
+      // apply since the platform is user-config-driven.)
       let wantOpenClaw = opts.withOpenclaw || (opts.all && !opts.local);
       let wantClaudeCode = opts.withClaudeCode || opts.all;
       let wantCodex = opts.withCodex || opts.all;
       let wantGemini = opts.withGemini || opts.all;
       let wantCursor = opts.withCursor || opts.all;
-      let wantWindsurf = opts.withWindsurf || (opts.all && !opts.local);
-      let wantContinue = opts.withContinue || (opts.all && !opts.local);
-      let wantAider = opts.withAider || (opts.all && !opts.local);
+      // Windsurf can install at --local scope (project rules + AGENTS.md)
+      // since rf-0vr3. User scope still also installs the MCP entry.
+      let wantWindsurf = opts.withWindsurf || opts.all;
+      // Continue.dev can install at --local scope (project rules) since rf-acz0.
+      // User scope additionally registers the MCP entry.
+      let wantContinue = opts.withContinue || opts.all;
+      // Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
+      // in cwd) since rf-du2o.
+      let wantAider = opts.withAider || opts.all;
       let wantGitleaks = opts.withGitleaks || (opts.all && !opts.local);
 
       // Interactive mode: prompt for each detected integration
@@ -732,7 +963,7 @@ export function createInitCommand(): Command {
         if (hasGemini && !wantGemini) wantGemini = await askYesNo("Install Gemini CLI MCP + hooks?");
         if (hasCursor && !wantCursor) wantCursor = await askYesNo("Install Cursor MCP + hooks?");
         if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP + hooks?");
-        if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP + hooks?");
+        if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP server?");
         if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
         if (!wantGitleaks) wantGitleaks = await askYesNo("Download Gitleaks binary (enhanced scanning)?");
         console.log();
@@ -887,6 +1118,7 @@ export function createInitCommand(): Command {
       if ((hasClaudeCode || opts.withClaudeCode || (opts.local && wantClaudeCode)) && wantClaudeCode) {
         try {
           await installClaudeCodeSkills(root);
+          installClaudeCodeSubAgents(root);
           installClaudeCodeHooks(root);
           if (scope === "project") {
             const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
@@ -932,65 +1164,87 @@ export function createInitCommand(): Command {
         }
       }
 
-      // Install Cursor MCP + hooks if opted in
+      // Install Cursor MCP + hooks + per-skill rules + sub-agent if opted in
       let cursorOk = false;
       if ((hasCursor || (opts.local && wantCursor)) && wantCursor) {
         try {
           cursorOk = installCursorMcp(root);
           installCursorHooks(root);
+          installCursorRules(root);
+          installCursorSubAgents(root);
           if (cursorOk && scope === "user") manager.set("agent.environments.cursor.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Cursor integration: ${e}`));
         }
       }
 
-      // Install Windsurf MCP + hooks if opted in
+      // Install Windsurf integration if opted in.
+      // - User scope: MCP entry under ~/.codeium/windsurf/ + per-skill rules
+      //   at .windsurf/rules/ (workspace) + AGENTS.md (workspace, written by
+      //   installGlobalInstructions below).
+      // - Project scope (--local): per-skill rules + AGENTS.md only (no
+      //   user-scope MCP entry written from a project init).
+      // The previous ~/.windsurf/hooks.json install was pruned: Windsurf has
+      // no documented hook surface (rf-0vr3).
       let windsurfOk = false;
-      if (hasWindsurf && wantWindsurf) {
+      if (wantWindsurf && (hasWindsurf || opts.local)) {
         try {
-          windsurfOk = installWindsurfMcp(root);
-          installWindsurfHooks(root);
-          if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
+          if (hasWindsurf) {
+            windsurfOk = installWindsurfMcp(root);
+            if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
+          }
+          installWindsurfRules(root);
+          // AGENTS.md is written below in installGlobalInstructions when
+          // platforms.windsurf is true.
+          if (!hasWindsurf) windsurfOk = true; // local-scope success: rules + AGENTS.md
         } catch (e) {
           console.error(fmt.error(`Failed to install Windsurf integration: ${e}`));
         }
-      } else if (opts.local && wantWindsurf) {
-        localUnsupported("Windsurf");
       }
 
-      // Install Continue.dev MCP + hooks if opted in
+      // Install Continue.dev integration if opted in (rf-acz0).
+      // - User scope: per-skill rules (.continue/rules/) + MCP entry under
+      //   ~/.continue/config.json.
+      // - Project scope (--local): rules only.
+      // Continue.dev has no hook surface — the prior hooks install was pruned
+      // in rf-cia phase b.
       let continueOk = false;
-      if (hasContinueDev && wantContinue) {
+      if (wantContinue && (hasContinueDev || opts.local)) {
         try {
-          continueOk = installContinueDevMcp(root);
-          installContinueDevHooks(root);
-          if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
+          if (hasContinueDev) {
+            continueOk = installContinueDevMcp(root);
+            if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
+          }
+          installContinueDevRules(root);
+          if (!hasContinueDev) continueOk = true; // local-scope success: rules only
         } catch (e) {
           console.error(fmt.error(`Failed to install Continue.dev integration: ${e}`));
         }
-      } else if (opts.local && wantContinue) {
-        localUnsupported("Continue.dev");
       }
 
-      // Install Aider MCP if opted in
+      // Install Aider integration if opted in (rf-du2o).
+      // Aider has no MCP and no hook surface — its only intercept is the
+      // `read:` flag in .aider.conf.yml. We write RAFTER.md and ensure
+      // `read:` includes it. The legacy mcp-server-command YAML line (a
+      // silent no-op) is stripped on reinstall.
       let aiderOk = false;
-      if (hasAider && wantAider) {
+      if (wantAider && (hasAider || opts.local)) {
         try {
-          aiderOk = installAiderMcp(root);
-          if (aiderOk) manager.set("agent.environments.aider.enabled", true);
+          aiderOk = installAiderRead(root);
+          if (aiderOk && hasAider) manager.set("agent.environments.aider.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Aider integration: ${e}`));
         }
-      } else if (opts.local && wantAider) {
-        localUnsupported("Aider");
       }
 
-      // Install global instruction files for platforms that support them
+      // Install global instruction files for platforms that support them.
+      // Cursor is intentionally absent — Cursor uses per-skill rules + the
+      // rafter sub-agent installed in the Cursor branch above (rf-svn3).
       installGlobalInstructions({
         claudeCode: claudeCodeOk,
         codex: codexOk,
         gemini: geminiOk,
-        cursor: cursorOk,
+        windsurf: windsurfOk,
       }, root, scope);
 
       console.log();
@@ -1008,7 +1262,7 @@ export function createInitCommand(): Command {
         if (cursorOk) console.log("  - Restart Cursor to load MCP server");
         if (windsurfOk) console.log("  - Restart Windsurf to load MCP server");
         if (continueOk) console.log("  - Restart Continue.dev to load MCP server");
-        if (aiderOk) console.log("  - Restart Aider to load MCP server");
+        if (aiderOk) console.log("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:");
       } else if (scope === "project") {
         console.log("No integrations were installed. In --local mode, pass one or more opt-in flags:");
         console.log("  rafter agent init --local --with-claude-code");

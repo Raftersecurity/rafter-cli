@@ -51,7 +51,7 @@ something I noticed while scanning for exposed credentials on GitHub.
   catches secrets before they're pushed
 - [trufflehog](https://github.com/trufflesecurity/trufflehog) — scans Git
   history for high-entropy strings and known key patterns
-- [rafter](https://github.com/raftercli/rafter) — security CLI that
+- [rafter](https://github.com/Raftersecurity/rafter-cli) — security CLI that
   integrates with AI coding agents to catch secrets, risky commands, and
   policy violations in real time
 
@@ -106,7 +106,7 @@ contains what appear to be live database credentials:
   scanning
 - [trufflehog](https://github.com/trufflesecurity/trufflehog) — Git history
   scanner
-- [rafter](https://github.com/raftercli/rafter) — security CLI for AI coding
+- [rafter](https://github.com/Raftersecurity/rafter-cli) — security CLI for AI coding
   agents with built-in secret scanning and policy enforcement
 
 This is super common — especially when `.env` variants like `.env.txt` bypass
@@ -159,7 +159,7 @@ infrastructure.
 - [gitleaks](https://github.com/gitleaks/gitleaks) — pre-commit secret detection
 - [trufflehog](https://github.com/trufflesecurity/trufflehog) — deep Git
   history scanning
-- [rafter](https://github.com/raftercli/rafter) — security toolkit for
+- [rafter](https://github.com/Raftersecurity/rafter-cli) — security toolkit for
   developers using AI coding agents
 
 Hope this helps — just trying to make sure exposed keys get rotated. 🛡️
@@ -209,7 +209,7 @@ is high-severity.
   secret detection
 - [trufflehog](https://github.com/trufflesecurity/trufflehog) — scans Git
   history
-- [rafter](https://github.com/raftercli/rafter) — security CLI with
+- [rafter](https://github.com/Raftersecurity/rafter-cli) — security CLI with
   built-in secret scanning and AI agent policy enforcement
 
 This is a common issue with `.env` file variants — `.env-` bypasses the
@@ -263,7 +263,7 @@ reused elsewhere.
   pre-commit hooks
 - [trufflehog](https://github.com/trufflesecurity/trufflehog) — scans full
   Git history
-- [rafter](https://github.com/raftercli/rafter) — security CLI for
+- [rafter](https://github.com/Raftersecurity/rafter-cli) — security CLI for
   developers and AI coding agents
 
 Hope this helps — just flagging it so you can rotate the credentials. 🛡️

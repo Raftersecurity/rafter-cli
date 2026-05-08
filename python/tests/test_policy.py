@@ -173,3 +173,48 @@ class TestValidateLogLevel:
             err = capsys.readouterr().err
             assert err == "", f"Unexpected warning for log_level={level}"
             assert result["audit"]["log_level"] == level
+
+
+class TestIgnoreRules:
+    """`.rafter.yml` ignore section parsing + validation."""
+
+    def test_parses_paths_rules_reason(self):
+        raw = {"ignore": [
+            {"paths": ["tests/fixtures/**", "*.example.env"],
+             "rules": ["AWS Access Key", "Generic API Key"],
+             "reason": "test fixtures"},
+            {"paths": ["docs/**"], "reason": "docs examples"},
+        ]}
+        result = _validate_policy(_map_policy(raw), raw)
+        assert len(result["ignore"]) == 2
+        assert result["ignore"][0]["paths"] == ["tests/fixtures/**", "*.example.env"]
+        assert result["ignore"][0]["rules"] == ["AWS Access Key", "Generic API Key"]
+        assert result["ignore"][0]["reason"] == "test fixtures"
+        assert "rules" not in result["ignore"][1]
+
+    def test_skips_entries_without_paths(self, capsys):
+        raw = {"ignore": [
+            {"rules": ["AWS Access Key"]},
+            {"paths": ["valid/**"], "reason": "kept"},
+        ]}
+        # _map_policy already drops the malformed entry; validate sees only the valid one.
+        # We exercise validate directly with an unfiltered policy to assert the warning path.
+        result = _validate_policy(
+            {"ignore": [{"rules": ["AWS Access Key"]}, {"paths": ["valid/**"], "reason": "kept"}]},
+            raw,
+        )
+        err = capsys.readouterr().err
+        assert "paths" in err
+        assert len(result["ignore"]) == 1
+        assert result["ignore"][0]["paths"] == ["valid/**"]
+
+    def test_empty_ignore_array_dropped(self):
+        raw = {"ignore": []}
+        result = _validate_policy(_map_policy(raw), raw)
+        assert "ignore" not in result
+
+    def test_non_array_ignore_warned_and_dropped(self, capsys):
+        result = _validate_policy({"ignore": "not-a-list"}, {"ignore": "not-a-list"})
+        err = capsys.readouterr().err
+        assert "ignore" in err
+        assert "ignore" not in result
