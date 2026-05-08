@@ -132,36 +132,55 @@ class BetterleaksScanner:
 
         with tempfile.TemporaryDirectory(prefix="betterleaks-") as tmp_dir:
             report_path = os.path.join(tmp_dir, "report.json")
+            # betterleaks uses subcommands: `dir <path>` for filesystem,
+            # `git <path>` for git history; report destination is --report-path.
+            # `--` ensures a target path beginning with `-` isn't parsed as a flag.
+            subcommand = "git" if use_git else "dir"
+            cmd = [self._path, subcommand, "-f", "json", "--report-path", report_path, "--", target]
             try:
-                # betterleaks uses subcommands: `dir <path>` for filesystem,
-                # `git <path>` for git history; report destination is --report-path.
-                # `--` ensures a target path beginning with `-` isn't parsed as a flag.
-                subcommand = "git" if use_git else "dir"
-                cmd = [self._path, subcommand, "-f", "json", "--report-path", report_path, "--", target]
-                subprocess.run(
-                    cmd,
-                    capture_output=True, timeout=60,
+                result = subprocess.run(cmd, capture_output=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                print(f"[rafter] Warning: Betterleaks scan of {target} timed out", file=sys.stderr)
+                return []
+            except (OSError, FileNotFoundError) as exc:
+                raise RuntimeError(f"Betterleaks invocation failed: {exc}") from exc
+
+            # Exit-code semantics (mirror Node):
+            #   0          = clean (no findings)
+            #   1          = findings reported (the `--exit-code` default)
+            #   anything else = scanner / runtime error — surface, don't pretend "clean"
+            if result.returncode not in (0, 1):
+                stderr_tail = (result.stderr or b"").decode("utf-8", "replace").strip()[-500:]
+                raise RuntimeError(
+                    f"Betterleaks scan failed (exit {result.returncode}): {stderr_tail or '(no stderr)'}"
                 )
-                if not os.path.exists(report_path):
-                    return []
+
+            if not os.path.exists(report_path):
+                # Exit 0 with no report = no findings; exit 1 with no report = unexpected.
+                if result.returncode == 1:
+                    stderr_tail = (result.stderr or b"").decode("utf-8", "replace").strip()[-500:]
+                    raise RuntimeError(
+                        f"Betterleaks reported findings (exit 1) but emitted no report: {stderr_tail or '(no stderr)'}"
+                    )
+                return []
+
+            try:
                 with open(report_path) as f:
                     content = f.read().strip()
                 if not content:
                     return []
                 parsed = json.loads(content)
-                if not isinstance(parsed, list):
-                    print(
-                        "[rafter] Warning: Betterleaks output is not an array — possible version mismatch",
-                        file=sys.stderr,
-                    )
-                    return []
-                return parsed
-            except subprocess.TimeoutExpired:
-                print(f"[rafter] Warning: Betterleaks scan of {target} timed out", file=sys.stderr)
-                return []
             except json.JSONDecodeError as exc:
                 print(f"[rafter] Warning: Failed to parse Betterleaks report: {exc}", file=sys.stderr)
                 return []
+
+            if not isinstance(parsed, list):
+                print(
+                    "[rafter] Warning: Betterleaks output is not an array — possible version mismatch",
+                    file=sys.stderr,
+                )
+                return []
+            return parsed
 
     @staticmethod
     def _convert(result: dict) -> PatternMatch:

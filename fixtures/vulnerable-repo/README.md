@@ -11,8 +11,8 @@ validating Rafter's secret scanning and command interception.
 # Scan with Rafter regex scanner
 rafter scan local ./fixtures/vulnerable-repo
 
-# Scan with Gitleaks engine
-rafter scan local ./fixtures/vulnerable-repo --engine gitleaks
+# Scan with Betterleaks engine
+rafter scan local ./fixtures/vulnerable-repo --engine betterleaks
 
 # Scan with built-in patterns engine (tests all 21+ patterns)
 rafter scan local ./fixtures/vulnerable-repo --engine patterns

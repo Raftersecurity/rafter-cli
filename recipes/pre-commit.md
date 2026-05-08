@@ -1,6 +1,6 @@
 # Pre-Commit Hook
 
-Block secrets from entering version control. Rafter scans staged files before every commit and rejects any that contain hardcoded credentials. 21+ credential patterns via Betterleaks (the gitleaks successor), deterministic results, exit code 1 on findings.
+Block secrets from entering version control. Rafter scans staged files before every commit and rejects any that contain hardcoded credentials. 21+ built-in credential patterns plus optional Betterleaks integration (the gitleaks successor) for higher-recall detection. Deterministic results, exit code 1 on findings.
 
 ## Pre-commit framework
 

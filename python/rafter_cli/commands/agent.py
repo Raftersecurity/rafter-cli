@@ -983,7 +983,8 @@ def init(
     # Betterleaks check (opt-in via --with-betterleaks or --all)
     if want_betterleaks:
         _bl_on_path = None if update else shutil.which("betterleaks")
-        _rafter_bin = Path.home() / ".rafter" / "bin" / "betterleaks"
+        _bin_name = "betterleaks.exe" if sys.platform == "win32" else "betterleaks"
+        _rafter_bin = Path.home() / ".rafter" / "bin" / _bin_name
         if _bl_on_path:
             rprint(fmt.success(f"Betterleaks available on PATH ({_bl_on_path})"))
         elif not update and _rafter_bin.exists():
@@ -2006,17 +2007,19 @@ class _CheckResult:
 def _check_betterleaks() -> _CheckResult:
     """Check if betterleaks is available and executable. Checks PATH first, then ~/.rafter/bin."""
     name = "Betterleaks"
+    bin_name = "betterleaks.exe" if sys.platform == "win32" else "betterleaks"
+    legacy_name = "gitleaks.exe" if sys.platform == "win32" else "gitleaks"
     # Check PATH first (e.g. Homebrew), then fall back to rafter-managed binary
     bl_path = shutil.which("betterleaks")
     if not bl_path:
-        rafter_bin = Path.home() / ".rafter" / "bin" / "betterleaks"
+        rafter_bin = Path.home() / ".rafter" / "bin" / bin_name
         if rafter_bin.exists():
             bl_path = str(rafter_bin)
     if not bl_path:
         # Soft-degrade if a legacy gitleaks install is still present.
         legacy = shutil.which("gitleaks") or (
-            str(Path.home() / ".rafter" / "bin" / "gitleaks")
-            if (Path.home() / ".rafter" / "bin" / "gitleaks").exists()
+            str(Path.home() / ".rafter" / "bin" / legacy_name)
+            if (Path.home() / ".rafter" / "bin" / legacy_name).exists()
             else None
         )
         if legacy:
@@ -2026,7 +2029,7 @@ def _check_betterleaks() -> _CheckResult:
                 f"Not installed; found legacy gitleaks at {legacy}. Run: rafter agent update-betterleaks",
                 optional=True,
             )
-        return _CheckResult(name, False, f"Not found on PATH or at {Path.home() / '.rafter' / 'bin' / 'betterleaks'}")
+        return _CheckResult(name, False, f"Not found on PATH or at {Path.home() / '.rafter' / 'bin' / bin_name}")
 
     # Verify the found binary actually works
     bm = BinaryManager()
@@ -2747,10 +2750,12 @@ def status():
         print(f"\nConfig:       not found — run: rafter agent init")
 
     # --- Betterleaks ---
-    bl_path = shutil.which("betterleaks") or str(rafter_dir / "bin" / "betterleaks")
+    bl_bin_name = "betterleaks.exe" if sys.platform == "win32" else "betterleaks"
+    legacy_bin_name = "gitleaks.exe" if sys.platform == "win32" else "gitleaks"
+    bl_path = shutil.which("betterleaks") or str(rafter_dir / "bin" / bl_bin_name)
     legacy_gitleaks = shutil.which("gitleaks") or (
-        str(rafter_dir / "bin" / "gitleaks")
-        if (rafter_dir / "bin" / "gitleaks").exists()
+        str(rafter_dir / "bin" / legacy_bin_name)
+        if (rafter_dir / "bin" / legacy_bin_name).exists()
         else None
     )
     if shutil.which("betterleaks"):
