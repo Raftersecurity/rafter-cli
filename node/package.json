@@ -1,6 +1,6 @@
 {
   "name": "@rafter-security/cli",
-  "version": "0.7.7",
+  "version": "0.7.9",
   "type": "module",
   "bin": {
     "rafter": "./dist/index.js"

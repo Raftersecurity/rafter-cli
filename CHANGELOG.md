@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-05-08
+
+### Fixed
+- **GitHub Action `@v1` tag YAML parse error** (rf-zfhj). The `v1` major-version tag was stuck at a commit whose root `action.yml` had unquoted descriptions with embedded colons (`description: Path to scan for secrets (default: repository root)`), causing GitHub Actions to fail every PR run with `Mapping values are not allowed in this context`. `v1` now points at current main HEAD, which has the description-quoting fix and the `--fail-with-body` curl rewrite from PR #76.
+- **CI `Validate Release` test-build job green** (rf-6s9l, rf-b9l8, rf-blvo). 13 Node tests across 4 files updated to match shape changes that already landed on main: rf-0pch (`rafter scan local --json` now wraps results in `{_note, scan_mode, triage_applied, results, _suppressed?}`), rf-d8s (`Suppression` gained a `source: ".rafterignore" | ".rafter.yml"` field), and rf-zgwj (OpenClaw skill install path moved to the canonical ClawHub `~/.openclaw/workspace/skills/rafter-security/SKILL.md`). Test-only changes; no production behavior shift.
+
 ### Changed
 - **OpenClaw integration rebuilt as a ClawHub-shaped skill** (Node + Python, rf-zgwj). Previously rafter wrote a single markdown file at `~/.openclaw/skills/rafter-security.md` — a path OpenClaw never read at runtime. ClawHub auto-discovers skills from `<workspace>/skills/<name>/SKILL.md`. The new install:
   - Writes `~/.openclaw/workspace/skills/rafter-security/SKILL.md` (the canonical ClawHub path).
