@@ -262,22 +262,19 @@ class TestRafterSecrets:
         _, _, rc = rafter(f"secrets {f} --engine patterns --quiet")
         assert rc == 0
 
-    def test_legacy_engine_gitleaks_alias_accepted(self, tmp_path):
-        """`--engine gitleaks` is the legacy spelling; should NOT be rejected as invalid."""
+    def test_engine_gitleaks_no_longer_accepted(self, tmp_path):
+        """`--engine gitleaks` was removed; the validator should reject it."""
         f = tmp_path / "clean.txt"
         f.write_text("no secrets\n")
-        stdout, stderr, rc = rafter(f"secrets {f} --engine gitleaks --quiet")
-        # Either 0 (clean) or 1 (findings) — but never 2 ("Invalid engine").
-        assert rc != 2, f"got rc=2 (validation rejection); stderr={stderr!r}"
-        assert "Invalid engine" not in stderr
+        _, stderr, rc = rafter(f"secrets {f} --engine gitleaks --quiet")
+        assert rc == 2, f"expected rc=2; got rc={rc}, stderr={stderr!r}"
+        assert "Invalid engine" in stderr
 
-    def test_legacy_with_gitleaks_alias_accepted(self):
-        """`--with-gitleaks` should be accepted by the typer parser as a deprecated alias."""
-        stdout, stderr, rc = rafter("agent init --with-gitleaks --help")
-        # --help short-circuits before any download, so this only verifies
-        # the option is registered (no "no such option" from typer/click).
-        assert rc == 0
-        assert "no such option" not in stderr.lower()
+    def test_with_gitleaks_no_longer_accepted(self):
+        """`--with-gitleaks` was removed; typer/click should report unknown option."""
+        _, stderr, rc = rafter("agent init --with-gitleaks")
+        assert rc != 0
+        assert "no such option" in stderr.lower() or "no such option" in stderr.lower()
 
 
 # ---------------------------------------------------------------------------

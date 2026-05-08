@@ -154,7 +154,6 @@ Initialize local security system. Creates config and detects available developme
 - `--with-windsurf` — install Windsurf integration
 - `--with-continue` — install Continue.dev integration
 - `--with-betterleaks` — download and install Betterleaks binary (the gitleaks successor)
-- `--with-gitleaks` — deprecated alias of `--with-betterleaks`
 - `--all` — install all detected integrations and download Betterleaks
 - `-i, --interactive` — guided setup — prompts for each detected integration (Node only)
 - `--update` — re-download betterleaks and reinstall integrations without resetting config
@@ -300,7 +299,7 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `--format <format>` — output format: `text`, `json`, or `sarif` (default: `text`)
 - `--staged` — scan git staged files only
 - `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
-- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default). The legacy value `gitleaks` is accepted as an alias of `betterleaks`.
+- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default).
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
 - `--history` — scan the full git history for previously-committed secrets (requires `--engine betterleaks`; invokes `betterleaks git` against the repo history)
@@ -811,8 +810,7 @@ Show agent security status dashboard. Displays config summary, installed integra
 
 ### rafter agent update-betterleaks [OPTIONS]
 
-Update (or reinstall) the managed betterleaks binary. The legacy spelling
-`rafter agent update-gitleaks` is kept as a hidden alias.
+Update (or reinstall) the managed betterleaks binary.
 
 - `--version <version>` — specific betterleaks version to install (default: current bundled version)
 
@@ -880,7 +878,7 @@ Start MCP server over stdio transport. Exposes 6 tools and 3 resources.
 
 **`scan_secrets` inputs:**
 - `path` (required) — file or directory path to scan
-- `engine` (optional) — `auto` (default), `betterleaks`, or `patterns`. The legacy value `gitleaks` is accepted as an alias of `betterleaks`.
+- `engine` (optional) — `auto` (default), `betterleaks`, or `patterns`.
 
 **`evaluate_command` output schema:**
 ```json

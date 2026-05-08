@@ -67,7 +67,7 @@ _rafter_completions() {
       ;;
     init)
       if [[ "\${COMP_WORDS[1]}" == "agent" ]]; then
-        COMPREPLY=( $(compgen -W "--risk-level --with-openclaw --with-claude-code --with-codex --with-gemini --with-aider --with-cursor --with-windsurf --with-continue --with-betterleaks --with-gitleaks --all --help" -- "\${cur}") )
+        COMPREPLY=( $(compgen -W "--risk-level --with-openclaw --with-claude-code --with-codex --with-gemini --with-aider --with-cursor --with-windsurf --with-continue --with-betterleaks --all --help" -- "\${cur}") )
       elif [[ "\${COMP_WORDS[1]}" == "ci" ]]; then
         COMPREPLY=( $(compgen -W "--platform --output --with-remote --with-backend --help" -- "\${cur}") )
       fi

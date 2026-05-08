@@ -67,8 +67,8 @@ export function createServer(): Server {
             path: { type: "string", description: "File or directory path to scan" },
             engine: {
               type: "string",
-              enum: ["auto", "betterleaks", "gitleaks", "patterns"],
-              description: "Scan engine: auto (default), betterleaks, or patterns. 'gitleaks' accepted as legacy alias for 'betterleaks'.",
+              enum: ["auto", "betterleaks", "patterns"],
+              description: "Scan engine: auto (default), betterleaks, or patterns.",
             },
           },
           required: ["path"],
@@ -144,9 +144,7 @@ export function createServer(): Server {
     switch (name) {
       case "scan_secrets": {
         const scanPath = args?.path as string;
-        const rawEngine = (args?.engine as string) || "auto";
-        // "gitleaks" accepted as legacy alias for "betterleaks"
-        const engine = rawEngine === "gitleaks" ? "betterleaks" : rawEngine;
+        const engine = (args?.engine as string) || "auto";
 
         if (engine === "betterleaks" || engine === "auto") {
           const bl = new BetterleaksScanner();

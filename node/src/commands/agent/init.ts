@@ -893,7 +893,6 @@ export function createInitCommand(): Command {
     .option("--with-windsurf", "Install Windsurf integration")
     .option("--with-continue", "Install Continue.dev integration")
     .option("--with-betterleaks", "Download and install Betterleaks binary")
-    .option("--with-gitleaks", "[deprecated alias of --with-betterleaks]")
     .option("--all", "Install all detected integrations and download Betterleaks")
     .option("-i, --interactive", "Guided setup — prompts for each detected integration")
     .option("--update", "Re-download betterleaks and reinstall integrations without resetting config")
@@ -951,7 +950,7 @@ export function createInitCommand(): Command {
       // Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
       // in cwd) since rf-du2o.
       let wantAider = opts.withAider || opts.all;
-      let wantBetterleaks = opts.withBetterleaks || opts.withGitleaks || (opts.all && !opts.local);
+      let wantBetterleaks = opts.withBetterleaks || (opts.all && !opts.local);
 
       // Interactive mode: prompt for each detected integration
       if (opts.interactive && !opts.all) {

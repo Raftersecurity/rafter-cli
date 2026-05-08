@@ -28,10 +28,6 @@ mcp_app = typer.Typer(
 
 def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
     """Scan files or directories for hardcoded secrets."""
-    # "gitleaks" accepted as legacy alias for "betterleaks"
-    if engine == "gitleaks":
-        engine = "betterleaks"
-
     # Try betterleaks if requested or auto
     if engine in ("betterleaks", "auto"):
         bl = BetterleaksScanner()
@@ -196,7 +192,7 @@ def create_mcp_server():
 
         Args:
             path: File or directory path to scan.
-            engine: Scan engine — auto (default), betterleaks, or patterns. "gitleaks" accepted as legacy alias.
+            engine: Scan engine — auto (default), betterleaks, or patterns.
         """
         return json.dumps(handle_scan_secrets(path, engine))
 

@@ -184,7 +184,7 @@ This command:
 - Creates `~/.rafter/` config and audit log (or `./.rafter/` with `--local` for ephemeral / containerized / benchmark setups)
 - Auto-detects Claude Code, Codex CLI, OpenClaw, Gemini, Cursor, Windsurf, Continue.dev, and Aider
 - With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
-- With `--with-betterleaks` or `--all`: downloads [Betterleaks](https://github.com/betterleaks/betterleaks) (the gitleaks successor maintained by the original gitleaks authors) for enhanced secret scanning. Falls back to built-in 21-pattern regex scanner. The legacy `--with-gitleaks` flag is accepted as an alias.
+- With `--with-betterleaks` or `--all`: downloads [Betterleaks](https://github.com/betterleaks/betterleaks) (the gitleaks successor maintained by the original gitleaks authors) for enhanced secret scanning. Falls back to built-in 21-pattern regex scanner.
 
 Use `rafter agent list/enable/disable` for granular per-component control after the initial install — toggle any platform on or off without re-running `init`.
 
@@ -223,7 +223,7 @@ Exit code 1 if secrets found, 0 if clean.
 
 Raw secret values are never included in output. Pipe to `jq`, feed to CI gates, or hand to any tool that reads JSON.
 
-**Engine selection:** Uses Betterleaks when available (more patterns), falls back to built-in regex. Override with `--engine betterleaks|patterns|auto`. The legacy value `gitleaks` is accepted as an alias of `betterleaks`.
+**Engine selection:** Uses Betterleaks when available (more patterns), falls back to built-in regex. Override with `--engine betterleaks|patterns|auto`.
 
 ### Pre-Commit Hook
 

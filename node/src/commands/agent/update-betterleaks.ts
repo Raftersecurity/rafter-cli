@@ -4,7 +4,6 @@ import { fmt } from "../../utils/formatter.js";
 
 export function createUpdateBetterleaksCommand(): Command {
   return new Command("update-betterleaks")
-    .alias("update-gitleaks")
     .description("Update (or reinstall) the managed betterleaks binary")
     .option(
       "--version <version>",

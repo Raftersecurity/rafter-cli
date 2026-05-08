@@ -58,7 +58,7 @@ cd python && poetry install && pytest
 
 **Risk classification**: Commands are classified into 4 tiers (critical/high/medium/low) by pattern matching in `command-interceptor.ts`. Policy files (`.rafter.yml`) can override defaults.
 
-**Secret scanning**: Dual-engine — tries Betterleaks binary first (higher accuracy), falls back to built-in regex patterns (21+ patterns, zero dependencies). Deterministic for a given version. Betterleaks is the gitleaks successor maintained by the original gitleaks authors; the legacy `--engine gitleaks` and `--with-gitleaks` flags still work as aliases.
+**Secret scanning**: Dual-engine — tries Betterleaks binary first (higher accuracy), falls back to built-in regex patterns (21+ patterns, zero dependencies). Deterministic for a given version. Betterleaks is the gitleaks successor maintained by the original gitleaks authors. Existing installs with a leftover `~/.rafter/bin/gitleaks` are detected by `agent verify`/`status` so users get an upgrade hint, but the legacy CLI flags (`--with-gitleaks`, `--engine gitleaks`, `update-gitleaks`) have been removed.
 
 **MCP server**: `rafter mcp serve` exposes 4 tools (`scan_secrets`, `evaluate_command`, `read_audit_log`, `get_config`) and 2 resources (`rafter://config`, `rafter://policy`) over stdio.
 
