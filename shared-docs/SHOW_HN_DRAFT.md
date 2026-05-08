@@ -20,7 +20,7 @@ Hi HN, I'm [NAME] and I built Rafter, an open-source security toolkit for develo
 
 **What Rafter does:**
 
-- **Secret scanning** — 21+ built-in patterns (AWS, GitHub, Stripe, etc.), pre-commit hooks, CI integration. Dual engine: tries Gitleaks first, falls back to built-in regex. Deterministic — same inputs, same findings. JSON output you can pipe to `jq` or feed to any tool.
+- **Secret scanning** — 21+ built-in patterns (AWS, GitHub, Stripe, etc.), pre-commit hooks, CI integration. Dual engine: tries Betterleaks (the gitleaks successor) first, falls back to built-in regex. Deterministic — same inputs, same findings. JSON output you can pipe to `jq` or feed to any tool.
 - **Custom rules** — Define your own patterns in `.rafter.yml`. They work exactly like built-in rules — same JSON output, same audit log, same pre-commit enforcement.
 - **Policy enforcement** — 4-tier risk classification (critical/high/medium/low). Blocks `rm -rf /`, requires approval for `sudo rm`, allows `npm install`. Same rules for every developer.
 - **Extension auditing** — Scans third-party extensions for embedded secrets, suspicious URLs, and obfuscated commands before you install them.
@@ -53,8 +53,8 @@ Would love feedback on the pattern library, custom rule authoring, and which pla
 
 Founder should be in comments within 5 minutes of posting. Prepared answers for likely questions:
 
-**Q: "Why not just use Gitleaks directly?"**
-A: Rafter uses Gitleaks when available but adds policy enforcement, custom rules, extension auditing, multi-platform config, and MCP. It's the integration layer, not a replacement.
+**Q: "Why not just use Betterleaks (or Gitleaks) directly?"**
+A: Rafter uses Betterleaks when available but adds policy enforcement, custom rules, extension auditing, multi-platform config, and MCP. It's the integration layer, not a replacement.
 
 **Q: "How is this different from pre-commit hooks?"**
 A: Pre-commit catches secrets at commit time. Rafter also enforces policy on live commands, audits extensions, and works at runtime — not just commit time.

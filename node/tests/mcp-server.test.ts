@@ -87,9 +87,7 @@ import { ConfigManager } from "../src/core/config-manager.js";
 /**
  * Simulate the scan_secrets tool handler from server.ts
  */
-async function handleScanSecrets(scanPath: string, engineRaw: string = "auto") {
-  // "gitleaks" accepted as legacy alias for "betterleaks"
-  const engine = engineRaw === "gitleaks" ? "betterleaks" : engineRaw;
+async function handleScanSecrets(scanPath: string, engine: string = "auto") {
   if (engine === "betterleaks" || engine === "auto") {
     const bl = new BetterleaksScanner();
     if (await bl.isAvailable()) {
