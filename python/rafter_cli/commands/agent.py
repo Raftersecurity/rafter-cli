@@ -859,7 +859,6 @@ def _install_aider_read(root: Path) -> bool:
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
     with_betterleaks: bool = typer.Option(False, "--with-betterleaks", help="Download and install Betterleaks binary"),
-    with_gitleaks: bool = typer.Option(False, "--with-gitleaks", help="[deprecated alias of --with-betterleaks]"),
     with_openclaw: bool = typer.Option(False, "--with-openclaw", help="Install OpenClaw integration"),
     with_claude_code: bool = typer.Option(False, "--with-claude-code", help="Install Claude Code integration"),
     with_codex: bool = typer.Option(False, "--with-codex", help="Install Codex CLI integration"),
@@ -921,7 +920,7 @@ def init(
     # Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
     # in cwd) since rf-du2o.
     want_aider = with_aider or all_integrations
-    want_betterleaks = with_betterleaks or with_gitleaks or (all_integrations and not local)
+    want_betterleaks = with_betterleaks or (all_integrations and not local)
 
     # Show detected environments
     detected = []
@@ -1229,21 +1228,18 @@ def init(
 
 def _select_engine(preference: str, quiet: bool) -> str:
     """Return 'betterleaks' or 'patterns'."""
-    valid_engines = ("auto", "betterleaks", "gitleaks", "patterns")
+    valid_engines = ("auto", "betterleaks", "patterns")
     if preference not in valid_engines:
-        print(f"Invalid engine: {preference}. Valid values: auto, betterleaks, patterns", file=sys.stderr)
+        print(f"Invalid engine: {preference}. Valid values: {', '.join(valid_engines)}", file=sys.stderr)
         raise typer.Exit(code=2)
 
-    # "gitleaks" accepted as legacy alias for "betterleaks"
-    normalized = "betterleaks" if preference == "gitleaks" else preference
-
-    if normalized == "patterns":
+    if preference == "patterns":
         return "patterns"
 
     scanner = BetterleaksScanner()
     available = scanner.is_available()
 
-    if normalized == "betterleaks":
+    if preference == "betterleaks":
         if not available:
             if not quiet:
                 print_stderr(fmt.warning("Betterleaks requested but not available, using patterns"))
@@ -1516,7 +1512,7 @@ def scan(
     format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
     staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
     diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
-    engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns (alias: gitleaks)"),
+    engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
@@ -2723,12 +2719,6 @@ def update_betterleaks(
     _update_betterleaks_impl(version)
 
 
-@agent_app.command("update-gitleaks", hidden=True)
-def update_gitleaks(
-    version: str = typer.Option(None, "--version", help="[deprecated alias of update-betterleaks]"),
-):
-    """[deprecated] Use 'rafter agent update-betterleaks'."""
-    _update_betterleaks_impl(version)
 
 
 # ── agent status ─────────────────────────────────────────────────────────
@@ -2932,7 +2922,7 @@ def _apply_baseline(results: list[ScanResult], entries: list[dict]) -> list[Scan
 @baseline_app.command("create")
 def baseline_create(
     path: str = typer.Argument(".", help="Path to scan"),
-    engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns (alias: gitleaks)"),
+    engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
 ):
     """Scan and save all current findings as the baseline."""
     import datetime

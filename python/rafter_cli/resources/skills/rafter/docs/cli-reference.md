@@ -109,8 +109,7 @@ Emit a ready-to-paste instruction block for an agent's system prompt.
 
 ### `rafter agent update-betterleaks`
 
-Download / upgrade the Betterleaks binary Rafter uses for local scans. Legacy
-spelling `update-gitleaks` is accepted as an alias.
+Download / upgrade the Betterleaks binary Rafter uses for local scans.
 
 ---
 

@@ -77,13 +77,13 @@ export function createScanCommand(): Command {
     .option("--format <format>", "Output format: text, json, sarif", "text")
     .option("--staged", "Scan only git staged files")
     .option("--diff <ref>", "Scan files changed since a git ref")
-    .option("--engine <engine>", "Scan engine: betterleaks or patterns (alias: gitleaks)", "auto")
+    .option("--engine <engine>", "Scan engine: betterleaks or patterns", "auto")
     .option("--baseline", "Filter findings present in the saved baseline")
     .option("--watch", "Watch for file changes and re-scan on change")
     .option("--history", "Scan git history for secrets (requires betterleaks engine)")
     .action(async (scanPath, opts: ScanOpts) => {
-      // Validate flags before doing any work. "gitleaks" accepted as legacy alias for "betterleaks".
-      const validEngines = ["auto", "betterleaks", "gitleaks", "patterns"];
+      // Validate flags before doing any work.
+      const validEngines = ["auto", "betterleaks", "patterns"];
       const engineValue = opts.engine || "auto";
       if (!validEngines.includes(engineValue)) {
         console.error(`Invalid engine: ${engineValue}. Valid values: ${validEngines.join(", ")}`);
@@ -460,14 +460,11 @@ async function scanStagedFiles(
  * Select scan engine based on availability and user preference
  */
 async function selectEngine(preference: string, quiet: boolean): Promise<"betterleaks" | "patterns"> {
-  // "gitleaks" accepted as legacy alias for "betterleaks"
-  const normalized = preference === "gitleaks" ? "betterleaks" : preference;
-
-  if (normalized === "patterns") {
+  if (preference === "patterns") {
     return "patterns";
   }
 
-  if (normalized === "betterleaks") {
+  if (preference === "betterleaks") {
     const bl = new BetterleaksScanner();
     const available = await bl.isAvailable();
     if (!available) {
@@ -479,7 +476,7 @@ async function selectEngine(preference: string, quiet: boolean): Promise<"better
     return "betterleaks";
   }
 
-  if (normalized !== "auto") {
+  if (preference !== "auto") {
     console.error(`Invalid engine: ${preference}. Valid values: auto, betterleaks, patterns`);
     process.exit(2);
   }

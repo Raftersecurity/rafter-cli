@@ -204,12 +204,10 @@ describe("agent init", () => {
     expect(cfg.agent.riskLevel).toBe("moderate");
   });
 
-  it("legacy --with-gitleaks alias is accepted (does not error out)", () => {
-    // Don't actually download — just confirm Commander accepts the option.
-    // Use --help to short-circuit before any action handler runs.
-    const r = runCli("agent init --with-gitleaks --help", home);
-    expect(r.exitCode).toBe(0);
-    expect(r.stderr).not.toMatch(/unknown option/i);
+  it("rejects --with-gitleaks (no longer a valid option)", () => {
+    const r = runCli("agent init --with-gitleaks", home);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toMatch(/unknown option/i);
   });
 
   it("creates bin and patterns directories", () => {
@@ -403,15 +401,12 @@ describe("agent scan", () => {
     expect(parsed.length).toBeGreaterThan(0);
   });
 
-  it("accepts legacy --engine gitleaks alias without rejecting as invalid", () => {
-    // gitleaks is no longer the engine name — betterleaks is — but the
-    // legacy spelling is preserved as an alias to avoid breaking existing
-    // configs/scripts. Should not exit 2 ("Invalid engine") at validation.
+  it("rejects --engine gitleaks (no longer a valid engine)", () => {
     const f = path.join(tmpDir, "clean.txt");
     fs.writeFileSync(f, "nothing\n");
     const r = runCli(`agent scan ${f} --engine gitleaks --quiet`, home);
-    expect(r.exitCode).not.toBe(2);
-    expect(r.stderr).not.toMatch(/Invalid engine/i);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/Invalid engine/i);
   });
 });
 

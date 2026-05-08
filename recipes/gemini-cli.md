@@ -41,7 +41,7 @@ Once the MCP server is configured, Gemini CLI can call the following tools:
 
 | Tool | Description |
 |------|-------------|
-| `scan_secrets` | Scan files or directories for hardcoded secrets and credentials. Supports `betterleaks` and `patterns` engines (legacy `gitleaks` accepted as alias). |
+| `scan_secrets` | Scan files or directories for hardcoded secrets and credentials. Supports `betterleaks` and `patterns` engines. |
 | `evaluate_command` | Check if a shell command is allowed by Rafter security policy. Returns risk level and approval requirement. |
 | `read_audit_log` | Query the Rafter audit log with optional filtering by event type, count, or timestamp. |
 | `get_config` | Read Rafter configuration — full config or a specific key via dot-path (e.g. `agent.commandPolicy`). |

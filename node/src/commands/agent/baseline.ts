@@ -58,9 +58,9 @@ function createBaselineCreateCommand(): Command {
   return new Command("create")
     .description("Scan and save all current findings as the baseline")
     .argument("[path]", "Path to scan", ".")
-    .option("--engine <engine>", "Scan engine: betterleaks or patterns (alias: gitleaks)", "auto")
+    .option("--engine <engine>", "Scan engine: betterleaks or patterns", "auto")
     .action(async (scanPath: string, opts: { engine?: string }) => {
-      const validEngines = ["auto", "betterleaks", "gitleaks", "patterns"];
+      const validEngines = ["auto", "betterleaks", "patterns"];
       const engineValue = opts.engine || "auto";
       if (!validEngines.includes(engineValue)) {
         console.error(`Invalid engine: ${engineValue}. Valid values: ${validEngines.join(", ")}`);
@@ -205,14 +205,12 @@ function createBaselineAddCommand(): Command {
 // ── helpers ─────────────────────────────────────────────────────────
 
 async function selectEngine(preference: string): Promise<"betterleaks" | "patterns"> {
-  // "gitleaks" accepted as legacy alias for "betterleaks"
-  const normalized = preference === "gitleaks" ? "betterleaks" : preference;
-  if (normalized === "patterns") return "patterns";
-  if (normalized === "betterleaks") {
+  if (preference === "patterns") return "patterns";
+  if (preference === "betterleaks") {
     const b = new BetterleaksScanner();
     return (await b.isAvailable()) ? "betterleaks" : "patterns";
   }
-  if (normalized !== "auto") {
+  if (preference !== "auto") {
     console.error(`Invalid engine: ${preference}. Valid values: auto, betterleaks, patterns`);
     process.exit(2);
   }
