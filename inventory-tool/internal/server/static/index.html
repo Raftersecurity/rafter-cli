@@ -89,6 +89,20 @@
     padding: 0.4em 0.75em;
     color: #57430b;
     font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+  }
+  details.group .group-warn .warn-text { flex: 1; }
+  details.group .group-warn button {
+    background: var(--panel);
+    border: 1px solid #c9a300;
+    color: #57430b;
+    font-size: 12px;
+    padding: 0.15em 0.6em;
+  }
+  details.group .group-warn button:hover:not(:disabled) {
+    background: #fff3a8;
   }
   ul.entries { list-style: none; padding: 0; margin: 0; }
   ul.entries li.entry {
@@ -176,7 +190,7 @@
   #panel .found-list li.unsupported { color: #8c8c8c; font-style: italic; }
   #panel .audit { background: #fff8c5; padding: 0.4em 0.6em; border-radius: 4px; margin: 0.5em 0; }
   #panel .audit .danger { color: var(--danger); }
-  #panel section h3 {
+  #panel h3 {
     font-size: 12px; color: var(--muted); text-transform: uppercase;
     letter-spacing: 0.05em; margin: 1.25em 0 0.4em 0;
   }

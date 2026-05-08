@@ -80,7 +80,17 @@ on launch when `ScanConfig.Roots` is empty.
 - `internal/server/static/`: the embedded inventory UI. List grouped
   by source, side panel for annotation, click-to-reveal for plaintext
   sources, debounced auto-save on annotation edits, live SSE updates
-  when the drift watcher fires.
+  when the drift watcher fires. World-readable file groups expose a
+  one-click "chmod 600" button that POSTs to the source-tightening
+  endpoint and refreshes the inventory.
+- `internal/server/sources.go`: `POST /api/sources/chmod600` is the
+  only HTTP path that mutates a user file's mode. Body
+  `{"path": "<source>"}`. The path must already be in the inventory
+  (so the endpoint cannot be used as a generic chmod gadget) and the
+  file must be regular. Tightens permissions to `0o600` and refreshes
+  the in-doc `Permissions` for every secret at that path. The file's
+  content is never read or rewritten, so the byte-identity guarantee
+  in `tests/invariant/` continues to hold.
 
 The keystore reader lands in subsequent commits.
 
