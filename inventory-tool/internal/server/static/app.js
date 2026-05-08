@@ -118,10 +118,7 @@
 
       const warn = sourceWarning(g);
       if (warn) {
-        const w = document.createElement("div");
-        w.className = "group-warn";
-        w.textContent = warn;
-        det.appendChild(w);
+        det.appendChild(buildGroupWarn(g, warn));
       }
 
       const ul = document.createElement("ul");
@@ -153,14 +150,64 @@
   function sourceWarning(g) {
     if (g.kind !== "file" || !g.perms) return null;
     if (g.perms === "0644" || g.perms === "0666") {
-      return `world-readable (${g.perms}). consider: chmod 600 "${g.label}"`;
+      return `world-readable (${g.perms}) — owner-only is the safer default.`;
     }
     return null;
+  }
+
+  function buildGroupWarn(g, message) {
+    const wrap = document.createElement("div");
+    wrap.className = "group-warn";
+    const txt = document.createElement("span");
+    txt.className = "warn-text";
+    txt.textContent = message;
+    wrap.appendChild(txt);
+
+    if (g.kind === "file" && g.label) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "chmod 600";
+      btn.title = `Tighten permissions on ${g.label} to owner-only (0600)`;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        chmod600Source(g.label, btn);
+      });
+      wrap.appendChild(btn);
+    }
+    return wrap;
+  }
+
+  async function chmod600Source(path, btn) {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "tightening…";
+    }
+    try {
+      const body = await api("/api/sources/chmod600", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      if (body && body.no_op) {
+        setToast(`already 0600: ${path}`);
+      } else {
+        setToast(`chmod 600 applied to ${path}`);
+      }
+      await loadSecrets();
+    } catch (e) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "chmod 600";
+      }
+      setToast("chmod failed: " + e.message, true);
+    }
   }
 
   function renderEntry(s) {
     const li = document.createElement("li");
     li.className = "entry";
+    li.dataset.id = s.id;
     if (s.id === selectedId) li.classList.add("selected");
     if (s.annotation && s.annotation.stale) li.classList.add("stale");
 
@@ -232,21 +279,15 @@
     panelWrap.classList.add("open");
     renderPanel();
     // Refresh selected highlight without rebuilding the whole list.
-    for (const el of list.querySelectorAll("li.entry")) el.classList.remove("selected");
-    const match = list.querySelector(`li.entry[data-id="${cssEscape(id)}"]`);
-    if (match) match.classList.add("selected");
-    // Cheap and reliable: re-render so the selected class propagates.
-    render();
+    for (const el of list.querySelectorAll("li.entry")) {
+      el.classList.toggle("selected", el.dataset.id === id);
+    }
   }
 
   function closePanel() {
     selectedId = null;
     panelWrap.classList.remove("open");
     panel.innerHTML = "";
-  }
-
-  function cssEscape(s) {
-    return s.replace(/"/g, '\\"');
   }
 
   function renderPanel() {
