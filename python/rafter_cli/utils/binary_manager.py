@@ -112,6 +112,18 @@ class BinaryManager:
         """Find betterleaks on system PATH (like Node's which/where)."""
         return shutil.which("betterleaks")
 
+    def find_legacy_gitleaks(self) -> str | None:
+        """Find a leftover legacy gitleaks binary so verify/status can surface
+        an upgrade hint instead of a confusing "not found". PATH first
+        (Homebrew etc.), then ~/.rafter/bin/gitleaks. Read-only — never executes.
+        """
+        on_path = shutil.which("gitleaks")
+        if on_path:
+            return on_path
+        ext = ".exe" if self._sys_platform() == "win32" else ""
+        local = self.bin_dir / f"gitleaks{ext}"
+        return str(local) if local.exists() else None
+
     def verify_betterleaks(self) -> bool:
         """Check if the managed betterleaks binary works (simple bool)."""
         if not self.is_betterleaks_installed():
@@ -373,10 +385,13 @@ class BinaryManager:
         dest: Path,
         on_progress: Callable[[str], None],
     ) -> None:
-        # Refuse to download non-https URLs (defends against an http:// initial
-        # URL or against `urlopen` quietly accepting a downgrade in some configs).
-        # `urlopen` already restricts redirects to http(s) and will raise on
-        # http→https mixes, but we want a hard floor before the request goes out.
+        # Defenses (mirrors Node):
+        #   - HTTPS-only (initial URL + final URL after urllib's internal redirect chain)
+        #   - 60s socket timeout
+        #   - 200 MB body cap (betterleaks releases are ~12 MB; abort early on
+        #     pathologically large responses to prevent disk-fill DoS)
+        MAX_BYTES = 200 * 1024 * 1024
+
         if not url.lower().startswith("https://"):
             raise RuntimeError(f"Refusing non-https download URL: {url}")
 
@@ -393,6 +408,11 @@ class BinaryManager:
             if not final_url.lower().startswith("https://"):
                 raise RuntimeError(f"Refusing non-https final URL after redirects: {final_url}")
             total = int(response.headers.get("Content-Length", 0))
+            if total > MAX_BYTES:
+                raise RuntimeError(
+                    f"Download refused: Content-Length {total} exceeds cap {MAX_BYTES} "
+                    f"(betterleaks releases are ~12 MB)."
+                )
             downloaded = 0
             last_pct = 0
 
@@ -401,6 +421,11 @@ class BinaryManager:
                     chunk = response.read(65536)
                     if not chunk:
                         break
+                    if downloaded + len(chunk) > MAX_BYTES:
+                        raise RuntimeError(
+                            f"Download aborted: stream exceeded {MAX_BYTES} bytes "
+                            f"(betterleaks releases are ~12 MB)."
+                        )
                     f.write(chunk)
                     downloaded += len(chunk)
                     if total > 0:

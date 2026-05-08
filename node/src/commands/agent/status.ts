@@ -6,6 +6,7 @@ import { execSync } from "child_process";
 import { getRafterDir, getAuditLogPath, getBinDir } from "../../core/config-defaults.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { BinaryManager } from "../../utils/binary-manager.js";
 
 export function createStatusCommand(): Command {
   return new Command("status")
@@ -35,7 +36,6 @@ export function createStatusCommand(): Command {
       // --- Betterleaks ---
       const exeExt = process.platform === "win32" ? ".exe" : "";
       const localBetterleaks = path.join(getBinDir(), `betterleaks${exeExt}`);
-      const localGitleaks = path.join(getBinDir(), `gitleaks${exeExt}`);
       let betterleaksStatus = "not found — run: rafter agent init --with-betterleaks";
       try {
         const ver = execSync("betterleaks version", { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
@@ -48,9 +48,12 @@ export function createStatusCommand(): Command {
           } catch {
             betterleaksStatus = `${localBetterleaks} (binary error)`;
           }
-        } else if (fs.existsSync(localGitleaks)) {
+        } else {
           // Legacy install — surface a hint instead of "not found"
-          betterleaksStatus = `not found — legacy gitleaks at ${localGitleaks}; run: rafter agent update-betterleaks`;
+          const legacy = new BinaryManager().findLegacyGitleaks();
+          if (legacy) {
+            betterleaksStatus = `not found — legacy gitleaks at ${legacy}; run: rafter agent update-betterleaks`;
+          }
         }
       }
       console.log(`Betterleaks:  ${betterleaksStatus}`);

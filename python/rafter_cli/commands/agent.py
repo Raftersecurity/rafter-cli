@@ -2007,21 +2007,16 @@ class _CheckResult:
 def _check_betterleaks() -> _CheckResult:
     """Check if betterleaks is available and executable. Checks PATH first, then ~/.rafter/bin."""
     name = "Betterleaks"
-    bin_name = "betterleaks.exe" if sys.platform == "win32" else "betterleaks"
-    legacy_name = "gitleaks.exe" if sys.platform == "win32" else "gitleaks"
+    bm = BinaryManager()
     # Check PATH first (e.g. Homebrew), then fall back to rafter-managed binary
     bl_path = shutil.which("betterleaks")
     if not bl_path:
-        rafter_bin = Path.home() / ".rafter" / "bin" / bin_name
+        rafter_bin = bm.get_betterleaks_path()
         if rafter_bin.exists():
             bl_path = str(rafter_bin)
     if not bl_path:
         # Soft-degrade if a legacy gitleaks install is still present.
-        legacy = shutil.which("gitleaks") or (
-            str(Path.home() / ".rafter" / "bin" / legacy_name)
-            if (Path.home() / ".rafter" / "bin" / legacy_name).exists()
-            else None
-        )
+        legacy = bm.find_legacy_gitleaks()
         if legacy:
             return _CheckResult(
                 name,
@@ -2029,10 +2024,9 @@ def _check_betterleaks() -> _CheckResult:
                 f"Not installed; found legacy gitleaks at {legacy}. Run: rafter agent update-betterleaks",
                 optional=True,
             )
-        return _CheckResult(name, False, f"Not found on PATH or at {Path.home() / '.rafter' / 'bin' / bin_name}")
+        return _CheckResult(name, False, f"Not found on PATH or at {bm.get_betterleaks_path()}")
 
     # Verify the found binary actually works
-    bm = BinaryManager()
     result = bm.verify_betterleaks_verbose(binary_path=Path(bl_path))
     if result["ok"]:
         return _CheckResult(name, True, result["stdout"] or bl_path)
@@ -2668,48 +2662,6 @@ def audit_skill(
 # ── update-betterleaks ───────────────────────────────────────────────────
 
 
-def _update_betterleaks_impl(version: str | None) -> None:
-    from ..utils.binary_manager import BETTERLEAKS_VERSION
-
-    target_version = version or BETTERLEAKS_VERSION
-    _bm = BinaryManager()
-
-    if not _bm.is_platform_supported():
-        rprint(fmt.error(
-            f"Betterleaks not available for {_bm._sys_platform()}/{_bm._machine()}"
-        ))
-        raise typer.Exit(code=1)
-
-    _rafter_bin = _bm.get_betterleaks_path()
-    if _rafter_bin.exists():
-        result = _bm.verify_betterleaks_verbose()
-        if result["ok"]:
-            rprint(fmt.info(f"Current: {result['stdout']}"))
-        else:
-            rprint(fmt.warning(f"Current binary at {_rafter_bin} is not working"))
-    else:
-        rprint(fmt.info("Betterleaks not currently installed (managed binary)"))
-
-    rprint(fmt.info(f"Installing betterleaks v{target_version}..."))
-    rprint()
-
-    try:
-        _bm.download_betterleaks(on_progress=typer.echo, version=target_version)
-        rprint()
-        result = _bm.verify_betterleaks_verbose()
-        rprint(fmt.success(f"Betterleaks updated: {result['stdout']}"))
-        rprint(fmt.info(f"  Binary: {_rafter_bin}"))
-    except Exception as _err:
-        rprint()
-        rprint(fmt.error(f"Update failed: {_err}"))
-        rprint(fmt.info(
-            "To fix: install betterleaks manually "
-            "(https://github.com/betterleaks/betterleaks/releases) "
-            "and ensure it is on PATH."
-        ))
-        raise typer.Exit(code=1)
-
-
 @agent_app.command("update-betterleaks")
 def update_betterleaks(
     version: str = typer.Option(
@@ -2719,7 +2671,45 @@ def update_betterleaks(
     ),
 ):
     """Update (or reinstall) the managed betterleaks binary."""
-    _update_betterleaks_impl(version)
+    from ..utils.binary_manager import BETTERLEAKS_VERSION
+
+    target_version = version or BETTERLEAKS_VERSION
+    bm = BinaryManager()
+
+    if not bm.is_platform_supported():
+        rprint(fmt.error(
+            f"Betterleaks not available for {bm._sys_platform()}/{bm._machine()}"
+        ))
+        raise typer.Exit(code=1)
+
+    rafter_bin = bm.get_betterleaks_path()
+    if rafter_bin.exists():
+        result = bm.verify_betterleaks_verbose()
+        if result["ok"]:
+            rprint(fmt.info(f"Current: {result['stdout']}"))
+        else:
+            rprint(fmt.warning(f"Current binary at {rafter_bin} is not working"))
+    else:
+        rprint(fmt.info("Betterleaks not currently installed (managed binary)"))
+
+    rprint(fmt.info(f"Installing betterleaks v{target_version}..."))
+    rprint()
+
+    try:
+        bm.download_betterleaks(on_progress=typer.echo, version=target_version)
+        rprint()
+        result = bm.verify_betterleaks_verbose()
+        rprint(fmt.success(f"Betterleaks updated: {result['stdout']}"))
+        rprint(fmt.info(f"  Binary: {rafter_bin}"))
+    except Exception as err:
+        rprint()
+        rprint(fmt.error(f"Update failed: {err}"))
+        rprint(fmt.info(
+            "To fix: install betterleaks manually "
+            "(https://github.com/betterleaks/betterleaks/releases) "
+            "and ensure it is on PATH."
+        ))
+        raise typer.Exit(code=1)
 
 
 
@@ -2750,26 +2740,22 @@ def status():
         print(f"\nConfig:       not found — run: rafter agent init")
 
     # --- Betterleaks ---
-    bl_bin_name = "betterleaks.exe" if sys.platform == "win32" else "betterleaks"
-    legacy_bin_name = "gitleaks.exe" if sys.platform == "win32" else "gitleaks"
-    bl_path = shutil.which("betterleaks") or str(rafter_dir / "bin" / bl_bin_name)
-    legacy_gitleaks = shutil.which("gitleaks") or (
-        str(rafter_dir / "bin" / legacy_bin_name)
-        if (rafter_dir / "bin" / legacy_bin_name).exists()
-        else None
-    )
+    bm = BinaryManager()
+    bl_local = bm.get_betterleaks_path()
     if shutil.which("betterleaks"):
         try:
             ver = subprocess.run(["betterleaks", "version"], capture_output=True, text=True, timeout=5)
             print(f"Betterleaks:  {ver.stdout.strip()} (PATH)")
         except Exception:
             print("Betterleaks:  on PATH (version check failed)")
-    elif Path(bl_path).exists():
-        print(f"Betterleaks:  {bl_path} (local)")
-    elif legacy_gitleaks:
-        print(f"Betterleaks:  not found — legacy gitleaks at {legacy_gitleaks}; run: rafter agent update-betterleaks")
+    elif bl_local.exists():
+        print(f"Betterleaks:  {bl_local} (local)")
     else:
-        print("Betterleaks:  not found — run: rafter agent init --with-betterleaks")
+        legacy = bm.find_legacy_gitleaks()
+        if legacy:
+            print(f"Betterleaks:  not found — legacy gitleaks at {legacy}; run: rafter agent update-betterleaks")
+        else:
+            print("Betterleaks:  not found — run: rafter agent init --with-betterleaks")
 
     # --- Claude Code hooks ---
     claude_dir = Path.home() / ".claude"

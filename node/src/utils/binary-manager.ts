@@ -87,6 +87,23 @@ export class BinaryManager {
   }
 
   /**
+   * Find a leftover legacy gitleaks binary so verify/status can surface
+   * an upgrade hint instead of a confusing "not found". PATH first
+   * (Homebrew etc.), then ~/.rafter/bin/gitleaks. Read-only — never executes.
+   */
+  findLegacyGitleaks(): string | null {
+    const cmd = process.platform === "win32" ? "where gitleaks" : "which gitleaks";
+    try {
+      const result = execSync(cmd, { timeout: 5000, encoding: "utf-8" });
+      const found = result.trim().split("\n")[0].trim();
+      if (found) return found;
+    } catch { /* not on PATH */ }
+    const ext = process.platform === "win32" ? ".exe" : "";
+    const local = path.join(this.binDir, `gitleaks${ext}`);
+    return fs.existsSync(local) ? local : null;
+  }
+
+  /**
    * Find betterleaks on system PATH
    */
   findBetterleaksOnPath(): string | null {
@@ -310,15 +327,36 @@ export class BinaryManager {
   }
 
   /**
-   * Download file from URL
+   * Download file from URL.
+   *
+   * Defenses:
+   *   - HTTPS-only (initial URL and every redirect; non-https rejected)
+   *   - Redirect cap (max 10 hops; bounds recursion if a CDN misbehaves)
+   *   - Socket timeout (60s; bounds slow-loris hangs that never close)
+   *   - Body-size cap (200 MB; bounds DoS-via-large-body if a mirror serves
+   *     an arbitrarily large stream — betterleaks releases are ~12 MB, so
+   *     200 MB has a generous margin while still preventing disk fill)
    */
-  private downloadFile(url: string, dest: string, onProgress: (msg: string) => void): Promise<void> {
+  private downloadFile(
+    url: string,
+    dest: string,
+    onProgress: (msg: string) => void,
+    redirectCount = 0,
+  ): Promise<void> {
+    const MAX_REDIRECTS = 10;
+    const MAX_BYTES = 200 * 1024 * 1024;
+    const REQUEST_TIMEOUT_MS = 60_000;
+
     return new Promise((resolve, reject) => {
       const file = fs.createWriteStream(dest);
 
-      https.get(url, (response) => {
+      const req = https.get(url, (response) => {
         // Follow redirects (HTTPS only — never follow into http://, mailto:, etc.)
         if (response.statusCode === 302 || response.statusCode === 301) {
+          if (redirectCount >= MAX_REDIRECTS) {
+            reject(new Error(`Too many redirects (>${MAX_REDIRECTS}) following ${url}`));
+            return;
+          }
           const redirectUrl = response.headers.location;
           if (!redirectUrl) {
             reject(new Error("Redirect without location"));
@@ -337,7 +375,7 @@ export class BinaryManager {
           }
           file.close();
           fs.unlinkSync(dest);
-          this.downloadFile(resolved.toString(), dest, onProgress).then(resolve).catch(reject);
+          this.downloadFile(resolved.toString(), dest, onProgress, redirectCount + 1).then(resolve).catch(reject);
           return;
         }
 
@@ -347,11 +385,28 @@ export class BinaryManager {
         }
 
         const totalBytes = parseInt(response.headers["content-length"] || "0", 10);
+        if (totalBytes > MAX_BYTES) {
+          reject(new Error(
+            `Download refused: Content-Length ${totalBytes} exceeds cap ${MAX_BYTES} (betterleaks releases are ~12 MB).`
+          ));
+          response.destroy();
+          return;
+        }
+
         let downloadedBytes = 0;
         let lastPercent = 0;
 
         response.on("data", (chunk) => {
           downloadedBytes += chunk.length;
+          if (downloadedBytes > MAX_BYTES) {
+            response.destroy();
+            file.close();
+            try { fs.unlinkSync(dest); } catch { /* already gone */ }
+            reject(new Error(
+              `Download aborted: stream exceeded ${MAX_BYTES} bytes (betterleaks releases are ~12 MB).`
+            ));
+            return;
+          }
           if (totalBytes > 0) {
             const percent = Math.round((downloadedBytes / totalBytes) * 100);
             if (percent > lastPercent && percent % 10 === 0) {
@@ -372,9 +427,15 @@ export class BinaryManager {
           fs.unlinkSync(dest);
           reject(err);
         });
-      }).on("error", (err) => {
+      });
+
+      req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+        req.destroy(new Error(`Download timeout after ${REQUEST_TIMEOUT_MS}ms: ${url}`));
+      });
+
+      req.on("error", (err) => {
         if (fs.existsSync(dest)) {
-          fs.unlinkSync(dest);
+          try { fs.unlinkSync(dest); } catch { /* race */ }
         }
         reject(err);
       });
