@@ -316,10 +316,10 @@ describe("agent scan", () => {
     const r = runCli(`agent scan ${f} --engine patterns --json`, home);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed.length).toBeGreaterThan(0);
-    expect(parsed[0]).toHaveProperty("file");
-    expect(parsed[0]).toHaveProperty("matches");
+    expect(Array.isArray(parsed.results)).toBe(true);
+    expect(parsed.results.length).toBeGreaterThan(0);
+    expect(parsed.results[0]).toHaveProperty("file");
+    expect(parsed.results[0]).toHaveProperty("matches");
   });
 
   it("--format sarif produces SARIF 2.1.0 output", () => {
@@ -364,7 +364,7 @@ describe("agent scan", () => {
     const r = runCli(`agent scan ${tmpDir} --engine patterns --json`, home);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
-    expect(parsed.length).toBeGreaterThan(0);
+    expect(parsed.results.length).toBeGreaterThan(0);
   });
 
   it("emits deprecation warning when invoked as agent scan", () => {
@@ -392,7 +392,7 @@ describe("agent scan", () => {
     const r = runCli(`agent scan ${f} --engine patterns --json --baseline`, home);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
-    expect(parsed.length).toBeGreaterThan(0);
+    expect(parsed.results.length).toBeGreaterThan(0);
   });
 });
 
