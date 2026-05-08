@@ -49,7 +49,7 @@ The skill file ships with the ClawHub-required frontmatter:
 ---
 name: rafter-security
 description: Security toolkit for AI workflows. Use when scanning code...
-version: 0.7.7
+version: 0.7.9
 metadata:
   openclaw:
     skillKey: rafter-security
