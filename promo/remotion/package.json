@@ -1,0 +1,28 @@
+{
+  "name": "rafter-promo-60s",
+  "version": "0.1.0",
+  "private": true,
+  "description": "60s Rafter promo video — Remotion composition. Renders headless via npx remotion render.",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render Promo60-16x9 ../build/promo-60s-raw.mp4",
+    "render:9x16": "remotion render Promo60-9x16 ../build/promo-60s-9x16-raw.mp4",
+    "render:1x1": "remotion render Promo60-1x1 ../build/promo-60s-1x1-raw.mp4",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.380",
+    "@remotion/cli": "4.0.380",
+    "@remotion/media-utils": "4.0.380",
+    "@remotion/zod-types": "4.0.380",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.380",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "typescript": "5.6.3"
+  }
+}

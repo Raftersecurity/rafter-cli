@@ -1,0 +1,10 @@
+.env
+build/
+remotion/public/tape/
+remotion/public/vo/
+remotion/public/music/
+remotion/public/sfx/
+remotion/node_modules/
+remotion/.cache/
+node_modules/
+*.log

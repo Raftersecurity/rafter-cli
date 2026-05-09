@@ -1,0 +1,29 @@
+SUNO PROMPT — Rafter promo bed (60s, instrumental)
+=====================================================
+
+Genre: Cinematic electronic, propulsive but restrained.
+Reference: Mr. Robot main title × Linear product launch reel × Oneohtrix Point Never's Uncut Gems score.
+
+Tempo: 96 BPM, locked.
+Key: A minor.
+Length: exactly 60 seconds.
+Mood: tense → resolute → quietly confident.
+
+Structure (bar-locked):
+  Bar 1–4   (0:00–0:10)  | Sparse: low pulse, single arp, sub bass swell. Tension.
+  Bar 5–8   (0:10–0:20)  | Drums enter on bar 5. Filtered noise riser into bar 6 downbeat (this is the brand-reveal hit).
+  Bar 9–16  (0:20–0:40)  | Steady groove. Wide synths, light percussion. Should feel like progress.
+  Bar 17–20 (0:40–0:50)  | Build. Layer in bright bell melody, light kick swap.
+  Bar 21    (0:50–0:53)  | DROP TO NEAR-SILENCE. Sustained low pad + sub only. This is the "Safely." beat.
+  Bar 22–24 (0:53–1:00)  | Resolution. One clean major-key chord swap, fade out. End on silence at 1:00.
+
+Texture rules:
+  - No vocal samples.
+  - No melodic content above C6 (keep room for VO).
+  - Sub bass roll-off at 30 Hz (broadcast spec).
+  - Stereo width moderate; mono-compatible (audio mixer in social apps).
+  - Avoid genre-stamped sounds (no 808 trap kit, no big-room EDM lead).
+
+Mix target: -16 LUFS integrated (will be ducked under VO and re-mastered to -14 LUFS final).
+
+Negative prompts: vocals, lyrics, lo-fi hip hop, jazz, ukulele, corporate stock, cinematic trailer hits.
