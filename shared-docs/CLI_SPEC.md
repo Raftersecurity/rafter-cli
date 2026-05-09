@@ -816,7 +816,7 @@ Update (or reinstall) the managed betterleaks binary.
 
 ### rafter agent baseline SUBCOMMAND
 
-Manage the findings baseline (allowlist for known findings). Baseline entries suppress matched findings in `scan local --baseline`.
+Manage the findings baseline (allowlist for known findings). Baseline entries suppress matched findings in `rafter secrets --baseline`.
 
 - `rafter agent baseline create [path]` — scan and save all current findings as the baseline
 - `rafter agent baseline show` — show current baseline entries
