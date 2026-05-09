@@ -9,13 +9,13 @@ validating Rafter's secret scanning and command interception.
 
 ```bash
 # Scan with Rafter regex scanner
-rafter scan local ./fixtures/vulnerable-repo
+rafter secrets ./fixtures/vulnerable-repo
 
 # Scan with Betterleaks engine
-rafter scan local ./fixtures/vulnerable-repo --engine betterleaks
+rafter secrets ./fixtures/vulnerable-repo --engine betterleaks
 
 # Scan with built-in patterns engine (tests all 21+ patterns)
-rafter scan local ./fixtures/vulnerable-repo --engine patterns
+rafter secrets ./fixtures/vulnerable-repo --engine patterns
 
 # Expected: 27+ findings across all severity levels
 ```

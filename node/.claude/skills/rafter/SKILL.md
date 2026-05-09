@@ -25,7 +25,7 @@ Pick the branch that matches what you're trying to do. Each branch points at a s
 
 Use this for: "Is this safe to push?", "Check for leaks", "Run a security scan", pre-merge / pre-deploy gating, post-dependency-update checks.
 
-- Local secret scan (fast, no key): `rafter scan local .`
+- Local secret scan (fast, no key): `rafter secrets .`
 - Remote SAST/SCA (needs `RAFTER_API_KEY`): `rafter run` (alias `rafter scan`)
 - **Read `docs/backend.md`** for fast-vs-plus modes, auth, latency, cost.
 - **Read `docs/cli-reference.md`** §`scan` and §`run` for full flag matrix.
@@ -85,7 +85,7 @@ MCP-connected agents: the same surface is exposed as the `rafter://docs` resourc
 ## Fast Path (most common)
 
 ```bash
-rafter scan local .          # secrets, offline, exit 0/1/2
+rafter secrets .             # secrets, offline, exit 0/1/2
 rafter run                   # remote SAST/SCA (auto-detects repo/branch)
 rafter get <scan-id>         # fetch results
 rafter usage                 # check API quota

@@ -6,7 +6,7 @@ When to reach for the Rafter API instead of (or in addition to) the local scanne
 
 | Question | Answer |
 |---|---|
-| "Are there leaked secrets in this diff/repo?" | **Local first** (`rafter scan local .`). Deterministic, offline, sub-second. |
+| "Are there leaked secrets in this diff/repo?" | **Local first** (`rafter secrets .`). Deterministic, offline, sub-second. |
 | "Any SAST issues — SQLi, XSS, insecure deserialization, weak crypto?" | **Remote** (`rafter run`). Needs the backend's analyzers. |
 | "Are my dependencies vulnerable (CVEs)?" | **Remote** — SCA runs server-side. |
 | "I'm in a CI pipeline without a `RAFTER_API_KEY`" | **Local only**. Don't fail the build on a missing key. |
@@ -26,7 +26,7 @@ Private GitHub repos need `RAFTER_GITHUB_TOKEN` (or `--github-token`) so the bac
 
 Check quota with `rafter usage` before firing a batch of scans.
 
-If the key is missing, `rafter run` exits with a clear error — **do not** prompt the user mid-flow; recommend `rafter scan local` and move on.
+If the key is missing, `rafter run` exits with a clear error — **do not** prompt the user mid-flow; recommend `rafter secrets` and move on.
 
 ## Modes
 
@@ -47,7 +47,7 @@ Agentic deep-dive pass on top of fast mode: cross-file reasoning, data-flow hypo
 - **Output**: same JSON shape as fast mode, plus narrative `notes` and higher-confidence chains.
 
 Recommended flow:
-1. `rafter scan local .` — secrets guardrail in dev loop.
+1. `rafter secrets .` — secrets guardrail in dev loop.
 2. `rafter run --mode fast` — every PR in CI.
 3. `rafter run --mode plus` — before release, or when a fast-mode finding needs deeper context.
 

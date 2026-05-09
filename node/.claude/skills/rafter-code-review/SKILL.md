@@ -64,7 +64,7 @@ For: single-finding follow-up, tracing a suspicious call, "is this input reachab
 ## What this skill will NOT do
 
 - It will not generate a monolithic "security audit report". If you need a report, run `rafter run --mode plus` — the backend is better at that.
-- It will not replace automated scanning. Always pair with `rafter scan local .` (secrets) and `rafter run` (SAST/SCA) before review.
+- It will not replace automated scanning. Always pair with `rafter secrets .` (secrets) and `rafter run` (SAST/SCA) before review.
 - It will not produce recommendations without evidence. Every question expects a file:line answer before moving on.
 
 ---
@@ -73,7 +73,7 @@ For: single-finding follow-up, tracing a suspicious call, "is this input reachab
 
 ```bash
 # 1. Run deterministic checks first — cheap, catches the obvious
-rafter scan local .
+rafter secrets .
 rafter run                    # remote SAST/SCA, if RAFTER_API_KEY set
 
 # 2. Then pick the category and walk the questions
