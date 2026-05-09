@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/scanners/file"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/storage"
 )
 
@@ -41,6 +42,18 @@ type Result struct {
 	// this Run, in scan order. The drift watcher uses this to publish
 	// SSE events; CLI callers ignore it.
 	Changes []Change
+
+	// FoundInPruned is the number of FoundIn entries removed from doc
+	// during the post-walk reconciliation pass — paths that previously
+	// held a Secret entry but now match a filter (template env file or
+	// a scan_config.excludes rule) and so should no longer anchor it.
+	FoundInPruned int `json:"found_in_pruned"`
+
+	// SecretsRemoved is the number of Secrets dropped because their
+	// last FoundIn entry was pruned. The Secret has no remaining anchor
+	// on disk and is not surfaceable in the UI; persisting it would
+	// leave a stale row no user could ever resolve.
+	SecretsRemoved int `json:"secrets_removed"`
 }
 
 // Change is the per-secret summary of one Upsert during a scan. It
@@ -82,6 +95,29 @@ func Run(ctx context.Context, doc *storage.Global, cfg storage.ScanConfig) (*Res
 		}
 		walkRoot(ctx, root, roots, excludes, seen, doc, r, now)
 	}
+
+	// Reconciliation: a previous scan may have recorded a FoundIn entry
+	// at a path that the current scan would now filter — either a
+	// template env file (cataloged before the P11 skip filter landed)
+	// or a path under a newly-added exclude rule. Walk the persisted
+	// FoundIn list, collect every path the current filters reject, and
+	// hand them to PruneFoundInPaths so stale rows don't outlive the
+	// rule that produced them.
+	var stale []string
+	for _, s := range doc.Secrets {
+		for _, f := range s.FoundIn {
+			if f.Path == "" {
+				continue
+			}
+			if file.IsTemplateEnvPath(f.Path) || matchExcluded(f.Path, false, excludes) {
+				stale = append(stale, f.Path)
+			}
+		}
+	}
+	if len(stale) > 0 {
+		r.FoundInPruned, r.SecretsRemoved = doc.PruneFoundInPaths(stale)
+	}
+
 	return r, nil
 }
 
