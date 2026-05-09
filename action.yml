@@ -94,9 +94,12 @@ runs:
         echo "${OUTPUT}" >> "$GITHUB_OUTPUT"
         echo "RAFTER_EOF" >> "$GITHUB_OUTPUT"
 
-        # Count findings from output
+        # Count findings from output. rafter ≥0.7.0 wraps results in an object
+        # ({_note, scan_mode, triage_applied, results: [...]}); older versions
+        # emitted a bare array. Handle both so users pinning `version:` to an
+        # older release don't break.
         if [ "${{ inputs.format }}" = "json" ]; then
-          COUNT=$(echo "${OUTPUT}" | jq '[.[].matches[]] | length' 2>/dev/null || echo "0")
+          COUNT=$(echo "${OUTPUT}" | jq '[(if type == "array" then . else .results end) | .[]?.matches[]?] | length' 2>/dev/null || echo "0")
         else
           COUNT=$(echo "${OUTPUT}" | grep -c 'Secret:' 2>/dev/null || echo "0")
         fi
