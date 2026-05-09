@@ -32,8 +32,8 @@ rafter agent init --with-continue      # MCP server
 rafter agent init --with-aider         # MCP server
 rafter agent init --with-openclaw      # Skills
 
-# Also download Gitleaks for enhanced scanning (optional, falls back to built-in 21-pattern regex)
-rafter agent init --with-claude-code --with-gitleaks
+# Also download Betterleaks for enhanced scanning (optional, falls back to built-in 21-pattern regex)
+rafter agent init --with-claude-code --with-betterleaks
 ```
 
 **What init does per platform:**

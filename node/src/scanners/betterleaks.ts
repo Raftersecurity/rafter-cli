@@ -9,7 +9,12 @@ import path from "path";
 
 const execFileAsync = promisify(execFile);
 
-interface GitleaksResult {
+/**
+ * Subset of betterleaks JSON report fields we actually consume.
+ * Git-history-only fields (Commit, Author, Email, Date, Message) are absent
+ * when scanning with the `dir` subcommand, so they're typed optional.
+ */
+interface BetterleaksResult {
   Description: string;
   StartLine: number;
   EndLine: number;
@@ -18,75 +23,93 @@ interface GitleaksResult {
   Match: string;
   Secret: string;
   File: string;
-  SymlinkFile: string;
-  Commit: string;
-  Entropy: number;
-  Author: string;
-  Email: string;
-  Date: string;
-  Message: string;
+  SymlinkFile?: string;
+  Commit?: string;
+  Entropy?: number;
+  Author?: string;
+  Email?: string;
+  Date?: string;
+  Message?: string;
   Tags: string[];
   RuleID: string;
-  Fingerprint: string;
+  Fingerprint?: string;
 }
 
-export interface GitleaksScanResult {
+export interface BetterleaksScanResult {
   file: string;
   matches: PatternMatch[];
 }
 
-export class GitleaksScanner {
+export class BetterleaksScanner {
   private binaryManager: BinaryManager;
+  private resolvedPath: string | null = null;
 
   constructor() {
     this.binaryManager = new BinaryManager();
   }
 
   /**
-   * Check if Gitleaks is available
+   * Resolve the betterleaks binary to use. Prefer the rafter-managed binary at
+   * ~/.rafter/bin/betterleaks; otherwise fall back to one on PATH (e.g. Homebrew).
+   * Cached after first lookup.
    */
-  async isAvailable(): Promise<boolean> {
-    if (!this.binaryManager.isGitleaksInstalled()) {
-      return false;
+  private async resolveBinary(): Promise<string | null> {
+    if (this.resolvedPath !== null) return this.resolvedPath || null;
+    if (this.binaryManager.isBetterleaksInstalled()) {
+      const managed = this.binaryManager.getBetterleaksPath();
+      if (await this.binaryManager.verifyBetterleaks()) {
+        this.resolvedPath = managed;
+        return managed;
+      }
     }
-    return await this.binaryManager.verifyGitleaks();
+    const onPath = this.binaryManager.findBetterleaksOnPath();
+    if (onPath) {
+      const ok = await this.binaryManager.verifyBetterleaksVerbose(onPath);
+      if (ok.ok) {
+        this.resolvedPath = onPath;
+        return onPath;
+      }
+    }
+    this.resolvedPath = "";
+    return null;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return (await this.resolveBinary()) !== null;
   }
 
   /**
-   * Scan a file with Gitleaks
+   * Scan a single file with Betterleaks (uses `dir` subcommand on a single path).
    */
-  async scanFile(filePath: string): Promise<GitleaksScanResult> {
-    if (!await this.isAvailable()) {
-      throw new Error("Gitleaks not available");
+  async scanFile(filePath: string): Promise<BetterleaksScanResult> {
+    const blPath = await this.resolveBinary();
+    if (!blPath) {
+      throw new Error("Betterleaks not available");
     }
 
-    const gitleaksPath = this.binaryManager.getGitleaksPath();
-    const tmpReport = path.join(os.tmpdir(), `gitleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
+    const tmpReport = path.join(os.tmpdir(), `betterleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
 
     try {
-      // Run gitleaks detect on file
+      // `--` ensures a target path beginning with `-` isn't parsed as a flag by betterleaks.
       await execFileAsync(
-        gitleaksPath, ["detect", "--no-git", "-f", "json", "-r", tmpReport, "-s", filePath],
-        { timeout: 30000 }
+        blPath, ["dir", "-f", "json", "--report-path", tmpReport, "--", filePath],
+        { timeout: 60000 }
       );
 
-      // If no leaks found, gitleaks exits 0 with empty report
       if (!fs.existsSync(tmpReport)) {
         return { file: filePath, matches: [] };
       }
 
       const results = this.parseResults(tmpReport);
 
-      // Clean up report
       fs.unlinkSync(tmpReport);
 
-      // Convert to our format
       return {
         file: filePath,
         matches: results.map(r => this.convertToPatternMatch(r))
       };
     } catch (e: any) {
-      // Gitleaks exits with code 1 when leaks found — read report before cleanup
+      // Betterleaks exits with --exit-code (default 1) when leaks found — read report before cleanup
       if (e.code === 1 && fs.existsSync(tmpReport)) {
         const results = this.parseResults(tmpReport);
         fs.unlinkSync(tmpReport);
@@ -97,20 +120,16 @@ export class GitleaksScanner {
         };
       }
 
-      // Clean up report for non-leak errors
       if (fs.existsSync(tmpReport)) {
         fs.unlinkSync(tmpReport);
       }
 
-      throw new Error(`Gitleaks scan failed: ${e.message}`);
+      throw new Error(`Betterleaks scan failed: ${e.message}`);
     }
   }
 
-  /**
-   * Scan multiple files
-   */
-  async scanFiles(filePaths: string[]): Promise<GitleaksScanResult[]> {
-    const results: GitleaksScanResult[] = [];
+  async scanFiles(filePaths: string[]): Promise<BetterleaksScanResult[]> {
+    const results: BetterleaksScanResult[] = [];
 
     for (const filePath of filePaths) {
       try {
@@ -127,28 +146,25 @@ export class GitleaksScanner {
   }
 
   /**
-   * Scan a directory
+   * Scan a directory. With useGit=true, scans git history (`betterleaks git`);
+   * otherwise scans the filesystem (`betterleaks dir`).
    */
-  async scanDirectory(dirPath: string, opts?: { useGit?: boolean }): Promise<GitleaksScanResult[]> {
-    if (!await this.isAvailable()) {
-      throw new Error("Gitleaks not available");
+  async scanDirectory(dirPath: string, opts?: { useGit?: boolean }): Promise<BetterleaksScanResult[]> {
+    const blPath = await this.resolveBinary();
+    if (!blPath) {
+      throw new Error("Betterleaks not available");
     }
 
-    const gitleaksPath = this.binaryManager.getGitleaksPath();
-    const tmpReport = path.join(os.tmpdir(), `gitleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
+    const tmpReport = path.join(os.tmpdir(), `betterleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
+    const subcommand = opts?.useGit ? "git" : "dir";
 
     try {
-      const args = ["detect", "-f", "json", "-r", tmpReport, "-s", dirPath];
-      if (!opts?.useGit) {
-        args.splice(1, 0, "--no-git");
-      }
-      // Run gitleaks detect on directory
+      // `--` ensures a target path beginning with `-` isn't parsed as a flag by betterleaks.
       await execFileAsync(
-        gitleaksPath, args,
+        blPath, [subcommand, "-f", "json", "--report-path", tmpReport, "--", dirPath],
         { timeout: 60000 }
       );
 
-      // No leaks found
       if (!fs.existsSync(tmpReport)) {
         return [];
       }
@@ -156,28 +172,22 @@ export class GitleaksScanner {
       const results = this.parseResults(tmpReport);
       fs.unlinkSync(tmpReport);
 
-      // Group by file
       return this.groupByFile(results);
     } catch (e: any) {
-      // Clean up report
       if (fs.existsSync(tmpReport)) {
         const results = this.parseResults(tmpReport);
         fs.unlinkSync(tmpReport);
 
-        // Gitleaks exits 1 when leaks found
         if (e.code === 1) {
           return this.groupByFile(results);
         }
       }
 
-      throw new Error(`Gitleaks scan failed: ${e.message}`);
+      throw new Error(`Betterleaks scan failed: ${e.message}`);
     }
   }
 
-  /**
-   * Parse Gitleaks JSON report
-   */
-  private parseResults(reportPath: string): GitleaksResult[] {
+  private parseResults(reportPath: string): BetterleaksResult[] {
     try {
       const content = fs.readFileSync(reportPath, "utf-8");
       if (!content.trim()) {
@@ -185,27 +195,23 @@ export class GitleaksScanner {
       }
       const parsed = JSON.parse(content);
       if (!Array.isArray(parsed)) {
-        console.error("[rafter] Warning: Gitleaks output is not an array — possible version mismatch");
+        console.error("[rafter] Warning: Betterleaks output is not an array — possible version mismatch");
         return [];
       }
       return parsed;
     } catch (e) {
-      console.error(`[rafter] Warning: Failed to parse Gitleaks report: ${e instanceof Error ? e.message : e}`);
+      console.error(`[rafter] Warning: Failed to parse Betterleaks report: ${e instanceof Error ? e.message : e}`);
       return [];
     }
   }
 
-  /**
-   * Convert Gitleaks result to our PatternMatch format
-   */
-  private convertToPatternMatch(result: GitleaksResult): PatternMatch {
-    // Map Gitleaks severity to our levels
+  private convertToPatternMatch(result: BetterleaksResult): PatternMatch {
     const severity = this.getSeverity(result.RuleID, result.Tags);
 
     return {
       pattern: {
         name: result.RuleID || result.Description,
-        regex: "", // Gitleaks doesn't expose the regex
+        regex: "",
         severity,
         description: result.Description
       },
@@ -216,13 +222,9 @@ export class GitleaksScanner {
     };
   }
 
-  /**
-   * Determine severity from Gitleaks rule ID and tags
-   */
   private getSeverity(ruleID: string, tags: string[]): "low" | "medium" | "high" | "critical" {
     const lowerID = ruleID.toLowerCase();
 
-    // Critical: Private keys, passwords, database credentials, access tokens
     if (lowerID.includes("private-key") ||
         lowerID.includes("password") ||
         lowerID.includes("database") ||
@@ -233,7 +235,6 @@ export class GitleaksScanner {
       return "critical";
     }
 
-    // High: API keys, generic tokens
     if (lowerID.includes("api-key") ||
         lowerID.includes("-token") ||
         lowerID.startsWith("token-") ||
@@ -241,19 +242,14 @@ export class GitleaksScanner {
       return "high";
     }
 
-    // Medium: Generic secrets
     if (lowerID.includes("generic") ||
         tags.includes("generic")) {
       return "medium";
     }
 
-    // Default to high for safety
     return "high";
   }
 
-  /**
-   * Redact a secret
-   */
   private redact(match: string): string {
     if (match.length <= 8) {
       return "*".repeat(match.length);
@@ -265,10 +261,7 @@ export class GitleaksScanner {
     return start + middle + end;
   }
 
-  /**
-   * Group results by file
-   */
-  private groupByFile(results: GitleaksResult[]): GitleaksScanResult[] {
+  private groupByFile(results: BetterleaksResult[]): BetterleaksScanResult[] {
     const grouped = new Map<string, PatternMatch[]>();
 
     for (const result of results) {

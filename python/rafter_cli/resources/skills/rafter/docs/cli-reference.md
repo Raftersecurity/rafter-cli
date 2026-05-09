@@ -32,11 +32,11 @@ Example: `rafter run --repo myorg/api --branch feature/auth --mode plus --format
 
 ### `rafter secrets [path]`
 
-Local secret scan. Deterministic, offline, no API key. Dual-engine: Gitleaks binary if present, built-in regex fallback (21+ patterns).
+Local secret scan. Deterministic, offline, no API key. Dual-engine: Betterleaks binary if present, built-in regex fallback (21+ patterns).
 
 When: pre-commit, pre-push, fast first pass before remote scan, air-gapped envs.
 
-Useful flags: `--history` (scan git history with Gitleaks), `--format json`, `--quiet`.
+Useful flags: `--history` (scan git history with Betterleaks), `--format json`, `--quiet`.
 
 Example: `rafter secrets . --format json`
 
@@ -80,7 +80,7 @@ Audit a single skill file (SKILL.md). Flags prompt-injection, unbounded tool use
 
 ### `rafter agent status` · `rafter agent verify`
 
-`status`: dump config, hook state, gitleaks availability, audit log location.
+`status`: dump config, hook state, betterleaks availability, audit log location.
 `verify`: sanity-check installation; exit non-zero if anything is broken.
 
 ### `rafter agent init [--with-<platform>]`
@@ -107,9 +107,9 @@ Snapshot current findings so only *new* ones fail future scans.
 
 Emit a ready-to-paste instruction block for an agent's system prompt.
 
-### `rafter agent update-gitleaks`
+### `rafter agent update-betterleaks`
 
-Download / upgrade the Gitleaks binary Rafter uses for local scans.
+Download / upgrade the Betterleaks binary Rafter uses for local scans.
 
 ---
 

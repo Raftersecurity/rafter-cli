@@ -9,7 +9,7 @@ import { createAuditSkillCommand } from "./audit-skill.js";
 import { createInstallHookCommand } from "./install-hook.js";
 import { createVerifyCommand } from "./verify.js";
 import { createStatusCommand } from "./status.js";
-import { createUpdateGitleaksCommand } from "./update-gitleaks.js";
+import { createUpdateBetterleaksCommand } from "./update-betterleaks.js";
 import { createBaselineCommand } from "./baseline.js";
 import { createListCommand } from "./list.js";
 import { createEnableCommand } from "./enable.js";
@@ -30,7 +30,7 @@ export function createAgentCommand(): Command {
   agent.addCommand(createInstallHookCommand());
   agent.addCommand(createVerifyCommand());
   agent.addCommand(createStatusCommand());
-  agent.addCommand(createUpdateGitleaksCommand());
+  agent.addCommand(createUpdateBetterleaksCommand());
   agent.addCommand(createBaselineCommand());
   agent.addCommand(createListCommand());
   agent.addCommand(createEnableCommand());

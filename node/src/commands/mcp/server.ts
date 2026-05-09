@@ -8,7 +8,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { RegexScanner } from "../../scanners/regex-scanner.js";
-import { GitleaksScanner } from "../../scanners/gitleaks.js";
+import { BetterleaksScanner } from "../../scanners/betterleaks.js";
 import { CommandInterceptor } from "../../core/command-interceptor.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
@@ -67,8 +67,8 @@ export function createServer(): Server {
             path: { type: "string", description: "File or directory path to scan" },
             engine: {
               type: "string",
-              enum: ["auto", "gitleaks", "patterns"],
-              description: "Scan engine: auto (default), gitleaks, or patterns",
+              enum: ["auto", "betterleaks", "patterns"],
+              description: "Scan engine: auto (default), betterleaks, or patterns.",
             },
           },
           required: ["path"],
@@ -146,17 +146,17 @@ export function createServer(): Server {
         const scanPath = args?.path as string;
         const engine = (args?.engine as string) || "auto";
 
-        if (engine === "gitleaks" || engine === "auto") {
-          const gitleaks = new GitleaksScanner();
-          if (await gitleaks.isAvailable()) {
+        if (engine === "betterleaks" || engine === "auto") {
+          const bl = new BetterleaksScanner();
+          if (await bl.isAvailable()) {
             try {
-              const results = await gitleaks.scanDirectory(scanPath);
+              const results = await bl.scanDirectory(scanPath);
               return textResult(formatScanResults(results));
             } catch {
-              if (engine === "gitleaks") return errorResult("Gitleaks scan failed");
+              if (engine === "betterleaks") return errorResult("Betterleaks scan failed");
             }
-          } else if (engine === "gitleaks") {
-            return errorResult("Gitleaks not installed");
+          } else if (engine === "betterleaks") {
+            return errorResult("Betterleaks not installed");
           }
         }
 

@@ -38,7 +38,7 @@ rafter secrets --diff main             # only files changed since a ref
 rafter secrets --json .                # JSON output for piping to jq / orchestrators
 
 # Install Rafter into every detected agent platform on this machine
-rafter agent init --all                # also downloads gitleaks binary
+rafter agent init --all                # also downloads betterleaks binary
 rafter agent init --interactive        # prompted setup
 rafter agent init --with-claude-code   # one specific platform
 
@@ -118,7 +118,7 @@ Full schema: [docs.rafter.so/policy](https://docs.rafter.so/policy) (or see `sha
 | Continue.dev | `--with-continue`     | MCP server config                   |
 | Aider        | `--with-aider`        | MCP server config                   |
 
-Plus `--with-gitleaks` to install the upstream Gitleaks binary for higher-recall secret detection (Rafter falls back to 21+ built-in regex patterns if absent).
+Plus `--with-betterleaks` to install the upstream Betterleaks binary (the gitleaks successor) for higher-recall secret detection (Rafter falls back to 21+ built-in regex patterns if absent).
 
 ## MCP Server
 
