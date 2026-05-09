@@ -236,6 +236,138 @@ def _copy_skill_tree(skill_name: str, dest_dir: Path, label: str) -> None:
     rprint(fmt.success(f"Installed {label} skill to {dest_dir}"))
 
 
+def _print_dry_run_plan(
+    *,
+    root: Path,
+    scope: str,
+    want_openclaw: bool,
+    want_claude_code: bool,
+    want_codex: bool,
+    want_gemini: bool,
+    want_cursor: bool,
+    want_windsurf: bool,
+    want_continue: bool,
+    want_aider: bool,
+    want_betterleaks: bool,
+    risk_level: str,
+) -> None:
+    """Print every file path the install would touch — without writing anything (rf-hrtd).
+
+    Lists are derived from the resolved want_* booleans (which already account
+    for --all, --with-*, detection, and --local scope), so the printed plan
+    mirrors what the install path would actually do.
+    """
+    home = Path.home()
+    write_count = 0
+    download_count = 0
+
+    def W(p: Path, note: str = "") -> None:
+        nonlocal write_count
+        write_count += 1
+        suffix = f"   ({note})" if note else ""
+        print(f"  WRITE     {p}{suffix}")
+
+    def D(p: Path, note: str = "") -> None:
+        nonlocal download_count
+        download_count += 1
+        suffix = f"   ({note})" if note else ""
+        print(f"  DOWNLOAD  {p}{suffix}")
+
+    def R(p: Path, note: str = "") -> None:
+        suffix = f"   ({note})" if note else ""
+        print(f"  REMOVE    {p}{suffix}")
+
+    rprint()
+    rprint(fmt.info("DRY RUN — no files will be created or modified."))
+    scope_note = f" (cwd: {root})" if scope == "project" else ""
+    rprint(fmt.info(f"Scope: {scope}{scope_note}"))
+    rprint()
+    rprint(fmt.divider())
+    print("Always:")
+    W(home / ".rafter" / "config.json", f"riskLevel: {risk_level}")
+    W(home / ".rafter" / "bin/", "directory")
+    W(home / ".rafter" / "patterns/", "directory")
+
+    if want_betterleaks:
+        print()
+        print("Betterleaks (--with-betterleaks / --all):")
+        D(home / ".rafter" / "bin" / "betterleaks", "binary, ~12MB from GitHub releases")
+
+    if want_claude_code:
+        print()
+        print("Claude Code (--with-claude-code):")
+        W(root / ".claude" / "settings.json", "PreToolUse + PostToolUse hooks merged")
+        for s in ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"):
+            W(root / ".claude" / "skills" / s / "SKILL.md")
+        W(root / ".claude" / "agents" / "rafter.md", "sub-agent")
+        W(root / ".claude" / "CLAUDE.md", "rafter:start/end marker block")
+        W(root / ".mcp.json", "project-scope MCP config")
+
+    if want_codex:
+        print()
+        print("Codex CLI (--with-codex):")
+        W(root / ".codex" / "hooks.json", "PreToolUse: Bash|apply_patch, PostToolUse: .*")
+        for s in _AGENT_SKILLS:
+            W(root / ".agents" / "skills" / s["name"] / "SKILL.md")
+        agents_md = root / ".codex" / "AGENTS.md" if scope == "user" else root / "AGENTS.md"
+        W(agents_md, "shared with Windsurf when --with-windsurf")
+
+    if want_gemini:
+        print()
+        print("Gemini CLI (--with-gemini):")
+        W(root / ".gemini" / "settings.json", "MCP + BeforeTool/AfterTool hooks")
+        for s in _AGENT_SKILLS:
+            W(root / ".agents" / "skills" / s["name"] / "SKILL.md", "shared with Codex")
+        gemini_md = root / ".gemini" / "GEMINI.md" if scope == "user" else root / "GEMINI.md"
+        W(gemini_md)
+        if scope == "user":
+            print(f"  EXEC      gemini skills link {root / '.agents' / 'skills' / 'rafter'}   (per-skill, runtime registration)")
+
+    if want_cursor:
+        print()
+        print("Cursor (--with-cursor):")
+        W(root / ".cursor" / "hooks.json", "preToolUse + postToolUse + beforeShellExecution")
+        for s in ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"):
+            W(root / ".cursor" / "rules" / f"{s}.mdc")
+        W(root / ".cursor" / "agents" / "rafter.md", "sub-agent (Cursor reads .claude/agents/ too)")
+        W(root / ".cursor" / "mcp.json")
+
+    if want_windsurf:
+        print()
+        print("Windsurf (--with-windsurf):")
+        if scope == "user":
+            W(home / ".codeium" / "windsurf" / "mcp_config.json", "user-scope MCP only")
+        for s in ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"):
+            W(root / ".windsurf" / "rules" / f"{s}.md")
+        W(root / "AGENTS.md", "shared with Codex; idempotent if already written")
+
+    if want_continue:
+        print()
+        print("Continue.dev (--with-continue):")
+        if scope == "user":
+            W(home / ".continue" / "config.json", "MCP entry; preserves existing keys")
+        for s in ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"):
+            W(root / ".continue" / "rules" / f"{s}.md")
+
+    if want_aider:
+        print()
+        print("Aider (--with-aider):")
+        W(root / "RAFTER.md", "rafter:start/end marker block")
+        W(root / ".aider.conf.yml", "appends RAFTER.md to read: list; strips legacy mcp-server-command line")
+
+    if want_openclaw:
+        print()
+        print("OpenClaw (--with-openclaw):")
+        W(home / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md", "ClawHub-shape")
+        R(home / ".openclaw" / "skills" / "rafter-security.md", "legacy file from rafter ≤ 0.7.7, if present")
+
+    rprint()
+    rprint(fmt.divider())
+    rprint(fmt.info(f"Plan: {write_count} write{'s' if write_count != 1 else ''}, {download_count} download{'s' if download_count != 1 else ''}."))
+    rprint(fmt.info("Re-run without --dry-run to apply."))
+    rprint()
+
+
 def _install_skills_to(skills_dir: Path) -> None:
     """Install all _AGENT_SKILLS into <skills_dir>, including any docs/ trees."""
     skills_dir.mkdir(parents=True, exist_ok=True)
@@ -877,6 +1009,11 @@ def init(
             "Supported for Claude Code, Codex, Gemini, Cursor. Other platforms are skipped in local mode."
         ),
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print every file path that would be created, modified, or downloaded — without making any changes (rf-hrtd).",
+    ),
 ):
     """Initialize agent security system."""
     rprint(fmt.header("Rafter Agent Security Setup"))
@@ -965,6 +1102,26 @@ def init(
             rprint(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
         if want_aider and not has_aider:
             rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
+
+    # --dry-run: print every file path the command would touch, then exit
+    # before any filesystem write happens (rf-hrtd). Built from the same
+    # resolved want_* / has_* booleans the install path uses.
+    if dry_run:
+        _print_dry_run_plan(
+            root=root,
+            scope=scope,
+            want_openclaw=want_openclaw and has_openclaw,
+            want_claude_code=want_claude_code and (has_claude_code or local),
+            want_codex=want_codex and (has_codex or local),
+            want_gemini=want_gemini and (has_gemini or local),
+            want_cursor=want_cursor and (has_cursor or local),
+            want_windsurf=want_windsurf and (has_windsurf or local),
+            want_continue=want_continue and (has_continue_dev or local),
+            want_aider=want_aider and (has_aider or local),
+            want_betterleaks=want_betterleaks,
+            risk_level=risk_level,
+        )
+        return
 
     # Initialize
     manager.initialize()

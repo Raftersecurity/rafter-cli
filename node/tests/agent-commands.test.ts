@@ -243,6 +243,48 @@ describe("agent init", () => {
     expect(cfg).toHaveProperty("version");
   });
 
+  // ── --dry-run (rf-hrtd) ────────────────────────────────────────────
+
+  it("--dry-run prints a plan and writes no files (rf-hrtd)", () => {
+    const r = runCli("agent init --local --all --dry-run", home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("DRY RUN");
+    expect(r.stdout).toContain("Plan:");
+    expect(r.stdout).toContain("Re-run without --dry-run to apply.");
+
+    // No agent install dirs should exist after dry-run.
+    for (const dir of [".claude", ".codex", ".cursor", ".gemini", ".windsurf", ".continue", ".agents", ".mcp.json", "AGENTS.md", "RAFTER.md", "GEMINI.md", "CLAUDE.md"]) {
+      expect(
+        fs.existsSync(path.join(home, dir)),
+        `${dir} should NOT exist after --dry-run`,
+      ).toBe(false);
+    }
+    // Even ~/.rafter/config.json — the always-write — must NOT land.
+    expect(fs.existsSync(path.join(home, ".rafter", "config.json"))).toBe(false);
+  });
+
+  it("--dry-run lists all 8 platform sections under --local --all", () => {
+    const r = runCli("agent init --local --all --dry-run", home);
+    expect(r.exitCode).toBe(0);
+    // Each section header should appear.
+    expect(r.stdout).toContain("Claude Code (--with-claude-code):");
+    expect(r.stdout).toContain("Codex CLI (--with-codex):");
+    expect(r.stdout).toContain("Gemini CLI (--with-gemini):");
+    expect(r.stdout).toContain("Cursor (--with-cursor):");
+    expect(r.stdout).toContain("Windsurf (--with-windsurf):");
+    expect(r.stdout).toContain("Continue.dev (--with-continue):");
+    expect(r.stdout).toContain("Aider (--with-aider):");
+    // OpenClaw is user-scope only and skipped under --local.
+    expect(r.stdout).not.toContain("OpenClaw (--with-openclaw):");
+  });
+
+  it("--dry-run with --with-betterleaks lists the binary download", () => {
+    const r = runCli("agent init --with-betterleaks --dry-run", home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("DOWNLOAD");
+    expect(r.stdout).toContain("betterleaks");
+  });
+
   it("--with-claude-code installs hooks into settings.json", () => {
     // init only installs Claude Code integrations when ~/.claude/ exists
     // (it's gated on environment detection) — pre-create it.
