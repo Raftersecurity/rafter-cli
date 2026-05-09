@@ -406,6 +406,68 @@ class TestOptInGating:
         assert not (tmp_path / "RAFTER.md").exists()
 
 
+# ── --dry-run (rf-hrtd) ──────────────────────────────────────────────
+
+
+class TestDryRun:
+    """rf-hrtd — `rafter agent init --dry-run` prints a plan without writing."""
+
+    def test_writes_no_files_under_local_all(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--local", "--all", "--dry-run"])
+        assert result.exit_code == 0
+        assert "DRY RUN" in result.stdout
+        assert "Plan:" in result.stdout
+        assert "Re-run without --dry-run to apply." in result.stdout
+
+        for sub in (".claude", ".codex", ".cursor", ".gemini", ".windsurf", ".continue", ".agents", ".mcp.json", "AGENTS.md", "RAFTER.md", "GEMINI.md", "CLAUDE.md"):
+            assert not (tmp_path / sub).exists(), f"{sub} should NOT exist after --dry-run"
+        # Even ~/.rafter/config.json (always-write) must not land.
+        assert not (tmp_path / ".rafter" / "config.json").exists()
+
+    def test_lists_all_platform_sections_under_local_all(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--local", "--all", "--dry-run"])
+        assert result.exit_code == 0
+        for header in (
+            "Claude Code (--with-claude-code):",
+            "Codex CLI (--with-codex):",
+            "Gemini CLI (--with-gemini):",
+            "Cursor (--with-cursor):",
+            "Windsurf (--with-windsurf):",
+            "Continue.dev (--with-continue):",
+            "Aider (--with-aider):",
+        ):
+            assert header in result.stdout, f"missing section: {header}"
+        # OpenClaw is user-scope only and skipped under --local.
+        assert "OpenClaw (--with-openclaw):" not in result.stdout
+
+    def test_with_betterleaks_lists_binary_download(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--with-betterleaks", "--dry-run"])
+        assert result.exit_code == 0
+        assert "DOWNLOAD" in result.stdout
+        assert "betterleaks" in result.stdout
+
+
 # ── Codex skill installation tests ───────────────────────────────────
 
 from rafter_cli.commands.agent import _install_codex_skills

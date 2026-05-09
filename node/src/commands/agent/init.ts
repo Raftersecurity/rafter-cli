@@ -31,6 +31,151 @@ const AGENT_SKILLS: { name: string; description: string }[] = [
 ];
 
 /**
+ * Print every file path the install would touch — without writing anything.
+ *
+ * Lists are derived from the resolved want* booleans (which already account
+ * for --all, --with-*, detection, and --local scope), so the printed plan
+ * mirrors exactly what the install path would do. Implements rf-hrtd.
+ */
+function printDryRunPlan(plan: {
+  root: string;
+  scope: "user" | "project";
+  wantOpenClaw: boolean;
+  wantClaudeCode: boolean;
+  wantCodex: boolean;
+  wantGemini: boolean;
+  wantCursor: boolean;
+  wantWindsurf: boolean;
+  wantContinue: boolean;
+  wantAider: boolean;
+  wantBetterleaks: boolean;
+  riskLevel: string;
+}): void {
+  const home = os.homedir();
+  let writeCount = 0;
+  let downloadCount = 0;
+
+  const W = (p: string, note?: string) => {
+    writeCount++;
+    console.log(`  WRITE     ${p}${note ? `   (${note})` : ""}`);
+  };
+  const D = (p: string, note?: string) => {
+    downloadCount++;
+    console.log(`  DOWNLOAD  ${p}${note ? `   (${note})` : ""}`);
+  };
+  const R = (p: string, note?: string) => {
+    console.log(`  REMOVE    ${p}${note ? `   (${note})` : ""}`);
+  };
+
+  console.log();
+  console.log(fmt.info("DRY RUN — no files will be created or modified."));
+  console.log(fmt.info(`Scope: ${plan.scope}${plan.scope === "project" ? ` (cwd: ${plan.root})` : ""}`));
+  console.log();
+  console.log(fmt.divider());
+  console.log("Always:");
+  W(path.join(home, ".rafter", "config.json"), `riskLevel: ${plan.riskLevel}`);
+  W(path.join(home, ".rafter", "bin/"), "directory");
+  W(path.join(home, ".rafter", "patterns/"), "directory");
+
+  if (plan.wantBetterleaks) {
+    console.log();
+    console.log("Betterleaks (--with-betterleaks / --all):");
+    D(path.join(home, ".rafter", "bin", "betterleaks"), "binary, ~12MB from GitHub releases");
+  }
+
+  if (plan.wantClaudeCode) {
+    console.log();
+    console.log("Claude Code (--with-claude-code):");
+    W(path.join(plan.root, ".claude", "settings.json"), "PreToolUse + PostToolUse hooks merged");
+    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+      W(path.join(plan.root, ".claude", "skills", s, "SKILL.md"));
+    }
+    W(path.join(plan.root, ".claude", "agents", "rafter.md"), "sub-agent");
+    W(path.join(plan.root, ".claude", "CLAUDE.md"), "rafter:start/end marker block");
+    W(path.join(plan.root, ".mcp.json"), "project-scope MCP config");
+  }
+
+  if (plan.wantCodex) {
+    console.log();
+    console.log("Codex CLI (--with-codex):");
+    W(path.join(plan.root, ".codex", "hooks.json"), "PreToolUse: Bash|apply_patch, PostToolUse: .*");
+    for (const s of AGENT_SKILLS) {
+      W(path.join(plan.root, ".agents", "skills", s.name, "SKILL.md"));
+    }
+    const agentsMd = plan.scope === "user" ? path.join(plan.root, ".codex", "AGENTS.md") : path.join(plan.root, "AGENTS.md");
+    W(agentsMd, "shared with Windsurf when --with-windsurf");
+  }
+
+  if (plan.wantGemini) {
+    console.log();
+    console.log("Gemini CLI (--with-gemini):");
+    W(path.join(plan.root, ".gemini", "settings.json"), "MCP + BeforeTool/AfterTool hooks");
+    for (const s of AGENT_SKILLS) {
+      W(path.join(plan.root, ".agents", "skills", s.name, "SKILL.md"), "shared with Codex");
+    }
+    const geminiMd = plan.scope === "user" ? path.join(plan.root, ".gemini", "GEMINI.md") : path.join(plan.root, "GEMINI.md");
+    W(geminiMd);
+    if (plan.scope === "user") {
+      console.log(`  EXEC      gemini skills link ${path.join(plan.root, ".agents", "skills", "rafter")}   (per-skill, runtime registration)`);
+    }
+  }
+
+  if (plan.wantCursor) {
+    console.log();
+    console.log("Cursor (--with-cursor):");
+    W(path.join(plan.root, ".cursor", "hooks.json"), "preToolUse + postToolUse + beforeShellExecution");
+    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+      W(path.join(plan.root, ".cursor", "rules", `${s}.mdc`));
+    }
+    W(path.join(plan.root, ".cursor", "agents", "rafter.md"), "sub-agent (Cursor reads .claude/agents/ too)");
+    W(path.join(plan.root, ".cursor", "mcp.json"));
+  }
+
+  if (plan.wantWindsurf) {
+    console.log();
+    console.log("Windsurf (--with-windsurf):");
+    if (plan.scope === "user") {
+      W(path.join(home, ".codeium", "windsurf", "mcp_config.json"), "user-scope MCP only");
+    }
+    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+      W(path.join(plan.root, ".windsurf", "rules", `${s}.md`));
+    }
+    W(path.join(plan.root, "AGENTS.md"), "shared with Codex; idempotent if already written");
+  }
+
+  if (plan.wantContinue) {
+    console.log();
+    console.log("Continue.dev (--with-continue):");
+    if (plan.scope === "user") {
+      W(path.join(home, ".continue", "config.json"), "MCP entry; preserves existing keys");
+    }
+    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+      W(path.join(plan.root, ".continue", "rules", `${s}.md`));
+    }
+  }
+
+  if (plan.wantAider) {
+    console.log();
+    console.log("Aider (--with-aider):");
+    W(path.join(plan.root, "RAFTER.md"), "rafter:start/end marker block");
+    W(path.join(plan.root, ".aider.conf.yml"), "appends RAFTER.md to read: list; strips legacy mcp-server-command line");
+  }
+
+  if (plan.wantOpenClaw) {
+    console.log();
+    console.log("OpenClaw (--with-openclaw):");
+    W(path.join(home, ".openclaw", "workspace", "skills", "rafter-security", "SKILL.md"), "ClawHub-shape");
+    R(path.join(home, ".openclaw", "skills", "rafter-security.md"), "legacy file from rafter ≤ 0.7.7, if present");
+  }
+
+  console.log();
+  console.log(fmt.divider());
+  console.log(fmt.info(`Plan: ${writeCount} write${writeCount === 1 ? "" : "s"}, ${downloadCount} download${downloadCount === 1 ? "" : "s"}.`));
+  console.log(fmt.info("Re-run without --dry-run to apply."));
+  console.log();
+}
+
+/**
  * Install instruction files for platforms that support them, at either user
  * or project scope.
  *
@@ -901,6 +1046,10 @@ export function createInitCommand(): Command {
       "Install integration configs project-locally (in CWD) instead of user-globally. " +
       "Supported for Claude Code, Codex, Gemini, Cursor. Other platforms are skipped in local mode.",
     )
+    .option(
+      "--dry-run",
+      "Print every file path that would be created, modified, or downloaded — without making any changes (rf-hrtd).",
+    )
     .action(async (opts) => {
       console.log(fmt.header("Rafter Agent Security Setup"));
       console.log(fmt.divider());
@@ -997,6 +1146,28 @@ export function createInitCommand(): Command {
         if (wantWindsurf && !hasWindsurf) console.log(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
         if (wantContinue && !hasContinueDev) console.log(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
         if (wantAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
+      }
+
+      // --dry-run: print every file path the command would touch, then
+      // exit before any filesystem write happens (rf-hrtd). The plan is
+      // built from the SAME resolved want* / has* booleans the install
+      // path uses, so the listing mirrors what would actually run.
+      if (opts.dryRun) {
+        printDryRunPlan({
+          root,
+          scope,
+          wantOpenClaw: wantOpenClaw && (hasOpenClaw),
+          wantClaudeCode: wantClaudeCode && (hasClaudeCode || opts.local),
+          wantCodex: wantCodex && (hasCodex || opts.local),
+          wantGemini: wantGemini && (hasGemini || opts.local),
+          wantCursor: wantCursor && (hasCursor || opts.local),
+          wantWindsurf: wantWindsurf && (hasWindsurf || opts.local),
+          wantContinue: wantContinue && (hasContinueDev || opts.local),
+          wantAider: wantAider && (hasAider || opts.local),
+          wantBetterleaks,
+          riskLevel: opts.riskLevel,
+        });
+        return;
       }
 
       // Initialize directory structure

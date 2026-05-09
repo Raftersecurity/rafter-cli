@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`rafter agent init --dry-run`** (Node + Python, rf-hrtd). Prints every file path the command would create, modify, or download — without making any changes. Lists the always-written `~/.rafter/config.json` and bin/patterns dirs, then per-enabled-platform sections (Claude Code, Codex, Gemini, Cursor, Windsurf, Continue.dev, Aider, OpenClaw) with file paths and short notes about what each write contains. Optional Betterleaks binary download is listed as `DOWNLOAD`. The plan is built from the same resolved `want_*` / `has_*` booleans the install path uses, so the listing mirrors what would actually run. Three new Node tests + three new Python tests confirm `--dry-run` writes nothing (not even the always-create `~/.rafter/config.json`) and lists every section under `--local --all`. Closes the rf-v85b P0-1 review concern: security-conscious adopters can preview every edit before accepting.
+
 - **ClawHub auto-publish on release** (CI). `.github/workflows/publish.yml` now runs `clawhub skill publish` against the rafter-security SKILL.md after every `prod`-branch deploy. Skips on forks (gated on `secrets.CLAWHUB_TOKEN`); fails loudly on auth or publish errors on the canonical repo. `validate-release.yml` was extended to enforce that `version:` in both Node and Python copies of `rafter-security-skill.md` matches the package version — drift would silently ship a stale ClawHub release. OpenClaw users can now install rafter via `clawhub skill install rafter-security` as an alternative to `rafter agent init --with-openclaw`.
 
 ## [0.7.9] - 2026-05-08
