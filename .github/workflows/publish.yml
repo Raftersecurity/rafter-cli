@@ -226,7 +226,7 @@ jobs:
           # fails (intentional — bumps must come with a version change).
           npx -y clawhub@latest skill publish /tmp/rafter-skill/rafter-security \
             --version "${{ needs.publish-node.outputs.version }}" \
-            --owner raftersecurity
+            --owner rafter
 
       - name: Verify the publish landed
         if: steps.gate.outputs.skip != 'true'
