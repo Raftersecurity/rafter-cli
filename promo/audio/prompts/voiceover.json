@@ -1,0 +1,23 @@
+{
+  "voice": "Brian",
+  "model": "eleven_v3",
+  "settings": {
+    "stability": 0.45,
+    "similarity_boost": 0.75,
+    "style": 0.25,
+    "use_speaker_boost": true
+  },
+  "delivery_notes": "Conversational, low-affect, slightly dry. Not hype-voice. Pause naturally on the marked beats. Land the final 'Safely.' soft, not punched.",
+  "lines": [
+    { "id": "L01", "start": 0.0,  "end": 4.0,  "text": "Your AI agent just leaked a key." },
+    { "id": "L02", "start": 5.0,  "end": 12.0, "text": "Rafter would've caught it — in the pre-commit hook, before the push, before the bill." },
+    { "id": "L03", "start": 13.0, "end": 17.5, "text": "Rafter is the security primitive for AI-first dev." },
+    { "id": "L04", "start": 18.0, "end": 25.5, "text": "We're built by agents. Shipped at agent velocity. Dogfooded on every commit you're watching." },
+    { "id": "L05", "start": 26.0, "end": 29.5, "text": "One CLI, eight platforms — Claude Code, Cursor, Codex, Gemini, Windsurf, and the rest. Same scan. Same contract." },
+    { "id": "L06", "start": 30.0, "end": 37.5, "text": "Audit third-party skills before they run. Block destructive commands by policy. Sign every event into a tamper-evident log." },
+    { "id": "L07", "start": 38.0, "end": 45.0, "text": "Your agents get guardrails. For free. Local-only. No telemetry." },
+    { "id": "L08", "start": 46.0, "end": 49.5, "text": "Scale up to remote SAST, SCA, and agentic analysis when you need it." },
+    { "id": "L09", "start": 50.0, "end": 54.0, "text": "Become AI-first. Safely." },
+    { "id": "L10", "start": 55.0, "end": 58.5, "text": "Rafter. rafter dot s o." }
+  ]
+}

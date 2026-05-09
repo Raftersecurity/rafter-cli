@@ -1,0 +1,42 @@
+[
+  {
+    "name": "keyclack-01.wav",
+    "purpose": "Beat 1-3 typing — randomized layer",
+    "url": "https://cdn.freesound.org/previews/378/378085_7060836-lq.mp3",
+    "freesound_id": 378085,
+    "license": "CC0",
+    "sha256": "PENDING-FIRST-FETCH"
+  },
+  {
+    "name": "keyclack-02.wav",
+    "purpose": "Beat 1-3 typing — randomized layer",
+    "url": "https://cdn.freesound.org/previews/270/270156_5123851-lq.mp3",
+    "freesound_id": 270156,
+    "license": "CC0",
+    "sha256": "PENDING-FIRST-FETCH"
+  },
+  {
+    "name": "thunk-block.wav",
+    "purpose": "Beat 4 — pre-commit hook blocks",
+    "url": "https://cdn.freesound.org/previews/411/411642_6486197-lq.mp3",
+    "freesound_id": 411642,
+    "license": "CC0",
+    "sha256": "PENDING-FIRST-FETCH"
+  },
+  {
+    "name": "ding-allclear.wav",
+    "purpose": "Beat 12 — chain ok ✓",
+    "url": "https://cdn.freesound.org/previews/411/411089_5121236-lq.mp3",
+    "freesound_id": 411089,
+    "license": "CC0",
+    "sha256": "PENDING-FIRST-FETCH"
+  },
+  {
+    "name": "riser-brand-reveal.wav",
+    "purpose": "Beat 5 — filtered noise riser into brand lockup",
+    "url": "https://cdn.freesound.org/previews/385/385811_6797828-lq.mp3",
+    "freesound_id": 385811,
+    "license": "CC0",
+    "sha256": "PENDING-FIRST-FETCH"
+  }
+]
