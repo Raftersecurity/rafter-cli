@@ -181,6 +181,46 @@ func (g *Global) MarkRotated(id string, now time.Time) bool {
 	return false
 }
 
+// PruneFoundInPaths removes any FoundIn entries whose Path appears in
+// paths. A Secret whose FoundIn list becomes empty as a result is
+// removed from g.Secrets entirely; it has no remaining anchor to a
+// real source on disk and would otherwise persist as an orphan.
+//
+// Returns (foundInRemoved, secretsRemoved). Keystore-source FoundIn
+// entries (Path == "") are never touched.
+func (g *Global) PruneFoundInPaths(paths []string) (foundInRemoved, secretsRemoved int) {
+	if len(paths) == 0 || len(g.Secrets) == 0 {
+		return 0, 0
+	}
+	pathSet := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		pathSet[p] = struct{}{}
+	}
+
+	kept := make([]Secret, 0, len(g.Secrets))
+	for i := range g.Secrets {
+		s := g.Secrets[i]
+		filtered := s.FoundIn[:0]
+		for _, f := range s.FoundIn {
+			if f.Path != "" {
+				if _, hit := pathSet[f.Path]; hit {
+					foundInRemoved++
+					continue
+				}
+			}
+			filtered = append(filtered, f)
+		}
+		s.FoundIn = filtered
+		if len(s.FoundIn) == 0 {
+			secretsRemoved++
+			continue
+		}
+		kept = append(kept, s)
+	}
+	g.Secrets = kept
+	return foundInRemoved, secretsRemoved
+}
+
 // upsertKey returns a stable key identifying a FoundIn for drift
 // purposes. File-based FoundIn are keyed by Path; keystore FoundIn are
 // keyed by (Keystore, Service, Account). Two FoundIn with the same

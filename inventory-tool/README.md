@@ -84,6 +84,30 @@ on launch when `ScanConfig.Roots` is empty.
 
 The keystore reader lands in subsequent commits.
 
+## What v1 scans
+
+- `.env`, `.envrc`, and per-environment files like `.env.local` and
+  `.env.production` — every KEY=VALUE pair becomes a candidate Secret.
+- `~/.aws/credentials`, `~/.npmrc`, `~/.docker/config.json`, `~/.config/gh/hosts.yml`,
+  `~/.claude/settings.json`.
+- Shell rc files: `.zshrc`, `.bashrc`, `.profile`, `.zshenv`, `.bash_profile`.
+
+## What v1 does NOT scan
+
+- **Documentation-template env files.** Files whose basename matches
+  `.env.<...>.example`, `.sample`, `.template`, `.tmpl`, `.dist`, or `.dummy`
+  (case-insensitive) are skipped by the file scanner — they hold placeholder
+  values like `YOUR_API_KEY` by convention, and cataloging them as real
+  secrets drowns the actual signal. `.env`, `.env.local`, `.env.production`,
+  and `.envrc` are unaffected.
+  Each `scan.Run` also reconciles previously-recorded FoundIn entries: if a
+  past scan cataloged a `.env.example` (before this filter landed) or a path
+  that now matches a `scan_config.excludes` rule, the FoundIn entry is
+  pruned, and any Secret left without a single anchor on disk is removed.
+- OS keystores (macOS Keychain, Linux Secret Service) — landing after
+  `rafter-secure-design`.
+- Source code — landing after `betterleaks` lands in raftercli.
+
 ## Hard rules (carried in from the spec)
 
 - **Zero mutations to `.env` files in any code path.** Ever. The audit surface
