@@ -243,7 +243,7 @@ Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-c
 ```yaml
 repos:
   - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.7.1
+    rev: v0.7.9
     hooks:
       - id: rafter-scan-node
 ```
@@ -430,7 +430,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.7.1
+    rev: v0.7.9
     hooks:
       - id: rafter-scan-node      # auto-installs via npm
       # - id: rafter-scan-python  # auto-installs via pip
