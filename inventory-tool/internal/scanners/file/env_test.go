@@ -181,6 +181,168 @@ func TestEnvParser_BadFileGracefulError(t *testing.T) {
 	}
 }
 
+// Template-env skip tests (rf-sq72): trove must not catalog placeholder values
+// from documentation-by-convention env files (.env.example, .env.sample, etc.).
+// The filter is suffix-based on the lowercased basename and applies regardless
+// of how many segments sit between `.env` and the trailing template suffix.
+
+func TestEnvParser_SkipsExampleSuffix(t *testing.T) {
+	p := writeFixture(t, ".env.example", "YOUR_API_KEY=placeholder\n", 0o644)
+	out, err := ScanEnvFile(p)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(out) != 0 {
+		t.Errorf(".env.example: len(out) = %d, want 0", len(out))
+	}
+}
+
+func TestEnvParser_SkipsSampleSuffix(t *testing.T) {
+	p := writeFixture(t, ".env.sample", "TOKEN=sk-PLACEHOLDER\n", 0o644)
+	out, err := ScanEnvFile(p)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(out) != 0 {
+		t.Errorf(".env.sample: len(out) = %d, want 0", len(out))
+	}
+}
+
+func TestEnvParser_SkipsTemplateSuffix(t *testing.T) {
+	p := writeFixture(t, ".env.template", "DB_URL=postgres://USER:PASS@host/db\n", 0o644)
+	out, err := ScanEnvFile(p)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(out) != 0 {
+		t.Errorf(".env.template: len(out) = %d, want 0", len(out))
+	}
+}
+
+func TestEnvParser_SkipsLocalExampleSuffix(t *testing.T) {
+	p := writeFixture(t, ".env.local.example", "FOO=bar\n", 0o644)
+	out, err := ScanEnvFile(p)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(out) != 0 {
+		t.Errorf(".env.local.example: len(out) = %d, want 0", len(out))
+	}
+}
+
+func TestEnvParser_SkipsDistSuffix(t *testing.T) {
+	p := writeFixture(t, ".env.dist", "FOO=bar\n", 0o644)
+	out, err := ScanEnvFile(p)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(out) != 0 {
+		t.Errorf(".env.dist: len(out) = %d, want 0", len(out))
+	}
+}
+
+func TestEnvParser_SkipsTmplSuffix(t *testing.T) {
+	p := writeFixture(t, ".env.tmpl", "FOO=bar\n", 0o644)
+	out, err := ScanEnvFile(p)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(out) != 0 {
+		t.Errorf(".env.tmpl: len(out) = %d, want 0", len(out))
+	}
+}
+
+func TestEnvParser_SkipsDummySuffix(t *testing.T) {
+	p := writeFixture(t, ".env.dummy", "FOO=bar\n", 0o644)
+	out, err := ScanEnvFile(p)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(out) != 0 {
+		t.Errorf(".env.dummy: len(out) = %d, want 0", len(out))
+	}
+}
+
+func TestEnvParser_CaseInsensitive(t *testing.T) {
+	for _, name := range []string{".env.Example", ".env.SAMPLE"} {
+		p := writeFixture(t, name, "FOO=bar\n", 0o644)
+		out, err := ScanEnvFile(p)
+		if err != nil {
+			t.Fatalf("%s: err = %v, want nil", name, err)
+		}
+		if len(out) != 0 {
+			t.Errorf("%s: len(out) = %d, want 0 (case-insensitive)", name, len(out))
+		}
+	}
+}
+
+func TestEnvParser_DoesNotSkipRealEnv(t *testing.T) {
+	// .env, .env.local, .env.production are real per-environment files —
+	// the values inside are real secrets and must be cataloged. Only the
+	// documentation-template suffixes are skipped.
+	for _, name := range []string{".env", ".env.local", ".env.production"} {
+		p := writeFixture(t, name, "REAL_KEY=real-value\n", 0o600)
+		out, err := ScanEnvFile(p)
+		if err != nil {
+			t.Fatalf("%s: err = %v, want nil", name, err)
+		}
+		if len(out) != 1 {
+			t.Errorf("%s: len(out) = %d, want 1 (not a template)", name, len(out))
+		}
+	}
+}
+
+func TestEnvParser_DoesNotSkipEnvrc(t *testing.T) {
+	// .envrc is a direnv config file — basename does not start with `.env.`
+	// so the template filter must leave it alone.
+	p := writeFixture(t, ".envrc", "export FOO=bar\n", 0o600)
+	out, err := ScanEnvFile(p)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(out) != 1 {
+		t.Errorf(".envrc: len(out) = %d, want 1 (not a template)", len(out))
+	}
+}
+
+func TestIsTemplateEnvPath(t *testing.T) {
+	hits := []string{
+		".env.example",
+		".env.sample",
+		".env.template",
+		".env.tmpl",
+		".env.local.example",
+		".env.dist",
+		".env.dummy",
+		".env.Example",
+		".env.SAMPLE",
+		"/abs/path/.env.example",
+		"deep/nested/.env.local.template",
+	}
+	for _, p := range hits {
+		if !IsTemplateEnvPath(p) {
+			t.Errorf("IsTemplateEnvPath(%q) = false, want true", p)
+		}
+	}
+	misses := []string{
+		".env",
+		".env.local",
+		".env.production",
+		".envrc",
+		"foo.example",
+		"envsample",
+		".envsample", // no dot between env and suffix
+		"/abs/.env",
+		"",
+		"config.json",
+	}
+	for _, p := range misses {
+		if IsTemplateEnvPath(p) {
+			t.Errorf("IsTemplateEnvPath(%q) = true, want false", p)
+		}
+	}
+}
+
 func TestEnvParser_MissingFileNoError(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "does-not-exist.env")
 	out, err := ScanEnvFile(p)

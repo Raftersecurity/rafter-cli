@@ -245,6 +245,100 @@ func TestScan_NeverWritesAnyFile(t *testing.T) {
 	}
 }
 
+func TestScan_PruneFoundInForFilteredPaths(t *testing.T) {
+	// rf-sq72: pre-populate the store with a Secret that has FoundIn at both
+	// a real .env and a .env.example. After scan, only the real .env FoundIn
+	// survives — the template-env entry is reconciled away.
+	tmp := t.TempDir()
+	realEnv := filepath.Join(tmp, ".env")
+	example := filepath.Join(tmp, ".env.example")
+	writeFile(t, realEnv, "API_KEY=real-secret-value\n")
+	writeFile(t, example, "API_KEY=YOUR_API_KEY_HERE\n")
+
+	doc := storage.Empty()
+	now := time.Now().UTC()
+	// Stage S so it has both FoundIn entries upfront. The fingerprint is
+	// computed against the real value so the rescan refreshes the .env entry
+	// rather than creating a new secret.
+	doc.Upsert(storage.Upsertable{
+		KeyName: "API_KEY",
+		Value:   "real-secret-value",
+		Found: storage.FoundIn{
+			SourceType: storage.SourceEnvFile,
+			Path:       realEnv,
+			Line:       1,
+		},
+		Now: now,
+	})
+	doc.Upsert(storage.Upsertable{
+		KeyName: "API_KEY",
+		Value:   "real-secret-value",
+		Found: storage.FoundIn{
+			SourceType: storage.SourceEnvFile,
+			Path:       example,
+			Line:       1,
+		},
+		Now: now,
+	})
+	if len(doc.Secrets) != 1 || len(doc.Secrets[0].FoundIn) != 2 {
+		t.Fatalf("setup: want 1 secret with 2 FoundIn, got %+v", doc.Secrets)
+	}
+
+	r := runScan(t, doc, []string{tmp}, nil)
+
+	if len(doc.Secrets) != 1 {
+		t.Fatalf("after scan: len(Secrets) = %d, want 1", len(doc.Secrets))
+	}
+	s := doc.Secrets[0]
+	if len(s.FoundIn) != 1 {
+		t.Fatalf("FoundIn = %+v, want only the real .env entry", s.FoundIn)
+	}
+	if s.FoundIn[0].Path != realEnv {
+		t.Errorf("FoundIn[0].Path = %q, want %q", s.FoundIn[0].Path, realEnv)
+	}
+	if r.FoundInPruned != 1 {
+		t.Errorf("Result.FoundInPruned = %d, want 1", r.FoundInPruned)
+	}
+	if r.SecretsRemoved != 0 {
+		t.Errorf("Result.SecretsRemoved = %d, want 0 (real .env still there)", r.SecretsRemoved)
+	}
+}
+
+func TestScan_RemoveSecretIfAllFoundInFiltered(t *testing.T) {
+	// rf-sq72: if a Secret's only FoundIn was a template env file, the
+	// reconciliation pass removes the FoundIn AND the now-orphan Secret.
+	tmp := t.TempDir()
+	example := filepath.Join(tmp, ".env.example")
+	writeFile(t, example, "API_KEY=YOUR_API_KEY_HERE\n")
+
+	doc := storage.Empty()
+	doc.Upsert(storage.Upsertable{
+		KeyName: "API_KEY",
+		Value:   "stale-recorded-value",
+		Found: storage.FoundIn{
+			SourceType: storage.SourceEnvFile,
+			Path:       example,
+			Line:       1,
+		},
+		Now: time.Now().UTC(),
+	})
+	if len(doc.Secrets) != 1 {
+		t.Fatalf("setup: len(Secrets) = %d, want 1", len(doc.Secrets))
+	}
+
+	r := runScan(t, doc, []string{tmp}, nil)
+
+	if len(doc.Secrets) != 0 {
+		t.Errorf("after scan: len(Secrets) = %d, want 0 (orphan secret removed)", len(doc.Secrets))
+	}
+	if r.SecretsRemoved != 1 {
+		t.Errorf("Result.SecretsRemoved = %d, want 1", r.SecretsRemoved)
+	}
+	if r.FoundInPruned != 1 {
+		t.Errorf("Result.FoundInPruned = %d, want 1", r.FoundInPruned)
+	}
+}
+
 func TestScan_FirstSeenLastSeenCorrect(t *testing.T) {
 	tmp := t.TempDir()
 	envPath := filepath.Join(tmp, ".env")
