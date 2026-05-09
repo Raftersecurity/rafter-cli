@@ -154,6 +154,88 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: python -m twine upload dist/*
 
+  publish-clawhub:
+    # Publishes the rafter-security skill to ClawHub
+    # (https://clawhub.ai), the OpenClaw skill registry. The SKILL.md
+    # frontmatter version (validated by validate-release.yml to match the
+    # package version) becomes the ClawHub release version.
+    #
+    # Skips on forks where the secret isn't configured. On the canonical
+    # repo, fails loudly on auth or publish errors so a broken token
+    # surfaces immediately rather than silently skipping releases.
+    needs: [publish-node]
+    runs-on: ubuntu-latest
+    if: github.repository == 'Raftersecurity/rafter-cli'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Skip if CLAWHUB_TOKEN is not configured
+        id: gate
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          if [ -z "$CLAWHUB_TOKEN" ]; then
+            echo "CLAWHUB_TOKEN secret is not set — skipping ClawHub publish."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Stage SKILL.md in a publish directory
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          # ClawHub expects a directory containing SKILL.md (canonical
+          # filename). The Node and Python resources are kept in sync by
+          # validate-release.yml — pick either one as the source of truth.
+          mkdir -p /tmp/rafter-skill/rafter-security
+          cp node/resources/rafter-security-skill.md /tmp/rafter-skill/rafter-security/SKILL.md
+          # Sanity-check: the version in the SKILL.md must match the npm
+          # publish version. validate-release.yml already enforces this on
+          # PRs/main, but we re-check here so a release with bypassed
+          # validation can't ship a stale skill.
+          SKILL_VERSION=$(sed -n 's/^version: *\(.*\)$/\1/p' /tmp/rafter-skill/rafter-security/SKILL.md | head -1 | tr -d ' ')
+          PACKAGE_VERSION="${{ needs.publish-node.outputs.version }}"
+          if [ "$SKILL_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "FAIL: SKILL.md version=$SKILL_VERSION but package=$PACKAGE_VERSION"
+            exit 1
+          fi
+          echo "Publishing rafter-security@$SKILL_VERSION to ClawHub"
+
+      - name: Authenticate clawhub CLI
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          # Use the token directly via env var rather than a login step —
+          # `clawhub` reads CLAWHUB_TOKEN automatically when present
+          # (clawhub login --token persists to disk; we want stateless CI).
+          npx -y clawhub@latest whoami
+
+      - name: Publish to ClawHub
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          # `clawhub skill publish` is idempotent: if the version+content
+          # fingerprint matches what's already published, it no-ops.
+          # If the version is unchanged but content differs, the command
+          # fails (intentional — bumps must come with a version change).
+          npx -y clawhub@latest skill publish /tmp/rafter-skill/rafter-security \
+            --version "${{ needs.publish-node.outputs.version }}" \
+            --owner raftersecurity
+
+      - name: Verify the publish landed
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          # Smoke-check: the published version should be reachable via the
+          # public registry. Wait a few seconds for index propagation.
+          sleep 5
+          npx -y clawhub@latest skill show rafter-security --version "${{ needs.publish-node.outputs.version }}"
+
   create-release:
     needs: [publish-node, publish-python]
     runs-on: ubuntu-latest
@@ -179,6 +261,11 @@ jobs:
             **Python:**
             ```bash
             pip install rafter-cli==${{ needs.publish-python.outputs.version }}
+            ```
+
+            **OpenClaw (via ClawHub):**
+            ```bash
+            clawhub skill install rafter-security
             ```
 
             See [CHANGELOG.md](https://github.com/raftersecurity/rafter-cli/blob/main/CHANGELOG.md) for details.

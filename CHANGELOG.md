@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **ClawHub auto-publish on release** (CI). `.github/workflows/publish.yml` now runs `clawhub skill publish` against the rafter-security SKILL.md after every `prod`-branch deploy. Skips on forks (gated on `secrets.CLAWHUB_TOKEN`); fails loudly on auth or publish errors on the canonical repo. `validate-release.yml` was extended to enforce that `version:` in both Node and Python copies of `rafter-security-skill.md` matches the package version — drift would silently ship a stale ClawHub release. OpenClaw users can now install rafter via `clawhub skill install rafter-security` as an alternative to `rafter agent init --with-openclaw`.
+
 ## [0.7.9] - 2026-05-08
 
 ### Fixed
