@@ -235,6 +235,78 @@ func TestMarkRotated(t *testing.T) {
 	}
 }
 
+func TestPruneFoundInPaths(t *testing.T) {
+	g := Empty()
+	now := at(2026, 5, 1)
+
+	// S1: lives at both /a/.env and /a/.env.example.
+	g.Upsert(Upsertable{KeyName: "K", Value: "v", Found: mkFound("/a/.env", 1), Now: now})
+	g.Upsert(Upsertable{KeyName: "K", Value: "v", Found: mkFound("/a/.env.example", 1), Now: now})
+	// S2: lives ONLY at /b/.env.example — pruning that path must remove S2.
+	g.Upsert(Upsertable{KeyName: "ONLY_TEMPLATE", Value: "v", Found: mkFound("/b/.env.example", 1), Now: now})
+	// S3: untouched control — never appears in the prune list.
+	g.Upsert(Upsertable{KeyName: "KEEPME", Value: "v", Found: mkFound("/c/.env", 1), Now: now})
+
+	if len(g.Secrets) != 3 {
+		t.Fatalf("setup: len(Secrets) = %d, want 3", len(g.Secrets))
+	}
+
+	foundInRemoved, secretsRemoved := g.PruneFoundInPaths([]string{
+		"/a/.env.example",
+		"/b/.env.example",
+	})
+	if foundInRemoved != 2 {
+		t.Errorf("foundInRemoved = %d, want 2", foundInRemoved)
+	}
+	if secretsRemoved != 1 {
+		t.Errorf("secretsRemoved = %d, want 1 (only S2 had no other locations)", secretsRemoved)
+	}
+	if len(g.Secrets) != 2 {
+		t.Fatalf("len(Secrets) = %d, want 2", len(g.Secrets))
+	}
+
+	// S1 keeps its real /a/.env entry; the .example FoundIn is gone.
+	var s1 *Secret
+	for i := range g.Secrets {
+		if g.Secrets[i].KeyName == "K" {
+			s1 = &g.Secrets[i]
+		}
+	}
+	if s1 == nil {
+		t.Fatal("S1 (KeyName=K) was removed; expected it to keep /a/.env")
+	}
+	if len(s1.FoundIn) != 1 || s1.FoundIn[0].Path != "/a/.env" {
+		t.Errorf("S1.FoundIn = %+v, want single /a/.env", s1.FoundIn)
+	}
+
+	// S3 untouched.
+	var s3 *Secret
+	for i := range g.Secrets {
+		if g.Secrets[i].KeyName == "KEEPME" {
+			s3 = &g.Secrets[i]
+		}
+	}
+	if s3 == nil {
+		t.Fatal("S3 (KeyName=KEEPME) missing — prune touched a path it shouldn't have")
+	}
+	if len(s3.FoundIn) != 1 || s3.FoundIn[0].Path != "/c/.env" {
+		t.Errorf("S3.FoundIn = %+v, want single /c/.env", s3.FoundIn)
+	}
+}
+
+func TestPruneFoundInPaths_Empty(t *testing.T) {
+	g := Empty()
+	g.Upsert(Upsertable{KeyName: "K", Value: "v", Found: mkFound("/a/.env", 1), Now: at(2026, 5, 1)})
+
+	foundInRemoved, secretsRemoved := g.PruneFoundInPaths(nil)
+	if foundInRemoved != 0 || secretsRemoved != 0 {
+		t.Errorf("empty paths: removed=(%d,%d), want (0,0)", foundInRemoved, secretsRemoved)
+	}
+	if len(g.Secrets) != 1 {
+		t.Errorf("empty paths must not touch Secrets; len = %d", len(g.Secrets))
+	}
+}
+
 func readFile(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)

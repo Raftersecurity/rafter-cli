@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/scanners"
@@ -23,6 +24,43 @@ import (
 // binary or corrupted file than a real secret.
 const maxLineLen = 256 * 1024
 
+// templateEnvSuffixes are the trailing basename suffixes that mark an env
+// file as documentation-by-convention rather than a real secret store.
+// Order is irrelevant — the suffix list is applied as a set.
+var templateEnvSuffixes = []string{
+	".example",
+	".sample",
+	".template",
+	".tmpl",
+	".dist",
+	".dummy",
+}
+
+// IsTemplateEnvPath reports whether path looks like a documentation
+// template for an env file rather than a real secret store. Match is
+// case-insensitive and based on path basename suffixes.
+//
+// Hits:  .env.example, .env.sample, .env.template, .env.tmpl,
+//
+//	.env.local.example, .env.dist, .env.dummy
+//
+// Misses: .env, .env.local, .env.production, .envrc, anything not starting
+//
+//	with .env. (the trailing dot is required so .envrc — a direnv
+//	config — is left alone).
+func IsTemplateEnvPath(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	if !strings.HasPrefix(base, ".env.") {
+		return false
+	}
+	for _, suffix := range templateEnvSuffixes {
+		if strings.HasSuffix(base, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 // ScanEnvFile parses path as a dotenv-style file and returns one
 // FoundSecret per non-comment, non-blank KEY=VALUE line.
 //
@@ -30,6 +68,12 @@ const maxLineLen = 256 * 1024
 // errors surface unchanged. The file is opened O_RDONLY and never
 // modified.
 func ScanEnvFile(path string) ([]scanners.FoundSecret, error) {
+	// Documentation-template env files (.env.example, .env.sample, …)
+	// hold placeholder values by convention; cataloging them as real
+	// secrets drowns the actual signal. Skip before opening the file.
+	if IsTemplateEnvPath(path) {
+		return nil, nil
+	}
 	f, err := os.OpenFile(path, os.O_RDONLY, 0)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
