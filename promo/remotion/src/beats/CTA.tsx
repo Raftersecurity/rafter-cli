@@ -1,10 +1,16 @@
-import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, OffthreadVideo, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import type { Aspect } from "../Promo60";
 import { theme } from "./theme";
 
 // Beats 14–15 (0:50–1:00). 0:50–0:55 = "Become AI-first. Safely."  0:55–1:00 = CTA card.
+//
+// Optional HeyGen avatar bookend: when `hostBookend` is true and
+// scripts/render-host.sh produced remotion/public/host/cta.webm, the second
+// half (0:55–1:00) overlays the talking-head host. Default is the pure
+// motion-graphic CTA. The flag is wired through Promo60 from inputProps
+// passed at render time by the Makefile when HEYGEN_AVATAR_ID is set.
 
-export const CTA: React.FC<{ aspect: Aspect }> = ({ aspect }) => {
+export const CTA: React.FC<{ aspect: Aspect; hostBookend?: boolean }> = ({ aspect, hostBookend = false }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -28,6 +34,23 @@ export const CTA: React.FC<{ aspect: Aspect }> = ({ aspect }) => {
         Become AI-first.<br />
         <span style={{ color: theme.rafterGreen }}>Safely.</span>
       </div>
+
+      {/* Optional HeyGen avatar bookend — overlays the CTA card when set up */}
+      {hostBookend && (
+        <AbsoluteFill style={{ opacity: cardOpacity }}>
+          <OffthreadVideo
+            src={staticFile("host/cta.webm")}
+            style={{
+              width: aspect === "9x16" ? "100%" : "55%",
+              height: "100%",
+              objectFit: "cover",
+              position: "absolute",
+              left: aspect === "9x16" ? 0 : "5%",
+              top: 0,
+            }}
+          />
+        </AbsoluteFill>
+      )}
 
       {/* CTA card */}
       <div style={{ opacity: cardOpacity, textAlign: "center", display: "flex", flexDirection: "column", gap: 28 }}>

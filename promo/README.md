@@ -5,23 +5,30 @@ Builds the 60s promo from `docs/promo-video-60s-storyboard.md` end-to-end with n
 ## One-shot
 
 ```sh
-cp .env.example .env       # fill ELEVENLABS_API_KEY, SUNO_API_KEY
+cp .env.example .env       # fill HEYGEN_API_KEY (+ HEYGEN_VOICE_ID), SUNO_API_KEY
 make video                 # 60s 16:9 master at build/promo-60s.mp4
 make deliver               # also writes 9:16 and 1:1 reframes
 ```
+
+Optional: set `HEYGEN_AVATAR_ID` and run `make host` to add a talking-head bookend on the CTA beat.
 
 ## Stack
 
 | Layer | Tool | Source files | Output |
 |-------|------|--------------|--------|
 | Terminal capture | `vhs` (charmbracelet) | `tape/*.tape` | `remotion/public/tape/*.mp4` |
-| Voiceover | ElevenLabs API (`eleven_v3`) | `audio/prompts/voiceover.json` | `remotion/public/vo/full.mp3` |
-| Music bed | Suno API | `audio/prompts/music.txt` | `remotion/public/music/bed.mp3` |
+| Voiceover | **HeyGen v2 video API** (TTS, audio extracted) | `audio/prompts/voiceover.json` | `remotion/public/vo/full.mp3` |
+| Avatar bookend (optional) | **HeyGen v2 video API** (with `HEYGEN_AVATAR_ID`) | `scripts/render-host.sh` | `remotion/public/host/cta.webm` |
+| Music bed | Suno API (HeyGen does not compose music) | `audio/prompts/music.txt` | `remotion/public/music/bed.mp3` |
 | SFX | freesound.org CC0 manifest | `audio/sfx/manifest.json` | `remotion/public/sfx/*.wav` |
 | Motion graphics | Remotion | `remotion/src/**/*.tsx` | render via `npx remotion render` |
 | Captions | whisper.cpp large-v3 | derived from VO | `build/captions.srt` |
 | Loudness | ffmpeg `loudnorm` | — | -14 LUFS master |
-| Reframes | Remotion compositions `Promo60_16x9` / `Promo60_9x16` / `Promo60_1x1` | same JSX | three masters |
+| Reframes | Remotion compositions `Promo60-16x9` / `Promo60-9x16` / `Promo60-1x1` | same JSX | three masters |
+
+**Why HeyGen for VO instead of ElevenLabs:** HeyGen's TTS is exposed through the same v2 video endpoint that drives their avatar product, so the same API key + the same voice IDs cover both audio-only VO *and* the optional talking-head bookend on the CTA beat. Lower surface area, one provider to manage. The trade-off: each VO line round-trips through a video render (we discard the pixels and `ffmpeg -vn` the audio). Slower than a pure-TTS API, but keeps the stack to one upstream.
+
+**Why music still routes through Suno:** HeyGen has no music-bed composition product. The Suno brief (`audio/prompts/music.txt`) is bar-locked to the storyboard's drop at 0:50, which is hard to replace with stock library music.
 
 ## Pipeline (DAG)
 
@@ -67,7 +74,7 @@ make caption            # whisper.cpp transcribes vo/full.mp3 → SRT
 ## Human-action gates
 
 Two beads tagged `human` block public posting:
-1. API keys (one-time): `ELEVENLABS_API_KEY`, `SUNO_API_KEY` in `.env`
+1. API keys (one-time): `HEYGEN_API_KEY` (+ optional `HEYGEN_AVATAR_ID`), `SUNO_API_KEY` in `.env`
 2. Final approval: review `build/promo-60s.mp4` and merge the production PR before publishing
 
 Everything else is owned by the agent pipeline.

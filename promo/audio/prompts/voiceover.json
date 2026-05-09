@@ -1,13 +1,13 @@
 {
-  "voice": "Brian",
-  "model": "eleven_v3",
+  "provider": "heygen",
+  "voice_id_default": "1bd001e7e50f421d891986aad5158bc8",
+  "voice_name_hint": "Daniel — Conversational, en-US baritone. Override via HEYGEN_VOICE_ID in .env.",
   "settings": {
-    "stability": 0.45,
-    "similarity_boost": 0.75,
-    "style": 0.25,
-    "use_speaker_boost": true
+    "rate": 1.0,
+    "pitch": 0,
+    "emotion": "Friendly",
+    "delivery_notes": "Conversational, low-affect, slightly dry. Not hype-voice. HeyGen's emotion knob is coarse — keep it on Friendly and let the script's pauses do the work. Land the final 'Safely.' soft, not punched."
   },
-  "delivery_notes": "Conversational, low-affect, slightly dry. Not hype-voice. Pause naturally on the marked beats. Land the final 'Safely.' soft, not punched.",
   "lines": [
     { "id": "L01", "start": 0.0,  "end": 4.0,  "text": "Your AI agent just leaked a key." },
     { "id": "L02", "start": 5.0,  "end": 12.0, "text": "Rafter would've caught it — in the pre-commit hook, before the push, before the bill." },

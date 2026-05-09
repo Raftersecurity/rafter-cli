@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# render-vo.sh — synthesize the voiceover from audio/prompts/voiceover.json
-# using ElevenLabs API, then concatenate lines with the timing baked into the JSON.
+# render-vo.sh — synthesize the voiceover via HeyGen v2 video API,
+# then extract audio per line and place each line on a 60s silent canvas
+# at the start time declared in audio/prompts/voiceover.json.
+#
+# HeyGen's TTS is exposed through the video-generate endpoint. We render
+# the smallest possible video per line (we discard the pixels), strip audio
+# with ffmpeg, then assemble the final 60s mix in one filter graph.
 #
 # Usage: render-vo.sh <prompts.json> <output.mp3>
 
@@ -8,14 +13,65 @@ set -euo pipefail
 
 INPUT="${1:?prompts.json required}"
 OUTPUT="${2:?output.mp3 required}"
-: "${ELEVENLABS_API_KEY:?ELEVENLABS_API_KEY missing}"
-VOICE_ID="${ELEVENLABS_VOICE_ID:-nPczCjzI2devNBz1zQrb}"
+: "${HEYGEN_API_KEY:?HEYGEN_API_KEY missing}"
+VOICE_ID="${HEYGEN_VOICE_ID:?HEYGEN_VOICE_ID missing}"
 
+API="https://api.heygen.com"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# Render each line as its own MP3, then place it on a 60s silent canvas at its start time.
 LINE_COUNT=$(jq '.lines | length' "$INPUT")
+RATE=$(jq -r '.settings.rate // 1.0' "$INPUT")
+PITCH=$(jq -r '.settings.pitch // 0' "$INPUT")
+EMOTION=$(jq -r '.settings.emotion // "Friendly"' "$INPUT")
+
+submit_line() {
+  local text="$1"
+  jq -n \
+    --arg text   "$text" \
+    --arg voice  "$VOICE_ID" \
+    --arg emo    "$EMOTION" \
+    --argjson rate  "$RATE" \
+    --argjson pitch "$PITCH" \
+    '{
+      caption: false,
+      dimension: { width: 1280, height: 720 },
+      video_inputs: [{
+        character: { type: "avatar", avatar_id: "Vanessa-public", avatar_style: "normal" },
+        voice:     { type: "text", input_text: $text, voice_id: $voice,
+                     emotion: $emo, speed: $rate, pitch: $pitch },
+        background:{ type: "color", value: "#000000" }
+      }]
+    }' \
+  | curl -sS -X POST "$API/v2/video/generate" \
+      -H "X-Api-Key: $HEYGEN_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d @- \
+  | jq -r '.data.video_id // .video_id // empty'
+}
+
+poll_until_done() {
+  local id="$1"
+  for _ in $(seq 1 60); do
+    sleep 8
+    local resp status url
+    resp=$(curl -sS "$API/v1/video_status.get?video_id=$id" \
+      -H "X-Api-Key: $HEYGEN_API_KEY")
+    status=$(echo "$resp" | jq -r '.data.status // .status // empty')
+    if [ "$status" = "completed" ]; then
+      echo "$resp" | jq -r '.data.video_url // .video_url'
+      return 0
+    fi
+    if [ "$status" = "failed" ]; then
+      echo "  [vo] HeyGen render failed for $id: $resp" >&2
+      return 1
+    fi
+  done
+  echo "  [vo] timed out waiting for $id" >&2
+  return 1
+}
+
+# ── Render every line, extract audio ─────────────────────────────
 for i in $(seq 0 $((LINE_COUNT - 1))); do
   line=$(jq -r ".lines[$i]" "$INPUT")
   id=$(echo "$line" | jq -r .id)
@@ -24,19 +80,18 @@ for i in $(seq 0 $((LINE_COUNT - 1))); do
 
   echo "  [vo] rendering $id @ ${start}s — \"$text\""
 
-  curl -sS -X POST "https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}" \
-    -H "xi-api-key: ${ELEVENLABS_API_KEY}" \
-    -H "Content-Type: application/json" \
-    -H "Accept: audio/mpeg" \
-    -d "$(jq -n --arg t "$text" --argjson s "$(jq .settings "$INPUT")" \
-        '{text:$t, model_id:"eleven_v3", voice_settings:$s}')" \
-    -o "$WORK/$id.mp3"
+  video_id=$(submit_line "$text")
+  [ -n "$video_id" ] || { echo "  [vo] no video_id returned" >&2; exit 1; }
+
+  url=$(poll_until_done "$video_id")
+  curl -sSL "$url" -o "$WORK/$id.mp4"
+  ffmpeg -y -i "$WORK/$id.mp4" -vn -acodec libmp3lame -q:a 4 "$WORK/$id.mp3" -loglevel error
 done
 
-# Build a 60s silent base and overlay each line at its timestamp.
-ffmpeg -y -f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=48000" -t 60 -q:a 9 -acodec libmp3lame "$WORK/base.mp3" -loglevel error
+# ── Build a 60s silent canvas, overlay each line at its timestamp ──
+ffmpeg -y -f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=48000" \
+  -t 60 -q:a 9 -acodec libmp3lame "$WORK/base.mp3" -loglevel error
 
-# adelay one line at a time, summing into the canvas.
 INPUTS=("$WORK/base.mp3")
 FILTERS=("[0:a]aresample=48000[base]")
 LAST="base"

@@ -13,7 +13,13 @@ const sec = (s: number) => Math.round(s * FPS);
 
 export type Aspect = "16x9" | "9x16" | "1x1";
 
-export const Promo60: React.FC<{ aspect: Aspect }> = ({ aspect }) => {
+export type Promo60Props = {
+  aspect: Aspect;
+  /** When true, the CTA beat overlays the HeyGen avatar bookend at remotion/public/host/cta.webm. */
+  hostBookend?: boolean;
+};
+
+export const Promo60: React.FC<Promo60Props> = ({ aspect, hostBookend = false }) => {
   return (
     <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }}>
       {/* ── Visual beats ─────────────────────────────────────── */}
@@ -39,7 +45,7 @@ export const Promo60: React.FC<{ aspect: Aspect }> = ({ aspect }) => {
         <AuditChain aspect={aspect} />
       </Sequence>
       <Sequence from={sec(50)}   durationInFrames={sec(10)}>
-        <CTA aspect={aspect} />
+        <CTA aspect={aspect} hostBookend={hostBookend} />
       </Sequence>
 
       {/* ── Audio beds (assembled at master time, but previewable here) */}

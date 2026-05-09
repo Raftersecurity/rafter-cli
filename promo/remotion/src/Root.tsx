@@ -13,7 +13,7 @@ export const Root: React.FC = () => (
       fps={FPS}
       width={1920}
       height={1080}
-      defaultProps={{ aspect: "16x9" as const }}
+      defaultProps={{ aspect: "16x9" as const, hostBookend: false }}
     />
     <Composition
       id="Promo60-9x16"
@@ -22,7 +22,7 @@ export const Root: React.FC = () => (
       fps={FPS}
       width={1080}
       height={1920}
-      defaultProps={{ aspect: "9x16" as const }}
+      defaultProps={{ aspect: "9x16" as const, hostBookend: false }}
     />
     <Composition
       id="Promo60-1x1"
@@ -31,7 +31,7 @@ export const Root: React.FC = () => (
       fps={FPS}
       width={1080}
       height={1080}
-      defaultProps={{ aspect: "1x1" as const }}
+      defaultProps={{ aspect: "1x1" as const, hostBookend: false }}
     />
   </>
 );

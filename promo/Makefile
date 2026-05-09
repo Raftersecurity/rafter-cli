@@ -16,6 +16,7 @@ PUBLIC         := $(ROOT)/remotion/public
 TAPE_SRC       := $(wildcard tape/*.tape)
 TAPE_MP4       := $(patsubst tape/%.tape,$(PUBLIC)/tape/%.mp4,$(TAPE_SRC))
 VO_OUT         := $(PUBLIC)/vo/full.mp3
+HOST_OUT       := $(PUBLIC)/host/cta.webm
 MUSIC_OUT      := $(PUBLIC)/music/bed.mp3
 SFX_MANIFEST   := audio/sfx/manifest.json
 SFX_OUT        := $(PUBLIC)/sfx/.fetched
@@ -29,7 +30,7 @@ POSTER         := $(BUILD)/promo-60s-poster.png
 include .env
 export
 
-.PHONY: video deliver tape vo music sfx render master caption reframe poster clean check-env
+.PHONY: video deliver tape vo host music sfx render master caption reframe poster clean check-env
 
 # ── Top-level ────────────────────────────────────────────────────
 video: $(MASTER_16x9)
@@ -49,6 +50,13 @@ $(VO_OUT): audio/prompts/voiceover.json scripts/render-vo.sh check-env
 	@mkdir -p $(PUBLIC)/vo
 	bash scripts/render-vo.sh $< $@
 
+# Optional avatar bookend. No-op unless HEYGEN_AVATAR_ID is set in .env.
+host: $(HOST_OUT)
+
+$(HOST_OUT): scripts/render-host.sh check-env
+	@mkdir -p $(PUBLIC)/host
+	bash scripts/render-host.sh $@
+
 music: $(MUSIC_OUT)
 
 $(MUSIC_OUT): audio/prompts/music.txt scripts/render-music.sh check-env
@@ -63,13 +71,18 @@ $(SFX_OUT): $(SFX_MANIFEST) scripts/fetch-sfx.sh
 	@touch $@
 
 # ── Render (Remotion → 16:9 raw) ─────────────────────────────────
+# hostBookend=true is passed only when remotion/public/host/cta.webm exists
+# (i.e., HEYGEN_AVATAR_ID was set and `make host` ran). Otherwise the CTA
+# beat falls through to the pure motion-graphic path.
+HOST_BOOKEND := $(shell test -f $(HOST_OUT) && echo true || echo false)
+
 render: $(BUILD)/promo-60s-raw.mp4
 
 $(BUILD)/promo-60s-raw.mp4: $(TAPE_MP4) $(VO_OUT) $(MUSIC_OUT) $(SFX_OUT) $(wildcard remotion/src/**/*.tsx)
 	@mkdir -p $(BUILD)
 	cd remotion && npx remotion render Promo60-16x9 $@ \
 		--codec=h264 --image-format=jpeg --concurrency=4 \
-		--props='{"version":"$(shell git rev-parse --short HEAD)"}'
+		--props='{"aspect":"16x9","hostBookend":$(HOST_BOOKEND)}'
 
 # ── Master (color grade + loudnorm to -14 LUFS) ──────────────────
 $(MASTER_16x9): $(BUILD)/promo-60s-raw.mp4 $(LUT)
@@ -83,10 +96,12 @@ $(MASTER_16x9): $(BUILD)/promo-60s-raw.mp4 $(LUT)
 
 # ── Reframes ─────────────────────────────────────────────────────
 $(MASTER_9x16): $(TAPE_MP4) $(VO_OUT) $(MUSIC_OUT) $(SFX_OUT)
-	cd remotion && npx remotion render Promo60-9x16 $@ --codec=h264
+	cd remotion && npx remotion render Promo60-9x16 $@ --codec=h264 \
+		--props='{"aspect":"9x16","hostBookend":$(HOST_BOOKEND)}'
 
 $(MASTER_1x1): $(TAPE_MP4) $(VO_OUT) $(MUSIC_OUT) $(SFX_OUT)
-	cd remotion && npx remotion render Promo60-1x1 $@ --codec=h264
+	cd remotion && npx remotion render Promo60-1x1 $@ --codec=h264 \
+		--props='{"aspect":"1x1","hostBookend":$(HOST_BOOKEND)}'
 
 # ── Captions (whisper.cpp local) ─────────────────────────────────
 caption: $(CAPTIONS)
@@ -102,8 +117,9 @@ $(POSTER): $(MASTER_16x9)
 
 # ── Misc ─────────────────────────────────────────────────────────
 check-env:
-	@: $${ELEVENLABS_API_KEY?ELEVENLABS_API_KEY missing — see .env.example}
+	@: $${HEYGEN_API_KEY?HEYGEN_API_KEY missing — see .env.example}
+	@: $${HEYGEN_VOICE_ID?HEYGEN_VOICE_ID missing — see .env.example}
 	@: $${SUNO_API_KEY?SUNO_API_KEY missing — see .env.example}
 
 clean:
-	rm -rf $(BUILD) $(PUBLIC)/tape $(PUBLIC)/vo $(PUBLIC)/music $(PUBLIC)/sfx
+	rm -rf $(BUILD) $(PUBLIC)/tape $(PUBLIC)/vo $(PUBLIC)/host $(PUBLIC)/music $(PUBLIC)/sfx
