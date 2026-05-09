@@ -153,11 +153,11 @@ Initialize local security system. Creates config and detects available developme
 - `--with-cursor` — install Cursor integration
 - `--with-windsurf` — install Windsurf integration
 - `--with-continue` — install Continue.dev integration
-- `--with-gitleaks` — download and install Gitleaks binary
-- `--all` — install all detected integrations and download Gitleaks
+- `--with-betterleaks` — download and install Betterleaks binary (the gitleaks successor)
+- `--all` — install all detected integrations and download Betterleaks
 - `-i, --interactive` — guided setup — prompts for each detected integration (Node only)
-- `--update` — re-download gitleaks and reinstall integrations without resetting config
-- `--local` — install integration configs into the current working directory instead of the user home. Writes to `./.claude/`, `./.agents/`, `./.gemini/`, `./.cursor/` etc. Supports `--with-claude-code`, `--with-codex`, `--with-gemini`, `--with-cursor`. User-level side effects (global config, `agent.environments.*.enabled`, auto-detection, gitleaks download) are suppressed in this mode. Intended for benchmark harnesses, one-off project setup, and ephemeral containers.
+- `--update` — re-download betterleaks and reinstall integrations without resetting config
+- `--local` — install integration configs into the current working directory instead of the user home. Writes to `./.claude/`, `./.agents/`, `./.gemini/`, `./.cursor/` etc. Supports `--with-claude-code`, `--with-codex`, `--with-gemini`, `--with-cursor`. User-level side effects (global config, `agent.environments.*.enabled`, auto-detection, betterleaks download) are suppressed in this mode. Intended for benchmark harnesses, one-off project setup, and ephemeral containers.
 
 ### rafter agent list [OPTIONS]
 
@@ -289,7 +289,7 @@ Persists `skillInstallations.<platform>.<name>.enabled = false` in `~/.rafter/co
 
 Aliases: `rafter scan local`, `rafter agent scan` (both still supported for backward compatibility)
 
-Scan files or directories for **hardcoded secrets** (21+ patterns + gitleaks). **Secrets only — not a full code-security scan.** For SAST + SCA, use `rafter run`.
+Scan files or directories for **hardcoded secrets** (21+ patterns + betterleaks). **Secrets only — not a full code-security scan.** For SAST + SCA, use `rafter run`.
 
 The `secrets` spelling is preferred because it makes the scope explicit; `scan local` reads as "the full scan, locally" which it is not.
 
@@ -299,10 +299,10 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `--format <format>` — output format: `text`, `json`, or `sarif` (default: `text`)
 - `--staged` — scan git staged files only
 - `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
-- `--engine <engine>` — `gitleaks`, `patterns`, or `auto` (default)
+- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default).
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
-- `--history` — scan the full git history for previously-committed secrets (requires `--engine gitleaks`; invokes `gitleaks detect` against the repo history)
+- `--history` — scan the full git history for previously-committed secrets (requires `--engine betterleaks`; invokes `betterleaks git` against the repo history)
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
 
@@ -767,7 +767,7 @@ Check agent security integration status. Reports whether config files, hooks, an
 | Name | Severity | Detection | Pass criterion |
 |---|---|---|---|
 | `Config` | hard (exit 1 on fail) | `~/.rafter/config.json` exists and parses | valid JSON |
-| `Gitleaks` | hard | binary on PATH or at `~/.rafter/bin/gitleaks` | `--version` succeeds |
+| `Betterleaks` | hard | binary on PATH or at `~/.rafter/bin/betterleaks` | `version` succeeds |
 | `Claude Code` | optional | `~/.claude/` exists | `settings.json` PreToolUse contains `rafter hook pretool` |
 | `OpenClaw` | optional | `~/.openclaw/skills/` exists | `rafter-security.md` skill present |
 | `Codex CLI` | optional | `~/.codex/` exists | `~/.agents/skills/rafter/SKILL.md` present |
@@ -789,7 +789,7 @@ With `--probe`, an additional `Claude Code (probe)` check appears as the last en
 {
   "checks": [
     { "name": "Config",      "status": "pass",  "detail": "/home/u/.rafter/config.json" },
-    { "name": "Gitleaks",    "status": "fail",  "detail": "Not found on PATH or at ..." },
+    { "name": "Betterleaks", "status": "fail",  "detail": "Not found on PATH or at ..." },
     { "name": "Claude Code", "status": "warn",  "detail": "Not detected — run 'rafter agent init --with-claude-code' to enable" }
   ],
   "summary": {
@@ -802,17 +802,17 @@ With `--probe`, an additional `Claude Code (probe)` check appears as the last en
 }
 ```
 
-`status` is one of `pass | warn | fail`. `warn` is reserved for optional integrations that aren't installed; `fail` is reserved for hard failures (Config, Gitleaks, or any failing `--probe` check).
+`status` is one of `pass | warn | fail`. `warn` is reserved for optional integrations that aren't installed; `fail` is reserved for hard failures (Config, Betterleaks, or any failing `--probe` check).
 
 ### rafter agent status
 
 Show agent security status dashboard. Displays config summary, installed integrations, audit log summary, and recent events.
 
-### rafter agent update-gitleaks [OPTIONS]
+### rafter agent update-betterleaks [OPTIONS]
 
-Update (or reinstall) the managed gitleaks binary.
+Update (or reinstall) the managed betterleaks binary.
 
-- `--version <version>` — specific gitleaks version to install (default: current bundled version)
+- `--version <version>` — specific betterleaks version to install (default: current bundled version)
 
 ### rafter agent baseline SUBCOMMAND
 
@@ -878,7 +878,7 @@ Start MCP server over stdio transport. Exposes 6 tools and 3 resources.
 
 **`scan_secrets` inputs:**
 - `path` (required) — file or directory path to scan
-- `engine` (optional) — `auto` (default), `gitleaks`, or `patterns`
+- `engine` (optional) — `auto` (default), `betterleaks`, or `patterns`.
 
 **`evaluate_command` output schema:**
 ```json

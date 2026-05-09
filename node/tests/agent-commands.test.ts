@@ -204,6 +204,12 @@ describe("agent init", () => {
     expect(cfg.agent.riskLevel).toBe("moderate");
   });
 
+  it("rejects --with-gitleaks (no longer a valid option)", () => {
+    const r = runCli("agent init --with-gitleaks", home);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toMatch(/unknown option/i);
+  });
+
   it("creates bin and patterns directories", () => {
     runCli("agent init", home);
     expect(fs.existsSync(path.join(home, ".rafter", "bin"))).toBe(true);
@@ -394,6 +400,14 @@ describe("agent scan", () => {
     const parsed = JSON.parse(r.stdout);
     expect(parsed.results.length).toBeGreaterThan(0);
   });
+
+  it("rejects --engine gitleaks (no longer a valid engine)", () => {
+    const f = path.join(tmpDir, "clean.txt");
+    fs.writeFileSync(f, "nothing\n");
+    const r = runCli(`agent scan ${f} --engine gitleaks --quiet`, home);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/Invalid engine/i);
+  });
 });
 
 // ─── agent exec ──────────────────────────────────────────────────────────────
@@ -570,9 +584,9 @@ describe("agent status", () => {
     expect(r.stdout).toContain("minimal");
   });
 
-  it("shows Gitleaks status", () => {
+  it("shows Betterleaks status", () => {
     const r = runCli("agent status", home);
-    expect(r.stdout).toContain("Gitleaks:");
+    expect(r.stdout).toContain("Betterleaks:");
   });
 
   it("shows Claude Code hook status", () => {
@@ -608,6 +622,17 @@ describe("agent status", () => {
     const r = runCli("agent status", home);
     expect(r.stdout).toContain("Total events:");
   });
+
+  it("surfaces a legacy gitleaks install with an upgrade hint", () => {
+    runCli("agent init", home);
+    // Drop a fake legacy gitleaks binary in ~/.rafter/bin/gitleaks.
+    const binDir = path.join(home, ".rafter", "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, "gitleaks"), "#!/bin/sh\necho fake\n", { mode: 0o755 });
+    const r = runCli("agent status", home);
+    expect(r.stdout).toMatch(/legacy gitleaks/i);
+    expect(r.stdout).toMatch(/update-betterleaks/i);
+  });
 });
 
 // ─── agent verify ────────────────────────────────────────────────────────────
@@ -639,7 +664,7 @@ describe("agent verify", () => {
   it("config check passes after init", () => {
     runCli("agent init", home);
     const r = runCli("agent verify", home);
-    // Config should pass now (gitleaks may still fail)
+    // Config should pass now (betterleaks may still fail)
     expect(r.stdout).toContain("Config:");
   });
 

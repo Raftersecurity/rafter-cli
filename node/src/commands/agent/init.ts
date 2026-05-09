@@ -892,10 +892,10 @@ export function createInitCommand(): Command {
     .option("--with-cursor", "Install Cursor integration")
     .option("--with-windsurf", "Install Windsurf integration")
     .option("--with-continue", "Install Continue.dev integration")
-    .option("--with-gitleaks", "Download and install Gitleaks binary")
-    .option("--all", "Install all detected integrations and download Gitleaks")
+    .option("--with-betterleaks", "Download and install Betterleaks binary")
+    .option("--all", "Install all detected integrations and download Betterleaks")
     .option("-i, --interactive", "Guided setup — prompts for each detected integration")
-    .option("--update", "Re-download gitleaks and reinstall integrations without resetting config")
+    .option("--update", "Re-download betterleaks and reinstall integrations without resetting config")
     .option(
       "--local",
       "Install integration configs project-locally (in CWD) instead of user-globally. " +
@@ -950,7 +950,7 @@ export function createInitCommand(): Command {
       // Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
       // in cwd) since rf-du2o.
       let wantAider = opts.withAider || opts.all;
-      let wantGitleaks = opts.withGitleaks || (opts.all && !opts.local);
+      let wantBetterleaks = opts.withBetterleaks || (opts.all && !opts.local);
 
       // Interactive mode: prompt for each detected integration
       if (opts.interactive && !opts.all) {
@@ -965,7 +965,7 @@ export function createInitCommand(): Command {
         if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP + hooks?");
         if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP server?");
         if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
-        if (!wantGitleaks) wantGitleaks = await askYesNo("Download Gitleaks binary (enhanced scanning)?");
+        if (!wantBetterleaks) wantBetterleaks = await askYesNo("Download Betterleaks binary (enhanced scanning)?");
         console.log();
       }
 
@@ -1019,8 +1019,8 @@ export function createInitCommand(): Command {
       manager.set("agent.riskLevel", opts.riskLevel);
       console.log(fmt.success(`Set risk level: ${opts.riskLevel}`));
 
-      // Check / download Gitleaks binary (opt-in via --with-gitleaks or --all)
-      if (wantGitleaks) {
+      // Check / download Betterleaks binary (opt-in via --with-betterleaks or --all)
+      if (wantBetterleaks) {
         const binaryManager = new BinaryManager();
         const platformInfo = binaryManager.getPlatformInfo();
 
@@ -1034,51 +1034,51 @@ export function createInitCommand(): Command {
             console.log(fmt.info("Diagnostics:"));
             console.log(diag);
           }
-          console.log(fmt.info("To fix: install gitleaks (https://github.com/gitleaks/gitleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
+          console.log(fmt.info("To fix: install betterleaks (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
           console.log();
         };
 
-        if (!opts.update && binaryManager.isGitleaksInstalled()) {
+        if (!opts.update && binaryManager.isBetterleaksInstalled()) {
           // Local binary exists — verify it actually works
-          const verResult = await binaryManager.verifyGitleaksVerbose();
+          const verResult = await binaryManager.verifyBetterleaksVerbose();
           if (verResult.ok) {
-            console.log(fmt.success(`Gitleaks already installed (${verResult.stdout})`));
+            console.log(fmt.success(`Betterleaks already installed (${verResult.stdout})`));
           } else {
-            console.log(fmt.warning("Gitleaks binary found locally but failed to execute."));
-            console.log(fmt.info(`  Binary: ${binaryManager.getGitleaksPath()}`));
-            await showDiagnostics(binaryManager.getGitleaksPath(), verResult);
+            console.log(fmt.warning("Betterleaks binary found locally but failed to execute."));
+            console.log(fmt.info(`  Binary: ${binaryManager.getBetterleaksPath()}`));
+            await showDiagnostics(binaryManager.getBetterleaksPath(), verResult);
           }
         } else {
           // Not installed locally (or --update forcing re-download) — check PATH first
           // unless --update was passed (in that case force a fresh managed install)
-          const pathBinary = opts.update ? null : binaryManager.findGitleaksOnPath();
+          const pathBinary = opts.update ? null : binaryManager.findBetterleaksOnPath();
           if (pathBinary) {
-            const verResult = await binaryManager.verifyGitleaksVerbose(pathBinary);
+            const verResult = await binaryManager.verifyBetterleaksVerbose(pathBinary);
             if (verResult.ok) {
-              console.log(fmt.success(`Gitleaks available on PATH (${verResult.stdout})`));
+              console.log(fmt.success(`Betterleaks available on PATH (${verResult.stdout})`));
             } else {
-              console.log(fmt.warning("Gitleaks found on PATH but failed to execute."));
+              console.log(fmt.warning("Betterleaks found on PATH but failed to execute."));
               console.log(fmt.info(`  Binary: ${pathBinary}`));
               await showDiagnostics(pathBinary, verResult);
             }
           } else if (!platformInfo.supported) {
-            console.log(fmt.info(`Gitleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
+            console.log(fmt.info(`Betterleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
             console.log(fmt.success("Using pattern-based scanning (21 patterns)"));
           } else {
             // Not on PATH, not installed locally — download
             console.log();
-            console.log(fmt.info("Downloading Gitleaks (enhanced secret detection)..."));
+            console.log(fmt.info("Downloading Betterleaks (enhanced secret detection)..."));
             try {
-              await binaryManager.downloadGitleaks((msg) => {
+              await binaryManager.downloadBetterleaks((msg) => {
                 console.log(`   ${msg}`);
               });
               console.log();
             } catch (e) {
               console.log();
-              console.log(fmt.error(`Gitleaks setup failed — pattern-based scanning will be used instead.`));
+              console.log(fmt.error(`Betterleaks setup failed — pattern-based scanning will be used instead.`));
               console.log(fmt.warning(String(e)));
               console.log();
-              console.log(fmt.info("To fix: install gitleaks manually (https://github.com/gitleaks/gitleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
+              console.log(fmt.info("To fix: install betterleaks manually (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
               console.log();
             }
           }

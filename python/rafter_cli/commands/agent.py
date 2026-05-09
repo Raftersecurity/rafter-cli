@@ -27,7 +27,7 @@ from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
 from ..core.config_manager import ConfigManager
 from ..core.pattern_engine import PatternEngine
-from ..scanners.gitleaks import GitleaksScanner
+from ..scanners.betterleaks import BetterleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
 from ..utils.formatter import fmt, is_agent_mode, print_stderr
@@ -858,7 +858,7 @@ def _install_aider_read(root: Path) -> bool:
 @agent_app.command()
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
-    with_gitleaks: bool = typer.Option(False, "--with-gitleaks", help="Download and install Gitleaks binary"),
+    with_betterleaks: bool = typer.Option(False, "--with-betterleaks", help="Download and install Betterleaks binary"),
     with_openclaw: bool = typer.Option(False, "--with-openclaw", help="Install OpenClaw integration"),
     with_claude_code: bool = typer.Option(False, "--with-claude-code", help="Install Claude Code integration"),
     with_codex: bool = typer.Option(False, "--with-codex", help="Install Codex CLI integration"),
@@ -867,8 +867,8 @@ def init(
     with_cursor: bool = typer.Option(False, "--with-cursor", help="Install Cursor integration"),
     with_windsurf: bool = typer.Option(False, "--with-windsurf", help="Install Windsurf integration"),
     with_continue: bool = typer.Option(False, "--with-continue", help="Install Continue.dev integration"),
-    all_integrations: bool = typer.Option(False, "--all", help="Install all detected integrations and download Gitleaks"),
-    update: bool = typer.Option(False, "--update", help="Re-download gitleaks and reinstall integrations without resetting config"),
+    all_integrations: bool = typer.Option(False, "--all", help="Install all detected integrations and download Betterleaks"),
+    update: bool = typer.Option(False, "--update", help="Re-download betterleaks and reinstall integrations without resetting config"),
     local: bool = typer.Option(
         False,
         "--local",
@@ -920,7 +920,7 @@ def init(
     # Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
     # in cwd) since rf-du2o.
     want_aider = with_aider or all_integrations
-    want_gitleaks = with_gitleaks or (all_integrations and not local)
+    want_betterleaks = with_betterleaks or (all_integrations and not local)
 
     # Show detected environments
     detected = []
@@ -980,38 +980,39 @@ def init(
     manager.set("agent.risk_level", risk_level)
     rprint(fmt.success(f"Set risk level: {risk_level}"))
 
-    # Gitleaks check (opt-in via --with-gitleaks or --all)
-    if want_gitleaks:
-        _gitleaks_on_path = None if update else shutil.which("gitleaks")
-        _rafter_bin = Path.home() / ".rafter" / "bin" / "gitleaks"
-        if _gitleaks_on_path:
-            rprint(fmt.success(f"Gitleaks available on PATH ({_gitleaks_on_path})"))
+    # Betterleaks check (opt-in via --with-betterleaks or --all)
+    if want_betterleaks:
+        _bl_on_path = None if update else shutil.which("betterleaks")
+        _bin_name = "betterleaks.exe" if sys.platform == "win32" else "betterleaks"
+        _rafter_bin = Path.home() / ".rafter" / "bin" / _bin_name
+        if _bl_on_path:
+            rprint(fmt.success(f"Betterleaks available on PATH ({_bl_on_path})"))
         elif not update and _rafter_bin.exists():
-            rprint(fmt.success(f"Gitleaks available at {_rafter_bin}"))
+            rprint(fmt.success(f"Betterleaks available at {_rafter_bin}"))
         else:
             if update:
-                rprint(fmt.info("Updating gitleaks binary..."))
+                rprint(fmt.info("Updating betterleaks binary..."))
             else:
-                rprint(fmt.info("Gitleaks not found — attempting auto-download..."))
+                rprint(fmt.info("Betterleaks not found — attempting auto-download..."))
             _bm = BinaryManager()
             if _bm.is_platform_supported():
                 try:
-                    _bm.download_gitleaks(on_progress=typer.echo)
-                    rprint(fmt.success("Gitleaks downloaded and verified."))
+                    _bm.download_betterleaks(on_progress=typer.echo)
+                    rprint(fmt.success("Betterleaks downloaded and verified."))
                 except Exception as _dl_err:
                     rprint(fmt.warning(f"Auto-download failed: {_dl_err}"))
                     rprint(fmt.info(
-                        "To fix: install gitleaks manually "
-                        "(https://github.com/gitleaks/gitleaks/releases) "
+                        "To fix: install betterleaks manually "
+                        "(https://github.com/betterleaks/betterleaks/releases) "
                         "and ensure it is on PATH, then re-run 'rafter agent init'."
                     ))
             else:
                 rprint(fmt.warning(
-                    "Gitleaks not available for this platform — "
+                    "Betterleaks not available for this platform — "
                     "pattern-based scanning will be used instead."
                 ))
                 rprint(fmt.info(
-                    "To fix: install gitleaks (https://github.com/gitleaks/gitleaks/releases) "
+                    "To fix: install betterleaks (https://github.com/betterleaks/betterleaks/releases) "
                     "and ensure it is on PATH, then re-run 'rafter agent init'."
                 ))
 
@@ -1227,8 +1228,8 @@ def init(
 
 
 def _select_engine(preference: str, quiet: bool) -> str:
-    """Return 'gitleaks' or 'patterns'."""
-    valid_engines = ("auto", "gitleaks", "patterns")
+    """Return 'betterleaks' or 'patterns'."""
+    valid_engines = ("auto", "betterleaks", "patterns")
     if preference not in valid_engines:
         print(f"Invalid engine: {preference}. Valid values: {', '.join(valid_engines)}", file=sys.stderr)
         raise typer.Exit(code=2)
@@ -1236,25 +1237,25 @@ def _select_engine(preference: str, quiet: bool) -> str:
     if preference == "patterns":
         return "patterns"
 
-    scanner = GitleaksScanner()
+    scanner = BetterleaksScanner()
     available = scanner.is_available()
 
-    if preference == "gitleaks":
+    if preference == "betterleaks":
         if not available:
             if not quiet:
-                print_stderr(fmt.warning("Gitleaks requested but not available, using patterns"))
+                print_stderr(fmt.warning("Betterleaks requested but not available, using patterns"))
             return "patterns"
-        return "gitleaks"
+        return "betterleaks"
 
     # auto
-    return "gitleaks" if available else "patterns"
+    return "betterleaks" if available else "patterns"
 
 
 def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanResult]:
-    if engine == "gitleaks":
+    if engine == "betterleaks":
         try:
-            gl = GitleaksScanner()
-            result = gl.scan_file(file_path)
+            bl = BetterleaksScanner()
+            result = bl.scan_file(file_path)
             return [ScanResult(file=result.file, matches=result.matches)] if result.matches else []
         except Exception:
             scanner = RegexScanner(custom_patterns)
@@ -1273,10 +1274,10 @@ def _scan_directory(dir_path: str, engine: str, scan_cfg=None, *, history: bool 
         custom = [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns] if scan_cfg.custom_patterns else None
         exclude = scan_cfg.exclude_paths or None
 
-    if engine == "gitleaks":
+    if engine == "betterleaks":
         try:
-            gl = GitleaksScanner()
-            results = gl.scan_directory(dir_path, use_git=history)
+            bl = BetterleaksScanner()
+            results = bl.scan_directory(dir_path, use_git=history)
             return [ScanResult(file=r.file, matches=r.matches) for r in results]
         except Exception:
             scanner = RegexScanner(custom)
@@ -1512,10 +1513,10 @@ def scan(
     format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
     staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
     diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
-    engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
+    engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
-    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires gitleaks engine)"),
+    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
 ):
     """Scan files or directories for secrets. [deprecated: use 'rafter secrets' instead]"""
     print(
@@ -2003,30 +2004,39 @@ class _CheckResult:
     optional: bool = False  # optional checks warn but don't fail exit code
 
 
-def _check_gitleaks() -> _CheckResult:
-    """Check if gitleaks is available and executable. Checks PATH first, then ~/.rafter/bin."""
-    name = "Gitleaks"
+def _check_betterleaks() -> _CheckResult:
+    """Check if betterleaks is available and executable. Checks PATH first, then ~/.rafter/bin."""
+    name = "Betterleaks"
+    bm = BinaryManager()
     # Check PATH first (e.g. Homebrew), then fall back to rafter-managed binary
-    gitleaks_path = shutil.which("gitleaks")
-    if not gitleaks_path:
-        rafter_bin = Path.home() / ".rafter" / "bin" / "gitleaks"
+    bl_path = shutil.which("betterleaks")
+    if not bl_path:
+        rafter_bin = bm.get_betterleaks_path()
         if rafter_bin.exists():
-            gitleaks_path = str(rafter_bin)
-    if not gitleaks_path:
-        return _CheckResult(name, False, f"Not found on PATH or at {Path.home() / '.rafter' / 'bin' / 'gitleaks'}")
+            bl_path = str(rafter_bin)
+    if not bl_path:
+        # Soft-degrade if a legacy gitleaks install is still present.
+        legacy = bm.find_legacy_gitleaks()
+        if legacy:
+            return _CheckResult(
+                name,
+                False,
+                f"Not installed; found legacy gitleaks at {legacy}. Run: rafter agent update-betterleaks",
+                optional=True,
+            )
+        return _CheckResult(name, False, f"Not found on PATH or at {bm.get_betterleaks_path()}")
 
     # Verify the found binary actually works
-    bm = BinaryManager()
-    result = bm.verify_gitleaks_verbose(binary_path=Path(gitleaks_path))
+    result = bm.verify_betterleaks_verbose(binary_path=Path(bl_path))
     if result["ok"]:
-        return _CheckResult(name, True, result["stdout"] or gitleaks_path)
+        return _CheckResult(name, True, result["stdout"] or bl_path)
 
-    detail = f"Found at {gitleaks_path} but failed to execute"
+    detail = f"Found at {bl_path} but failed to execute"
     if result["stdout"]:
         detail += f"\n   stdout: {result['stdout']}"
     if result["stderr"]:
         detail += f"\n   stderr: {result['stderr']}"
-    diag = bm.collect_binary_diagnostics(binary_path=Path(gitleaks_path))
+    diag = bm.collect_binary_diagnostics(binary_path=Path(bl_path))
     if diag:
         detail += f"\n{diag}"
     return _CheckResult(name, False, detail)
@@ -2365,7 +2375,7 @@ def verify(
 
     results = [
         _check_config(),
-        _check_gitleaks(),
+        _check_betterleaks(),
         _check_claude_code(),
         _check_openclaw(),
         _check_codex(),
@@ -2649,58 +2659,59 @@ def audit_skill(
         raise typer.Exit(code=1)
 
 
-# ── update-gitleaks ──────────────────────────────────────────────────────
+# ── update-betterleaks ───────────────────────────────────────────────────
 
 
-@agent_app.command("update-gitleaks")
-def update_gitleaks(
+@agent_app.command("update-betterleaks")
+def update_betterleaks(
     version: str = typer.Option(
         None,
         "--version",
-        help="Gitleaks version to install (default: bundled version)",
+        help="Betterleaks version to install (default: bundled version)",
     ),
 ):
-    """Update (or reinstall) the managed gitleaks binary."""
-    from ..utils.binary_manager import GITLEAKS_VERSION
+    """Update (or reinstall) the managed betterleaks binary."""
+    from ..utils.binary_manager import BETTERLEAKS_VERSION
 
-    target_version = version or GITLEAKS_VERSION
-    _bm = BinaryManager()
+    target_version = version or BETTERLEAKS_VERSION
+    bm = BinaryManager()
 
-    if not _bm.is_platform_supported():
+    if not bm.is_platform_supported():
         rprint(fmt.error(
-            f"Gitleaks not available for {_bm._sys_platform()}/{_bm._machine()}"
+            f"Betterleaks not available for {bm._sys_platform()}/{bm._machine()}"
         ))
         raise typer.Exit(code=1)
 
-    # Show current version if installed
-    _rafter_bin = _bm.get_gitleaks_path()
-    if _rafter_bin.exists():
-        result = _bm.verify_gitleaks_verbose()
+    rafter_bin = bm.get_betterleaks_path()
+    if rafter_bin.exists():
+        result = bm.verify_betterleaks_verbose()
         if result["ok"]:
             rprint(fmt.info(f"Current: {result['stdout']}"))
         else:
-            rprint(fmt.warning(f"Current binary at {_rafter_bin} is not working"))
+            rprint(fmt.warning(f"Current binary at {rafter_bin} is not working"))
     else:
-        rprint(fmt.info("Gitleaks not currently installed (managed binary)"))
+        rprint(fmt.info("Betterleaks not currently installed (managed binary)"))
 
-    rprint(fmt.info(f"Installing gitleaks v{target_version}..."))
+    rprint(fmt.info(f"Installing betterleaks v{target_version}..."))
     rprint()
 
     try:
-        _bm.download_gitleaks(on_progress=typer.echo, version=target_version)
+        bm.download_betterleaks(on_progress=typer.echo, version=target_version)
         rprint()
-        result = _bm.verify_gitleaks_verbose()
-        rprint(fmt.success(f"Gitleaks updated: {result['stdout']}"))
-        rprint(fmt.info(f"  Binary: {_rafter_bin}"))
-    except Exception as _err:
+        result = bm.verify_betterleaks_verbose()
+        rprint(fmt.success(f"Betterleaks updated: {result['stdout']}"))
+        rprint(fmt.info(f"  Binary: {rafter_bin}"))
+    except Exception as err:
         rprint()
-        rprint(fmt.error(f"Update failed: {_err}"))
+        rprint(fmt.error(f"Update failed: {err}"))
         rprint(fmt.info(
-            "To fix: install gitleaks manually "
-            "(https://github.com/gitleaks/gitleaks/releases) "
+            "To fix: install betterleaks manually "
+            "(https://github.com/betterleaks/betterleaks/releases) "
             "and ensure it is on PATH."
         ))
         raise typer.Exit(code=1)
+
+
 
 
 # ── agent status ─────────────────────────────────────────────────────────
@@ -2728,18 +2739,23 @@ def status():
     else:
         print(f"\nConfig:       not found — run: rafter agent init")
 
-    # --- Gitleaks ---
-    gl_path = shutil.which("gitleaks") or str(rafter_dir / "bin" / "gitleaks")
-    if shutil.which("gitleaks"):
+    # --- Betterleaks ---
+    bm = BinaryManager()
+    bl_local = bm.get_betterleaks_path()
+    if shutil.which("betterleaks"):
         try:
-            ver = subprocess.run(["gitleaks", "version"], capture_output=True, text=True, timeout=5)
-            print(f"Gitleaks:     {ver.stdout.strip()} (PATH)")
+            ver = subprocess.run(["betterleaks", "version"], capture_output=True, text=True, timeout=5)
+            print(f"Betterleaks:  {ver.stdout.strip()} (PATH)")
         except Exception:
-            print("Gitleaks:     on PATH (version check failed)")
-    elif Path(gl_path).exists():
-        print(f"Gitleaks:     {gl_path} (local)")
+            print("Betterleaks:  on PATH (version check failed)")
+    elif bl_local.exists():
+        print(f"Betterleaks:  {bl_local} (local)")
     else:
-        print("Gitleaks:     not found — run: rafter agent init --with-gitleaks")
+        legacy = bm.find_legacy_gitleaks()
+        if legacy:
+            print(f"Betterleaks:  not found — legacy gitleaks at {legacy}; run: rafter agent update-betterleaks")
+        else:
+            print("Betterleaks:  not found — run: rafter agent init --with-betterleaks")
 
     # --- Claude Code hooks ---
     claude_dir = Path.home() / ".claude"
@@ -2897,7 +2913,7 @@ def _apply_baseline(results: list[ScanResult], entries: list[dict]) -> list[Scan
 @baseline_app.command("create")
 def baseline_create(
     path: str = typer.Argument(".", help="Path to scan"),
-    engine: str = typer.Option("auto", "--engine", help="gitleaks or patterns"),
+    engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
 ):
     """Scan and save all current findings as the baseline."""
     import datetime

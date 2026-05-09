@@ -2,7 +2,7 @@
 
 Python CLI for [Rafter](https://rafter.so) — the security toolkit for developers. Full feature parity with the Node.js package.
 
-**Local security toolkit** — Fast, deterministic secret scanning (21+ patterns, Gitleaks), policy enforcement with risk-tiered rules, pre-commit hooks, pretool hooks, extension auditing, custom rule authoring, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, and 5 more platforms. No API key required. No data leaves your machine.
+**Local security toolkit** — Fast, deterministic secret scanning (21+ patterns, Betterleaks), policy enforcement with risk-tiered rules, pre-commit hooks, pretool hooks, extension auditing, custom rule authoring, and full audit logging. Works with Claude Code, Codex CLI, OpenClaw, and 5 more platforms. No API key required. No data leaves your machine.
 
 **Remote code analysis** — Deep security audits that combine agentic analysis with a full SAST/SCA toolchain. The engine examines your codebase the way a professional cybersecurity auditor would — tracing data flows, reasoning about business logic, and surfacing vulnerabilities that static rules alone miss — then cross-references findings with industry-standard static analysis and dependency scanning. Structured JSON reports with documented exit codes. Your code is deleted immediately after analysis completes.
 
@@ -42,7 +42,7 @@ rafter agent list                # show detected integrations + status
 rafter agent enable claude-code  # toggle a single platform on/off
 rafter agent scan .              # scan for secrets
 rafter agent scan --diff HEAD~1  # scan changed files
-rafter agent scan --history      # scan full git history (gitleaks engine)
+rafter agent scan --history      # scan full git history (betterleaks engine)
 rafter agent exec "git commit"   # execute with risk assessment
 rafter agent audit               # view security logs
 rafter agent audit --verify      # verify tamper-evident hash chain

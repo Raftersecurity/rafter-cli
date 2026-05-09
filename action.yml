@@ -1,6 +1,6 @@
 # Rafter Security — GitHub Action
 #
-# Deterministic secret scanning for CI. 21+ credential patterns via Gitleaks,
+# Deterministic secret scanning for CI. 21+ credential patterns via Betterleaks,
 # stable exit codes (0 = clean, 1 = findings, 2 = error), structured JSON output.
 # No API key required. No code leaves the runner.
 #

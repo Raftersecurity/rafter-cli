@@ -40,7 +40,7 @@ To initialize Rafter, use **opt-in** `--with-*` flags to select integrations. Th
 ```bash
 # Install specific integrations (opt-in)
 rafter agent init --with-openclaw
-rafter agent init --with-claude-code --with-gitleaks
+rafter agent init --with-claude-code --with-betterleaks
 
 # Install everything detected
 rafter agent init --all

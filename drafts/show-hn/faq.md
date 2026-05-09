@@ -4,11 +4,11 @@ Responses written in founder voice. Adapt as needed based on the actual question
 
 ---
 
-## "How is this different from gitleaks / trufflehog?"
+## "How is this different from betterleaks (or gitleaks) / trufflehog?"
 
-Rafter actually wraps gitleaks when it's available -- if the binary is on your PATH, we use it as the primary scanner because it's excellent. Our built-in regex engine (21+ patterns) is the fallback for zero-dependency environments.
+Rafter actually wraps betterleaks (the gitleaks successor) when it's available -- if the binary is on your PATH, we use it as the primary scanner because it's excellent. Our built-in regex engine (21+ patterns) is the fallback for zero-dependency environments.
 
-The difference is everything around the scan. Gitleaks and trufflehog are standalone secret scanners. Rafter adds command interception (blocking `curl | bash` before your agent runs it), audit logging of agent sessions, MCP integration so the agent itself can check for secrets, pre-commit hooks, and one-command setup for 8 different AI platforms. If you're just scanning repos for secrets, gitleaks is great and you don't need us. If you're running AI coding agents and want guardrails around the whole session, that's what Rafter is for.
+The difference is everything around the scan. Betterleaks and trufflehog are standalone secret scanners. Rafter adds command interception (blocking `curl | bash` before your agent runs it), audit logging of agent sessions, MCP integration so the agent itself can check for secrets, pre-commit hooks, and one-command setup for 8 different AI platforms. If you're just scanning repos for secrets, betterleaks is great and you don't need us. If you're running AI coding agents and want guardrails around the whole session, that's what Rafter is for.
 
 ---
 

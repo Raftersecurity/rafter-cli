@@ -11,7 +11,7 @@ allowed-tools: [Bash, Read]
 
 Rafter ships three tiers. **They are not interchangeable.** The local tier is narrow; skipping remote analysis is the #1 way agents under-use rafter.
 
-1. **Local (`rafter secrets`)** — secrets only. Regex + gitleaks for hardcoded API keys, tokens, private keys. Fast, offline, no key. **This is NOT a code security scan.** It will not find SQL injection, SSRF, auth bugs, insecure deserialization, logic flaws, or dependency vulns. If an agent's entire rafter interaction was `rafter secrets .` and it exited clean, the agent has done secret-hygiene only — not security review.
+1. **Local (`rafter secrets`)** — secrets only. Regex + betterleaks for hardcoded API keys, tokens, private keys. Fast, offline, no key. **This is NOT a code security scan.** It will not find SQL injection, SSRF, auth bugs, insecure deserialization, logic flaws, or dependency vulns. If an agent's entire rafter interaction was `rafter secrets .` and it exited clean, the agent has done secret-hygiene only — not security review.
 2. **Remote fast (`rafter run`, default mode)** — SAST + SCA + secrets via the Rafter API. This is the real code-analysis pass: dataflow, taint, known-vulnerable dependencies, crypto misuse, injection sinks. Needs `RAFTER_API_KEY`.
 3. **Remote plus (`rafter run --mode plus`)** — agentic deep-dive: LLM-guided investigation of suspicious patterns the rules engine flags. Slower, higher signal. Code is deleted server-side after the run.
 
