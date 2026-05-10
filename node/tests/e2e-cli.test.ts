@@ -214,7 +214,9 @@ describe("CLI e2e — rafter secrets (alias for scan local)", () => {
   it("--help advertises secrets-only scope", () => {
     const r = rafter("secrets --help");
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toMatch(/secrets only/i);
+    // Commander wraps the description at terminal width, so "Secrets only"
+    // can land split across a newline. Match any whitespace between the words.
+    expect(r.stdout).toMatch(/secrets\s+only/i);
     expect(r.stdout).toMatch(/rafter run/);
   }, 30000);
 
