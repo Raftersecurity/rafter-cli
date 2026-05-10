@@ -120,6 +120,28 @@ The zero-mutation rule has two enforcement layers — both must stay green:
 `.github-trove-lint.yml` is the staged GitHub Actions workflow that wires
 both layers into CI; P7 promotes it to `.github/workflows/`.
 
+### Performance under churn
+
+Trove is expected to live alongside busy real-world `$HOME`s — log
+rotators, build watchers, dev-server reloaders, dolt servers, polecat
+worktrees. Two contracts hold even when the underlying filesystem is
+firing thousands of inotify events per second:
+
+- **HTTP read latency is bounded.** `GET /api/secrets`, `GET /api/status`,
+  and the SSE stream all read from a snapshot pointer; no read path
+  takes the docstore writer mutex. The performance test in
+  `tests/perf/watcher_test.go` pins the budget at P95 < 200ms / P99 <
+  500ms while the fixture fires 2,000 fs events/second under the scan
+  root.
+- **Watcher events are best-effort with a bounded queue, scans are
+  rate-limited.** The watcher honours the same `scan_config.excludes`
+  the walker uses (so excluded subtrees are never registered with
+  inotify), and the rescanner caps wall-clock rescan rate at one full
+  scan per second regardless of how many debounce windows close.
+  Overflow events from the kernel queue are counted and surfaced via
+  `GET /api/status` as `watch_events_dropped`, so a saturating consumer
+  is visible to a curl probe without reading server logs.
+
 ## Build
 
 ```bash
