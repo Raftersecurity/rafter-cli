@@ -9,6 +9,20 @@
 // orchestrator up when something on disk could plausibly have moved a
 // secret. Anything finer would duplicate logic that already lives in
 // internal/storage.Upsert.
+//
+// Two things keep the watcher cheap on busy filesystems:
+//
+//   - Exclude-aware Add: directories that match the user's
+//     scan_config.excludes patterns are NEVER registered with fsnotify.
+//     A node_modules / .git / etc. exclude keeps the inotify watch list
+//     small even when the configured root is broad like $HOME.
+//
+//   - Non-blocking onChange dispatch: the debounce timer fires onChange
+//     in a fresh goroutine, so a slow consumer (the rescanner doing a
+//     lock-free scan) doesn't stop us draining fsnotify's event queue.
+//     If onChange runs slower than events arrive, the rescanner's own
+//     rate-limit gate handles coalescing. The events themselves are
+//     never queued by us — fsnotify owns its buffer.
 package watch
 
 import (
@@ -17,10 +31,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/excludes"
 )
 
 // DefaultDebounce is the window we wait after the last fs event before
@@ -42,9 +60,15 @@ type Watcher struct {
 
 	// added tracks every directory we currently have a watch on, so we
 	// don't double-register and so Close can audit. Guarded by mu.
-	mu       sync.Mutex
-	added    map[string]struct{}
-	excludes []string
+	mu              sync.Mutex
+	added           map[string]struct{}
+	excludeDirs     []string
+	excludeMatchers []excludes.Matcher
+
+	// eventsDropped counts fsnotify queue-overflow signals plus any
+	// drops we apply ourselves. Exposed via EventsDropped so the
+	// /api/status endpoint can surface saturation to a curl probe.
+	eventsDropped atomic.Int64
 }
 
 // Config bundles the watcher's construction-time options.
@@ -60,7 +84,16 @@ type Config struct {
 	// even if they sit under a configured root. Used to suppress the
 	// rescan→save→event→rescan loop the trove global-store directory
 	// would otherwise produce when scanned-and-watched at $HOME.
+	//
+	// These are pre-canonicalised paths (no glob); a matching path or
+	// any descendant is silently dropped on Add and on event delivery.
 	ExcludeDirs []string
+	// ExcludePatterns is the glob-style exclude language from
+	// scan_config.excludes (e.g. `**/node_modules/`, `**/.git/`,
+	// `~/Library/`). The watcher honours the same patterns the walker
+	// does so a noisy excluded subtree never lands in the inotify
+	// watch list.
+	ExcludePatterns []string
 }
 
 // New constructs a Watcher and registers every directory at-or-below
@@ -82,10 +115,11 @@ func NewWithConfig(cfg Config) (*Watcher, error) {
 		return nil, err
 	}
 	w := &Watcher{
-		fsw:      fsw,
-		debounce: debounce,
-		added:    make(map[string]struct{}),
-		excludes: canonDirs(cfg.ExcludeDirs),
+		fsw:             fsw,
+		debounce:        debounce,
+		added:           make(map[string]struct{}),
+		excludeDirs:     canonDirs(cfg.ExcludeDirs),
+		excludeMatchers: excludes.Compile(cfg.ExcludePatterns),
 	}
 	w.roots = canonDirs(cfg.Roots)
 	var firstErr error
@@ -127,10 +161,20 @@ func (w *Watcher) Roots() []string {
 	return out
 }
 
+// EventsDropped returns the running tally of fs events we couldn't
+// service — currently an fsnotify queue-overflow report. Surfaced via
+// /api/status so a saturating consumer is visible to curl without
+// reading server logs.
+func (w *Watcher) EventsDropped() int64 {
+	return w.eventsDropped.Load()
+}
+
 // Run blocks until ctx is cancelled. While running, every fsnotify event
-// resets a debounce timer; when the timer fires, onChange is invoked
-// synchronously on Run's goroutine. onChange MUST NOT block — kick off
-// the rescan asynchronously if it's slow.
+// resets a debounce timer; when the timer fires, onChange is invoked on
+// a fresh goroutine so a slow scan can't stop the watcher from draining
+// fsnotify's event queue. onChange may be called concurrently if a
+// previous invocation hasn't returned; the rescanner gates duplicates
+// itself.
 //
 // Errors from the underlying watcher are forwarded to onError if non-nil
 // and otherwise dropped. fsnotify treats most errors as recoverable
@@ -194,12 +238,22 @@ func (w *Watcher) Run(ctx context.Context, onChange func(), onError func(error))
 			if !ok {
 				return nil
 			}
+			// fsnotify reports kernel-side queue overflow as a string-
+			// matched error; count those so /api/status can show the
+			// drop tally. Other errors (deleted watched dir, etc.) are
+			// non-fatal and just go to onError.
+			if err != nil && strings.Contains(err.Error(), "queue overflow") {
+				w.eventsDropped.Add(1)
+			}
 			if onError != nil {
 				onError(err)
 			}
 		case <-timerC:
 			timerC = nil
-			onChange()
+			// Dispatch onChange on a fresh goroutine so a slow scan
+			// can't block the event drain. The rescanner is responsible
+			// for in-flight coalescing + rate-limiting.
+			go onChange()
 		}
 	}
 }
@@ -270,13 +324,29 @@ func (w *Watcher) insideAnyRoot(p string) bool {
 }
 
 // isExcluded reports whether p sits at or under any configured exclude
-// directory. The check is a pure prefix test against pre-canonicalised
-// paths, which is why excludes that don't yet exist on disk are
-// dropped at construction time instead of carried as patterns.
+// directory, OR matches one of the configured exclude-patterns from
+// scan_config.excludes. ExcludeDirs is a pure prefix test against
+// pre-canonicalised paths; ExcludePatterns runs through the same
+// glob-language matcher the walker uses, so the two stay in lockstep.
+//
+// We pass isDir=true to the matcher because the watcher only ever
+// considers directories — a path-from-events doesn't have to be a
+// directory, but we use isExcluded as a "should we register a watch
+// here?" filter, which only fires for directories. Fall-through is the
+// safe direction: a non-matching directory is watched (correct);
+// a non-matching file is irrelevant to addTree.
 func (w *Watcher) isExcluded(p string) bool {
 	sep := string(filepath.Separator)
-	for _, ex := range w.excludes {
+	for _, ex := range w.excludeDirs {
 		if p == ex || hasPathPrefix(p, ex+sep) {
+			return true
+		}
+	}
+	if len(w.excludeMatchers) > 0 {
+		// Try as a directory first — that's the watcher's normal use.
+		// If a non-dir path happens through, fall back to file-mode so
+		// `**/.DS_Store` style excludes also fire.
+		if excludes.Match(p, true, w.excludeMatchers) || excludes.Match(p, false, w.excludeMatchers) {
 			return true
 		}
 	}
