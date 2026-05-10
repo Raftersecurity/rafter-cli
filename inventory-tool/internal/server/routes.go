@@ -44,11 +44,20 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"version": "0.0.0-scaffold",
 		"name":    "trove",
-	})
+	}
+	// StatusExtras lets main mix in the watcher's events_dropped counter
+	// (and anything else operationally useful) without coupling the
+	// server package to internal/watch directly.
+	if s.statusExtras != nil {
+		for k, v := range s.statusExtras() {
+			resp[k] = v
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleEvents is the Server-Sent Events stream for drift updates.

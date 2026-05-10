@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/excludes"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/storage"
 )
 
@@ -18,7 +19,7 @@ func walkRoot(
 	ctx context.Context,
 	root string,
 	allRoots []string,
-	excludes []excludeMatcher,
+	excludeMatchers []excludes.Matcher,
 	seen map[string]struct{},
 	doc *storage.Global,
 	r *Result,
@@ -29,7 +30,7 @@ func walkRoot(
 		r.Errors = append(r.Errors, err)
 		return
 	}
-	walkOne(ctx, root, info, allRoots, excludes, seen, doc, r, now, []string{root})
+	walkOne(ctx, root, info, allRoots, excludeMatchers, seen, doc, r, now, []string{root})
 }
 
 // walkOne handles a single directory entry: dispatches to a scanner
@@ -44,7 +45,7 @@ func walkOne(
 	path string,
 	info fs.FileInfo,
 	allRoots []string,
-	excludes []excludeMatcher,
+	excludeMatchers []excludes.Matcher,
 	seen map[string]struct{},
 	doc *storage.Global,
 	r *Result,
@@ -95,7 +96,7 @@ func walkOne(
 	}
 
 	if info.IsDir() {
-		if matchExcluded(path, true, excludes) {
+		if excludes.Match(path, true, excludeMatchers) {
 			return
 		}
 		if _, ok := seen[path]; ok {
@@ -119,7 +120,7 @@ func walkOne(
 				r.Errors = append(r.Errors, err)
 				continue
 			}
-			walkOne(ctx, full, child, allRoots, excludes, seen, doc, r, now, next)
+			walkOne(ctx, full, child, allRoots, excludeMatchers, seen, doc, r, now, next)
 		}
 		return
 	}
@@ -128,7 +129,7 @@ func walkOne(
 		// Devices, pipes, sockets — never credential files.
 		return
 	}
-	if matchExcluded(path, false, excludes) {
+	if excludes.Match(path, false, excludeMatchers) {
 		return
 	}
 	scan, ok := scannerFor(path)

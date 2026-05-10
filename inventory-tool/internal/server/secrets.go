@@ -36,21 +36,19 @@ func (s *Server) handleSecretsList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "store not configured", http.StatusServiceUnavailable)
 		return
 	}
-	// Marshal under the docstore lock so the snapshot is consistent
-	// across concurrent Upserts; do the network write outside the
-	// lock so a slow client can't stall the rescanner.
+	// Snapshot is a single atomic load — no writer lock — so a rescan
+	// in flight against a busy $HOME does not stall this read. The doc
+	// behind the snapshot is immutable; concurrent Updates publish a
+	// different pointer and leave this one alone.
+	g := s.store.Snapshot()
+	resp := secretsListResponse{
+		Secrets:      g.Secrets,
+		ScanConfig:   g.ScanConfig,
+		RevealPolicy: g.RevealPolicy,
+	}
 	var buf bytes.Buffer
-	var marshalErr error
-	s.store.Read(func(g *storage.Global) {
-		resp := secretsListResponse{
-			Secrets:      g.Secrets,
-			ScanConfig:   g.ScanConfig,
-			RevealPolicy: g.RevealPolicy,
-		}
-		marshalErr = json.NewEncoder(&buf).Encode(&resp)
-	})
-	if marshalErr != nil {
-		writeJSONErr(w, http.StatusInternalServerError, "marshal: "+marshalErr.Error())
+	if err := json.NewEncoder(&buf).Encode(&resp); err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "marshal: "+err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -96,35 +94,34 @@ func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 		found   storage.FoundIn
 		ok      bool
 	)
-	s.store.Read(func(g *storage.Global) {
-		for i := range g.Secrets {
-			if g.Secrets[i].ID != id {
-				continue
-			}
-			sec := &g.Secrets[i]
-			keyName = sec.KeyName
-			idx := 0
-			if req.SourceIndex != nil {
-				idx = *req.SourceIndex
-			} else {
-				// Default: first file source. Fall back to index 0 if
-				// no file source exists so the unsupported branch hits
-				// for keystore-only secrets.
-				for j, f := range sec.FoundIn {
-					if f.Path != "" {
-						idx = j
-						break
-					}
+	g := s.store.Snapshot()
+	for i := range g.Secrets {
+		if g.Secrets[i].ID != id {
+			continue
+		}
+		sec := &g.Secrets[i]
+		keyName = sec.KeyName
+		idx := 0
+		if req.SourceIndex != nil {
+			idx = *req.SourceIndex
+		} else {
+			// Default: first file source. Fall back to index 0 if
+			// no file source exists so the unsupported branch hits
+			// for keystore-only secrets.
+			for j, f := range sec.FoundIn {
+				if f.Path != "" {
+					idx = j
+					break
 				}
 			}
-			if idx < 0 || idx >= len(sec.FoundIn) {
-				return
-			}
-			found = sec.FoundIn[idx]
-			ok = true
-			return
 		}
-	})
+		if idx < 0 || idx >= len(sec.FoundIn) {
+			break
+		}
+		found = sec.FoundIn[idx]
+		ok = true
+		break
+	}
 	if !ok {
 		http.Error(w, "secret not found", http.StatusNotFound)
 		return

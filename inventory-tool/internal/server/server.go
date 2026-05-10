@@ -28,16 +28,23 @@ type Config struct {
 	// /api/secrets and friends return 503 when nil; this matches Bus's
 	// "fail loud" pattern for misconfigured launches.
 	Store *docstore.Store
+
+	// StatusExtras, if non-nil, is consulted on every /api/status call
+	// and merged into the response JSON. Used by main to expose the
+	// watcher's events_dropped counter without giving the server a
+	// direct dependency on internal/watch.
+	StatusExtras func() map[string]any
 }
 
 type Server struct {
-	httpSrv  *http.Server
-	listener net.Listener
-	token    string
-	url      string
-	life     *lifecycle
-	bus      *eventbus.Bus
-	store    *docstore.Store
+	httpSrv      *http.Server
+	listener     net.Listener
+	token        string
+	url          string
+	life         *lifecycle
+	bus          *eventbus.Bus
+	store        *docstore.Store
+	statusExtras func() map[string]any
 }
 
 // New binds to a random port on 127.0.0.1 and prepares (but does not start)
@@ -55,11 +62,12 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		listener: ln,
-		token:    tok,
-		life:     newLifecycle(cfg.IdleTimeout),
-		bus:      cfg.Bus,
-		store:    cfg.Store,
+		listener:     ln,
+		token:        tok,
+		life:         newLifecycle(cfg.IdleTimeout),
+		bus:          cfg.Bus,
+		store:        cfg.Store,
+		statusExtras: cfg.StatusExtras,
 	}
 	addr := ln.Addr().(*net.TCPAddr)
 	s.url = fmt.Sprintf("http://127.0.0.1:%d/?token=%s", addr.Port, tok)

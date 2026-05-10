@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/excludes"
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/storage"
 )
 
@@ -67,7 +68,7 @@ func Run(ctx context.Context, doc *storage.Global, cfg storage.ScanConfig) (*Res
 		return nil, errors.New("scan: nil doc")
 	}
 	r := &Result{}
-	excludes := compileExcludes(cfg.Excludes)
+	exMatchers := excludes.Compile(cfg.Excludes)
 
 	roots := canonicalRoots(cfg.Roots, r)
 	if len(roots) == 0 {
@@ -80,7 +81,7 @@ func Run(ctx context.Context, doc *storage.Global, cfg storage.ScanConfig) (*Res
 		if err := ctx.Err(); err != nil {
 			return r, err
 		}
-		walkRoot(ctx, root, roots, excludes, seen, doc, r, now)
+		walkRoot(ctx, root, roots, exMatchers, seen, doc, r, now)
 	}
 	return r, nil
 }
