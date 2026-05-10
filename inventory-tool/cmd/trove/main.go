@@ -74,10 +74,31 @@ func main() {
 	})
 
 	bus := eventbus.New()
+
+	// Watcher is constructed before the server so the status endpoint
+	// can read its events_dropped counter even if the rescanner
+	// couldn't fully wire up (e.g. one root unreadable).
+	storeDir := filepath.Dir(storePath)
+	wch, wchErr := watch.NewWithConfig(watch.Config{
+		Roots:           doc.ScanConfig.Roots,
+		ExcludeDirs:     []string{storeDir},
+		ExcludePatterns: doc.ScanConfig.Excludes,
+	})
+	if wchErr != nil {
+		fmt.Fprintf(os.Stderr, "trove: watcher partial setup: %v\n", wchErr)
+	}
+
 	srv, err := server.New(server.Config{
 		IdleTimeout: *idleTimeout,
 		Bus:         bus,
 		Store:       store,
+		StatusExtras: func() map[string]any {
+			extras := map[string]any{}
+			if wch != nil {
+				extras["watch_events_dropped"] = wch.EventsDropped()
+			}
+			return extras
+		},
 	})
 	if err != nil {
 		log.Fatalf("trove: %v", err)
@@ -97,23 +118,11 @@ func main() {
 		_ = srv.Shutdown(shCtx)
 	}()
 
-	// Bring up the fsnotify drift watcher. A partial-setup error
-	// (e.g. one root unreadable) is logged but doesn't abort: the
-	// other roots are still watched, and the user can fix config
-	// without restarting.
-	// Exclude the trove store directory itself from the watcher; if a
-	// scan root is set to $HOME (the spec default), the store-save
-	// landing under ~/.config/trove would otherwise re-fire the
-	// watcher and loop forever.
-	storeDir := filepath.Dir(storePath)
-	wch, wchErr := watch.NewWithConfig(watch.Config{
-		Roots:       doc.ScanConfig.Roots,
-		ExcludeDirs: []string{storeDir},
-	})
-	if wchErr != nil {
-		fmt.Fprintf(os.Stderr, "trove: watcher partial setup: %v\n", wchErr)
-	}
-
+	// Bring up the rescanner. The watcher is already constructed above
+	// (before the server) so /api/status can surface its dropped-event
+	// counter. A partial watcher-setup error (e.g. one root unreadable)
+	// is logged but doesn't abort: the other roots are still watched,
+	// and the user can fix config without restarting.
 	rs, rsErr := rescanpkg.New(rescanpkg.Config{
 		Store:   store,
 		Bus:     bus,
