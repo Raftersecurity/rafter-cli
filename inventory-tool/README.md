@@ -217,7 +217,6 @@ Smoke tests in `internal/server/static_smoke_test.go` lock in the
 structural markers (wordmark, aria-live drift ticker, `data-mode-octal`
 hook, `data-clear-selection` hook, the four reveal-policy strings, brand
 palette hexes) so the page can't silently lose features.
->>>>>>> p13-merge
 
 ## Build
 
