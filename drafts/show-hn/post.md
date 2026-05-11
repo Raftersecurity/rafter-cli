@@ -4,7 +4,7 @@ If you use Claude Code, Codex CLI, Cursor, Gemini CLI, or similar tools, your AI
 
 **What it does:**
 
-- **Secret scanning**: 21+ built-in regex patterns plus optional Gitleaks integration. Deterministic for a given version. Stable exit codes for CI.
+- **Secret scanning**: 21+ built-in regex patterns plus optional Betterleaks integration (the gitleaks successor). Deterministic for a given version. Stable exit codes for CI.
 - **Command interception**: Classifies commands into risk tiers (critical/high/medium/low) and enforces approval policies before execution.
 - **Audit logging**: JSONL trail of every command your agent runs and every secret scan result.
 - **MCP server**: 4 tools (`scan_secrets`, `evaluate_command`, `read_audit_log`, `get_config`) so AI agents can query security status natively.

@@ -701,20 +701,20 @@ describe("AuditLogger — Error Paths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. GitleaksScanner — availability and fallback
+// 6. BetterleaksScanner — availability and fallback
 // ---------------------------------------------------------------------------
 
-import { GitleaksScanner } from "../src/scanners/gitleaks.js";
+import { BetterleaksScanner } from "../src/scanners/betterleaks.js";
 
-describe("GitleaksScanner — Error Paths", () => {
+describe("BetterleaksScanner — Error Paths", () => {
   it("isAvailable returns boolean without throwing", async () => {
-    const scanner = new GitleaksScanner();
+    const scanner = new BetterleaksScanner();
     const result = await scanner.isAvailable();
     expect(typeof result).toBe("boolean");
   });
 
-  it("scanFile throws when gitleaks is not installed", async () => {
-    const scanner = new GitleaksScanner("/nonexistent/gitleaks-binary");
+  it("scanFile throws when betterleaks is not installed", async () => {
+    const scanner = new BetterleaksScanner();
     try {
       await scanner.scanFile("/tmp/test.txt");
       // If it doesn't throw, that's also acceptable (empty results)

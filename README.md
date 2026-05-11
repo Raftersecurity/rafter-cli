@@ -50,7 +50,7 @@ rafter secrets .
 ```sh
 rafter agent init --all
 # → Installs all detected integrations
-# → Downloads Gitleaks (or falls back to built-in scanner)
+# → Downloads Betterleaks (or falls back to built-in scanner)
 ```
 
 **3. Try to commit—hook blocks it**
@@ -184,7 +184,7 @@ This command:
 - Creates `~/.rafter/` config and audit log (or `./.rafter/` with `--local` for ephemeral / containerized / benchmark setups)
 - Auto-detects Claude Code, Codex CLI, OpenClaw, Gemini, Cursor, Windsurf, Continue.dev, and Aider
 - With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
-- With `--with-gitleaks` or `--all`: downloads [Gitleaks](https://github.com/gitleaks/gitleaks) for enhanced secret scanning (falls back to built-in 21-pattern regex scanner)
+- With `--with-betterleaks` or `--all`: downloads [Betterleaks](https://github.com/betterleaks/betterleaks) (the gitleaks successor maintained by the original gitleaks authors) for enhanced secret scanning. Falls back to built-in 21-pattern regex scanner.
 
 Use `rafter agent list/enable/disable` for granular per-component control after the initial install — toggle any platform on or off without re-running `init`.
 
@@ -197,7 +197,7 @@ rafter secrets .              # scan directory
 rafter secrets ./config.js    # scan specific file
 rafter secrets --staged       # scan git staged files only
 rafter secrets --diff HEAD~1  # scan files changed since a git ref
-rafter secrets --history      # scan full git history (requires gitleaks engine)
+rafter secrets --history      # scan full git history (requires betterleaks engine)
 rafter secrets --json         # structured output
 rafter secrets --quiet        # silent unless secrets found (CI-friendly)
 ```
@@ -223,7 +223,7 @@ Exit code 1 if secrets found, 0 if clean.
 
 Raw secret values are never included in output. Pipe to `jq`, feed to CI gates, or hand to any tool that reads JSON.
 
-**Engine selection:** Uses Gitleaks when available (more patterns), falls back to built-in regex. Override with `--engine gitleaks|patterns|auto`.
+**Engine selection:** Uses Betterleaks when available (more patterns), falls back to built-in regex. Override with `--engine betterleaks|patterns|auto`.
 
 ### Pre-Commit Hook
 
@@ -243,7 +243,7 @@ Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-c
 ```yaml
 repos:
   - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.7.1
+    rev: v0.7.9
     hooks:
       - id: rafter-scan-node
 ```
@@ -430,7 +430,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.7.1
+    rev: v0.7.9
     hooks:
       - id: rafter-scan-node      # auto-installs via npm
       # - id: rafter-scan-python  # auto-installs via pip
@@ -524,7 +524,7 @@ Exit codes are part of Rafter's output contract — CI pipelines and orchestrato
 ~/.rafter/
 ├── config.json        # Configuration
 ├── audit.jsonl        # Security event log (JSON lines)
-├── bin/gitleaks       # Gitleaks binary
+├── bin/betterleaks    # Betterleaks binary
 ├── patterns/          # Custom patterns (reserved)
 └── git-hooks/         # Global pre-commit hook (if --global)
 ```

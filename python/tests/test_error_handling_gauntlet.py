@@ -534,23 +534,23 @@ class TestBackendErrorPaths:
 
 
 # ---------------------------------------------------------------------------
-# 7. GitleaksScanner — availability
+# 7. BetterleaksScanner — availability
 # ---------------------------------------------------------------------------
 
-from rafter_cli.scanners.gitleaks import GitleaksScanner
+from rafter_cli.scanners.betterleaks import BetterleaksScanner
 
 
-class TestGitleaksScannerErrors:
+class TestBetterleaksScannerErrors:
     def test_is_available_returns_bool(self):
-        scanner = GitleaksScanner()
+        scanner = BetterleaksScanner()
         result = scanner.is_available()
         assert isinstance(result, bool)
 
     def test_scan_file_with_missing_binary(self, tmp_path):
-        """Scanner with no gitleaks binary should handle error gracefully."""
-        scanner = GitleaksScanner()
+        """Scanner with no betterleaks binary should handle error gracefully."""
+        scanner = BetterleaksScanner()
         # Override the binary path after construction
-        scanner._path = "/nonexistent/gitleaks"
+        scanner._path = "/nonexistent/betterleaks"
         test_file = tmp_path / "test.txt"
         test_file.write_text("test content")
         try:

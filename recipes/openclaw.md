@@ -14,16 +14,28 @@ CLI.
 
 ## Automatic setup
 
+Two equivalent paths — pick whichever fits your install surface:
+
 ```sh
+# A. Via the rafter CLI (you already have rafter installed):
 rafter agent init --with-openclaw
 # or, install all detected integrations
 rafter agent init --all
+
+# B. Via ClawHub (you only have OpenClaw installed):
+clawhub skill install rafter-security
 ```
 
-`--with-openclaw` writes the skill at
+Path A writes the skill at
 `~/.openclaw/workspace/skills/rafter-security/SKILL.md` and removes any
 legacy `~/.openclaw/skills/rafter-security.md` left by older rafter
-versions. OpenClaw auto-discovers the skill on the next session start.
+versions. Path B installs the same SKILL.md from the public ClawHub
+registry — note the skill's `requires.bins: [rafter]` gate means OpenClaw
+only surfaces it when the rafter CLI is on your `$PATH`, so you'll still
+need to install rafter separately (`npm install -g @rafter-security/cli`
+or `pip install rafter-cli`).
+
+OpenClaw auto-discovers the skill on the next session start either way.
 
 ## Manual setup
 
@@ -49,7 +61,7 @@ The skill file ships with the ClawHub-required frontmatter:
 ---
 name: rafter-security
 description: Security toolkit for AI workflows. Use when scanning code...
-version: 0.7.9
+version: 0.8.0
 metadata:
   openclaw:
     skillKey: rafter-security

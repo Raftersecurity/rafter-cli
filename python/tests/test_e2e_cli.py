@@ -124,8 +124,8 @@ class TestCommandRouting:
         _, _, rc = rafter("nonexistent-command")
         assert rc != 0
 
-    def test_scan_local_routes_to_scanner(self):
-        _, _, rc = rafter("scan local /tmp/nonexistent-rafter-routing-test")
+    def test_secrets_routes_to_scanner(self):
+        _, _, rc = rafter("secrets /tmp/nonexistent-rafter-routing-test")
         assert rc == 2  # path not found
 
     def test_agent_exec_routes_to_interceptor(self):
@@ -145,27 +145,33 @@ class TestCommandRouting:
 
 
 # ---------------------------------------------------------------------------
-# Local secret scanning
+# rafter secrets — local secret scanning
 # ---------------------------------------------------------------------------
 
 
-class TestLocalScanning:
+class TestSecretsScanning:
+    def test_help_advertises_secrets_only_scope(self):
+        stdout, _, rc = rafter("secrets --help")
+        assert rc == 0
+        assert "secrets only" in stdout.lower()
+        assert "rafter run" in stdout.lower()
+
     def test_exits_0_for_clean_file(self, tmp_path):
         f = tmp_path / "clean.txt"
         f.write_text("no secrets here\n")
-        _, _, rc = rafter(f"scan local {f} --engine patterns --quiet")
+        _, _, rc = rafter(f"secrets {f} --engine patterns --quiet")
         assert rc == 0
 
     def test_exits_1_when_secrets_detected(self, tmp_path):
         f = tmp_path / "secrets.txt"
         f.write_text("AKIAIOSFODNN7EXAMPLE\n")
-        _, _, rc = rafter(f"scan local {f} --engine patterns --quiet")
+        _, _, rc = rafter(f"secrets {f} --engine patterns --quiet")
         assert rc == 1
 
     def test_json_outputs_valid_json(self, tmp_path):
         f = tmp_path / "secrets.txt"
         f.write_text("AKIA" + "IOSFODNN7" + "EXAMPLE\n")
-        stdout, _, rc = rafter(f"scan local {f} --engine patterns --json")
+        stdout, _, rc = rafter(f"secrets {f} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
         assert isinstance(parsed, dict)
@@ -175,7 +181,7 @@ class TestLocalScanning:
     def test_json_output_includes_scan_mode_note(self, tmp_path):
         f = tmp_path / "secrets.txt"
         f.write_text("AKIA" + "IOSFODNN7" + "EXAMPLE\n")
-        stdout, _, rc = rafter(f"scan local {f} --engine patterns --json")
+        stdout, _, rc = rafter(f"secrets {f} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
         assert parsed["scan_mode"] == "local"
@@ -187,7 +193,7 @@ class TestLocalScanning:
     def test_json_scan_mode_note_present_when_no_findings(self, tmp_path):
         f = tmp_path / "clean.txt"
         f.write_text("nothing to see here\n")
-        stdout, _, rc = rafter(f"scan local {f} --engine patterns --json")
+        stdout, _, rc = rafter(f"secrets {f} --engine patterns --json")
         assert rc == 0
         parsed = json.loads(stdout)
         assert parsed["scan_mode"] == "local"
@@ -198,7 +204,7 @@ class TestLocalScanning:
     def test_sarif_format_outputs_sarif_schema(self, tmp_path):
         f = tmp_path / "secrets.txt"
         f.write_text("AKIAIOSFODNN7EXAMPLE\n")
-        stdout, _, rc = rafter(f"scan local {f} --engine patterns --format sarif")
+        stdout, _, rc = rafter(f"secrets {f} --engine patterns --format sarif")
         assert rc == 1
         sarif = json.loads(stdout)
         assert sarif["version"] == "2.1.0"
@@ -210,20 +216,20 @@ class TestLocalScanning:
         sub = tmp_path / "src"
         sub.mkdir()
         (sub / "config.ts").write_text("const key = '" + "AKIA" + "IOSFODNN7" + "EXAMPLE';\n")
-        stdout, _, rc = rafter(f"scan local {tmp_path} --engine patterns --json")
+        stdout, _, rc = rafter(f"secrets {tmp_path} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
         assert len(parsed["results"]) > 0
 
     def test_exits_2_for_nonexistent_path(self):
-        _, _, rc = rafter("scan local /tmp/nonexistent-rafter-path-12345 --engine patterns")
+        _, _, rc = rafter("secrets /tmp/nonexistent-rafter-path-12345 --engine patterns")
         assert rc == 2
 
     def test_invalid_engine_does_not_crash(self, tmp_path):
         """Python implementation rejects unknown engines with exit code 2."""
         f = tmp_path / "clean.txt"
         f.write_text("ok\n")
-        _, _, rc = rafter(f"scan local {f} --engine badengine")
+        _, _, rc = rafter(f"secrets {f} --engine badengine")
         # Python rejects invalid engines with exit code 2
         assert rc == 2
 
@@ -231,36 +237,53 @@ class TestLocalScanning:
         """Python implementation falls back gracefully for unknown formats."""
         f = tmp_path / "clean.txt"
         f.write_text("ok\n")
-        _, _, rc = rafter(f"scan local {f} --engine patterns --format xml")
+        _, _, rc = rafter(f"secrets {f} --engine patterns --format xml")
         assert rc == 0
+
+    def test_engine_gitleaks_no_longer_accepted(self, tmp_path):
+        """`--engine gitleaks` was removed; the validator should reject it."""
+        f = tmp_path / "clean.txt"
+        f.write_text("no secrets\n")
+        _, stderr, rc = rafter(f"secrets {f} --engine gitleaks --quiet")
+        assert rc == 2, f"expected rc=2; got rc={rc}, stderr={stderr!r}"
+        assert "Invalid engine" in stderr
+
+    def test_with_gitleaks_no_longer_accepted(self):
+        """`--with-gitleaks` was removed; typer/click should report unknown option."""
+        _, stderr, rc = rafter("agent init --with-gitleaks")
+        assert rc != 0
+        assert "no such option" in stderr.lower() or "no such option" in stderr.lower()
 
 
 # ---------------------------------------------------------------------------
-# rafter secrets — top-level alias for local secret scanning
+# `scan local` back-compat alias
 # ---------------------------------------------------------------------------
+# The canonical command is `rafter secrets`. `scan local` remains a hidden
+# alias so existing scripts and pre-commit configs that predate the rename
+# continue to work. These tests pin the alias contract: same routing, same
+# output, no deprecation warning. Delete this whole class if the alias is
+# ever formally removed.
 
 
-class TestRafterSecrets:
-    def test_help_advertises_secrets_only_scope(self):
-        stdout, _, rc = rafter("secrets --help")
-        assert rc == 0
-        assert "secrets only" in stdout.lower()
-        assert "rafter run" in stdout.lower()
-
-    def test_detects_secrets_same_as_scan_local(self, tmp_path):
+class TestScanLocalAliasBackCompat:
+    def test_alias_produces_identical_json_to_secrets(self, tmp_path):
         f = tmp_path / "secrets.txt"
         f.write_text("AKIAIOSFODNN7EXAMPLE\n")
-        a_stdout, _, a_rc = rafter(f"secrets {f} --engine patterns --json")
-        b_stdout, _, b_rc = rafter(f"scan local {f} --engine patterns --json")
-        assert a_rc == 1
-        assert b_rc == 1
-        assert json.loads(a_stdout) == json.loads(b_stdout)
+        canonical_stdout, _, canonical_rc = rafter(f"secrets {f} --engine patterns --json")
+        alias_stdout, _, alias_rc = rafter(f"scan local {f} --engine patterns --json")
+        assert canonical_rc == 1
+        assert alias_rc == 1
+        assert json.loads(alias_stdout) == json.loads(canonical_stdout)
 
-    def test_exits_0_for_clean_file(self, tmp_path):
+    def test_alias_routes_to_scanner(self):
+        _, _, rc = rafter("scan local /tmp/nonexistent-rafter-alias-routing-test")
+        assert rc == 2
+
+    def test_alias_does_not_emit_deprecation(self, tmp_path):
         f = tmp_path / "clean.txt"
-        f.write_text("no secrets here\n")
-        _, _, rc = rafter(f"secrets {f} --engine patterns --quiet")
-        assert rc == 0
+        f.write_text("no secrets\n")
+        _, stderr, _ = rafter(f"scan local {f} --engine patterns")
+        assert "deprecated" not in stderr.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +310,7 @@ class TestAgentModeFlag:
     def test_agent_flag_produces_plain_output(self, tmp_path):
         f = tmp_path / "clean.txt"
         f.write_text("no secrets\n")
-        stdout, _, rc = rafter(f"-a scan local {f} --engine patterns")
+        stdout, _, rc = rafter(f"-a secrets {f} --engine patterns")
         assert rc == 0
         # Should not contain ANSI escape codes
         assert "\x1b[" not in stdout
@@ -306,11 +329,6 @@ class TestAgentScanDeprecation:
         assert "deprecated" in stderr.lower()
         assert "rafter secrets" in stderr
 
-    def test_scan_local_does_not_emit_deprecation(self, tmp_path):
-        f = tmp_path / "clean.txt"
-        f.write_text("no secrets\n")
-        _, stderr, _ = rafter(f"scan local {f} --engine patterns")
-        assert "deprecated" not in stderr.lower()
 
 
 # ---------------------------------------------------------------------------

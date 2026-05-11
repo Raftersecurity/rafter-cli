@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
-import { GitleaksScanner } from "../../scanners/gitleaks.js";
+import { BetterleaksScanner } from "../../scanners/betterleaks.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import {
@@ -77,13 +77,13 @@ export function createScanCommand(): Command {
     .option("--format <format>", "Output format: text, json, sarif", "text")
     .option("--staged", "Scan only git staged files")
     .option("--diff <ref>", "Scan files changed since a git ref")
-    .option("--engine <engine>", "Scan engine: gitleaks or patterns", "auto")
+    .option("--engine <engine>", "Scan engine: betterleaks or patterns", "auto")
     .option("--baseline", "Filter findings present in the saved baseline")
     .option("--watch", "Watch for file changes and re-scan on change")
-    .option("--history", "Scan git history for secrets (requires gitleaks engine)")
+    .option("--history", "Scan git history for secrets (requires betterleaks engine)")
     .action(async (scanPath, opts: ScanOpts) => {
-      // Validate flags before doing any work
-      const validEngines = ["auto", "gitleaks", "patterns"];
+      // Validate flags before doing any work.
+      const validEngines = ["auto", "betterleaks", "patterns"];
       const engineValue = opts.engine || "auto";
       if (!validEngines.includes(engineValue)) {
         console.error(`Invalid engine: ${engineValue}. Valid values: ${validEngines.join(", ")}`);
@@ -172,7 +172,7 @@ export function createSecretsCommand(): Command {
   const cmd = createScanCommand();
   cmd.name("secrets");
   cmd.description(
-    "Scan files/directories for hardcoded secrets (regex + gitleaks). Secrets only — not a code analysis. For full SAST/SCA, use 'rafter run'.",
+    "Scan files/directories for hardcoded secrets (regex + betterleaks). Secrets only — not a code analysis. For full SAST/SCA, use 'rafter run'.",
   );
   return cmd;
 }
@@ -459,33 +459,33 @@ async function scanStagedFiles(
 /**
  * Select scan engine based on availability and user preference
  */
-async function selectEngine(preference: string, quiet: boolean): Promise<"gitleaks" | "patterns"> {
+async function selectEngine(preference: string, quiet: boolean): Promise<"betterleaks" | "patterns"> {
   if (preference === "patterns") {
     return "patterns";
   }
 
-  if (preference === "gitleaks") {
-    const gitleaks = new GitleaksScanner();
-    const available = await gitleaks.isAvailable();
+  if (preference === "betterleaks") {
+    const bl = new BetterleaksScanner();
+    const available = await bl.isAvailable();
     if (!available) {
       if (!quiet) {
-        console.error(fmt.warning("Gitleaks requested but not available, using patterns"));
+        console.error(fmt.warning("Betterleaks requested but not available, using patterns"));
       }
       return "patterns";
     }
-    return "gitleaks";
+    return "betterleaks";
   }
 
   if (preference !== "auto") {
-    console.error(`Invalid engine: ${preference}. Valid values: auto, gitleaks, patterns`);
+    console.error(`Invalid engine: ${preference}. Valid values: auto, betterleaks, patterns`);
     process.exit(2);
   }
 
-  // Auto mode: try Gitleaks, fall back to patterns
-  const gitleaks = new GitleaksScanner();
-  const available = await gitleaks.isAvailable();
+  // Auto mode: try Betterleaks, fall back to patterns
+  const bl = new BetterleaksScanner();
+  const available = await bl.isAvailable();
 
-  return available ? "gitleaks" : "patterns";
+  return available ? "betterleaks" : "patterns";
 }
 
 /**
@@ -493,16 +493,16 @@ async function selectEngine(preference: string, quiet: boolean): Promise<"gitlea
  */
 async function scanFile(
   filePath: string,
-  engine: "gitleaks" | "patterns",
+  engine: "betterleaks" | "patterns",
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
 ): Promise<ScanResult[]> {
-  if (engine === "gitleaks") {
+  if (engine === "betterleaks") {
     try {
-      const gitleaks = new GitleaksScanner();
-      const result = await gitleaks.scanFile(filePath);
+      const bl = new BetterleaksScanner();
+      const result = await bl.scanFile(filePath);
       return result.matches.length > 0 ? [result] : [];
     } catch (e) {
-      console.error(fmt.warning("Gitleaks scan failed, falling back to patterns"));
+      console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
       const scanner = new RegexScanner(scanCfg?.customPatterns);
       const result = scanner.scanFile(filePath);
       return result.matches.length > 0 ? [result] : [];
@@ -519,16 +519,16 @@ async function scanFile(
  */
 async function scanDirectory(
   dirPath: string,
-  engine: "gitleaks" | "patterns",
+  engine: "betterleaks" | "patterns",
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
   history?: boolean,
 ): Promise<ScanResult[]> {
-  if (engine === "gitleaks") {
+  if (engine === "betterleaks") {
     try {
-      const gitleaks = new GitleaksScanner();
-      return await gitleaks.scanDirectory(dirPath, { useGit: history ?? false });
+      const bl = new BetterleaksScanner();
+      return await bl.scanDirectory(dirPath, { useGit: history ?? false });
     } catch (e) {
-      console.error(fmt.warning("Gitleaks scan failed, falling back to patterns"));
+      console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
       const scanner = new RegexScanner(scanCfg?.customPatterns);
       return scanner.scanDirectory(dirPath, { excludePaths: scanCfg?.excludePaths });
     }
