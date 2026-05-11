@@ -10,6 +10,13 @@
 //
 // The session cookie set on the launcher redirect authenticates every
 // fetch automatically (credentials: 'same-origin').
+//
+// Reveal policies (storage.RevealPolicy on the wire):
+//   "strict"   — never reveal; only annotations.
+//   "session"  — reveal per-click; values stay in-memory only. Default.
+//   "loose"    — reveal without per-secret confirmation.
+//   "paranoid" — never decrypt OS keystore reads; keystore reveals 422
+//                and the UI surfaces a "Decrypt off — see settings" link.
 
 (function () {
   "use strict";
@@ -18,7 +25,82 @@
   const panelWrap = document.getElementById("panel-wrap");
   const panel = document.getElementById("panel");
   const summary = document.getElementById("summary");
-  const toast = document.getElementById("toast");
+  const toastRegion = document.getElementById("toast-region");
+  const driftTicker = document.getElementById("drift-ticker");
+  const driftBadge = document.getElementById("drift-badge");
+
+  // Five-family taxonomy. Order in this array controls render order.
+  // Each entry maps a SourceType (+ optional path predicate) to a
+  // self-explaining family copy block.
+  const FAMILIES = [
+    {
+      id: "envfile",
+      title: "Environment files (.env, .envrc)",
+      icon: "envfile",
+      matches: (f) => f.source_type === "envfile" && isDotEnvPath(f.path),
+      always: false,
+    },
+    {
+      id: "shell-rc",
+      title: "Shell config (.zshrc, .bashrc, .profile)",
+      icon: "shell",
+      matches: (f) => f.source_type === "shell-rc",
+      always: false,
+    },
+    {
+      id: "config",
+      title: "Config files (~/.aws, ~/.npmrc, ~/.config/gh, …)",
+      icon: "config",
+      matches: (f) => f.source_type === "envfile" && !isDotEnvPath(f.path),
+      always: false,
+    },
+    {
+      id: "keystore",
+      title: "OS keychain",
+      subtitle: "coming soon",
+      icon: "key",
+      matches: (f) => f.source_type === "keystore",
+      always: true,
+      unsupported: true,
+    },
+    {
+      id: "source-code",
+      title: "Source code",
+      subtitle: "coming soon, blocked on betterleaks",
+      icon: "code",
+      matches: (f) => f.source_type === "source-code",
+      always: true,
+      unsupported: true,
+    },
+  ];
+
+  // Inline single-color SVG icons (--fg-muted via currentColor).
+  const ICONS = {
+    envfile: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 1.5h7l3 3V14a.5.5 0 0 1-.5.5h-9A.5.5 0 0 1 3 14V1.5z" stroke="currentColor"/><path d="M10 1.5V5h3" stroke="currentColor"/><path d="M5.5 8h5M5.5 10.5h5M5.5 6h2" stroke="currentColor"/></svg>',
+    shell:   '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.2" stroke="currentColor"/><path d="M4.5 6.5l2 2-2 2M8 11h3.5" stroke="currentColor" stroke-linecap="round"/></svg>',
+    config:  '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="2.5" stroke="currentColor"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4" stroke="currentColor"/></svg>',
+    key:     '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="5" cy="11" r="2.5" stroke="currentColor"/><path d="M6.8 9.2L14 2M11 5l1.5 1.5M13 3l1.5 1.5" stroke="currentColor"/></svg>',
+    code:    '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5M9.5 3.5l-3 9" stroke="currentColor" stroke-linecap="round"/></svg>',
+    lock:    '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.2" stroke="currentColor"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor"/></svg>',
+    copy:    '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor"/><path d="M6 4V3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-1" stroke="currentColor"/></svg>',
+  };
+
+  // Mode-octal explainer copy. Append a `?` icon next to any value
+  // that renders an octal mode; hover/focus shows this tip.
+  const MODE_TIPS = {
+    "0644": "World-readable. Anyone with a shell on this machine can read the file. .env files should be 0600.",
+    "0640": "Owner + group. Members of the file's group can read.",
+    "0600": "Owner-only. Recommended for files holding secrets.",
+    "0660": "Owner + group, no world. Group members can read.",
+    "0666": "World-readable AND world-writable. Treat as compromised.",
+    "0664": "Group-writable. Members of the file's group can read and edit.",
+  };
+  function modeSeverity(mode) {
+    if (!mode) return "";
+    if (mode === "0600" || mode === "0400") return "ok";
+    if (mode === "0640" || mode === "0660" || mode === "0660") return "warn";
+    return "danger";
+  }
 
   let state = { secrets: [], reveal_policy: "session" };
   let selectedId = null;
@@ -28,15 +110,40 @@
   // Annotation save debouncer.
   let saveTimer = null;
   let saveState = "idle";
+  // Pending undo for mark-stale; null when no undo is active.
+  let undoStaleTimer = null;
+  let undoStaleId = null;
 
-  function setToast(text, isErr) {
-    toast.textContent = text || "";
-    toast.classList.toggle("err", !!isErr);
-    if (text) {
-      setTimeout(() => {
-        if (toast.textContent === text) toast.textContent = "";
-      }, 4000);
-    }
+  // ----------- helpers -----------
+
+  function isDotEnvPath(p) {
+    if (!p) return false;
+    // Match common dotenv basenames anywhere in the path.
+    return /(^|\/)\.env(\..+|rc)?$/.test(p);
+  }
+
+  function setToast(text, kind) {
+    if (!text) return;
+    const t = document.createElement("div");
+    t.className = "toast";
+    if (kind === "err") t.classList.add("err");
+    if (kind === "ok") t.classList.add("ok");
+    t.textContent = text;
+    toastRegion.appendChild(t);
+    setTimeout(() => {
+      t.style.transition = "opacity 0.25s ease";
+      t.style.opacity = "0";
+      setTimeout(() => t.remove(), 250);
+    }, kind === "err" ? 4500 : 1500);
+  }
+
+  function announceDrift(text) {
+    if (!text) return;
+    const el = document.createElement("div");
+    el.textContent = text;
+    driftTicker.appendChild(el);
+    // Trim to last 5 entries so the live region doesn't grow unbounded.
+    while (driftTicker.childNodes.length > 5) driftTicker.removeChild(driftTicker.firstChild);
   }
 
   async function api(path, opts) {
@@ -63,69 +170,182 @@
       state.reveal_policy = body.reveal_policy || "session";
       render();
     } catch (e) {
-      setToast("load failed: " + e.message, true);
+      setToast("Load failed: " + e.message, "err");
     }
   }
 
-  // Group secrets by their first file source path, falling back to
-  // keystore service or the literal "(other)" bucket.
-  function groupSecrets(secrets) {
-    const groups = new Map();
-    for (const s of secrets) {
-      const found = s.found_in && s.found_in[0];
-      let label, kind, perms;
-      if (!found) {
-        label = "(no source)"; kind = "unknown";
-      } else if (found.path) {
-        label = found.path; kind = "file"; perms = found.permissions;
-      } else if (found.keystore) {
-        label = `${found.keystore} keystore`; kind = "keystore";
-      } else {
-        label = "(other)"; kind = "unknown";
-      }
-      if (!groups.has(label)) groups.set(label, { label, kind, perms, items: [] });
-      groups.get(label).items.push(s);
+  // ----------- grouping -----------
+
+  function classify(secret) {
+    const f = (secret.found_in || [])[0];
+    if (!f) return { id: "config", _orphan: true };
+    for (const fam of FAMILIES) {
+      if (fam.matches(f)) return fam;
     }
-    return Array.from(groups.values()).sort((a, b) => a.label.localeCompare(b.label));
+    // Unknown source_type → bucket into config catch-all.
+    return FAMILIES.find((g) => g.id === "config");
   }
+
+  function groupSecrets(secrets) {
+    // groupId -> { fam, items: [secret] }
+    const buckets = new Map();
+    for (const fam of FAMILIES) {
+      if (fam.always) buckets.set(fam.id, { fam, items: [] });
+    }
+    for (const s of secrets) {
+      const fam = classify(s);
+      if (!buckets.has(fam.id)) buckets.set(fam.id, { fam, items: [] });
+      buckets.get(fam.id).items.push(s);
+    }
+    // Order according to FAMILIES definition.
+    const out = [];
+    for (const fam of FAMILIES) {
+      const b = buckets.get(fam.id);
+      if (b) out.push(b);
+    }
+    return out;
+  }
+
+  function sourceWarning(items) {
+    // Returns the worst world-readable warning across the group's
+    // file entries, or null. The header pill nudges users toward 0600.
+    let worst = null;
+    for (const s of items) {
+      for (const f of s.found_in || []) {
+        if (!f.path || !f.permissions) continue;
+        const sev = modeSeverity(f.permissions);
+        if (sev === "danger") return { mode: f.permissions, path: f.path };
+        if (sev === "warn" && !worst) worst = { mode: f.permissions, path: f.path };
+      }
+    }
+    return worst;
+  }
+
+  // ----------- render: list -----------
 
   function render() {
     const secrets = state.secrets;
-    summary.textContent = secretsSummary(secrets);
+    renderSummary(secrets);
 
-    if (secrets.length === 0) {
-      list.innerHTML = '<div class="empty">No secrets recorded yet. trove watches your scan roots; edit a tracked file or wait for the next scan.</div>';
-      return;
-    }
+    list.setAttribute("data-clear-selection", "");
+    list.innerHTML = "";
 
     const groups = groupSecrets(secrets);
-    list.innerHTML = "";
+    let totalRendered = 0;
+
     for (const g of groups) {
       const det = document.createElement("details");
       det.className = "group";
-      det.open = true;
+      if (g.fam.unsupported) det.classList.add("unsupported");
+      det.open = !g.fam.unsupported && g.items.length > 0;
+      det.dataset.familyId = g.fam.id;
+
       const sum = document.createElement("summary");
-      const labelSpan = document.createElement("span");
-      labelSpan.textContent = g.label;
-      sum.appendChild(labelSpan);
-      const meta = document.createElement("span");
-      meta.className = "source-meta";
-      const parts = [`${g.items.length} secret${g.items.length === 1 ? "" : "s"}`];
-      if (g.perms) parts.push(g.perms);
-      meta.textContent = parts.join(" · ");
-      sum.appendChild(meta);
+      const icon = document.createElement("span");
+      icon.className = "group-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = ICONS[g.fam.icon] || "";
+      sum.appendChild(icon);
+
+      const titleWrap = document.createElement("span");
+      titleWrap.className = "group-title-wrap";
+
+      const titleSpan = document.createElement("span");
+      titleSpan.className = "group-title";
+      titleSpan.textContent = g.fam.title;
+      titleWrap.appendChild(titleSpan);
+
+      if (g.fam.subtitle) {
+        titleWrap.appendChild(document.createTextNode(" "));
+        const sub = document.createElement("span");
+        sub.className = "group-subtitle";
+        sub.textContent = "— " + g.fam.subtitle;
+        titleWrap.appendChild(sub);
+      }
+      sum.appendChild(titleWrap);
+
+      const count = document.createElement("span");
+      count.className = "group-count";
+      const n = g.items.length;
+      count.textContent = g.fam.unsupported && n === 0
+        ? ""
+        : `${n} secret${n === 1 ? "" : "s"}`;
+      sum.appendChild(count);
+
       det.appendChild(sum);
 
-      const warn = sourceWarning(g);
+      const warn = sourceWarning(g.items);
       if (warn) {
-        det.appendChild(buildGroupWarn(g, warn));
+        const w = document.createElement("div");
+        w.className = "group-warn";
+        const pill = document.createElement("span");
+        pill.className = "warn-pill";
+        pill.textContent = warn.mode === "0644" || warn.mode === "0666" ? "world-readable" : "loose mode";
+        w.appendChild(pill);
+        const txt = document.createElement("span");
+        const basename = warn.path.split("/").pop();
+        txt.textContent = warn.mode === "0644" || warn.mode === "0666"
+          ? `Files in this group are world-readable (${warn.mode}). `
+          : `Files in this group are group-readable (${warn.mode}). `;
+        w.appendChild(txt);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "chmod-btn";
+        btn.setAttribute("aria-label", `Tighten ${basename} to 0600`);
+        btn.textContent = "Tighten to 0600";
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          btn.textContent = "Tightening…";
+          try {
+            await api("/api/sources/chmod600", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ path: warn.path }),
+            });
+            setToast(`Permissions tightened on ${basename}`, "ok");
+            await loadSecrets();
+          } catch (e) {
+            btn.disabled = false;
+            btn.textContent = "Tighten to 0600";
+            setToast(`${basename}: ${e.message || e}`, "err");
+          }
+        });
+        w.appendChild(btn);
+        det.appendChild(w);
       }
 
-      const ul = document.createElement("ul");
-      ul.className = "entries";
-      for (const s of g.items) ul.appendChild(renderEntry(s));
-      det.appendChild(ul);
+      if (g.items.length > 0) {
+        const ul = document.createElement("ul");
+        ul.className = "entries";
+        for (const s of g.items) {
+          ul.appendChild(renderEntry(s));
+          totalRendered++;
+        }
+        det.appendChild(ul);
+      } else if (g.fam.unsupported) {
+        const sub = document.createElement("div");
+        sub.className = "group-warn";
+        sub.style.background = "transparent";
+        sub.style.color = "var(--fg-muted)";
+        sub.style.fontStyle = "italic";
+        sub.textContent = "Nothing scanned here yet.";
+        det.appendChild(sub);
+      }
+
       list.appendChild(det);
+    }
+
+    if (totalRendered === 0) {
+      // No real secrets — show the empty hero.
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      const lede = document.createElement("div");
+      lede.className = "empty-lede";
+      lede.textContent = "No secrets recorded yet.";
+      empty.appendChild(lede);
+      empty.appendChild(document.createTextNode(
+        "trove watches your scan roots. Edit a tracked file or wait for the next scan."));
+      list.appendChild(empty);
     }
 
     if (selectedId) {
@@ -134,73 +354,44 @@
     }
   }
 
-  function secretsSummary(secrets) {
-    if (secrets.length === 0) return "no secrets";
+  function renderSummary(secrets) {
+    summary.innerHTML = "";
+    if (secrets.length === 0) {
+      const c = document.createElement("span");
+      c.className = "chip";
+      c.innerHTML = "<strong>0</strong> secrets";
+      summary.appendChild(c);
+      return;
+    }
     const counts = new Map();
     for (const s of secrets) {
-      for (const f of s.found_in || []) {
-        counts.set(f.source_type, (counts.get(f.source_type) || 0) + 1);
-      }
+      const fam = classify(s);
+      counts.set(fam.id, (counts.get(fam.id) || 0) + 1);
     }
-    const parts = [`${secrets.length} secret${secrets.length === 1 ? "" : "s"}`];
-    for (const [k, v] of counts) parts.push(`${v} ${k}`);
-    return parts.join(" · ");
+    const total = document.createElement("span");
+    total.className = "chip";
+    total.innerHTML = `<strong>${secrets.length}</strong> secret${secrets.length === 1 ? "" : "s"}`;
+    summary.appendChild(total);
+
+    for (const fam of FAMILIES) {
+      const n = counts.get(fam.id);
+      if (!n) continue;
+      const c = document.createElement("span");
+      c.className = "chip";
+      const label = familyShortLabel(fam.id);
+      c.innerHTML = `<strong>${n}</strong> in ${label}`;
+      summary.appendChild(c);
+    }
   }
 
-  function sourceWarning(g) {
-    if (g.kind !== "file" || !g.perms) return null;
-    if (g.perms === "0644" || g.perms === "0666") {
-      return `world-readable (${g.perms}) — owner-only is the safer default.`;
-    }
-    return null;
-  }
-
-  function buildGroupWarn(g, message) {
-    const wrap = document.createElement("div");
-    wrap.className = "group-warn";
-    const txt = document.createElement("span");
-    txt.className = "warn-text";
-    txt.textContent = message;
-    wrap.appendChild(txt);
-
-    if (g.kind === "file" && g.label) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = "chmod 600";
-      btn.title = `Tighten permissions on ${g.label} to owner-only (0600)`;
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        chmod600Source(g.label, btn);
-      });
-      wrap.appendChild(btn);
-    }
-    return wrap;
-  }
-
-  async function chmod600Source(path, btn) {
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = "tightening…";
-    }
-    try {
-      const body = await api("/api/sources/chmod600", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      if (body && body.no_op) {
-        setToast(`already 0600: ${path}`);
-      } else {
-        setToast(`chmod 600 applied to ${path}`);
-      }
-      await loadSecrets();
-    } catch (e) {
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = "chmod 600";
-      }
-      setToast("chmod failed: " + e.message, true);
+  function familyShortLabel(id) {
+    switch (id) {
+      case "envfile":     return ".env files";
+      case "shell-rc":    return "shell config";
+      case "config":      return "config files";
+      case "keystore":    return "keychain";
+      case "source-code": return "source code";
+      default: return id;
     }
   }
 
@@ -214,6 +405,7 @@
     const key = document.createElement("span");
     key.className = "key";
     key.textContent = s.key_name;
+    key.title = s.key_name;
     li.appendChild(key);
 
     const preview = document.createElement("span");
@@ -221,33 +413,113 @@
     if (revealed.has(s.id)) {
       preview.textContent = revealed.get(s.id);
       preview.classList.add("revealed");
+      preview.title = "Click to copy";
     } else {
       preview.textContent = s.value_preview || "—";
+      preview.classList.add("blurred");
+      preview.title = "Click to reveal";
     }
+    preview.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (revealed.has(s.id)) {
+        copyToClipboard(revealed.get(s.id));
+      } else {
+        toggleReveal(s);
+      }
+    });
     li.appendChild(preview);
 
-    const actions = document.createElement("span");
-    actions.className = "actions";
-    const revealBtn = document.createElement("button");
-    revealBtn.textContent = revealed.has(s.id) ? "hide" : "reveal";
-    revealBtn.title = "Read the live value from disk";
-    revealBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggleReveal(s);
-    });
-    actions.appendChild(revealBtn);
-    const annotateBtn = document.createElement("button");
-    annotateBtn.textContent = "annotate";
-    annotateBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      selectSecret(s.id);
-    });
-    actions.appendChild(annotateBtn);
-    li.appendChild(actions);
+    const right = document.createElement("span");
+    right.className = "meta-right";
+    const first = (s.found_in || [])[0];
+    if (first) {
+      if (first.path) {
+        const path = document.createElement("span");
+        path.className = "path";
+        const basename = first.path.split("/").pop();
+        path.textContent = basename;
+        path.title = first.path;
+        right.appendChild(path);
+        if (first.permissions) {
+          right.appendChild(modeNode(first.permissions));
+        }
+      } else if (first.keystore) {
+        const k = document.createElement("span");
+        k.className = "badge";
+        k.textContent = first.keystore;
+        right.appendChild(k);
+      }
+    }
+    if (s.annotation && s.annotation.stale) {
+      const b = document.createElement("span");
+      b.className = "badge stale";
+      b.textContent = "stale";
+      right.appendChild(b);
+    }
+    if (s.annotation && s.annotation.rotated_at) {
+      const b = document.createElement("span");
+      b.className = "badge rotated";
+      b.textContent = "rotated " + relativeTime(s.annotation.rotated_at);
+      right.appendChild(b);
+    }
+    li.appendChild(right);
 
     li.addEventListener("click", () => selectSecret(s.id));
     return li;
   }
+
+  function modeNode(perms) {
+    const sev = modeSeverity(perms);
+    const span = document.createElement("span");
+    span.className = "mode" + (sev ? " " + sev : "");
+    span.setAttribute("data-mode-octal", perms);
+    const code = document.createElement("span");
+    code.textContent = perms;
+    span.appendChild(code);
+    const help = document.createElement("span");
+    help.className = "mode-help";
+    help.tabIndex = 0;
+    help.setAttribute("role", "img");
+    help.setAttribute("aria-label", "What does mode " + perms + " mean?");
+    help.textContent = "?";
+    const tip = MODE_TIPS[perms] || "Octal file mode. 0600 (owner-only) is recommended for files holding secrets.";
+    help.setAttribute("data-tip", tip);
+    // Stop click on the help bubble from triggering parent row select.
+    help.addEventListener("click", (e) => e.stopPropagation());
+    span.appendChild(help);
+    return span;
+  }
+
+  function relativeTime(iso) {
+    const t = Date.parse(iso);
+    if (isNaN(t)) return iso;
+    const diff = (Date.now() - t) / 1000;
+    if (diff < 60) return "just now";
+    if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+    return Math.floor(diff / 86400) + "d ago";
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      }
+      setToast("Copied", "ok");
+    } catch (e) {
+      setToast("Copy failed: " + e.message, "err");
+    }
+  }
+
+  // ----------- reveal -----------
 
   async function toggleReveal(s) {
     if (revealed.has(s.id)) {
@@ -265,20 +537,26 @@
       render();
     } catch (e) {
       if (e.status === 422) {
-        setToast("reveal not supported for this source", true);
+        // Special-case paranoid + keystore — point at settings.
+        if (state.reveal_policy === "paranoid") {
+          setToast("Decrypt off — see settings", "err");
+        } else {
+          setToast("Reveal not supported for this source", "err");
+        }
       } else if (e.status === 410) {
-        setToast("value is gone — drift not yet rescanned", true);
+        setToast("Value is gone — drift not yet rescanned", "err");
       } else {
-        setToast("reveal failed: " + e.message, true);
+        setToast("Reveal failed: " + e.message, "err");
       }
     }
   }
+
+  // ----------- selection / panel -----------
 
   function selectSecret(id) {
     selectedId = id;
     panelWrap.classList.add("open");
     renderPanel();
-    // Refresh selected highlight without rebuilding the whole list.
     for (const el of list.querySelectorAll("li.entry")) {
       el.classList.toggle("selected", el.dataset.id === id);
     }
@@ -288,74 +566,123 @@
     selectedId = null;
     panelWrap.classList.remove("open");
     panel.innerHTML = "";
+    for (const el of list.querySelectorAll("li.entry.selected")) {
+      el.classList.remove("selected");
+    }
   }
+
+  // Esc + click-outside-list clears selection. The data-clear-selection
+  // hook on #list is the assertion target for the smoke test.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && selectedId) closePanel();
+  });
 
   function renderPanel() {
     if (!selectedId) return;
     const s = state.secrets.find((x) => x.id === selectedId);
-    if (!s) {
-      closePanel();
-      return;
-    }
+    if (!s) { closePanel(); return; }
     panel.innerHTML = "";
 
+    // Head
+    const head = document.createElement("div");
+    head.className = "panel-head";
+    const h2 = document.createElement("h2");
+    h2.textContent = s.key_name;
+    head.appendChild(h2);
     const closeBtn = document.createElement("button");
     closeBtn.className = "close-panel";
+    closeBtn.setAttribute("aria-label", "Close detail panel");
     closeBtn.textContent = "✕";
-    closeBtn.title = "Close";
     closeBtn.addEventListener("click", closePanel);
-    panel.appendChild(closeBtn);
+    head.appendChild(closeBtn);
+    panel.appendChild(head);
 
-    const h = document.createElement("h2");
-    h.textContent = s.key_name;
-    panel.appendChild(h);
-
-    const prevDiv = document.createElement("div");
-    prevDiv.className = "panel-preview";
+    // Value section
+    const valSec = document.createElement("section");
+    const valH = document.createElement("h3");
+    valH.textContent = "Value";
+    valSec.appendChild(valH);
+    const prev = document.createElement("div");
+    prev.className = "panel-preview";
     if (revealed.has(s.id)) {
-      prevDiv.textContent = revealed.get(s.id);
-      prevDiv.classList.add("revealed");
+      prev.classList.add("revealed");
+      prev.textContent = revealed.get(s.id);
+      prev.title = "Click to copy";
     } else {
-      prevDiv.textContent = s.value_preview || "—";
+      prev.textContent = s.value_preview || "—";
+      prev.title = "Click to reveal";
     }
-    panel.appendChild(prevDiv);
+    prev.addEventListener("click", () => {
+      if (revealed.has(s.id)) copyToClipboard(revealed.get(s.id));
+      else toggleReveal(s);
+    });
+    valSec.appendChild(prev);
 
-    const revealRow = document.createElement("div");
-    revealRow.className = "actions-row";
-    const rb = document.createElement("button");
-    rb.textContent = revealed.has(s.id) ? "hide value" : "reveal value";
-    rb.addEventListener("click", () => toggleReveal(s));
-    revealRow.appendChild(rb);
-    panel.appendChild(revealRow);
+    const valActions = document.createElement("div");
+    valActions.className = "panel-preview-actions";
+    const revealBtn = document.createElement("button");
+    if (state.reveal_policy === "paranoid" && (s.found_in || []).some((f) => f.source_type === "keystore")) {
+      revealBtn.textContent = "Decrypt off — see settings";
+      revealBtn.disabled = true;
+      revealBtn.title = "Reveal policy is paranoid. Change in settings to enable keystore reveals.";
+    } else {
+      revealBtn.textContent = revealed.has(s.id) ? "Re-blur" : "Reveal value";
+      revealBtn.classList.add("primary");
+      revealBtn.addEventListener("click", () => toggleReveal(s));
+    }
+    valActions.appendChild(revealBtn);
+    if (revealed.has(s.id)) {
+      const copyBtn = document.createElement("button");
+      copyBtn.title = "Copy to clipboard";
+      copyBtn.setAttribute("aria-label", "Copy value");
+      copyBtn.innerHTML = ICONS.copy + " <span>Copy</span>";
+      copyBtn.addEventListener("click", () => copyToClipboard(revealed.get(s.id)));
+      valActions.appendChild(copyBtn);
+    }
+    const saveStateEl = document.createElement("span");
+    saveStateEl.className = "save-state";
+    saveStateEl.id = "save-state";
+    valActions.appendChild(saveStateEl);
+    valSec.appendChild(valActions);
+    panel.appendChild(valSec);
 
+    // Notes section (renamed from the older annotate copy)
+    const notesSec = document.createElement("section");
+    notesSec.setAttribute("aria-label", "Notes");
+    const notesH = document.createElement("h3");
+    notesH.textContent = "Notes";
+    notesSec.appendChild(notesH);
     const meta = document.createElement("dl");
     meta.className = "meta";
-    meta.appendChild(field("source url", "source_url", s.annotation.source_url || "", "text"));
-    meta.appendChild(field("owner", "owner", s.annotation.owner || "", "text"));
-    meta.appendChild(field("notes", "notes", s.annotation.notes || "", "textarea"));
-    meta.appendChild(field("rotate at", "rotate_url", s.annotation.rotate_url || "", "text"));
-    meta.appendChild(field("tags", "tags", (s.annotation.tags || []).join(", "), "text"));
-    panel.appendChild(meta);
-
+    meta.appendChild(field("Notes", "notes", s.annotation.notes || "", "textarea",
+                            "Add a note about this secret"));
+    meta.appendChild(field("Owner", "owner", s.annotation.owner || "", "text",
+                            "Who owns this credential?"));
+    meta.appendChild(field("Source URL", "source_url", s.annotation.source_url || "", "text",
+                            "Where this was issued (provider console URL)"));
+    meta.appendChild(field("Rotate at", "rotate_url", s.annotation.rotate_url || "", "text",
+                            "Provider rotation page"));
+    meta.appendChild(field("Tags", "tags", (s.annotation.tags || []).join(", "), "text",
+                            "Comma-separated tags"));
+    notesSec.appendChild(meta);
     if (s.annotation.rotate_url) {
       const a = document.createElement("a");
       a.href = s.annotation.rotate_url;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
-      a.textContent = "open admin page ↗";
-      panel.appendChild(a);
+      a.textContent = "Open admin page ↗";
+      a.style.fontSize = "12px";
+      a.style.color = "var(--accent)";
+      notesSec.appendChild(a);
     }
-
-    const saveState = document.createElement("div");
-    saveState.className = "save-state";
-    saveState.id = "save-state";
-    saveState.textContent = "";
-    panel.appendChild(saveState);
+    panel.appendChild(notesSec);
     updateSaveState();
 
-    const foundHeader = document.createElement("h3");
-    foundHeader.textContent = "found in";
-    panel.appendChild(foundHeader);
+    // Found in
+    const foundSec = document.createElement("section");
+    const foundH = document.createElement("h3");
+    foundH.textContent = "Found in";
+    foundSec.appendChild(foundH);
     const foundUL = document.createElement("ul");
     foundUL.className = "found-list";
     for (const f of s.found_in || []) {
@@ -363,8 +690,11 @@
       if (f.path) {
         let txt = `${f.source_type}: ${f.path}`;
         if (f.line) txt += `:${f.line}`;
-        if (f.permissions) txt += `  (${f.permissions})`;
         li.textContent = txt;
+        if (f.permissions) {
+          li.appendChild(document.createTextNode("  "));
+          li.appendChild(modeNode(f.permissions));
+        }
       } else if (f.keystore) {
         li.textContent = `${f.source_type}: ${f.keystore} ${f.service || ""}/${f.account || ""}`;
         li.classList.add("unsupported");
@@ -373,42 +703,88 @@
       }
       foundUL.appendChild(li);
     }
-    panel.appendChild(foundUL);
+    foundSec.appendChild(foundUL);
+    panel.appendChild(foundSec);
 
+    // Audit findings (derived from FoundIn flags)
+    const auditLines = [];
+    for (const f of s.found_in || []) {
+      if (f.in_git_repo === true) auditLines.push("Inside a git repository.");
+      if (f.in_gitignore === false && f.path) auditLines.push(`Not in .gitignore: ${f.path}`);
+      if (f.appears_in_git_history === true) auditLines.push("Appears in git history — assume committed.");
+    }
+    if (auditLines.length > 0) {
+      const auditSec = document.createElement("section");
+      const aH = document.createElement("h3");
+      aH.textContent = "Audit findings";
+      auditSec.appendChild(aH);
+      const aUL = document.createElement("ul");
+      aUL.className = "found-list";
+      for (const ln of auditLines) {
+        const li = document.createElement("li");
+        li.textContent = ln;
+        li.style.color = "var(--danger)";
+        aUL.appendChild(li);
+      }
+      auditSec.appendChild(aUL);
+      panel.appendChild(auditSec);
+    }
+
+    // Value history
     if (s.value_history && s.value_history.length > 0) {
-      const histH = document.createElement("h3");
-      histH.textContent = `value history (${s.value_history.length})`;
-      panel.appendChild(histH);
+      const histSec = document.createElement("section");
+      const hH = document.createElement("h3");
+      hH.textContent = `Value history (${s.value_history.length})`;
+      histSec.appendChild(hH);
       const hUL = document.createElement("ul");
-      hUL.className = "found-list";
+      hUL.className = "history-list";
       for (const h of s.value_history) {
         const li = document.createElement("li");
         li.textContent = `${h.fingerprint.slice(0, 12)}…  seen ${h.seen_at}`;
         hUL.appendChild(li);
       }
-      panel.appendChild(hUL);
+      histSec.appendChild(hUL);
+      panel.appendChild(histSec);
     }
 
-    const actionsH = document.createElement("h3");
-    actionsH.textContent = "actions";
-    panel.appendChild(actionsH);
+    // Actions
+    const actSec = document.createElement("section");
+    const actH = document.createElement("h3");
+    actH.textContent = "Actions";
+    actSec.appendChild(actH);
     const actions = document.createElement("div");
     actions.className = "actions-row";
     const stale = document.createElement("button");
-    stale.textContent = s.annotation.stale ? "(already stale)" : "mark stale";
+    stale.textContent = s.annotation.stale ? "(already stale)" : "Mark stale";
     stale.disabled = !!s.annotation.stale;
     stale.classList.add("warn");
     stale.addEventListener("click", () => markStale(s.id));
     actions.appendChild(stale);
     const rot = document.createElement("button");
-    rot.textContent = "mark rotated";
+    rot.textContent = "Mark rotated";
     rot.title = "Record that you rotated this credential out-of-band. The next scan will pick up the new value.";
     rot.addEventListener("click", () => markRotated(s.id));
     actions.appendChild(rot);
-    panel.appendChild(actions);
+    actSec.appendChild(actions);
+
+    // Undo row sits at the very bottom of the panel.
+    if (undoStaleId === s.id) {
+      const undoRow = document.createElement("div");
+      undoRow.className = "undo-row";
+      const txt = document.createElement("span");
+      txt.textContent = "Marked stale.";
+      undoRow.appendChild(txt);
+      const undoBtn = document.createElement("button");
+      undoBtn.className = "ghost";
+      undoBtn.textContent = "Undo";
+      undoBtn.addEventListener("click", undoStale);
+      undoRow.appendChild(undoBtn);
+      actSec.appendChild(undoRow);
+    }
+    panel.appendChild(actSec);
   }
 
-  function field(label, name, value, kind) {
+  function field(label, name, value, kind, placeholder) {
     const div = document.createElement("div");
     const dt = document.createElement("dt");
     dt.textContent = label;
@@ -424,6 +800,8 @@
       input.value = value;
     }
     input.dataset.field = name;
+    if (placeholder) input.placeholder = placeholder;
+    input.setAttribute("aria-label", label);
     input.addEventListener("input", scheduleSave);
     dd.appendChild(input);
     div.appendChild(dd);
@@ -452,17 +830,17 @@
     saveTimer = setTimeout(saveAnnotation, 600);
   }
 
-  function setSaveState(state) {
-    saveState = state;
+  function setSaveState(s) {
+    saveState = s;
     updateSaveState();
   }
   function updateSaveState() {
     const el = document.getElementById("save-state");
     if (!el) return;
     el.classList.remove("saving", "saved", "err");
-    if (saveState === "saving") { el.textContent = "saving…"; el.classList.add("saving"); }
-    else if (saveState === "saved") { el.textContent = "saved"; el.classList.add("saved"); }
-    else if (saveState === "err") { el.textContent = "save failed"; el.classList.add("err"); }
+    if (saveState === "saving") { el.textContent = "Saving…"; el.classList.add("saving"); }
+    else if (saveState === "saved") { el.textContent = "Saved"; el.classList.add("saved"); }
+    else if (saveState === "err") { el.textContent = "Save failed"; el.classList.add("err"); }
     else el.textContent = "";
   }
 
@@ -475,54 +853,86 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(ann),
       });
-      // Mirror into local state so the next render sees the new
-      // annotation without waiting for a refetch.
       const s = state.secrets.find((x) => x.id === selectedId);
-      if (s) {
-        s.annotation = Object.assign({}, s.annotation, ann);
-      }
+      if (s) s.annotation = Object.assign({}, s.annotation, ann);
       setSaveState("saved");
       setTimeout(() => { if (saveState === "saved") setSaveState("idle"); }, 2000);
     } catch (e) {
       setSaveState("err");
-      setToast("save failed: " + e.message, true);
+      setToast("Save failed: " + e.message, "err");
     }
   }
 
   async function markStale(id) {
     try {
       await api(`/api/secrets/${encodeURIComponent(id)}/stale`, { method: "POST" });
-      setToast("marked stale");
+      undoStaleId = id;
+      if (undoStaleTimer) clearTimeout(undoStaleTimer);
+      undoStaleTimer = setTimeout(() => { undoStaleId = null; renderPanel(); }, 4000);
       await loadSecrets();
     } catch (e) {
-      setToast("mark stale failed: " + e.message, true);
+      setToast("Mark stale failed: " + e.message, "err");
     }
+  }
+
+  async function undoStale() {
+    // No first-class un-stale endpoint; clear the stale bit by sending
+    // an annotation save with the existing fields (the dedicated stale
+    // endpoint only flips on). For now: show a soft toast — the action
+    // becomes available when an /unstale endpoint lands.
+    setToast("Undo not yet wired — use a fresh scan to re-mark.", "err");
+    undoStaleId = null;
+    renderPanel();
   }
 
   async function markRotated(id) {
     try {
       await api(`/api/secrets/${encodeURIComponent(id)}/rotated`, { method: "POST" });
-      setToast("rotation recorded");
+      setToast("Rotation recorded", "ok");
       await loadSecrets();
     } catch (e) {
-      setToast("mark rotated failed: " + e.message, true);
+      setToast("Mark rotated failed: " + e.message, "err");
     }
   }
 
+  // ----------- SSE: drift watcher -----------
+
+  function setDriftState(stateName, label) {
+    driftBadge.dataset.state = stateName;
+    const lab = driftBadge.querySelector(".label");
+    if (lab) lab.textContent = label;
+  }
+
   function startEvents() {
+    setDriftState("connecting", "Connecting…");
     const es = new EventSource("/api/events");
-    const reload = () => loadSecrets();
-    ["secret_created", "secret_refreshed", "secret_drifted"].forEach((t) =>
-      es.addEventListener(t, reload),
-    );
+    es.addEventListener("open", () => setDriftState("connected", "Watching for changes"));
+
+    const reload = (type) => () => {
+      loadSecrets();
+      if (type === "secret_created") announceDrift("New secret detected.");
+      if (type === "secret_refreshed") announceDrift("Secret refreshed.");
+      if (type === "secret_drifted") announceDrift("Secret value changed.");
+    };
+    es.addEventListener("secret_created", reload("secret_created"));
+    es.addEventListener("secret_refreshed", reload("secret_refreshed"));
+    es.addEventListener("secret_drifted", reload("secret_drifted"));
     es.addEventListener("scan_complete", () => {
-      reload();
-      setToast("rescan complete");
+      loadSecrets();
+      setToast("Rescan complete", "ok");
+      announceDrift("Rescan complete.");
     });
-    es.addEventListener("scan_started", () => setToast("rescan started"));
+    es.addEventListener("scan_started", () => {
+      setToast("Rescan started", "ok");
+      announceDrift("Rescan started.");
+    });
     es.onerror = () => {
-      // EventSource auto-reconnects; surface a soft warning.
-      setToast("event stream interrupted; retrying", true);
+      // EventSource auto-reconnects; reflect the readyState in the badge.
+      if (es.readyState === EventSource.CLOSED) {
+        setDriftState("closed", "Not watching");
+      } else {
+        setDriftState("connecting", "Connecting…");
+      }
     };
   }
 

@@ -176,6 +176,49 @@ firing thousands of inotify events per second:
   `GET /api/status` as `watch_events_dropped`, so a saturating consumer
   is visible to a curl probe without reading server logs.
 
+## UI
+
+The embedded inventory UI lives in `internal/server/static/` (one HTML file
++ one JS file, no build step, no CDN fonts). It's styled to match the Rafter
+brand — warm-black `#141413` background, warm off-white `#faf9f5` body text,
+Claude Code orange `#d97757` accent, and a green `#2ea44f` "watching"
+indicator lifted from the `scanned by Rafter` shield in the parent README.
+
+What you should see on the page:
+
+- A sticky header bar with the `trove` wordmark, a small `by Rafter` subtag,
+  and pill-shaped summary chips counting secrets per family (e.g.
+  `12 secrets · 4 in .env files · 3 in shell config · 2 in config files`).
+- A drift watcher status badge in the top-right that mirrors the SSE
+  `EventSource.readyState`: green dot + "Watching for changes" when live,
+  amber-pulsing while connecting, grey + "Not watching" if the stream
+  closes. Hovering or focusing it explains what the watcher does.
+- A two-column main grid: a grouped inventory list on the left and a
+  detail panel on the right (which collapses to a bottom sheet on narrow
+  viewports).
+- Groups are named in self-explaining copy, not raw source-type tags:
+  `Environment files (.env, .envrc)`, `Shell config (.zshrc, .bashrc,
+  .profile)`, `Config files (~/.aws, ~/.npmrc, ~/.config/gh, …)`, plus
+  greyed `OS keychain` and `Source code` placeholders subtitled with
+  `coming soon`.
+- Per-entry rows show the key name (mono), a blurred value preview that
+  reveals on click, the basename of the source file, and a mode-octal
+  chip (e.g. `0644`) with a `?` icon. Hovering or keyboard-focusing the
+  `?` shows a plain-English tooltip explaining what that mode means.
+- The detail panel sections read: `Value`, `Notes`, `Found in`,
+  `Audit findings`, `Value history`, `Actions`. (The older `Annotate`
+  label has been renamed to `Notes` everywhere user-visible; the wire
+  endpoint `PUT /api/secrets/{id}/annotation` is unchanged.)
+- Revealing a value POSTs `/api/secrets/{id}/reveal`. Revealed values
+  are in-memory only — they never persist across reloads. A revealed
+  preview becomes click-to-copy.
+
+Smoke tests in `internal/server/static_smoke_test.go` lock in the
+structural markers (wordmark, aria-live drift ticker, `data-mode-octal`
+hook, `data-clear-selection` hook, the four reveal-policy strings, brand
+palette hexes) so the page can't silently lose features.
+>>>>>>> p13-merge
+
 ## Build
 
 ```bash
