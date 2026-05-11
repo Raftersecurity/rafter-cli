@@ -304,7 +304,9 @@ class TestIsSuppressed:
     """Test suppression matching logic."""
 
     def test_suppresses_all_patterns_when_no_pattern_name(self):
-        suppressions = [Suppression(path_glob="node_modules/*")]
+        # `**` (not `*`) crosses path separators — match Node test in
+        # node/tests/custom-patterns.test.ts which uses "node_modules/**".
+        suppressions = [Suppression(path_glob="node_modules/**")]
         assert is_suppressed("node_modules/pkg/index.js", "AWS Access Key ID", suppressions)
         assert is_suppressed("node_modules/pkg/index.js", "Generic Secret", suppressions)
 

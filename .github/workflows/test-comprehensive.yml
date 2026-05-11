@@ -42,7 +42,12 @@ jobs:
         run: pnpm run build
 
       - name: Verify build
-        run: node -e "import('./dist/index.js').then(() => console.log('Build OK')).catch(e => { console.error(e); process.exit(1); })"
+        # Smoke-test that dist/index.js loads and the CLI runs. We can't use
+        # `node -e "import(...)"` because importing index.js triggers
+        # `program.parse()` synchronously; with no args Commander prints help
+        # and exits 1 (Node 20 / Commander 11), so the .then() never runs.
+        # `--version` is a real Commander action that exits 0 cleanly.
+        run: node ./dist/index.js --version
 
       - name: Run all tests
         run: pnpm test
@@ -251,7 +256,12 @@ jobs:
           pnpm run build
 
       - name: Verify build
-        run: node -e "import('./dist/index.js').then(() => console.log('Build OK')).catch(e => { console.error(e); process.exit(1); })"
+        # Smoke-test that dist/index.js loads and the CLI runs. We can't use
+        # `node -e "import(...)"` because importing index.js triggers
+        # `program.parse()` synchronously; with no args Commander prints help
+        # and exits 1 (Node 20 / Commander 11), so the .then() never runs.
+        # `--version` is a real Commander action that exits 0 cleanly.
+        run: node ./dist/index.js --version
 
       - name: Run tests
         run: pnpm test
