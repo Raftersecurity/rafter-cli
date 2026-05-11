@@ -144,7 +144,7 @@ describeIfPython("parity: help", () => {
 
 // ─── Local Secret Scanning ──────────────────────────────────────────
 
-describeIfPython("parity: scan local", () => {
+describeIfPython("parity: secrets", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -158,7 +158,7 @@ describeIfPython("parity: scan local", () => {
   it("both exit 0 for clean file", () => {
     const f = path.join(tmpDir, "clean.txt");
     fs.writeFileSync(f, "no secrets here\n");
-    const r = runBoth(["scan", "local", f, "--engine", "patterns", "--quiet"]);
+    const r = runBoth(["secrets", f, "--engine", "patterns", "--quiet"]);
     expect(r.node.exitCode).toBe(0);
     expect(r.python.exitCode).toBe(0);
   });
@@ -166,13 +166,13 @@ describeIfPython("parity: scan local", () => {
   it("both exit 1 when secrets detected", () => {
     const f = path.join(tmpDir, "secrets.txt");
     fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
-    const r = runBoth(["scan", "local", f, "--engine", "patterns", "--quiet"]);
+    const r = runBoth(["secrets", f, "--engine", "patterns", "--quiet"]);
     expect(r.node.exitCode).toBe(1);
     expect(r.python.exitCode).toBe(1);
   });
 
   it("both exit 2 for nonexistent path", () => {
-    const r = runBoth(["scan", "local", "/tmp/nonexistent-rafter-parity-12345", "--engine", "patterns"]);
+    const r = runBoth(["secrets", "/tmp/nonexistent-rafter-parity-12345", "--engine", "patterns"]);
     expect(r.node.exitCode).toBe(2);
     expect(r.python.exitCode).toBe(2);
   });
@@ -180,7 +180,7 @@ describeIfPython("parity: scan local", () => {
   it("both exit 2 for invalid engine", () => {
     const f = path.join(tmpDir, "clean.txt");
     fs.writeFileSync(f, "ok\n");
-    const r = runBoth(["scan", "local", f, "--engine", "badengine"]);
+    const r = runBoth(["secrets", f, "--engine", "badengine"]);
     expect(r.node.exitCode).toBe(2);
     expect(r.python.exitCode).toBe(2);
   });
@@ -188,7 +188,7 @@ describeIfPython("parity: scan local", () => {
   it("--json produces identical schema for AWS key", () => {
     const f = path.join(tmpDir, "secrets.txt");
     fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
-    const r = runBoth(["scan", "local", f, "--engine", "patterns", "--json"]);
+    const r = runBoth(["secrets", f, "--engine", "patterns", "--json"]);
 
     const nodeJson = JSON.parse(r.node.stdout);
     const pyJson = JSON.parse(r.python.stdout);
@@ -220,7 +220,7 @@ describeIfPython("parity: scan local", () => {
   it("--json produces matching schema fields", () => {
     const f = path.join(tmpDir, "secrets.txt");
     fs.writeFileSync(f, "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12\n");
-    const r = runBoth(["scan", "local", f, "--engine", "patterns", "--json"]);
+    const r = runBoth(["secrets", f, "--engine", "patterns", "--json"]);
 
     const nodeJson = JSON.parse(r.node.stdout);
     const pyJson = JSON.parse(r.python.stdout);
@@ -243,7 +243,7 @@ describeIfPython("parity: scan local", () => {
     const sub = path.join(tmpDir, "src");
     fs.mkdirSync(sub);
     fs.writeFileSync(path.join(sub, "config.ts"), "const key = 'AKIAIOSFODNN7EXAMPLE';\n");
-    const r = runBoth(["scan", "local", tmpDir, "--engine", "patterns", "--json"]);
+    const r = runBoth(["secrets", tmpDir, "--engine", "patterns", "--json"]);
 
     expect(r.node.exitCode).toBe(1);
     expect(r.python.exitCode).toBe(1);
@@ -267,7 +267,7 @@ describeIfPython("parity: scan local", () => {
       "github_token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12",
       "stripe_key=" + fakeSecret("sk_live", "_ABCDEFGHIJKLMNOPQRSTuvwx"),
     ].join("\n") + "\n");
-    const r = runBoth(["scan", "local", f, "--engine", "patterns", "--json"]);
+    const r = runBoth(["secrets", f, "--engine", "patterns", "--json"]);
 
     expect(r.node.exitCode).toBe(1);
     expect(r.python.exitCode).toBe(1);
@@ -289,7 +289,7 @@ describeIfPython("parity: scan local", () => {
     const f = path.join(tmpDir, "secrets.txt");
     // Long secret: first 4 + last 4 visible, middle masked
     fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
-    const r = runBoth(["scan", "local", f, "--engine", "patterns", "--json"]);
+    const r = runBoth(["secrets", f, "--engine", "patterns", "--json"]);
 
     const nodeRedacted = JSON.parse(r.node.stdout)[0].matches[0].redacted;
     const pyRedacted = JSON.parse(r.python.stdout)[0].matches[0].redacted;
@@ -343,7 +343,7 @@ describeIfPython("parity: agent mode flag (-a)", () => {
   it("both produce no ANSI escape codes in agent mode", () => {
     const f = path.join(tmpDir, "clean.txt");
     fs.writeFileSync(f, "no secrets\n");
-    const r = runBoth(["-a", "scan", "local", f, "--engine", "patterns"]);
+    const r = runBoth(["-a", "secrets", f, "--engine", "patterns"]);
     expect(r.node.exitCode).toBe(0);
     expect(r.python.exitCode).toBe(0);
     // No ANSI escape sequences in either output
@@ -549,7 +549,7 @@ describeIfPython("parity: secret pattern detection", () => {
     it(`both detect: ${patternName}`, () => {
       const f = path.join(tmpDir, "test-secret.txt");
       fs.writeFileSync(f, secret + "\n");
-      const r = runBoth(["scan", "local", f, "--engine", "patterns", "--json"]);
+      const r = runBoth(["secrets", f, "--engine", "patterns", "--json"]);
 
       expect(r.node.exitCode).toBe(1);
       expect(r.python.exitCode).toBe(1);
@@ -590,7 +590,7 @@ describeIfPython("parity: stdout/stderr separation", () => {
     // Run node
     let nodeResult: CLIResult;
     try {
-      const stdout = execFileSync("node", [NODE_CLI, "scan", "local", f, "--engine", "patterns", "--json"], {
+      const stdout = execFileSync("node", [NODE_CLI, "secrets", f, "--engine", "patterns", "--json"], {
         encoding: "utf-8",
         cwd: REPO_ROOT,
         stdio: ["pipe", "pipe", "pipe"],
@@ -604,7 +604,7 @@ describeIfPython("parity: stdout/stderr separation", () => {
     // Run python
     let pyResult: CLIResult;
     try {
-      const stdout = execFileSync("python3", ["-m", PYTHON_MODULE, "scan", "local", f, "--engine", "patterns", "--json"], {
+      const stdout = execFileSync("python3", ["-m", PYTHON_MODULE, "secrets", f, "--engine", "patterns", "--json"], {
         encoding: "utf-8",
         cwd: REPO_ROOT,
         env: { ...process.env, PYTHONPATH: [path.join(REPO_ROOT, "python"), PYTHON_USER_SITE].join(path.delimiter) },

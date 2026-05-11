@@ -119,7 +119,7 @@ describe("pre-push hook template", () => {
     expect(content).toContain("Rafter Security Pre-Push Hook");
   });
 
-  it("calls rafter scan local", () => {
+  it("calls rafter secrets", () => {
     const templatePath = path.resolve("resources", "pre-push-hook.sh");
     const content = fs.readFileSync(templatePath, "utf-8");
     expect(content).toContain("rafter secrets");

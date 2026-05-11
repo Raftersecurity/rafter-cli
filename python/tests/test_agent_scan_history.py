@@ -1,4 +1,4 @@
-"""Parity tests for --history flag on `rafter agent scan` and `rafter scan local`."""
+"""Parity tests for --history flag on `rafter agent scan` and `rafter secrets`."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,7 +37,20 @@ def test_agent_scan_default_history_is_false(tmp_path: Path) -> None:
     assert m.call_args.kwargs.get("history") is False
 
 
-def test_scan_local_accepts_history_flag(tmp_path: Path) -> None:
+def test_secrets_accepts_history_flag(tmp_path: Path) -> None:
+    (tmp_path / "clean.py").write_text("x = 1\n")
+
+    with patch("rafter_cli.commands.agent._scan_directory") as m:
+        m.return_value = []
+        result = runner.invoke(root_app, ["secrets", str(tmp_path), "--history", "--quiet"])
+
+    assert result.exit_code == 0, result.stdout
+    assert m.called
+    assert m.call_args.kwargs.get("history") is True
+
+
+def test_scan_local_alias_accepts_history_flag(tmp_path: Path) -> None:
+    """`scan local` back-compat alias also forwards --history."""
     (tmp_path / "clean.py").write_text("x = 1\n")
 
     with patch("rafter_cli.commands.agent._scan_directory") as m:

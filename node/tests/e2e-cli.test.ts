@@ -98,113 +98,11 @@ describe("CLI e2e — version and help", () => {
   }, 30000);
 });
 
-describe("CLI e2e — local secret scanning", () => {
+describe("CLI e2e — rafter secrets (local secret scanning)", () => {
   let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-e2e-"));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("exits 0 for clean file", () => {
-    const f = path.join(tmpDir, "clean.txt");
-    fs.writeFileSync(f, "no secrets here\n");
-    const r = rafter(`scan local ${f} --engine patterns --quiet`);
-    expect(r.exitCode).toBe(0);
-  }, 30000);
-
-  it("exits 1 when secrets detected", () => {
-    const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
-    const r = rafter(`scan local ${f} --engine patterns --quiet`);
-    expect(r.exitCode).toBe(1);
-  }, 30000);
-
-  it("--json outputs valid JSON", () => {
-    const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "EXAMPLE\n");
-    const r = rafter(`scan local ${f} --engine patterns --json`);
-    expect(r.exitCode).toBe(1);
-    const parsed = JSON.parse(r.stdout);
-    expect(Array.isArray(parsed.results)).toBe(true);
-    expect(parsed.results[0].matches[0].pattern.name).toBe("AWS Access Key ID");
-  }, 30000);
-
-  it("--json output includes scan-mode note (no agentic triage)", () => {
-    const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "EXAMPLE\n");
-    const r = rafter(`scan local ${f} --engine patterns --json`);
-    expect(r.exitCode).toBe(1);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.scan_mode).toBe("local");
-    expect(parsed.triage_applied).toBe(false);
-    expect(typeof parsed._note).toBe("string");
-    expect(parsed._note.toLowerCase()).toContain("agentic");
-    expect(parsed._note.toLowerCase()).toContain("local");
-  }, 30000);
-
-  it("--json scan-mode note also present when no findings", () => {
-    const f = path.join(tmpDir, "clean.txt");
-    fs.writeFileSync(f, "nothing to see here\n");
-    const r = rafter(`scan local ${f} --engine patterns --json`);
-    expect(r.exitCode).toBe(0);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.scan_mode).toBe("local");
-    expect(parsed.triage_applied).toBe(false);
-    expect(parsed.results).toEqual([]);
-    expect(typeof parsed._note).toBe("string");
-  }, 30000);
-
-  it("--format sarif outputs SARIF schema", () => {
-    const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
-    const r = rafter(`scan local ${f} --engine patterns --format sarif`);
-    expect(r.exitCode).toBe(1);
-    const sarif = JSON.parse(r.stdout);
-    expect(sarif.version).toBe("2.1.0");
-    expect(sarif.runs).toHaveLength(1);
-    expect(sarif.runs[0].tool.driver.name).toBe("rafter");
-    expect(sarif.runs[0].results.length).toBeGreaterThan(0);
-  }, 30000);
-
-  it("scans directory recursively", () => {
-    const sub = path.join(tmpDir, "src");
-    fs.mkdirSync(sub);
-    fs.writeFileSync(path.join(sub, "config.ts"), "const key = '" + "AKIA" + "IOSFODNN7" + "EXAMPLE';\n");
-    const r = rafter(`scan local ${tmpDir} --engine patterns --json`);
-    expect(r.exitCode).toBe(1);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.results.length).toBeGreaterThan(0);
-  }, 30000);
-
-  it("exits 2 for nonexistent path", () => {
-    const r = rafter(`scan local /tmp/nonexistent-rafter-path-12345 --engine patterns`);
-    expect(r.exitCode).toBe(2);
-  }, 30000);
-
-  it("exits 2 for invalid engine", () => {
-    const f = path.join(tmpDir, "clean.txt");
-    fs.writeFileSync(f, "ok\n");
-    const r = rafter(`scan local ${f} --engine badengine`);
-    expect(r.exitCode).toBe(2);
-  }, 30000);
-
-  it("exits 2 for invalid format", () => {
-    const f = path.join(tmpDir, "clean.txt");
-    fs.writeFileSync(f, "ok\n");
-    const r = rafter(`scan local ${f} --engine patterns --format xml`);
-    expect(r.exitCode).toBe(2);
-  }, 30000);
-});
-
-describe("CLI e2e — rafter secrets (alias for scan local)", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-secrets-e2e-"));
   });
 
   afterEach(() => {
@@ -220,21 +118,126 @@ describe("CLI e2e — rafter secrets (alias for scan local)", () => {
     expect(r.stdout).toMatch(/rafter run/);
   }, 30000);
 
-  it("detects secrets with same exit/output as scan local", () => {
-    const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
-    const a = rafter(`secrets ${f} --engine patterns --json`);
-    const b = rafter(`scan local ${f} --engine patterns --json`);
-    expect(a.exitCode).toBe(1);
-    expect(b.exitCode).toBe(1);
-    expect(JSON.parse(a.stdout)).toEqual(JSON.parse(b.stdout));
-  }, 30000);
-
   it("exits 0 for clean file", () => {
     const f = path.join(tmpDir, "clean.txt");
-    fs.writeFileSync(f, "nothing to see\n");
+    fs.writeFileSync(f, "no secrets here\n");
     const r = rafter(`secrets ${f} --engine patterns --quiet`);
     expect(r.exitCode).toBe(0);
+  }, 30000);
+
+  it("exits 1 when secrets detected", () => {
+    const f = path.join(tmpDir, "secrets.txt");
+    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    const r = rafter(`secrets ${f} --engine patterns --quiet`);
+    expect(r.exitCode).toBe(1);
+  }, 30000);
+
+  it("--json outputs valid JSON", () => {
+    const f = path.join(tmpDir, "secrets.txt");
+    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "EXAMPLE\n");
+    const r = rafter(`secrets ${f} --engine patterns --json`);
+    expect(r.exitCode).toBe(1);
+    const parsed = JSON.parse(r.stdout);
+    expect(Array.isArray(parsed.results)).toBe(true);
+    expect(parsed.results[0].matches[0].pattern.name).toBe("AWS Access Key ID");
+  }, 30000);
+
+  it("--json output includes scan-mode note (no agentic triage)", () => {
+    const f = path.join(tmpDir, "secrets.txt");
+    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "EXAMPLE\n");
+    const r = rafter(`secrets ${f} --engine patterns --json`);
+    expect(r.exitCode).toBe(1);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.scan_mode).toBe("local");
+    expect(parsed.triage_applied).toBe(false);
+    expect(typeof parsed._note).toBe("string");
+    expect(parsed._note.toLowerCase()).toContain("agentic");
+    expect(parsed._note.toLowerCase()).toContain("local");
+  }, 30000);
+
+  it("--json scan-mode note also present when no findings", () => {
+    const f = path.join(tmpDir, "clean.txt");
+    fs.writeFileSync(f, "nothing to see here\n");
+    const r = rafter(`secrets ${f} --engine patterns --json`);
+    expect(r.exitCode).toBe(0);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.scan_mode).toBe("local");
+    expect(parsed.triage_applied).toBe(false);
+    expect(parsed.results).toEqual([]);
+    expect(typeof parsed._note).toBe("string");
+  }, 30000);
+
+  it("--format sarif outputs SARIF schema", () => {
+    const f = path.join(tmpDir, "secrets.txt");
+    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    const r = rafter(`secrets ${f} --engine patterns --format sarif`);
+    expect(r.exitCode).toBe(1);
+    const sarif = JSON.parse(r.stdout);
+    expect(sarif.version).toBe("2.1.0");
+    expect(sarif.runs).toHaveLength(1);
+    expect(sarif.runs[0].tool.driver.name).toBe("rafter");
+    expect(sarif.runs[0].results.length).toBeGreaterThan(0);
+  }, 30000);
+
+  it("scans directory recursively", () => {
+    const sub = path.join(tmpDir, "src");
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, "config.ts"), "const key = '" + "AKIA" + "IOSFODNN7" + "EXAMPLE';\n");
+    const r = rafter(`secrets ${tmpDir} --engine patterns --json`);
+    expect(r.exitCode).toBe(1);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.results.length).toBeGreaterThan(0);
+  }, 30000);
+
+  it("exits 2 for nonexistent path", () => {
+    const r = rafter(`secrets /tmp/nonexistent-rafter-path-12345 --engine patterns`);
+    expect(r.exitCode).toBe(2);
+  }, 30000);
+
+  it("exits 2 for invalid engine", () => {
+    const f = path.join(tmpDir, "clean.txt");
+    fs.writeFileSync(f, "ok\n");
+    const r = rafter(`secrets ${f} --engine badengine`);
+    expect(r.exitCode).toBe(2);
+  }, 30000);
+
+  it("exits 2 for invalid format", () => {
+    const f = path.join(tmpDir, "clean.txt");
+    fs.writeFileSync(f, "ok\n");
+    const r = rafter(`secrets ${f} --engine patterns --format xml`);
+    expect(r.exitCode).toBe(2);
+  }, 30000);
+});
+
+describe("CLI e2e — `scan local` back-compat alias", () => {
+  // The canonical command is `rafter secrets` (covered above). `scan local`
+  // remains a hidden alias so existing scripts and pre-commit configs that
+  // predate the rename continue to work. These tests pin the alias contract:
+  // same routing, same output, no deprecation warning. If the alias is ever
+  // formally removed, delete this whole describe block in the same commit.
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-alias-e2e-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("scan local produces identical JSON to secrets", () => {
+    const f = path.join(tmpDir, "secrets.txt");
+    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    const canonical = rafter(`secrets ${f} --engine patterns --json`);
+    const alias = rafter(`scan local ${f} --engine patterns --json`);
+    expect(canonical.exitCode).toBe(1);
+    expect(alias.exitCode).toBe(1);
+    expect(JSON.parse(alias.stdout)).toEqual(JSON.parse(canonical.stdout));
+  }, 30000);
+
+  it("scan local routes to scanner (exit 2 for missing path)", () => {
+    const r = rafter("scan local /tmp/nonexistent-rafter-routing-test");
+    expect(r.exitCode).toBe(2);
   }, 30000);
 });
 
@@ -265,7 +268,7 @@ describe("CLI e2e — agent mode flag", () => {
   it("-a flag produces plain text output (no ANSI)", () => {
     const f = path.join(tmpDir, "clean.txt");
     fs.writeFileSync(f, "no secrets\n");
-    const r = rafter(`-a scan local ${f} --engine patterns`);
+    const r = rafter(`-a secrets ${f} --engine patterns`);
     expect(r.exitCode).toBe(0);
     // Agent mode should not contain ANSI escape codes
     expect(r.stdout).not.toMatch(/\x1b\[/);
@@ -302,8 +305,8 @@ describe("CLI e2e — command routing", () => {
     expect(r.exitCode).not.toBe(0);
   }, 30000);
 
-  it("scan local routes to scanner (exit 2 for missing path)", () => {
-    const r = rafter("scan local /tmp/nonexistent-rafter-routing-test");
+  it("secrets routes to scanner (exit 2 for missing path)", () => {
+    const r = rafter("secrets /tmp/nonexistent-rafter-routing-test");
     expect(r.exitCode).toBe(2);
   }, 30000);
 

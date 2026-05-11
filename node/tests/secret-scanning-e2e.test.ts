@@ -547,7 +547,7 @@ describe("E2E: CLI JSON output structure", () => {
       "clean\nclean\nconst key = 'AKIAIOSFODNN7EXAMPLE';\n",
     );
 
-    const r = rafter(`scan local ${tmpDir} --engine patterns --json`);
+    const r = rafter(`secrets ${tmpDir} --engine patterns --json`);
     expect(r.exitCode).toBe(1);
 
     const parsed = JSON.parse(r.stdout);
@@ -581,7 +581,7 @@ describe("E2E: CLI JSON output structure", () => {
       "clean code\n",
     );
 
-    const r = rafter(`scan local ${tmpDir} --engine patterns --json`);
+    const r = rafter(`secrets ${tmpDir} --engine patterns --json`);
     expect(r.exitCode).toBe(1);
 
     const parsed = JSON.parse(r.stdout);
@@ -617,7 +617,7 @@ describe("E2E: SARIF output with real files", () => {
       "const token = 'ghp_FAKEEFghijklmnopqrstuvwxyz0123456789';\n",
     );
 
-    const r = rafter(`scan local ${tmpDir} --engine patterns --format sarif`);
+    const r = rafter(`secrets ${tmpDir} --engine patterns --format sarif`);
     expect(r.exitCode).toBe(1);
 
     const sarif = JSON.parse(r.stdout);
@@ -673,7 +673,7 @@ describe("E2E: baseline filtering", () => {
       JSON.stringify(baseline),
     );
 
-    const r = rafter(`scan local ${secretFile} --engine patterns --json --baseline`, {
+    const r = rafter(`secrets ${secretFile} --engine patterns --json --baseline`, {
       env: { HOME: homeDir },
     });
     expect(r.exitCode).toBe(1);
@@ -705,7 +705,7 @@ describe("E2E: baseline filtering", () => {
       JSON.stringify(baseline),
     );
 
-    const r = rafter(`scan local ${secretFile} --engine patterns --json`, {
+    const r = rafter(`secrets ${secretFile} --engine patterns --json`, {
       env: { HOME: homeDir },
     });
     expect(r.exitCode).toBe(1);

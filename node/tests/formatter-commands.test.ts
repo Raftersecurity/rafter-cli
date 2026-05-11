@@ -41,9 +41,9 @@ function rafter(
   }
 }
 
-// ── scan local: agent vs human mode ──────────────────────────────────
+// ── secrets: agent vs human mode ─────────────────────────────────────
 
-describe("scan local — agent mode vs human mode", () => {
+describe("secrets — agent mode vs human mode", () => {
   let tmpDir: string;
 
   beforeEach(() => {
