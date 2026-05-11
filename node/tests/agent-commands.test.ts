@@ -204,6 +204,12 @@ describe("agent init", () => {
     expect(cfg.agent.riskLevel).toBe("moderate");
   });
 
+  it("rejects --with-gitleaks (no longer a valid option)", () => {
+    const r = runCli("agent init --with-gitleaks", home);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toMatch(/unknown option/i);
+  });
+
   it("creates bin and patterns directories", () => {
     runCli("agent init", home);
     expect(fs.existsSync(path.join(home, ".rafter", "bin"))).toBe(true);
@@ -235,6 +241,48 @@ describe("agent init", () => {
     // Config should still be valid JSON with expected fields
     expect(cfg).toHaveProperty("agent");
     expect(cfg).toHaveProperty("version");
+  });
+
+  // ── --dry-run (rf-hrtd) ────────────────────────────────────────────
+
+  it("--dry-run prints a plan and writes no files (rf-hrtd)", () => {
+    const r = runCli("agent init --local --all --dry-run", home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("DRY RUN");
+    expect(r.stdout).toContain("Plan:");
+    expect(r.stdout).toContain("Re-run without --dry-run to apply.");
+
+    // No agent install dirs should exist after dry-run.
+    for (const dir of [".claude", ".codex", ".cursor", ".gemini", ".windsurf", ".continue", ".agents", ".mcp.json", "AGENTS.md", "RAFTER.md", "GEMINI.md", "CLAUDE.md"]) {
+      expect(
+        fs.existsSync(path.join(home, dir)),
+        `${dir} should NOT exist after --dry-run`,
+      ).toBe(false);
+    }
+    // Even ~/.rafter/config.json — the always-write — must NOT land.
+    expect(fs.existsSync(path.join(home, ".rafter", "config.json"))).toBe(false);
+  });
+
+  it("--dry-run lists all 8 platform sections under --local --all", () => {
+    const r = runCli("agent init --local --all --dry-run", home);
+    expect(r.exitCode).toBe(0);
+    // Each section header should appear.
+    expect(r.stdout).toContain("Claude Code (--with-claude-code):");
+    expect(r.stdout).toContain("Codex CLI (--with-codex):");
+    expect(r.stdout).toContain("Gemini CLI (--with-gemini):");
+    expect(r.stdout).toContain("Cursor (--with-cursor):");
+    expect(r.stdout).toContain("Windsurf (--with-windsurf):");
+    expect(r.stdout).toContain("Continue.dev (--with-continue):");
+    expect(r.stdout).toContain("Aider (--with-aider):");
+    // OpenClaw is user-scope only and skipped under --local.
+    expect(r.stdout).not.toContain("OpenClaw (--with-openclaw):");
+  });
+
+  it("--dry-run with --with-betterleaks lists the binary download", () => {
+    const r = runCli("agent init --with-betterleaks --dry-run", home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("DOWNLOAD");
+    expect(r.stdout).toContain("betterleaks");
   });
 
   it("--with-claude-code installs hooks into settings.json", () => {
@@ -393,6 +441,14 @@ describe("agent scan", () => {
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.results.length).toBeGreaterThan(0);
+  });
+
+  it("rejects --engine gitleaks (no longer a valid engine)", () => {
+    const f = path.join(tmpDir, "clean.txt");
+    fs.writeFileSync(f, "nothing\n");
+    const r = runCli(`agent scan ${f} --engine gitleaks --quiet`, home);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/Invalid engine/i);
   });
 });
 
@@ -570,9 +626,9 @@ describe("agent status", () => {
     expect(r.stdout).toContain("minimal");
   });
 
-  it("shows Gitleaks status", () => {
+  it("shows Betterleaks status", () => {
     const r = runCli("agent status", home);
-    expect(r.stdout).toContain("Gitleaks:");
+    expect(r.stdout).toContain("Betterleaks:");
   });
 
   it("shows Claude Code hook status", () => {
@@ -608,6 +664,17 @@ describe("agent status", () => {
     const r = runCli("agent status", home);
     expect(r.stdout).toContain("Total events:");
   });
+
+  it("surfaces a legacy gitleaks install with an upgrade hint", () => {
+    runCli("agent init", home);
+    // Drop a fake legacy gitleaks binary in ~/.rafter/bin/gitleaks.
+    const binDir = path.join(home, ".rafter", "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, "gitleaks"), "#!/bin/sh\necho fake\n", { mode: 0o755 });
+    const r = runCli("agent status", home);
+    expect(r.stdout).toMatch(/legacy gitleaks/i);
+    expect(r.stdout).toMatch(/update-betterleaks/i);
+  });
 });
 
 // ─── agent verify ────────────────────────────────────────────────────────────
@@ -639,7 +706,7 @@ describe("agent verify", () => {
   it("config check passes after init", () => {
     runCli("agent init", home);
     const r = runCli("agent verify", home);
-    // Config should pass now (gitleaks may still fail)
+    // Config should pass now (betterleaks may still fail)
     expect(r.stdout).toContain("Config:");
   });
 

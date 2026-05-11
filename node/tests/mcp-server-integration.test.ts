@@ -5,8 +5,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock("../src/scanners/gitleaks.js", () => ({
-  GitleaksScanner: vi.fn().mockImplementation(function () {
+vi.mock("../src/scanners/betterleaks.js", () => ({
+  BetterleaksScanner: vi.fn().mockImplementation(function () {
     return {
       isAvailable: vi.fn().mockResolvedValue(false),
       scanDirectory: vi.fn().mockResolvedValue([]),
@@ -96,7 +96,7 @@ vi.mock("../src/core/config-manager.js", () => ({
 
 import { createServer } from "../src/commands/mcp/server.js";
 import { RegexScanner } from "../src/scanners/regex-scanner.js";
-import { GitleaksScanner } from "../src/scanners/gitleaks.js";
+import { BetterleaksScanner } from "../src/scanners/betterleaks.js";
 import { AuditLogger } from "../src/core/audit-logger.js";
 
 // ── Test harness ─────────────────────────────────────────────────────────────
@@ -289,10 +289,10 @@ describe("MCP Server — tool execution end-to-end", () => {
     expect(parsed[0].matches[0].pattern).toBe("aws-access-key");
   });
 
-  it("scan_secrets with gitleaks available uses gitleaks", async () => {
-    const glInstance = new GitleaksScanner() as any;
-    glInstance.isAvailable.mockResolvedValue(true);
-    glInstance.scanDirectory.mockResolvedValue([
+  it("scan_secrets with betterleaks available uses betterleaks", async () => {
+    const blInstance = new BetterleaksScanner() as any;
+    blInstance.isAvailable.mockResolvedValue(true);
+    blInstance.scanDirectory.mockResolvedValue([
       {
         file: "/tmp/leak.py",
         matches: [
@@ -305,13 +305,13 @@ describe("MCP Server — tool execution end-to-end", () => {
         ],
       },
     ]);
-    (GitleaksScanner as any).mockImplementation(function () { return glInstance; });
+    (BetterleaksScanner as any).mockImplementation(function () { return blInstance; });
 
     const result = await client.callTool({ name: "scan_secrets", arguments: { path: "/tmp", engine: "auto" } });
 
     const parsed = JSON.parse((result.content as any)[0].text);
     expect(parsed[0].matches[0].pattern).toBe("github-token");
-    expect(glInstance.scanDirectory).toHaveBeenCalledWith("/tmp");
+    expect(blInstance.scanDirectory).toHaveBeenCalledWith("/tmp");
   });
 
   it("evaluate_command allows safe commands", async () => {

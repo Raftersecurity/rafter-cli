@@ -6,6 +6,7 @@ import { execSync } from "child_process";
 import { getRafterDir, getAuditLogPath, getBinDir } from "../../core/config-defaults.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { BinaryManager } from "../../utils/binary-manager.js";
 
 export function createStatusCommand(): Command {
   return new Command("status")
@@ -32,23 +33,30 @@ export function createStatusCommand(): Command {
         console.log(`\nConfig:       not found — run: rafter agent init`);
       }
 
-      // --- Gitleaks ---
-      const localGitleaks = path.join(getBinDir(), "gitleaks");
-      let gitleaksStatus = "not found — run: rafter agent init --with-gitleaks";
+      // --- Betterleaks ---
+      const exeExt = process.platform === "win32" ? ".exe" : "";
+      const localBetterleaks = path.join(getBinDir(), `betterleaks${exeExt}`);
+      let betterleaksStatus = "not found — run: rafter agent init --with-betterleaks";
       try {
-        const ver = execSync("gitleaks version", { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
-        gitleaksStatus = `${ver} (PATH)`;
+        const ver = execSync("betterleaks version", { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+        betterleaksStatus = `${ver} (PATH)`;
       } catch {
-        if (fs.existsSync(localGitleaks)) {
+        if (fs.existsSync(localBetterleaks)) {
           try {
-            const ver = execSync(`"${localGitleaks}" version`, { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
-            gitleaksStatus = `${ver} (local)`;
+            const ver = execSync(`"${localBetterleaks}" version`, { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+            betterleaksStatus = `${ver} (local)`;
           } catch {
-            gitleaksStatus = `${localGitleaks} (binary error)`;
+            betterleaksStatus = `${localBetterleaks} (binary error)`;
+          }
+        } else {
+          // Legacy install — surface a hint instead of "not found"
+          const legacy = new BinaryManager().findLegacyGitleaks();
+          if (legacy) {
+            betterleaksStatus = `not found — legacy gitleaks at ${legacy}; run: rafter agent update-betterleaks`;
           }
         }
       }
-      console.log(`Gitleaks:     ${gitleaksStatus}`);
+      console.log(`Betterleaks:  ${betterleaksStatus}`);
 
       // --- Claude Code hooks ---
       const settingsPath = path.join(home, ".claude", "settings.json");

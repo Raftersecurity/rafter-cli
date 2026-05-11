@@ -17,7 +17,7 @@ FROM node:22-alpine
 
 RUN apk add --no-cache git \
     && npm install -g @rafter-security/cli \
-    && rafter agent init --with-gitleaks 2>/dev/null || true
+    && rafter agent init --with-betterleaks
 
 WORKDIR /workspace
 

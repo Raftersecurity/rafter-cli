@@ -31,6 +31,151 @@ const AGENT_SKILLS: { name: string; description: string }[] = [
 ];
 
 /**
+ * Print every file path the install would touch — without writing anything.
+ *
+ * Lists are derived from the resolved want* booleans (which already account
+ * for --all, --with-*, detection, and --local scope), so the printed plan
+ * mirrors exactly what the install path would do. Implements rf-hrtd.
+ */
+function printDryRunPlan(plan: {
+  root: string;
+  scope: "user" | "project";
+  wantOpenClaw: boolean;
+  wantClaudeCode: boolean;
+  wantCodex: boolean;
+  wantGemini: boolean;
+  wantCursor: boolean;
+  wantWindsurf: boolean;
+  wantContinue: boolean;
+  wantAider: boolean;
+  wantBetterleaks: boolean;
+  riskLevel: string;
+}): void {
+  const home = os.homedir();
+  let writeCount = 0;
+  let downloadCount = 0;
+
+  const W = (p: string, note?: string) => {
+    writeCount++;
+    console.log(`  WRITE     ${p}${note ? `   (${note})` : ""}`);
+  };
+  const D = (p: string, note?: string) => {
+    downloadCount++;
+    console.log(`  DOWNLOAD  ${p}${note ? `   (${note})` : ""}`);
+  };
+  const R = (p: string, note?: string) => {
+    console.log(`  REMOVE    ${p}${note ? `   (${note})` : ""}`);
+  };
+
+  console.log();
+  console.log(fmt.info("DRY RUN — no files will be created or modified."));
+  console.log(fmt.info(`Scope: ${plan.scope}${plan.scope === "project" ? ` (cwd: ${plan.root})` : ""}`));
+  console.log();
+  console.log(fmt.divider());
+  console.log("Always:");
+  W(path.join(home, ".rafter", "config.json"), `riskLevel: ${plan.riskLevel}`);
+  W(path.join(home, ".rafter", "bin/"), "directory");
+  W(path.join(home, ".rafter", "patterns/"), "directory");
+
+  if (plan.wantBetterleaks) {
+    console.log();
+    console.log("Betterleaks (--with-betterleaks / --all):");
+    D(path.join(home, ".rafter", "bin", "betterleaks"), "binary, ~12MB from GitHub releases");
+  }
+
+  if (plan.wantClaudeCode) {
+    console.log();
+    console.log("Claude Code (--with-claude-code):");
+    W(path.join(plan.root, ".claude", "settings.json"), "PreToolUse + PostToolUse hooks merged");
+    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+      W(path.join(plan.root, ".claude", "skills", s, "SKILL.md"));
+    }
+    W(path.join(plan.root, ".claude", "agents", "rafter.md"), "sub-agent");
+    W(path.join(plan.root, ".claude", "CLAUDE.md"), "rafter:start/end marker block");
+    W(path.join(plan.root, ".mcp.json"), "project-scope MCP config");
+  }
+
+  if (plan.wantCodex) {
+    console.log();
+    console.log("Codex CLI (--with-codex):");
+    W(path.join(plan.root, ".codex", "hooks.json"), "PreToolUse: Bash|apply_patch, PostToolUse: .*");
+    for (const s of AGENT_SKILLS) {
+      W(path.join(plan.root, ".agents", "skills", s.name, "SKILL.md"));
+    }
+    const agentsMd = plan.scope === "user" ? path.join(plan.root, ".codex", "AGENTS.md") : path.join(plan.root, "AGENTS.md");
+    W(agentsMd, "shared with Windsurf when --with-windsurf");
+  }
+
+  if (plan.wantGemini) {
+    console.log();
+    console.log("Gemini CLI (--with-gemini):");
+    W(path.join(plan.root, ".gemini", "settings.json"), "MCP + BeforeTool/AfterTool hooks");
+    for (const s of AGENT_SKILLS) {
+      W(path.join(plan.root, ".agents", "skills", s.name, "SKILL.md"), "shared with Codex");
+    }
+    const geminiMd = plan.scope === "user" ? path.join(plan.root, ".gemini", "GEMINI.md") : path.join(plan.root, "GEMINI.md");
+    W(geminiMd);
+    if (plan.scope === "user") {
+      console.log(`  EXEC      gemini skills link ${path.join(plan.root, ".agents", "skills", "rafter")}   (per-skill, runtime registration)`);
+    }
+  }
+
+  if (plan.wantCursor) {
+    console.log();
+    console.log("Cursor (--with-cursor):");
+    W(path.join(plan.root, ".cursor", "hooks.json"), "preToolUse + postToolUse + beforeShellExecution");
+    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+      W(path.join(plan.root, ".cursor", "rules", `${s}.mdc`));
+    }
+    W(path.join(plan.root, ".cursor", "agents", "rafter.md"), "sub-agent (Cursor reads .claude/agents/ too)");
+    W(path.join(plan.root, ".cursor", "mcp.json"));
+  }
+
+  if (plan.wantWindsurf) {
+    console.log();
+    console.log("Windsurf (--with-windsurf):");
+    if (plan.scope === "user") {
+      W(path.join(home, ".codeium", "windsurf", "mcp_config.json"), "user-scope MCP only");
+    }
+    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+      W(path.join(plan.root, ".windsurf", "rules", `${s}.md`));
+    }
+    W(path.join(plan.root, "AGENTS.md"), "shared with Codex; idempotent if already written");
+  }
+
+  if (plan.wantContinue) {
+    console.log();
+    console.log("Continue.dev (--with-continue):");
+    if (plan.scope === "user") {
+      W(path.join(home, ".continue", "config.json"), "MCP entry; preserves existing keys");
+    }
+    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
+      W(path.join(plan.root, ".continue", "rules", `${s}.md`));
+    }
+  }
+
+  if (plan.wantAider) {
+    console.log();
+    console.log("Aider (--with-aider):");
+    W(path.join(plan.root, "RAFTER.md"), "rafter:start/end marker block");
+    W(path.join(plan.root, ".aider.conf.yml"), "appends RAFTER.md to read: list; strips legacy mcp-server-command line");
+  }
+
+  if (plan.wantOpenClaw) {
+    console.log();
+    console.log("OpenClaw (--with-openclaw):");
+    W(path.join(home, ".openclaw", "workspace", "skills", "rafter-security", "SKILL.md"), "ClawHub-shape");
+    R(path.join(home, ".openclaw", "skills", "rafter-security.md"), "legacy file from rafter ≤ 0.7.7, if present");
+  }
+
+  console.log();
+  console.log(fmt.divider());
+  console.log(fmt.info(`Plan: ${writeCount} write${writeCount === 1 ? "" : "s"}, ${downloadCount} download${downloadCount === 1 ? "" : "s"}.`));
+  console.log(fmt.info("Re-run without --dry-run to apply."));
+  console.log();
+}
+
+/**
  * Install instruction files for platforms that support them, at either user
  * or project scope.
  *
@@ -892,14 +1037,18 @@ export function createInitCommand(): Command {
     .option("--with-cursor", "Install Cursor integration")
     .option("--with-windsurf", "Install Windsurf integration")
     .option("--with-continue", "Install Continue.dev integration")
-    .option("--with-gitleaks", "Download and install Gitleaks binary")
-    .option("--all", "Install all detected integrations and download Gitleaks")
+    .option("--with-betterleaks", "Download and install Betterleaks binary")
+    .option("--all", "Install all detected integrations and download Betterleaks")
     .option("-i, --interactive", "Guided setup — prompts for each detected integration")
-    .option("--update", "Re-download gitleaks and reinstall integrations without resetting config")
+    .option("--update", "Re-download betterleaks and reinstall integrations without resetting config")
     .option(
       "--local",
       "Install integration configs project-locally (in CWD) instead of user-globally. " +
       "Supported for Claude Code, Codex, Gemini, Cursor. Other platforms are skipped in local mode.",
+    )
+    .option(
+      "--dry-run",
+      "Print every file path that would be created, modified, or downloaded — without making any changes (rf-hrtd).",
     )
     .action(async (opts) => {
       console.log(fmt.header("Rafter Agent Security Setup"));
@@ -950,7 +1099,7 @@ export function createInitCommand(): Command {
       // Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
       // in cwd) since rf-du2o.
       let wantAider = opts.withAider || opts.all;
-      let wantGitleaks = opts.withGitleaks || (opts.all && !opts.local);
+      let wantBetterleaks = opts.withBetterleaks || (opts.all && !opts.local);
 
       // Interactive mode: prompt for each detected integration
       if (opts.interactive && !opts.all) {
@@ -965,7 +1114,7 @@ export function createInitCommand(): Command {
         if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP + hooks?");
         if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP server?");
         if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
-        if (!wantGitleaks) wantGitleaks = await askYesNo("Download Gitleaks binary (enhanced scanning)?");
+        if (!wantBetterleaks) wantBetterleaks = await askYesNo("Download Betterleaks binary (enhanced scanning)?");
         console.log();
       }
 
@@ -999,6 +1148,28 @@ export function createInitCommand(): Command {
         if (wantAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
       }
 
+      // --dry-run: print every file path the command would touch, then
+      // exit before any filesystem write happens (rf-hrtd). The plan is
+      // built from the SAME resolved want* / has* booleans the install
+      // path uses, so the listing mirrors what would actually run.
+      if (opts.dryRun) {
+        printDryRunPlan({
+          root,
+          scope,
+          wantOpenClaw: wantOpenClaw && (hasOpenClaw),
+          wantClaudeCode: wantClaudeCode && (hasClaudeCode || opts.local),
+          wantCodex: wantCodex && (hasCodex || opts.local),
+          wantGemini: wantGemini && (hasGemini || opts.local),
+          wantCursor: wantCursor && (hasCursor || opts.local),
+          wantWindsurf: wantWindsurf && (hasWindsurf || opts.local),
+          wantContinue: wantContinue && (hasContinueDev || opts.local),
+          wantAider: wantAider && (hasAider || opts.local),
+          wantBetterleaks,
+          riskLevel: opts.riskLevel,
+        });
+        return;
+      }
+
       // Initialize directory structure
       try {
         await manager.initialize();
@@ -1019,8 +1190,8 @@ export function createInitCommand(): Command {
       manager.set("agent.riskLevel", opts.riskLevel);
       console.log(fmt.success(`Set risk level: ${opts.riskLevel}`));
 
-      // Check / download Gitleaks binary (opt-in via --with-gitleaks or --all)
-      if (wantGitleaks) {
+      // Check / download Betterleaks binary (opt-in via --with-betterleaks or --all)
+      if (wantBetterleaks) {
         const binaryManager = new BinaryManager();
         const platformInfo = binaryManager.getPlatformInfo();
 
@@ -1034,51 +1205,51 @@ export function createInitCommand(): Command {
             console.log(fmt.info("Diagnostics:"));
             console.log(diag);
           }
-          console.log(fmt.info("To fix: install gitleaks (https://github.com/gitleaks/gitleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
+          console.log(fmt.info("To fix: install betterleaks (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
           console.log();
         };
 
-        if (!opts.update && binaryManager.isGitleaksInstalled()) {
+        if (!opts.update && binaryManager.isBetterleaksInstalled()) {
           // Local binary exists — verify it actually works
-          const verResult = await binaryManager.verifyGitleaksVerbose();
+          const verResult = await binaryManager.verifyBetterleaksVerbose();
           if (verResult.ok) {
-            console.log(fmt.success(`Gitleaks already installed (${verResult.stdout})`));
+            console.log(fmt.success(`Betterleaks already installed (${verResult.stdout})`));
           } else {
-            console.log(fmt.warning("Gitleaks binary found locally but failed to execute."));
-            console.log(fmt.info(`  Binary: ${binaryManager.getGitleaksPath()}`));
-            await showDiagnostics(binaryManager.getGitleaksPath(), verResult);
+            console.log(fmt.warning("Betterleaks binary found locally but failed to execute."));
+            console.log(fmt.info(`  Binary: ${binaryManager.getBetterleaksPath()}`));
+            await showDiagnostics(binaryManager.getBetterleaksPath(), verResult);
           }
         } else {
           // Not installed locally (or --update forcing re-download) — check PATH first
           // unless --update was passed (in that case force a fresh managed install)
-          const pathBinary = opts.update ? null : binaryManager.findGitleaksOnPath();
+          const pathBinary = opts.update ? null : binaryManager.findBetterleaksOnPath();
           if (pathBinary) {
-            const verResult = await binaryManager.verifyGitleaksVerbose(pathBinary);
+            const verResult = await binaryManager.verifyBetterleaksVerbose(pathBinary);
             if (verResult.ok) {
-              console.log(fmt.success(`Gitleaks available on PATH (${verResult.stdout})`));
+              console.log(fmt.success(`Betterleaks available on PATH (${verResult.stdout})`));
             } else {
-              console.log(fmt.warning("Gitleaks found on PATH but failed to execute."));
+              console.log(fmt.warning("Betterleaks found on PATH but failed to execute."));
               console.log(fmt.info(`  Binary: ${pathBinary}`));
               await showDiagnostics(pathBinary, verResult);
             }
           } else if (!platformInfo.supported) {
-            console.log(fmt.info(`Gitleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
+            console.log(fmt.info(`Betterleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
             console.log(fmt.success("Using pattern-based scanning (21 patterns)"));
           } else {
             // Not on PATH, not installed locally — download
             console.log();
-            console.log(fmt.info("Downloading Gitleaks (enhanced secret detection)..."));
+            console.log(fmt.info("Downloading Betterleaks (enhanced secret detection)..."));
             try {
-              await binaryManager.downloadGitleaks((msg) => {
+              await binaryManager.downloadBetterleaks((msg) => {
                 console.log(`   ${msg}`);
               });
               console.log();
             } catch (e) {
               console.log();
-              console.log(fmt.error(`Gitleaks setup failed — pattern-based scanning will be used instead.`));
+              console.log(fmt.error(`Betterleaks setup failed — pattern-based scanning will be used instead.`));
               console.log(fmt.warning(String(e)));
               console.log();
-              console.log(fmt.info("To fix: install gitleaks manually (https://github.com/gitleaks/gitleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
+              console.log(fmt.info("To fix: install betterleaks manually (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
               console.log();
             }
           }

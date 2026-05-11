@@ -3,7 +3,7 @@
  *
  * Supports both:
  * - Backend scans: --scan-id <id> (fetches from Rafter API)
- * - Local scans: --from-local <path> (reads JSON file from `rafter scan local --format json`)
+ * - Local scans: --from-local <path> (reads JSON file from `rafter secrets --format json`)
  */
 import { Command } from "commander";
 import fs from "fs";
@@ -27,7 +27,7 @@ export function createFromScanCommand(): Command {
     .option("--scan-id <id>", "Backend scan ID to create issues from")
     .option(
       "--from-local <path>",
-      "Path to local scan JSON (from rafter scan local --format json)"
+      "Path to local scan JSON (from rafter secrets --format json)"
     )
     .option("-r, --repo <repo>", "Target GitHub repo (org/repo)")
     .option(

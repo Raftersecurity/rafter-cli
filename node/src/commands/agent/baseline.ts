@@ -4,7 +4,7 @@ import os from "os";
 import path from "path";
 import { fmt } from "../../utils/formatter.js";
 import { RegexScanner } from "../../scanners/regex-scanner.js";
-import { GitleaksScanner } from "../../scanners/gitleaks.js";
+import { BetterleaksScanner } from "../../scanners/betterleaks.js";
 import { ConfigManager } from "../../core/config-manager.js";
 
 const BASELINE_PATH = path.join(os.homedir(), ".rafter", "baseline.json");
@@ -58,9 +58,9 @@ function createBaselineCreateCommand(): Command {
   return new Command("create")
     .description("Scan and save all current findings as the baseline")
     .argument("[path]", "Path to scan", ".")
-    .option("--engine <engine>", "Scan engine: gitleaks or patterns", "auto")
+    .option("--engine <engine>", "Scan engine: betterleaks or patterns", "auto")
     .action(async (scanPath: string, opts: { engine?: string }) => {
-      const validEngines = ["auto", "gitleaks", "patterns"];
+      const validEngines = ["auto", "betterleaks", "patterns"];
       const engineValue = opts.engine || "auto";
       if (!validEngines.includes(engineValue)) {
         console.error(`Invalid engine: ${engineValue}. Valid values: ${validEngines.join(", ")}`);
@@ -204,28 +204,28 @@ function createBaselineAddCommand(): Command {
 
 // ── helpers ─────────────────────────────────────────────────────────
 
-async function selectEngine(preference: string): Promise<"gitleaks" | "patterns"> {
+async function selectEngine(preference: string): Promise<"betterleaks" | "patterns"> {
   if (preference === "patterns") return "patterns";
-  if (preference === "gitleaks") {
-    const g = new GitleaksScanner();
-    return (await g.isAvailable()) ? "gitleaks" : "patterns";
+  if (preference === "betterleaks") {
+    const b = new BetterleaksScanner();
+    return (await b.isAvailable()) ? "betterleaks" : "patterns";
   }
   if (preference !== "auto") {
-    console.error(`Invalid engine: ${preference}. Valid values: auto, gitleaks, patterns`);
+    console.error(`Invalid engine: ${preference}. Valid values: auto, betterleaks, patterns`);
     process.exit(2);
   }
-  const g = new GitleaksScanner();
-  return (await g.isAvailable()) ? "gitleaks" : "patterns";
+  const b = new BetterleaksScanner();
+  return (await b.isAvailable()) ? "betterleaks" : "patterns";
 }
 
 async function scanFile(
   filePath: string,
-  engine: "gitleaks" | "patterns",
+  engine: "betterleaks" | "patterns",
 ) {
-  if (engine === "gitleaks") {
+  if (engine === "betterleaks") {
     try {
-      const g = new GitleaksScanner();
-      const r = await g.scanFile(filePath);
+      const b = new BetterleaksScanner();
+      const r = await b.scanFile(filePath);
       return r.matches.length > 0 ? [r] : [];
     } catch {
       const s = new RegexScanner();
@@ -240,13 +240,13 @@ async function scanFile(
 
 async function scanDirectory(
   dirPath: string,
-  engine: "gitleaks" | "patterns",
+  engine: "betterleaks" | "patterns",
   scanCfg?: { excludePaths?: string[] },
 ) {
-  if (engine === "gitleaks") {
+  if (engine === "betterleaks") {
     try {
-      const g = new GitleaksScanner();
-      return await g.scanDirectory(dirPath);
+      const b = new BetterleaksScanner();
+      return await b.scanDirectory(dirPath);
     } catch {
       const s = new RegexScanner();
       return s.scanDirectory(dirPath, { excludePaths: scanCfg?.excludePaths });

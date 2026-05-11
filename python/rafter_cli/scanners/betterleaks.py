@@ -1,11 +1,11 @@
-"""Gitleaks scanner — wraps system gitleaks binary."""
+"""Betterleaks scanner — wraps system betterleaks binary."""
 from __future__ import annotations
 
 import json
 import os
 import platform
-import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from typing import NamedTuple
@@ -15,36 +15,36 @@ from ..utils.binary_manager import BinaryManager
 
 
 @dataclass
-class GitleaksScanResult:
+class BetterleaksScanResult:
     file: str
     matches: list[PatternMatch] = field(default_factory=list)
 
 
-class GitleaksCheckResult(NamedTuple):
+class BetterleaksCheckResult(NamedTuple):
     available: bool
     stdout: str
     stderr: str
     error: str  # OSError / timeout message, empty on success
 
 
-class GitleaksScanner:
+class BetterleaksScanner:
     def __init__(self) -> None:
         self._binary_manager = BinaryManager()
         # Prefer managed binary, fall back to system PATH
-        if self._binary_manager.is_gitleaks_installed():
-            self._path: str | None = str(self._binary_manager.get_gitleaks_path())
+        if self._binary_manager.is_betterleaks_installed():
+            self._path: str | None = str(self._binary_manager.get_betterleaks_path())
         else:
-            self._path = self._binary_manager.find_gitleaks_on_path()
+            self._path = self._binary_manager.find_betterleaks_on_path()
 
     def is_available(self) -> bool:
         return self.check().available
 
-    def check(self) -> GitleaksCheckResult:
-        """Run 'gitleaks version' and return structured result with captured output."""
+    def check(self) -> BetterleaksCheckResult:
+        """Run 'betterleaks version' and return structured result with captured output."""
         if not self._path:
-            return GitleaksCheckResult(
+            return BetterleaksCheckResult(
                 available=False, stdout="", stderr="",
-                error="gitleaks not found (not installed via rafter and not on PATH)",
+                error="betterleaks not found (not installed via rafter and not on PATH)",
             )
         try:
             result = subprocess.run(
@@ -52,16 +52,16 @@ class GitleaksScanner:
                 capture_output=True, text=True, timeout=5,
             )
             ok = result.returncode == 0
-            return GitleaksCheckResult(
+            return BetterleaksCheckResult(
                 available=ok,
                 stdout=result.stdout.strip(),
                 stderr=result.stderr.strip(),
                 error="" if ok else f"exit code {result.returncode}",
             )
         except subprocess.TimeoutExpired:
-            return GitleaksCheckResult(available=False, stdout="", stderr="", error="timed out")
+            return BetterleaksCheckResult(available=False, stdout="", stderr="", error="timed out")
         except (OSError, FileNotFoundError) as exc:
-            return GitleaksCheckResult(available=False, stdout="", stderr="", error=str(exc))
+            return BetterleaksCheckResult(available=False, stdout="", stderr="", error=str(exc))
 
     @staticmethod
     def collect_diagnostics(binary_path: str | None = None) -> str:
@@ -88,7 +88,6 @@ class GitleaksScanner:
         lines.append(f"  python arch: {platform.machine()}, system: {platform.system()}")
 
         if platform.system() == "Linux":
-            # Detect glibc vs musl
             try:
                 result = subprocess.run(
                     "ldd --version 2>&1 || true", shell=True, capture_output=True, text=True, timeout=5
@@ -96,7 +95,7 @@ class GitleaksScanner:
                 ldd_out = result.stdout + result.stderr
                 if "musl" in ldd_out:
                     lines.append(
-                        "  libc: musl (gitleaks Linux releases target glibc; "
+                        "  libc: musl (betterleaks Linux releases target glibc; "
                         "musl systems need a static/musl build)"
                     )
                 elif "GLIBC" in ldd_out or "GNU" in ldd_out:
@@ -110,51 +109,83 @@ class GitleaksScanner:
 
         return "\n".join(lines)
 
-    def scan_file(self, file_path: str) -> GitleaksScanResult:
+    def scan_file(self, file_path: str) -> BetterleaksScanResult:
         results = self._run_scan(file_path)
-        return GitleaksScanResult(
+        return BetterleaksScanResult(
             file=file_path,
             matches=[self._convert(r) for r in results],
         )
 
-    def scan_directory(self, dir_path: str, *, use_git: bool = False) -> list[GitleaksScanResult]:
+    def scan_directory(self, dir_path: str, *, use_git: bool = False) -> list[BetterleaksScanResult]:
         results = self._run_scan(dir_path, use_git=use_git)
         grouped: dict[str, list[PatternMatch]] = {}
         for r in results:
             f = r.get("File", "unknown")
             grouped.setdefault(f, []).append(self._convert(r))
-        return [GitleaksScanResult(file=f, matches=m) for f, m in grouped.items()]
+        return [BetterleaksScanResult(file=f, matches=m) for f, m in grouped.items()]
 
     # ------------------------------------------------------------------
 
     def _run_scan(self, target: str, *, use_git: bool = False) -> list[dict]:
         if not self._path:
-            raise RuntimeError("Gitleaks not available")
+            raise RuntimeError("Betterleaks not available")
 
-        with tempfile.TemporaryDirectory(prefix="gitleaks-") as tmp_dir:
+        with tempfile.TemporaryDirectory(prefix="betterleaks-") as tmp_dir:
             report_path = os.path.join(tmp_dir, "report.json")
+            # betterleaks uses subcommands: `dir <path>` for filesystem,
+            # `git <path>` for git history; report destination is --report-path.
+            # `--` ensures a target path beginning with `-` isn't parsed as a flag.
+            subcommand = "git" if use_git else "dir"
+            cmd = [self._path, subcommand, "-f", "json", "--report-path", report_path, "--", target]
             try:
-                cmd = [self._path, "detect", "-f", "json", "-r", report_path, "-s", target]
-                if not use_git:
-                    cmd.insert(2, "--no-git")
-                subprocess.run(
-                    cmd,
-                    capture_output=True, timeout=60,
+                result = subprocess.run(cmd, capture_output=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                print(f"[rafter] Warning: Betterleaks scan of {target} timed out", file=sys.stderr)
+                return []
+            except (OSError, FileNotFoundError) as exc:
+                raise RuntimeError(f"Betterleaks invocation failed: {exc}") from exc
+
+            # Exit-code semantics (mirror Node):
+            #   0          = clean (no findings)
+            #   1          = findings reported (the `--exit-code` default)
+            #   anything else = scanner / runtime error — surface, don't pretend "clean"
+            if result.returncode not in (0, 1):
+                stderr_tail = (result.stderr or b"").decode("utf-8", "replace").strip()[-500:]
+                raise RuntimeError(
+                    f"Betterleaks scan failed (exit {result.returncode}): {stderr_tail or '(no stderr)'}"
                 )
-                if not os.path.exists(report_path):
-                    return []
+
+            if not os.path.exists(report_path):
+                # Exit 0 with no report = no findings; exit 1 with no report = unexpected.
+                if result.returncode == 1:
+                    stderr_tail = (result.stderr or b"").decode("utf-8", "replace").strip()[-500:]
+                    raise RuntimeError(
+                        f"Betterleaks reported findings (exit 1) but emitted no report: {stderr_tail or '(no stderr)'}"
+                    )
+                return []
+
+            try:
                 with open(report_path) as f:
                     content = f.read().strip()
                 if not content:
                     return []
-                return json.loads(content)
-            except (subprocess.TimeoutExpired, json.JSONDecodeError):
+                parsed = json.loads(content)
+            except json.JSONDecodeError as exc:
+                print(f"[rafter] Warning: Failed to parse Betterleaks report: {exc}", file=sys.stderr)
                 return []
+
+            if not isinstance(parsed, list):
+                print(
+                    "[rafter] Warning: Betterleaks output is not an array — possible version mismatch",
+                    file=sys.stderr,
+                )
+                return []
+            return parsed
 
     @staticmethod
     def _convert(result: dict) -> PatternMatch:
         rule_id = result.get("RuleID", result.get("Description", "unknown"))
-        severity = GitleaksScanner._get_severity(rule_id, result.get("Tags", []))
+        severity = BetterleaksScanner._get_severity(rule_id, result.get("Tags", []))
         secret = result.get("Secret", result.get("Match", ""))
         return PatternMatch(
             pattern=Pattern(
@@ -166,17 +197,30 @@ class GitleaksScanner:
             match=secret,
             line=result.get("StartLine"),
             column=result.get("StartColumn"),
-            redacted=GitleaksScanner._redact(secret),
+            redacted=BetterleaksScanner._redact(secret),
         )
 
     @staticmethod
     def _get_severity(rule_id: str, tags: list) -> str:
         lower = rule_id.lower()
-        if any(k in lower for k in ("private-key", "password", "database", "access-token", "secret-key")) or lower.endswith("-pat"):
+        tags = tags or []
+        # Critical: private keys, passwords, db credentials, access tokens,
+        # personal access tokens, or anything tagged as both key+secret.
+        if (
+            any(k in lower for k in ("private-key", "password", "database", "access-token", "secret-key"))
+            or lower.endswith("-pat")
+            or ("key" in tags and "secret" in tags)
+        ):
             return "critical"
-        if any(k in lower for k in ("api-key", "-token", "token-")):
+        # High: api keys, generic tokens, or anything tagged 'api'.
+        if (
+            any(k in lower for k in ("api-key", "-token"))
+            or lower.startswith("token-")
+            or "api" in tags
+        ):
             return "high"
-        if "generic" in lower:
+        # Medium: anything advertised as generic.
+        if "generic" in lower or "generic" in tags:
             return "medium"
         return "high"
 

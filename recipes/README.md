@@ -25,7 +25,7 @@ Integration snippets for adding Rafter security to your development workflow. Ea
 npm install -g @rafter-security/cli
 pip install rafter-cli
 
-# One-command setup: config, gitleaks, agent skills
+# One-command setup: config, betterleaks, agent skills
 rafter agent init
 ```
 
