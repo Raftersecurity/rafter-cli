@@ -90,6 +90,18 @@ function runBoth(args: string[], opts?: { cwd?: string; env?: Record<string, str
   };
 }
 
+/**
+ * Parse `rafter secrets --json` stdout into a per-file results array.
+ * Since rf-0pch (v0.7.7) the shape is `{_note, scan_mode, triage_applied, results: [...]}`;
+ * pre-rf-0pch versions emitted a bare array. Handle both so tests stay
+ * stable across versions and don't need to reach into the wrapper.
+ */
+function parseResultsArray(stdout: string): any[] {
+  const j = JSON.parse(stdout);
+  if (Array.isArray(j)) return j;
+  return (j && Array.isArray(j.results)) ? j.results : [];
+}
+
 // Skip all parity tests when Python + rafter_cli deps aren't available
 const describeIfPython = PYTHON_AVAILABLE ? describe : describe.skip;
 
@@ -190,25 +202,23 @@ describeIfPython("parity: secrets", () => {
     fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
     const r = runBoth(["secrets", f, "--engine", "patterns", "--json"]);
 
-    const nodeJson = JSON.parse(r.node.stdout);
-    const pyJson = JSON.parse(r.python.stdout);
+    const nodeResults = parseResultsArray(r.node.stdout);
+    const pyResults = parseResultsArray(r.python.stdout);
 
-    // Both are arrays with one entry
-    expect(Array.isArray(nodeJson)).toBe(true);
-    expect(Array.isArray(pyJson)).toBe(true);
-    expect(nodeJson).toHaveLength(1);
-    expect(pyJson).toHaveLength(1);
+    // Both have one entry
+    expect(nodeResults).toHaveLength(1);
+    expect(pyResults).toHaveLength(1);
 
     // File paths point to the same file
-    expect(nodeJson[0].file).toBe(f);
-    expect(pyJson[0].file).toBe(f);
+    expect(nodeResults[0].file).toBe(f);
+    expect(pyResults[0].file).toBe(f);
 
     // Same number of matches
-    expect(nodeJson[0].matches).toHaveLength(pyJson[0].matches.length);
+    expect(nodeResults[0].matches).toHaveLength(pyResults[0].matches.length);
 
     // Compare first match structure
-    const nodeMatch = nodeJson[0].matches[0];
-    const pyMatch = pyJson[0].matches[0];
+    const nodeMatch = nodeResults[0].matches[0];
+    const pyMatch = pyResults[0].matches[0];
 
     expect(nodeMatch.pattern.name).toBe(pyMatch.pattern.name);
     expect(nodeMatch.pattern.severity).toBe(pyMatch.pattern.severity);
@@ -222,20 +232,20 @@ describeIfPython("parity: secrets", () => {
     fs.writeFileSync(f, "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12\n");
     const r = runBoth(["secrets", f, "--engine", "patterns", "--json"]);
 
-    const nodeJson = JSON.parse(r.node.stdout);
-    const pyJson = JSON.parse(r.python.stdout);
+    const nodeResults = parseResultsArray(r.node.stdout);
+    const pyResults = parseResultsArray(r.python.stdout);
 
     // Validate schema shape matches on both
-    for (const result of [nodeJson, pyJson]) {
-      expect(result[0]).toHaveProperty("file");
-      expect(result[0]).toHaveProperty("matches");
-      expect(result[0].matches[0]).toHaveProperty("pattern");
-      expect(result[0].matches[0]).toHaveProperty("line");
-      expect(result[0].matches[0]).toHaveProperty("column");
-      expect(result[0].matches[0]).toHaveProperty("redacted");
-      expect(result[0].matches[0].pattern).toHaveProperty("name");
-      expect(result[0].matches[0].pattern).toHaveProperty("severity");
-      expect(result[0].matches[0].pattern).toHaveProperty("description");
+    for (const results of [nodeResults, pyResults]) {
+      expect(results[0]).toHaveProperty("file");
+      expect(results[0]).toHaveProperty("matches");
+      expect(results[0].matches[0]).toHaveProperty("pattern");
+      expect(results[0].matches[0]).toHaveProperty("line");
+      expect(results[0].matches[0]).toHaveProperty("column");
+      expect(results[0].matches[0]).toHaveProperty("redacted");
+      expect(results[0].matches[0].pattern).toHaveProperty("name");
+      expect(results[0].matches[0].pattern).toHaveProperty("severity");
+      expect(results[0].matches[0].pattern).toHaveProperty("description");
     }
   });
 
@@ -248,15 +258,15 @@ describeIfPython("parity: secrets", () => {
     expect(r.node.exitCode).toBe(1);
     expect(r.python.exitCode).toBe(1);
 
-    const nodeJson = JSON.parse(r.node.stdout);
-    const pyJson = JSON.parse(r.python.stdout);
+    const nodeResults = parseResultsArray(r.node.stdout);
+    const pyResults = parseResultsArray(r.python.stdout);
 
-    expect(nodeJson.length).toBeGreaterThan(0);
-    expect(nodeJson.length).toBe(pyJson.length);
+    expect(nodeResults.length).toBeGreaterThan(0);
+    expect(nodeResults.length).toBe(pyResults.length);
 
     // Both should find the same pattern name
-    const nodePatterns = nodeJson.flatMap((f: any) => f.matches.map((m: any) => m.pattern.name)).sort();
-    const pyPatterns = pyJson.flatMap((f: any) => f.matches.map((m: any) => m.pattern.name)).sort();
+    const nodePatterns = nodeResults.flatMap((f: any) => f.matches.map((m: any) => m.pattern.name)).sort();
+    const pyPatterns = pyResults.flatMap((f: any) => f.matches.map((m: any) => m.pattern.name)).sort();
     expect(nodePatterns).toEqual(pyPatterns);
   });
 
@@ -272,16 +282,16 @@ describeIfPython("parity: secrets", () => {
     expect(r.node.exitCode).toBe(1);
     expect(r.python.exitCode).toBe(1);
 
-    const nodeJson = JSON.parse(r.node.stdout);
-    const pyJson = JSON.parse(r.python.stdout);
+    const nodeResults = parseResultsArray(r.node.stdout);
+    const pyResults = parseResultsArray(r.python.stdout);
 
-    const nodeCount = nodeJson[0].matches.length;
-    const pyCount = pyJson[0].matches.length;
+    const nodeCount = nodeResults[0].matches.length;
+    const pyCount = pyResults[0].matches.length;
     expect(nodeCount).toBe(pyCount);
 
     // Same pattern names detected (order may differ)
-    const nodeNames = nodeJson[0].matches.map((m: any) => m.pattern.name).sort();
-    const pyNames = pyJson[0].matches.map((m: any) => m.pattern.name).sort();
+    const nodeNames = nodeResults[0].matches.map((m: any) => m.pattern.name).sort();
+    const pyNames = pyResults[0].matches.map((m: any) => m.pattern.name).sort();
     expect(nodeNames).toEqual(pyNames);
   });
 
@@ -291,8 +301,8 @@ describeIfPython("parity: secrets", () => {
     fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
     const r = runBoth(["secrets", f, "--engine", "patterns", "--json"]);
 
-    const nodeRedacted = JSON.parse(r.node.stdout)[0].matches[0].redacted;
-    const pyRedacted = JSON.parse(r.python.stdout)[0].matches[0].redacted;
+    const nodeRedacted = parseResultsArray(r.node.stdout)[0].matches[0].redacted;
+    const pyRedacted = parseResultsArray(r.python.stdout)[0].matches[0].redacted;
 
     expect(nodeRedacted).toBe(pyRedacted);
   });
@@ -439,8 +449,12 @@ describeIfPython("parity: brief", () => {
     expect(r.python.stdout).toContain("# Rafter Command Reference");
   });
 
-  it("both exit 0 for brief security", () => {
-    const r = runBoth(["brief", "security"]);
+  it("both exit 0 for brief scanning", () => {
+    // Was `brief security` originally (2026-04-05), but no such topic ever
+    // existed in either runtime — `brief security` returned "Unknown topic"
+    // and exit 1 on both sides. `scanning` is the canonical rafter-skill
+    // topic and is the closest match to the original intent.
+    const r = runBoth(["brief", "scanning"]);
     expect(r.node.exitCode).toBe(0);
     expect(r.python.exitCode).toBe(0);
   });
@@ -554,17 +568,17 @@ describeIfPython("parity: secret pattern detection", () => {
       expect(r.node.exitCode).toBe(1);
       expect(r.python.exitCode).toBe(1);
 
-      const nodeJson = JSON.parse(r.node.stdout);
-      const pyJson = JSON.parse(r.python.stdout);
+      const nodeResults = parseResultsArray(r.node.stdout);
+      const pyResults = parseResultsArray(r.python.stdout);
 
-      expect(nodeJson).toHaveLength(1);
-      expect(pyJson).toHaveLength(1);
-      expect(nodeJson[0].matches.length).toBeGreaterThan(0);
-      expect(pyJson[0].matches.length).toBeGreaterThan(0);
+      expect(nodeResults).toHaveLength(1);
+      expect(pyResults).toHaveLength(1);
+      expect(nodeResults[0].matches.length).toBeGreaterThan(0);
+      expect(pyResults[0].matches.length).toBeGreaterThan(0);
 
       // Same pattern name detected
-      const nodePatternName = nodeJson[0].matches[0].pattern.name;
-      const pyPatternName = pyJson[0].matches[0].pattern.name;
+      const nodePatternName = nodeResults[0].matches[0].pattern.name;
+      const pyPatternName = pyResults[0].matches[0].pattern.name;
       expect(nodePatternName).toBe(pyPatternName);
     });
   }
