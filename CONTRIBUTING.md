@@ -41,6 +41,17 @@ poetry install
 pytest                                   # 400+ tests, ~2s
 ```
 
+### (Optional) Dogfood the skills locally
+
+If you want Claude Code to auto-load the rafter skills while working *in* this repo, install them from the local build into `node/.claude/skills/` (gitignored):
+
+```bash
+cd node && pnpm run build
+node dist/index.js agent init --with-claude-code --local
+```
+
+This is the same install path users run. The previous checked-in dev copies were removed because they drifted from `node/resources/skills/` (the shipped source of truth).
+
 ## Dual Implementation
 
 Rafter ships as both `@rafter-security/cli` (npm) and `rafter-cli` (PyPI) with full feature parity. **Every change must be implemented in both Node.js and Python.**
