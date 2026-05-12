@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -75,18 +76,13 @@ func main() {
 
 	bus := eventbus.New()
 
-	// Watcher is constructed before the server so the status endpoint
-	// can read its events_dropped counter even if the rescanner
-	// couldn't fully wire up (e.g. one root unreadable).
+	// The watcher is constructed asynchronously after the URL is printed.
+	// NewWithConfig walks every root to register inotify watches; on a
+	// busy $HOME that takes minutes, so doing it on the main goroutine
+	// would hide the URL for that long. atomic.Pointer keeps the
+	// /api/status closure race-free while the bg goroutine swaps it in.
+	var wch atomic.Pointer[watch.Watcher]
 	storeDir := filepath.Dir(storePath)
-	wch, wchErr := watch.NewWithConfig(watch.Config{
-		Roots:           doc.ScanConfig.Roots,
-		ExcludeDirs:     []string{storeDir},
-		ExcludePatterns: doc.ScanConfig.Excludes,
-	})
-	if wchErr != nil {
-		fmt.Fprintf(os.Stderr, "trove: watcher partial setup: %v\n", wchErr)
-	}
 
 	srv, err := server.New(server.Config{
 		IdleTimeout: *idleTimeout,
@@ -94,8 +90,8 @@ func main() {
 		Store:       store,
 		StatusExtras: func() map[string]any {
 			extras := map[string]any{}
-			if wch != nil {
-				extras["watch_events_dropped"] = wch.EventsDropped()
+			if w := wch.Load(); w != nil {
+				extras["watch_events_dropped"] = w.EventsDropped()
 			}
 			return extras
 		},
@@ -118,29 +114,38 @@ func main() {
 		_ = srv.Shutdown(shCtx)
 	}()
 
-	// Bring up the rescanner. The watcher is already constructed above
-	// (before the server) so /api/status can surface its dropped-event
-	// counter. A partial watcher-setup error (e.g. one root unreadable)
-	// is logged but doesn't abort: the other roots are still watched,
-	// and the user can fix config without restarting.
-	rs, rsErr := rescanpkg.New(rescanpkg.Config{
-		Store:   store,
-		Bus:     bus,
-		Watcher: wch,
-		OnError: func(err error) {
-			fmt.Fprintf(os.Stderr, "trove: %v\n", err)
-		},
-	})
-	if rsErr != nil {
-		fmt.Fprintf(os.Stderr, "trove: watcher partial setup: %v\n", rsErr)
-	}
-	if rs != nil {
-		go func() {
+	// Register inotify watches + bring up the rescanner asynchronously.
+	// NewWithConfig walks every root to add watches and on a busy $HOME
+	// that takes a while; we don't want HTTP and drift events to wait.
+	// /api/status omits watch_events_dropped from the extras map until
+	// the watcher pointer is assigned.
+	go func() {
+		w, wErr := watch.NewWithConfig(watch.Config{
+			Roots:           doc.ScanConfig.Roots,
+			ExcludeDirs:     []string{storeDir},
+			ExcludePatterns: doc.ScanConfig.Excludes,
+		})
+		if wErr != nil {
+			fmt.Fprintf(os.Stderr, "trove: watcher partial setup: %v\n", wErr)
+		}
+		wch.Store(w)
+		rs, rsErr := rescanpkg.New(rescanpkg.Config{
+			Store:   store,
+			Bus:     bus,
+			Watcher: w,
+			OnError: func(err error) {
+				fmt.Fprintf(os.Stderr, "trove: %v\n", err)
+			},
+		})
+		if rsErr != nil {
+			fmt.Fprintf(os.Stderr, "trove: rescanner setup: %v\n", rsErr)
+		}
+		if rs != nil {
 			if err := rs.Run(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "trove: watcher exited: %v\n", err)
 			}
-		}()
-	}
+		}
+	}()
 
 	if !*noOpen {
 		if err := browser.Open(url); err != nil {
