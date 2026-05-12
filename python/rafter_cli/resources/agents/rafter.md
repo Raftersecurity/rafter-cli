@@ -20,8 +20,8 @@ Rafter ships three CLI tiers **and** four in-repo skills. They are NOT interchan
 
 ### CLI tiers (run code through the scanner)
 
-1. **`rafter run`** (default mode) — remote SAST + SCA + secrets via the Rafter API. Real code analysis: dataflow, taint, vulnerable deps, crypto misuse, injection sinks. Needs `RAFTER_API_KEY`. **This is the default for "is this safe / secure / production worthy?".**
-2. **`rafter run --mode plus`** — agentic deep-dive on suspicious patterns. Slower, higher signal. Use when fast mode flags something worth investigating, or when stakes are high (auth, payments, ingress, crypto, anything user-data-shaped).
+1. **`rafter run --mode plus`** — **recommended default for "is this safe / secure / production worthy?"** Superset of all tiers: runs full remote SAST + SCA + secrets, then adds an LLM-guided agentic deep-dive on suspicious patterns. Higher signal than fast mode; use this for auth, payments, ingress, crypto, and anything user-data-shaped. Needs `RAFTER_API_KEY`.
+2. **`rafter run`** (fast mode) — remote SAST + SCA + secrets via the Rafter API. Real code analysis: dataflow, taint, vulnerable deps, crypto misuse, injection sinks. Superset of local: finds everything `rafter secrets` finds plus code-level flaws. Use when speed or API quota matters and you don't need the agentic layer. Needs `RAFTER_API_KEY`.
 3. **`rafter secrets [path]`** — local secrets only (regex + betterleaks for hardcoded API keys, tokens, private keys). Fast, offline, no key. **NOT a code security scan.** Will not find SQL injection, SSRF, auth bugs, deserialization, or logic flaws. Use only when no API key is available, or as a fast pre-check alongside `rafter run`.
 
 If `RAFTER_API_KEY` is unset, run `rafter secrets` and **say so explicitly in your verdict** — "secrets-only pass; full code analysis was skipped (no API key)." Do not claim the code was "scanned" without that qualification. Never silently downgrade.
@@ -47,7 +47,7 @@ The CLI finds patterns. Skills ask the questions patterns miss — design choice
 
 | Question shape | Reach for |
 |---|---|
-| "Is this code / diff / repo safe?" (existing code) | `rafter run` (CLI tier 1) **and** `rafter-code-review` skill for the judgment layer — not one or the other |
+| "Is this code / diff / repo safe?" (existing code) | `rafter run --mode plus` (CLI tier 1 — recommended default) **and** `rafter-code-review` skill for the judgment layer — not one or the other |
 | "Is this design / primitive / API shape safe?" (no code yet) | `rafter-secure-design` skill (CLI can't help — there's no code) |
 | "Is this command safe to run?" | `rafter agent exec --dry-run -- <cmd>` (see `rafter/docs/guardrails.md`) |
 | "Is this skill / MCP / agent config safe to install?" | `rafter-skill-review` skill — **vet before install, not after** |
