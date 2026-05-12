@@ -194,6 +194,10 @@ export class BetterleaksScanner {
         return [];
       }
       const parsed = JSON.parse(content);
+      // betterleaks returns JSON null when no leaks found — not a version mismatch
+      if (parsed === null) {
+        return [];
+      }
       if (!Array.isArray(parsed)) {
         console.error("[rafter] Warning: Betterleaks output is not an array — possible version mismatch");
         return [];
