@@ -381,12 +381,24 @@ describe("MCP Server — real stdio transport: lifecycle", () => {
     await client.close();
   });
 
+  // Three back-to-back spawn/connect/listTools/close cycles. Each
+  // iteration spawns `node dist/index.js mcp serve` as a fresh
+  // subprocess; on cold-start CI the subprocess teardown can race the
+  // next iteration's connect (race shows as "MCP error -32000:
+  // Connection closed" from StdioClientTransport.onclose). Two
+  // mitigations:
+  //   1. 200ms inter-iteration sleep — gives the previous subprocess
+  //      time to finish exiting before we spawn another.
+  //   2. 60s per-test timeout (default is 5s) — accounts for the 3x
+  //      cold-start cost on slow runners.
   it("should handle sequential connect/disconnect cycles", async () => {
     for (let i = 0; i < 3; i++) {
       const { client } = await createConnectedClient();
       const { tools } = await client.listTools();
       expect(tools).toHaveLength(6);
       await client.close();
+      // Let the subprocess's exit propagate before the next spawn.
+      if (i < 2) await new Promise((resolve) => setTimeout(resolve, 200));
     }
-  });
+  }, 60_000);
 });

@@ -28,10 +28,15 @@ function cleanupDir(dir: string) {
   }
 }
 
+// 30s default per-call timeout. The original 15s flaked on slow CI runners
+// (rf-of20 documented the same root cause for the idempotency test: cold-start
+// ubuntu+node-22 + spawnSync with shell:true occasionally takes >15s for a
+// single `agent init` run). Apply the same fix to every install-doing test
+// here rather than just the idempotent one.
 function runCli(
   args: string,
   homeDir: string,
-  timeout = 15_000
+  timeout = 30_000
 ): { stdout: string; stderr: string; exitCode: number } {
   const result = spawnSync(`node ${CLI_ENTRY} ${args}`, {
     cwd: PROJECT_ROOT,
@@ -75,12 +80,20 @@ describe("Claude Code rafter sub-agent install (--with-claude-code)", () => {
 
   it("sub-agent file has the required frontmatter (name, description, tools)", () => {
     fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
-    runCli("agent init --with-claude-code", testHomeDir);
+    const r = runCli("agent init --with-claude-code", testHomeDir);
 
-    const content = fs.readFileSync(
-      path.join(testHomeDir, ".claude", "agents", "rafter.md"),
-      "utf-8"
-    );
+    // Diagnostic gate before readFileSync — without this, a slow CI install
+    // surfaces as a bare ENOENT that hides whether `agent init` returned
+    // non-zero (real bug) or silently exceeded the timeout (timing/fs issue).
+    // Mirrors the rf-of20 pattern from the idempotency test.
+    const subagentPath = path.join(testHomeDir, ".claude", "agents", "rafter.md");
+    expect(r.exitCode, `agent init failed: ${r.stderr || r.stdout}`).toBe(0);
+    expect(
+      fs.existsSync(subagentPath),
+      `subagent missing after install. stdout=${r.stdout} stderr=${r.stderr}`,
+    ).toBe(true);
+
+    const content = fs.readFileSync(subagentPath, "utf-8");
 
     // Frontmatter delimiters
     expect(content.startsWith("---\n")).toBe(true);
@@ -95,12 +108,16 @@ describe("Claude Code rafter sub-agent install (--with-claude-code)", () => {
 
   it("sub-agent body references current rafter commands and tier hierarchy", () => {
     fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
-    runCli("agent init --with-claude-code", testHomeDir);
+    const r = runCli("agent init --with-claude-code", testHomeDir);
 
-    const content = fs.readFileSync(
-      path.join(testHomeDir, ".claude", "agents", "rafter.md"),
-      "utf-8"
-    );
+    const subagentPath = path.join(testHomeDir, ".claude", "agents", "rafter.md");
+    expect(r.exitCode, `agent init failed: ${r.stderr || r.stdout}`).toBe(0);
+    expect(
+      fs.existsSync(subagentPath),
+      `subagent missing after install. stdout=${r.stdout} stderr=${r.stderr}`,
+    ).toBe(true);
+
+    const content = fs.readFileSync(subagentPath, "utf-8");
 
     // Trigger phrasing that maps to user's question
     expect(content).toContain("safe / secure / production worthy");
@@ -117,11 +134,19 @@ describe("Claude Code rafter sub-agent install (--with-claude-code)", () => {
   it("is idempotent on repeated installs", () => {
     fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
 
-    runCli("agent init --with-claude-code", testHomeDir);
+    // Bumped from default 15s → 30s. rf-of20 flaked on cross-platform
+    // (ubuntu-latest, 18) once: spawnSync with shell:true on cold-start
+    // ubuntu+node-18 occasionally exceeds 15s for two back-to-back
+    // `agent init` runs. Keep diagnostics below so a real install
+    // failure is distinguishable from a missing file.
+    const r1 = runCli("agent init --with-claude-code", testHomeDir, 30_000);
     const subagentPath = path.join(testHomeDir, ".claude", "agents", "rafter.md");
+    expect(r1.exitCode, `first install failed: ${r1.stderr || r1.stdout}`).toBe(0);
+    expect(fs.existsSync(subagentPath), `subagent missing after first install. stdout=${r1.stdout} stderr=${r1.stderr}`).toBe(true);
     const first = fs.readFileSync(subagentPath, "utf-8");
 
-    runCli("agent init --with-claude-code", testHomeDir);
+    const r2 = runCli("agent init --with-claude-code", testHomeDir, 30_000);
+    expect(r2.exitCode, `second install failed: ${r2.stderr || r2.stdout}`).toBe(0);
     const second = fs.readFileSync(subagentPath, "utf-8");
 
     expect(second).toBe(first);
@@ -141,7 +166,7 @@ describe("Claude Code rafter sub-agent install (--with-claude-code)", () => {
       const result = spawnSync(`node ${CLI_ENTRY} agent init --local --with-claude-code`, {
         cwd: projectDir,
         encoding: "utf-8",
-        timeout: 15_000,
+        timeout: 30_000,
         shell: true,
         env: {
           ...process.env,
@@ -150,10 +175,12 @@ describe("Claude Code rafter sub-agent install (--with-claude-code)", () => {
         },
         stdio: ["pipe", "pipe", "pipe"],
       });
-      expect(result.status).toBe(0);
-
       const subagentPath = path.join(projectDir, ".claude", "agents", "rafter.md");
-      expect(fs.existsSync(subagentPath)).toBe(true);
+      expect(result.status, `agent init --local failed: ${result.stderr || result.stdout}`).toBe(0);
+      expect(
+        fs.existsSync(subagentPath),
+        `subagent missing after --local install. stdout=${result.stdout} stderr=${result.stderr}`,
+      ).toBe(true);
     } finally {
       cleanupDir(projectDir);
     }
