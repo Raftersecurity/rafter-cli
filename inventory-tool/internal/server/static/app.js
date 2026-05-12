@@ -6,6 +6,7 @@
 //   PUT  /api/secrets/{id}/annotation  → 204
 //   POST /api/secrets/{id}/stale       → 204
 //   POST /api/secrets/{id}/rotated     → 204
+//   POST /api/sources/chmod600         → { path, permissions, no_op }
 //   GET  /api/events                   → SSE stream of drift events
 //
 // The session cookie set on the launcher redirect authenticates every
@@ -17,6 +18,10 @@
 //   "loose"    — reveal without per-secret confirmation.
 //   "paranoid" — never decrypt OS keystore reads; keystore reveals 422
 //                and the UI surfaces a "Decrypt off — see settings" link.
+//
+// P14 layout: file-primary. Secrets are grouped first by source-family
+// section, then by file path within each section. The dashboard up top
+// summarises risk across all files.
 
 (function () {
   "use strict";
@@ -24,41 +29,38 @@
   const list = document.getElementById("list");
   const panelWrap = document.getElementById("panel-wrap");
   const panel = document.getElementById("panel");
-  const summary = document.getElementById("summary");
   const toastRegion = document.getElementById("toast-region");
   const driftTicker = document.getElementById("drift-ticker");
   const driftBadge = document.getElementById("drift-badge");
+  const rescanBtn = document.getElementById("rescan-btn");
 
-  // Five-family taxonomy. Order in this array controls render order.
-  // Each entry maps a SourceType (+ optional path predicate) to a
-  // self-explaining family copy block.
-  const FAMILIES = [
+  // Source-family sections. Order controls render order.
+  // envfile splits into "Environment files" (.env / .envrc basenames) and
+  // "Config files" (other envfile-shaped paths). Source code + keychain
+  // are placeholders; they show up greyed even with zero items.
+  const SECTIONS = [
     {
       id: "envfile",
-      title: "Environment files (.env, .envrc)",
-      icon: "envfile",
+      title: "Environment files",
+      subtitle: ".env, .envrc",
       matches: (f) => f.source_type === "envfile" && isDotEnvPath(f.path),
-      always: false,
     },
     {
       id: "shell-rc",
-      title: "Shell config (.zshrc, .bashrc, .profile)",
-      icon: "shell",
+      title: "Shell config",
+      subtitle: ".zshrc, .bashrc, .profile",
       matches: (f) => f.source_type === "shell-rc",
-      always: false,
     },
     {
       id: "config",
-      title: "Config files (~/.aws, ~/.npmrc, ~/.config/gh, …)",
-      icon: "config",
+      title: "Config files",
+      subtitle: "~/.aws, ~/.npmrc, ~/.config/gh, …",
       matches: (f) => f.source_type === "envfile" && !isDotEnvPath(f.path),
-      always: false,
     },
     {
       id: "keystore",
       title: "OS keychain",
       subtitle: "coming soon",
-      icon: "key",
       matches: (f) => f.source_type === "keystore",
       always: true,
       unsupported: true,
@@ -67,26 +69,14 @@
       id: "source-code",
       title: "Source code",
       subtitle: "coming soon, blocked on betterleaks",
-      icon: "code",
       matches: (f) => f.source_type === "source-code",
       always: true,
       unsupported: true,
     },
   ];
 
-  // Inline single-color SVG icons (--fg-muted via currentColor).
-  const ICONS = {
-    envfile: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 1.5h7l3 3V14a.5.5 0 0 1-.5.5h-9A.5.5 0 0 1 3 14V1.5z" stroke="currentColor"/><path d="M10 1.5V5h3" stroke="currentColor"/><path d="M5.5 8h5M5.5 10.5h5M5.5 6h2" stroke="currentColor"/></svg>',
-    shell:   '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.2" stroke="currentColor"/><path d="M4.5 6.5l2 2-2 2M8 11h3.5" stroke="currentColor" stroke-linecap="round"/></svg>',
-    config:  '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="2.5" stroke="currentColor"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4" stroke="currentColor"/></svg>',
-    key:     '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="5" cy="11" r="2.5" stroke="currentColor"/><path d="M6.8 9.2L14 2M11 5l1.5 1.5M13 3l1.5 1.5" stroke="currentColor"/></svg>',
-    code:    '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5M9.5 3.5l-3 9" stroke="currentColor" stroke-linecap="round"/></svg>',
-    lock:    '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.2" stroke="currentColor"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor"/></svg>',
-    copy:    '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor"/><path d="M6 4V3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-1" stroke="currentColor"/></svg>',
-  };
-
-  // Mode-octal explainer copy. Append a `?` icon next to any value
-  // that renders an octal mode; hover/focus shows this tip.
+  // Mode-octal explainer copy. The "?" icon attached to every mode chip
+  // shows this text on hover/focus.
   const MODE_TIPS = {
     "0644": "World-readable. Anyone with a shell on this machine can read the file. .env files should be 0600.",
     "0640": "Owner + group. Members of the file's group can read.",
@@ -98,12 +88,21 @@
   function modeSeverity(mode) {
     if (!mode) return "";
     if (mode === "0600" || mode === "0400") return "ok";
-    if (mode === "0640" || mode === "0660" || mode === "0660") return "warn";
+    if (mode === "0640" || mode === "0660") return "warn";
     return "danger";
+  }
+  function modeIsLoose(mode) {
+    // "Loose" = anything more permissive than owner-only.
+    if (!mode) return false;
+    return mode !== "0600" && mode !== "0400";
+  }
+  function modeIsWorldReadable(mode) {
+    return mode === "0644" || mode === "0666" || mode === "0664";
   }
 
   let state = { secrets: [], reveal_policy: "session" };
   let selectedId = null;
+  const expandedFiles = new Set(); // path keys for expanded file-rows
   // Reveals are kept in-memory only — never persisted, never synced
   // across reloads. Map<secretID, value>.
   const revealed = new Map();
@@ -113,28 +112,40 @@
   // Pending undo for mark-stale; null when no undo is active.
   let undoStaleTimer = null;
   let undoStaleId = null;
+  // Tile filter: when a tile is "active", restrict file rows to those
+  // that match the tile predicate.
+  let activeFilter = null;
 
   // ----------- helpers -----------
 
   function isDotEnvPath(p) {
     if (!p) return false;
-    // Match common dotenv basenames anywhere in the path.
     return /(^|\/)\.env(\..+|rc)?$/.test(p);
+  }
+
+  function homePrefix() {
+    return state.home_dir || "";
+  }
+
+  function displayPath(p) {
+    if (!p) return "";
+    const h = homePrefix();
+    if (h && p.startsWith(h)) return "~" + p.slice(h.length);
+    return p;
   }
 
   function setToast(text, kind) {
     if (!text) return;
     const t = document.createElement("div");
     t.className = "toast";
-    if (kind === "err") t.classList.add("err");
-    if (kind === "ok") t.classList.add("ok");
+    if (kind) t.classList.add(kind);
     t.textContent = text;
     toastRegion.appendChild(t);
     setTimeout(() => {
       t.style.transition = "opacity 0.25s ease";
       t.style.opacity = "0";
       setTimeout(() => t.remove(), 250);
-    }, kind === "err" ? 4500 : 1500);
+    }, kind === "err" ? 4500 : 1800);
   }
 
   function announceDrift(text) {
@@ -142,7 +153,6 @@
     const el = document.createElement("div");
     el.textContent = text;
     driftTicker.appendChild(el);
-    // Trim to last 5 entries so the live region doesn't grow unbounded.
     while (driftTicker.childNodes.length > 5) driftTicker.removeChild(driftTicker.firstChild);
   }
 
@@ -168,175 +178,197 @@
       const body = await api("/api/secrets");
       state.secrets = body.secrets || [];
       state.reveal_policy = body.reveal_policy || "session";
+      state.home_dir = body.home_dir || state.home_dir;
       render();
     } catch (e) {
       setToast("Load failed: " + e.message, "err");
     }
   }
 
-  // ----------- grouping -----------
+  // ----------- grouping: file-primary -----------
 
-  function classify(secret) {
-    const f = (secret.found_in || [])[0];
-    if (!f) return { id: "config", _orphan: true };
-    for (const fam of FAMILIES) {
-      if (fam.matches(f)) return fam;
-    }
-    // Unknown source_type → bucket into config catch-all.
-    return FAMILIES.find((g) => g.id === "config");
-  }
+  // Walks all secrets and builds, per section:
+  //   files: Map<path, { found: FoundIn (first-seen), secrets: [Secret], section }>
+  // Each file row consolidates the first FoundIn we saw for that path
+  // (paths with multiple permissions/mode shouldn't happen, but we
+  // pick the most-permissive entry to be safe with the warning chip).
+  function buildFileIndex() {
+    // section.id -> Map<path, FileGroup>
+    const perSection = new Map();
+    for (const sec of SECTIONS) perSection.set(sec.id, new Map());
 
-  function groupSecrets(secrets) {
-    // groupId -> { fam, items: [secret] }
-    const buckets = new Map();
-    for (const fam of FAMILIES) {
-      if (fam.always) buckets.set(fam.id, { fam, items: [] });
-    }
-    for (const s of secrets) {
-      const fam = classify(s);
-      if (!buckets.has(fam.id)) buckets.set(fam.id, { fam, items: [] });
-      buckets.get(fam.id).items.push(s);
-    }
-    // Order according to FAMILIES definition.
-    const out = [];
-    for (const fam of FAMILIES) {
-      const b = buckets.get(fam.id);
-      if (b) out.push(b);
-    }
-    return out;
-  }
-
-  function sourceWarning(items) {
-    // Returns the worst world-readable warning across the group's
-    // file entries, or null. The header pill nudges users toward 0600.
-    let worst = null;
-    for (const s of items) {
+    for (const s of state.secrets) {
       for (const f of s.found_in || []) {
-        if (!f.path || !f.permissions) continue;
-        const sev = modeSeverity(f.permissions);
-        if (sev === "danger") return { mode: f.permissions, path: f.path };
-        if (sev === "warn" && !worst) worst = { mode: f.permissions, path: f.path };
+        const sec = SECTIONS.find((sx) => sx.matches(f));
+        if (!sec) continue;
+        const key = f.path || `${f.keystore || ""}:${f.service || ""}:${f.account || ""}`;
+        const sectMap = perSection.get(sec.id);
+        if (!sectMap.has(key)) {
+          sectMap.set(key, { key, found: f, secrets: [], section: sec });
+        }
+        const group = sectMap.get(key);
+        // Prefer the worst-perm FoundIn for the chip displayed on the row.
+        if (modeSeverity(f.permissions) === "danger" || (group.found && modeSeverity(group.found.permissions) === "ok" && modeSeverity(f.permissions) === "warn")) {
+          group.found = f;
+        }
+        // De-dup secret entries (a secret can have multiple FoundIn at the same path).
+        if (!group.secrets.some((x) => x.id === s.id)) {
+          group.secrets.push(s);
+        }
       }
     }
-    return worst;
+    return perSection;
   }
 
-  // ----------- render: list -----------
+  function computeDashboard(perSection) {
+    let totalFiles = 0;
+    let loosePerms = 0;
+    let envInGit = 0;
+    const distinctSecrets = new Set();
+    const filesPerType = new Map();
+
+    for (const sec of SECTIONS) {
+      const m = perSection.get(sec.id);
+      if (!m) continue;
+      for (const [, group] of m) {
+        if (sec.unsupported) continue;
+        totalFiles++;
+        filesPerType.set(sec.id, (filesPerType.get(sec.id) || 0) + 1);
+        const perms = group.found && group.found.permissions;
+        if (modeIsLoose(perms)) loosePerms++;
+        if (
+          sec.id === "envfile" &&
+          group.found &&
+          group.found.in_git_repo === true &&
+          group.secrets.length > 0
+        ) {
+          envInGit++;
+        }
+        for (const s of group.secrets) distinctSecrets.add(s.id);
+      }
+    }
+    return { totalFiles, loosePerms, envInGit, totalSecrets: distinctSecrets.size, filesPerType };
+  }
+
+  // ----------- render: dashboard tiles -----------
+
+  function setTile(name, value, severity, tip) {
+    const num = list.parentElement.querySelector(`[data-num="${name}"]`);
+    if (!num) return;
+    num.textContent = value;
+    const tile = num.closest(".tile");
+    if (tile) {
+      tile.dataset.severity = severity;
+      if (tip) {
+        const tipEl = tile.querySelector(".tip");
+        if (tipEl) tipEl.setAttribute("data-tip", tip);
+      }
+    }
+  }
+
+  function renderDashboard(d) {
+    setTile("files-scanned", d.totalFiles, d.totalFiles === 0 ? "zero" : "ok");
+    setTile(
+      "loose-perms",
+      d.loosePerms,
+      d.loosePerms === 0 ? "zero" : "warn"
+    );
+    setTile("env-in-git", d.envInGit, d.envInGit === 0 ? "zero" : "danger");
+    setTile("total-secrets", d.totalSecrets, d.totalSecrets === 0 ? "zero" : "ok");
+
+    // Files-scanned tip lists the per-type breakdown.
+    const breakdown = [];
+    const labelFor = { envfile: ".env", "shell-rc": "shell config", config: "config files" };
+    for (const sec of SECTIONS) {
+      if (sec.unsupported) continue;
+      const n = d.filesPerType.get(sec.id) || 0;
+      if (n > 0) breakdown.push(`${n} ${labelFor[sec.id] || sec.id}`);
+    }
+    const tilesScanned = document.querySelector('.tile[data-tile="files-scanned"] .tip');
+    if (tilesScanned) {
+      tilesScanned.setAttribute(
+        "data-tip",
+        breakdown.length
+          ? `Distinct files where trove found at least one secret. Breakdown: ${breakdown.join(", ")}.`
+          : "Distinct files where trove found at least one secret. Run a scan to populate this."
+      );
+    }
+  }
+
+  // ----------- render: sections + file rows -----------
 
   function render() {
-    const secrets = state.secrets;
-    renderSummary(secrets);
+    const perSection = buildFileIndex();
+    const dash = computeDashboard(perSection);
+    renderDashboard(dash);
 
     list.setAttribute("data-clear-selection", "");
     list.innerHTML = "";
 
-    const groups = groupSecrets(secrets);
     let totalRendered = 0;
 
-    for (const g of groups) {
+    for (const sec of SECTIONS) {
+      const m = perSection.get(sec.id);
+      const fileGroups = m ? Array.from(m.values()) : [];
+      // Hide non-placeholder sections that have no files.
+      if (!sec.always && fileGroups.length === 0) continue;
       const det = document.createElement("details");
-      det.className = "group";
-      if (g.fam.unsupported) det.classList.add("unsupported");
-      det.open = !g.fam.unsupported && g.items.length > 0;
-      det.dataset.familyId = g.fam.id;
+      det.className = "section";
+      if (sec.unsupported) det.classList.add("unsupported");
+      det.open = !sec.unsupported && fileGroups.length > 0;
+      det.dataset.sectionId = sec.id;
 
       const sum = document.createElement("summary");
-      const icon = document.createElement("span");
-      icon.className = "group-icon";
-      icon.setAttribute("aria-hidden", "true");
-      icon.innerHTML = ICONS[g.fam.icon] || "";
-      sum.appendChild(icon);
-
-      const titleWrap = document.createElement("span");
-      titleWrap.className = "group-title-wrap";
-
-      const titleSpan = document.createElement("span");
-      titleSpan.className = "group-title";
-      titleSpan.textContent = g.fam.title;
-      titleWrap.appendChild(titleSpan);
-
-      if (g.fam.subtitle) {
-        titleWrap.appendChild(document.createTextNode(" "));
+      const tw = document.createElement("span");
+      tw.className = "section-title";
+      tw.textContent = sec.title;
+      sum.appendChild(tw);
+      if (sec.subtitle) {
+        sum.appendChild(document.createTextNode(" "));
         const sub = document.createElement("span");
-        sub.className = "group-subtitle";
-        sub.textContent = "— " + g.fam.subtitle;
-        titleWrap.appendChild(sub);
+        sub.className = "section-subtitle";
+        sub.textContent = "(" + sec.subtitle + ")";
+        sum.appendChild(sub);
       }
-      sum.appendChild(titleWrap);
-
       const count = document.createElement("span");
-      count.className = "group-count";
-      const n = g.items.length;
-      count.textContent = g.fam.unsupported && n === 0
-        ? ""
-        : `${n} secret${n === 1 ? "" : "s"}`;
+      count.className = "section-count";
+      const totalSecretsInSection = fileGroups.reduce((acc, g) => acc + g.secrets.length, 0);
+      count.textContent = sec.unsupported && fileGroups.length === 0
+        ? "—"
+        : `${totalSecretsInSection}`;
       sum.appendChild(count);
-
       det.appendChild(sum);
 
-      const warn = sourceWarning(g.items);
-      if (warn) {
-        const w = document.createElement("div");
-        w.className = "group-warn";
-        const pill = document.createElement("span");
-        pill.className = "warn-pill";
-        pill.textContent = warn.mode === "0644" || warn.mode === "0666" ? "world-readable" : "loose mode";
-        w.appendChild(pill);
-        const txt = document.createElement("span");
-        const basename = warn.path.split("/").pop();
-        txt.textContent = warn.mode === "0644" || warn.mode === "0666"
-          ? `Files in this group are world-readable (${warn.mode}). `
-          : `Files in this group are group-readable (${warn.mode}). `;
-        w.appendChild(txt);
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "chmod-btn";
-        btn.setAttribute("aria-label", `Tighten ${basename} to 0600`);
-        btn.textContent = "Tighten to 0600";
-        btn.addEventListener("click", async () => {
-          btn.disabled = true;
-          btn.textContent = "Tightening…";
-          try {
-            await api("/api/sources/chmod600", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ path: warn.path }),
-            });
-            setToast(`Permissions tightened on ${basename}`, "ok");
-            await loadSecrets();
-          } catch (e) {
-            btn.disabled = false;
-            btn.textContent = "Tighten to 0600";
-            setToast(`${basename}: ${e.message || e}`, "err");
-          }
-        });
-        w.appendChild(btn);
-        det.appendChild(w);
-      }
-
-      if (g.items.length > 0) {
+      if (fileGroups.length === 0 && sec.unsupported) {
+        const ph = document.createElement("div");
+        ph.className = "coming-soon";
+        ph.textContent = "Nothing scanned here yet.";
+        det.appendChild(ph);
+      } else {
         const ul = document.createElement("ul");
-        ul.className = "entries";
-        for (const s of g.items) {
-          ul.appendChild(renderEntry(s));
+        ul.className = "files";
+
+        // Sort: danger first, then warn, then alpha.
+        fileGroups.sort((a, b) => {
+          const sa = rowSeverity(a);
+          const sb = rowSeverity(b);
+          const rank = { danger: 0, warn: 1, ok: 2, "": 3 };
+          if (rank[sa] !== rank[sb]) return rank[sa] - rank[sb];
+          return (a.found.path || a.key).localeCompare(b.found.path || b.key);
+        });
+
+        for (const group of fileGroups) {
+          if (activeFilter && !activeFilter(group)) continue;
+          ul.appendChild(renderFileRow(group));
           totalRendered++;
         }
         det.appendChild(ul);
-      } else if (g.fam.unsupported) {
-        const sub = document.createElement("div");
-        sub.className = "group-warn";
-        sub.style.background = "transparent";
-        sub.style.color = "var(--fg-muted)";
-        sub.style.fontStyle = "italic";
-        sub.textContent = "Nothing scanned here yet.";
-        det.appendChild(sub);
       }
 
       list.appendChild(det);
     }
 
-    if (totalRendered === 0) {
-      // No real secrets — show the empty hero.
+    if (totalRendered === 0 && state.secrets.length === 0) {
       const empty = document.createElement("div");
       empty.className = "empty";
       const lede = document.createElement("div");
@@ -344,60 +376,168 @@
       lede.textContent = "No secrets recorded yet.";
       empty.appendChild(lede);
       empty.appendChild(document.createTextNode(
-        "trove watches your scan roots. Edit a tracked file or wait for the next scan."));
+        "trove watches your scan roots for changes. Edit a tracked file or trigger a fresh scan."));
+      const actions = document.createElement("div");
+      actions.className = "empty-actions";
+      const rescan = document.createElement("button");
+      rescan.className = "primary";
+      rescan.textContent = "Re-scan";
+      rescan.addEventListener("click", triggerRescan);
+      actions.appendChild(rescan);
+      empty.appendChild(actions);
+      list.appendChild(empty);
+    } else if (totalRendered === 0 && activeFilter) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      const lede = document.createElement("div");
+      lede.className = "empty-lede";
+      lede.textContent = "No files match this filter.";
+      empty.appendChild(lede);
+      const actions = document.createElement("div");
+      actions.className = "empty-actions";
+      const clear = document.createElement("button");
+      clear.textContent = "Clear filter";
+      clear.addEventListener("click", () => { clearFilter(); render(); });
+      actions.appendChild(clear);
+      empty.appendChild(actions);
       list.appendChild(empty);
     }
 
     if (selectedId) {
-      const stillThere = secrets.some((s) => s.id === selectedId);
+      const stillThere = state.secrets.some((s) => s.id === selectedId);
       if (stillThere) renderPanel(); else closePanel();
     }
   }
 
-  function renderSummary(secrets) {
-    summary.innerHTML = "";
-    if (secrets.length === 0) {
-      const c = document.createElement("span");
-      c.className = "chip";
-      c.innerHTML = "<strong>0</strong> secrets";
-      summary.appendChild(c);
-      return;
-    }
-    const counts = new Map();
-    for (const s of secrets) {
-      const fam = classify(s);
-      counts.set(fam.id, (counts.get(fam.id) || 0) + 1);
-    }
-    const total = document.createElement("span");
-    total.className = "chip";
-    total.innerHTML = `<strong>${secrets.length}</strong> secret${secrets.length === 1 ? "" : "s"}`;
-    summary.appendChild(total);
-
-    for (const fam of FAMILIES) {
-      const n = counts.get(fam.id);
-      if (!n) continue;
-      const c = document.createElement("span");
-      c.className = "chip";
-      const label = familyShortLabel(fam.id);
-      c.innerHTML = `<strong>${n}</strong> in ${label}`;
-      summary.appendChild(c);
-    }
+  function rowSeverity(group) {
+    const f = group.found || {};
+    if (sec_envfile(group.section) && f.in_git_repo === true && group.secrets.length > 0) return "danger";
+    if (f.appears_in_git_history === true) return "danger";
+    if (modeIsWorldReadable(f.permissions)) return "warn";
+    if (modeIsLoose(f.permissions)) return "warn";
+    return "ok";
   }
+  function sec_envfile(s) { return s && s.id === "envfile"; }
 
-  function familyShortLabel(id) {
-    switch (id) {
-      case "envfile":     return ".env files";
-      case "shell-rc":    return "shell config";
-      case "config":      return "config files";
-      case "keystore":    return "keychain";
-      case "source-code": return "source code";
-      default: return id;
-    }
-  }
-
-  function renderEntry(s) {
+  function renderFileRow(group) {
     const li = document.createElement("li");
-    li.className = "entry";
+    li.className = "file-row";
+    const sev = rowSeverity(group);
+    if (sev === "danger" || sev === "warn") li.dataset.highlight = sev;
+    const expanded = expandedFiles.has(group.key);
+    if (expanded) li.classList.add("expanded");
+
+    const head = document.createElement("div");
+    head.className = "file-head";
+
+    const path = document.createElement("span");
+    path.className = "path";
+    const shown = displayPath(group.found.path || group.key);
+    // bdi wrap so ellipsis truncates the MIDDLE-ish under RTL trick.
+    const bdi = document.createElement("bdi");
+    bdi.textContent = shown;
+    path.appendChild(bdi);
+    path.title = group.found.path || group.key;
+    head.appendChild(path);
+
+    const count = document.createElement("span");
+    count.className = "count";
+    const n = group.secrets.length;
+    count.textContent = `${n} secret${n === 1 ? "" : "s"}`;
+    head.appendChild(count);
+
+    const chips = document.createElement("span");
+    chips.className = "chips";
+    if (group.found.permissions) {
+      chips.appendChild(modeChip(group.found.permissions));
+    }
+    if (group.found.in_git_repo === true) {
+      const c = document.createElement("span");
+      c.className = "chip in-git";
+      c.textContent = "in git";
+      c.title = "This file lives inside a git working tree.";
+      chips.appendChild(c);
+    }
+    if (group.found.appears_in_git_history === true) {
+      const c = document.createElement("span");
+      c.className = "chip in-history";
+      c.textContent = "in history";
+      c.title = "This file appears in git history — assume committed.";
+      chips.appendChild(c);
+    }
+    // Tighten button when world-readable + has secrets + in git repo (or just world-readable).
+    if (modeIsWorldReadable(group.found.permissions) && group.secrets.length > 0 && group.found.path) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chmod-btn";
+      btn.textContent = "Tighten to 0600";
+      const basename = (group.found.path || "").split("/").pop();
+      btn.setAttribute("aria-label", `Tighten ${basename} to 0600`);
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        btn.textContent = "Tightening…";
+        try {
+          await api("/api/sources/chmod600", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: group.found.path }),
+          });
+          setToast(`Permissions tightened on ${basename}`, "ok");
+          await loadSecrets();
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = "Tighten to 0600";
+          setToast(`${basename}: ${err.message || err}`, "err");
+        }
+      });
+      chips.appendChild(btn);
+    }
+    head.appendChild(chips);
+
+    head.addEventListener("click", () => {
+      if (expandedFiles.has(group.key)) expandedFiles.delete(group.key);
+      else expandedFiles.add(group.key);
+      render();
+    });
+
+    li.appendChild(head);
+
+    const body = document.createElement("div");
+    body.className = "file-body";
+    const secrets = document.createElement("ul");
+    secrets.className = "secrets-in-file";
+    for (const s of group.secrets) {
+      secrets.appendChild(renderSecretRow(s, group));
+    }
+    body.appendChild(secrets);
+    li.appendChild(body);
+
+    return li;
+  }
+
+  function modeChip(perms) {
+    const sev = modeSeverity(perms); // ok | warn | danger
+    const span = document.createElement("span");
+    span.className = "chip mode-" + (sev || "ok");
+    span.setAttribute("data-mode-octal", perms);
+    span.appendChild(document.createTextNode(perms));
+    const help = document.createElement("span");
+    help.className = "mode-help";
+    help.tabIndex = 0;
+    help.setAttribute("role", "img");
+    help.setAttribute("aria-label", "What does mode " + perms + " mean?");
+    help.textContent = "?";
+    const tip = MODE_TIPS[perms] || "Octal file mode. 0600 (owner-only) is recommended for files holding secrets.";
+    help.setAttribute("data-tip", tip);
+    help.addEventListener("click", (e) => e.stopPropagation());
+    span.appendChild(help);
+    return span;
+  }
+
+  function renderSecretRow(s, fileGroup) {
+    const li = document.createElement("li");
+    li.className = "secret";
     li.dataset.id = s.id;
     if (s.id === selectedId) li.classList.add("selected");
     if (s.annotation && s.annotation.stale) li.classList.add("stale");
@@ -421,38 +561,16 @@
     }
     preview.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (revealed.has(s.id)) {
-        copyToClipboard(revealed.get(s.id));
-      } else {
-        toggleReveal(s);
-      }
+      if (revealed.has(s.id)) copyToClipboard(revealed.get(s.id));
+      else toggleReveal(s);
     });
     li.appendChild(preview);
 
     const right = document.createElement("span");
     right.className = "meta-right";
-    const first = (s.found_in || [])[0];
-    if (first) {
-      if (first.path) {
-        const path = document.createElement("span");
-        path.className = "path";
-        const basename = first.path.split("/").pop();
-        path.textContent = basename;
-        path.title = first.path;
-        right.appendChild(path);
-        if (first.permissions) {
-          right.appendChild(modeNode(first.permissions));
-        }
-      } else if (first.keystore) {
-        const k = document.createElement("span");
-        k.className = "badge";
-        k.textContent = first.keystore;
-        right.appendChild(k);
-      }
-    }
     if (s.annotation && s.annotation.stale) {
       const b = document.createElement("span");
-      b.className = "badge stale";
+      b.className = "badge";
       b.textContent = "stale";
       right.appendChild(b);
     }
@@ -466,28 +584,6 @@
 
     li.addEventListener("click", () => selectSecret(s.id));
     return li;
-  }
-
-  function modeNode(perms) {
-    const sev = modeSeverity(perms);
-    const span = document.createElement("span");
-    span.className = "mode" + (sev ? " " + sev : "");
-    span.setAttribute("data-mode-octal", perms);
-    const code = document.createElement("span");
-    code.textContent = perms;
-    span.appendChild(code);
-    const help = document.createElement("span");
-    help.className = "mode-help";
-    help.tabIndex = 0;
-    help.setAttribute("role", "img");
-    help.setAttribute("aria-label", "What does mode " + perms + " mean?");
-    help.textContent = "?";
-    const tip = MODE_TIPS[perms] || "Octal file mode. 0600 (owner-only) is recommended for files holding secrets.";
-    help.setAttribute("data-tip", tip);
-    // Stop click on the help bubble from triggering parent row select.
-    help.addEventListener("click", (e) => e.stopPropagation());
-    span.appendChild(help);
-    return span;
   }
 
   function relativeTime(iso) {
@@ -537,7 +633,6 @@
       render();
     } catch (e) {
       if (e.status === 422) {
-        // Special-case paranoid + keystore — point at settings.
         if (state.reveal_policy === "paranoid") {
           setToast("Decrypt off — see settings", "err");
         } else {
@@ -557,7 +652,7 @@
     selectedId = id;
     panelWrap.classList.add("open");
     renderPanel();
-    for (const el of list.querySelectorAll("li.entry")) {
+    for (const el of list.querySelectorAll("li.secret")) {
       el.classList.toggle("selected", el.dataset.id === id);
     }
   }
@@ -566,13 +661,11 @@
     selectedId = null;
     panelWrap.classList.remove("open");
     panel.innerHTML = "";
-    for (const el of list.querySelectorAll("li.entry.selected")) {
+    for (const el of list.querySelectorAll("li.secret.selected")) {
       el.classList.remove("selected");
     }
   }
 
-  // Esc + click-outside-list clears selection. The data-clear-selection
-  // hook on #list is the assertion target for the smoke test.
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && selectedId) closePanel();
   });
@@ -583,7 +676,6 @@
     if (!s) { closePanel(); return; }
     panel.innerHTML = "";
 
-    // Head
     const head = document.createElement("div");
     head.className = "panel-head";
     const h2 = document.createElement("h2");
@@ -635,7 +727,7 @@
       const copyBtn = document.createElement("button");
       copyBtn.title = "Copy to clipboard";
       copyBtn.setAttribute("aria-label", "Copy value");
-      copyBtn.innerHTML = ICONS.copy + " <span>Copy</span>";
+      copyBtn.textContent = "Copy";
       copyBtn.addEventListener("click", () => copyToClipboard(revealed.get(s.id)));
       valActions.appendChild(copyBtn);
     }
@@ -646,7 +738,7 @@
     valSec.appendChild(valActions);
     panel.appendChild(valSec);
 
-    // Notes section (renamed from the older annotate copy)
+    // Notes (renamed from the older annotate copy)
     const notesSec = document.createElement("section");
     notesSec.setAttribute("aria-label", "Notes");
     const notesH = document.createElement("h3");
@@ -670,9 +762,8 @@
       a.href = s.annotation.rotate_url;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
+      a.className = "rotate-link";
       a.textContent = "Open admin page ↗";
-      a.style.fontSize = "12px";
-      a.style.color = "var(--accent)";
       notesSec.appendChild(a);
     }
     panel.appendChild(notesSec);
@@ -688,12 +779,12 @@
     for (const f of s.found_in || []) {
       const li = document.createElement("li");
       if (f.path) {
-        let txt = `${f.source_type}: ${f.path}`;
+        let txt = `${f.source_type}: ${displayPath(f.path)}`;
         if (f.line) txt += `:${f.line}`;
         li.textContent = txt;
         if (f.permissions) {
           li.appendChild(document.createTextNode("  "));
-          li.appendChild(modeNode(f.permissions));
+          li.appendChild(modeChip(f.permissions));
         }
       } else if (f.keystore) {
         li.textContent = `${f.source_type}: ${f.keystore} ${f.service || ""}/${f.account || ""}`;
@@ -706,15 +797,16 @@
     foundSec.appendChild(foundUL);
     panel.appendChild(foundSec);
 
-    // Audit findings (derived from FoundIn flags)
+    // Audit findings
     const auditLines = [];
     for (const f of s.found_in || []) {
       if (f.in_git_repo === true) auditLines.push("Inside a git repository.");
-      if (f.in_gitignore === false && f.path) auditLines.push(`Not in .gitignore: ${f.path}`);
+      if (f.in_gitignore === false && f.path) auditLines.push(`Not in .gitignore: ${displayPath(f.path)}`);
       if (f.appears_in_git_history === true) auditLines.push("Appears in git history — assume committed.");
     }
     if (auditLines.length > 0) {
       const auditSec = document.createElement("section");
+      auditSec.classList.add("audit");
       const aH = document.createElement("h3");
       aH.textContent = "Audit findings";
       auditSec.appendChild(aH);
@@ -723,7 +815,6 @@
       for (const ln of auditLines) {
         const li = document.createElement("li");
         li.textContent = ln;
-        li.style.color = "var(--danger)";
         aUL.appendChild(li);
       }
       auditSec.appendChild(aUL);
@@ -762,12 +853,11 @@
     actions.appendChild(stale);
     const rot = document.createElement("button");
     rot.textContent = "Mark rotated";
-    rot.title = "Record that you rotated this credential out-of-band. The next scan will pick up the new value.";
+    rot.title = "Record that you rotated this credential out-of-band.";
     rot.addEventListener("click", () => markRotated(s.id));
     actions.appendChild(rot);
     actSec.appendChild(actions);
 
-    // Undo row sits at the very bottom of the panel.
     if (undoStaleId === s.id) {
       const undoRow = document.createElement("div");
       undoRow.className = "undo-row";
@@ -810,9 +900,7 @@
 
   function readPanelAnnotation() {
     const fields = panel.querySelectorAll("[data-field]");
-    const ann = {
-      source_url: "", owner: "", notes: "", rotate_url: "", tags: [],
-    };
+    const ann = { source_url: "", owner: "", notes: "", rotate_url: "", tags: [] };
     for (const f of fields) {
       const name = f.dataset.field;
       if (name === "tags") {
@@ -830,10 +918,7 @@
     saveTimer = setTimeout(saveAnnotation, 600);
   }
 
-  function setSaveState(s) {
-    saveState = s;
-    updateSaveState();
-  }
+  function setSaveState(s) { saveState = s; updateSaveState(); }
   function updateSaveState() {
     const el = document.getElementById("save-state");
     if (!el) return;
@@ -876,10 +961,6 @@
   }
 
   async function undoStale() {
-    // No first-class un-stale endpoint; clear the stale bit by sending
-    // an annotation save with the existing fields (the dedicated stale
-    // endpoint only flips on). For now: show a soft toast — the action
-    // becomes available when an /unstale endpoint lands.
     setToast("Undo not yet wired — use a fresh scan to re-mark.", "err");
     undoStaleId = null;
     renderPanel();
@@ -893,6 +974,55 @@
     } catch (e) {
       setToast("Mark rotated failed: " + e.message, "err");
     }
+  }
+
+  // ----------- tile filters -----------
+
+  function setFilter(name) {
+    clearFilter();
+    if (name === "loose-perms") {
+      activeFilter = (g) => modeIsLoose(g.found && g.found.permissions);
+    } else if (name === "env-in-git") {
+      activeFilter = (g) =>
+        g.section.id === "envfile" &&
+        g.found && g.found.in_git_repo === true &&
+        g.secrets.length > 0;
+    } else {
+      activeFilter = null;
+    }
+    if (activeFilter) {
+      // Mark the active tile.
+      document.querySelectorAll(".tile").forEach((t) => {
+        t.classList.toggle("active", t.dataset.tile === name);
+      });
+    }
+  }
+  function clearFilter() {
+    activeFilter = null;
+    document.querySelectorAll(".tile.active").forEach((t) => t.classList.remove("active"));
+  }
+
+  function bindTileClicks() {
+    document.querySelectorAll(".tile").forEach((tile) => {
+      tile.addEventListener("click", (e) => {
+        // Don't trigger when clicking the "?" help bubble.
+        if (e.target.closest(".tip")) return;
+        const name = tile.dataset.tile;
+        if (name === "files-scanned" || name === "total-secrets") return;
+        if (activeFilter && tile.classList.contains("active")) {
+          clearFilter();
+        } else {
+          setFilter(name);
+        }
+        render();
+      });
+      tile.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          tile.click();
+        }
+      });
+    });
   }
 
   // ----------- SSE: drift watcher -----------
@@ -910,9 +1040,18 @@
 
     const reload = (type) => () => {
       loadSecrets();
-      if (type === "secret_created") announceDrift("New secret detected.");
-      if (type === "secret_refreshed") announceDrift("Secret refreshed.");
-      if (type === "secret_drifted") announceDrift("Secret value changed.");
+      if (type === "secret_created") {
+        setToast("New secret detected", "drift");
+        announceDrift("New secret detected.");
+      }
+      if (type === "secret_refreshed") {
+        setToast("Secret refreshed", "drift");
+        announceDrift("Secret refreshed.");
+      }
+      if (type === "secret_drifted") {
+        setToast("Secret value changed", "drift");
+        announceDrift("Secret value changed.");
+      }
     };
     es.addEventListener("secret_created", reload("secret_created"));
     es.addEventListener("secret_refreshed", reload("secret_refreshed"));
@@ -927,12 +1066,8 @@
       announceDrift("Rescan started.");
     });
     es.onerror = () => {
-      // EventSource auto-reconnects; reflect the readyState in the badge.
-      if (es.readyState === EventSource.CLOSED) {
-        setDriftState("closed", "Not watching");
-      } else {
-        setDriftState("connecting", "Connecting…");
-      }
+      if (es.readyState === EventSource.CLOSED) setDriftState("closed", "Not watching");
+      else setDriftState("connecting", "Connecting…");
     };
   }
 
@@ -945,6 +1080,19 @@
     });
   }
 
+  // The backend has no manual /api/rescan endpoint yet — the watcher
+  // handles drift automatically. Re-scan refreshes the snapshot the
+  // page is showing; a real scan is triggered by file mutations on the
+  // watcher side.
+  async function triggerRescan() {
+    await loadSecrets();
+    setToast("Refreshed", "ok");
+  }
+  if (rescanBtn) {
+    rescanBtn.addEventListener("click", triggerRescan);
+  }
+
+  bindTileClicks();
   loadSecrets();
   startEvents();
   startHeartbeat();
