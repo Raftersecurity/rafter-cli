@@ -164,23 +164,31 @@ class BetterleaksScanner:
                     )
                 return []
 
-            try:
-                with open(report_path) as f:
-                    content = f.read().strip()
-                if not content:
-                    return []
-                parsed = json.loads(content)
-            except json.JSONDecodeError as exc:
-                print(f"[rafter] Warning: Failed to parse Betterleaks report: {exc}", file=sys.stderr)
-                return []
+            return BetterleaksScanner._parse_report(report_path)
 
-            if not isinstance(parsed, list):
-                print(
-                    "[rafter] Warning: Betterleaks output is not an array — possible version mismatch",
-                    file=sys.stderr,
-                )
+    @staticmethod
+    def _parse_report(report_path: str) -> list[dict]:
+        """Parse a betterleaks JSON report file. Returns [] on empty/null output."""
+        try:
+            with open(report_path) as f:
+                content = f.read().strip()
+            if not content:
                 return []
-            return parsed
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            print(f"[rafter] Warning: Failed to parse Betterleaks report: {exc}", file=sys.stderr)
+            return []
+
+        # betterleaks returns JSON null when no leaks found — not a version mismatch
+        if parsed is None:
+            return []
+        if not isinstance(parsed, list):
+            print(
+                "[rafter] Warning: Betterleaks output is not an array — possible version mismatch",
+                file=sys.stderr,
+            )
+            return []
+        return parsed
 
     @staticmethod
     def _convert(result: dict) -> PatternMatch:

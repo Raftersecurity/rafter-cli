@@ -1,6 +1,9 @@
-"""Tests for BetterleaksScanner._get_severity mapping."""
+"""Tests for BetterleaksScanner._get_severity mapping and JSON parsing."""
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 import pytest
 
 from rafter_cli.scanners.betterleaks import BetterleaksScanner
@@ -71,3 +74,41 @@ class TestGetSeverity:
     def test_tag_generic_is_medium(self):
         sev = BetterleaksScanner._get_severity("some-unknown-rule", ["generic"])
         assert sev == "medium"
+
+
+class TestParseResults:
+    """Test BetterleaksScanner._parse_results JSON handling."""
+
+    def _make_tmp(self, content: str) -> str:
+        fd, path = tempfile.mkstemp(suffix=".json", prefix="betterleaks-test-")
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        return path
+
+    def test_null_json_returns_empty_no_warning(self, capsys):
+        path = self._make_tmp("null")
+        try:
+            results = BetterleaksScanner._parse_report(path)
+            assert results == []
+            captured = capsys.readouterr()
+            assert "not an array" not in captured.err
+        finally:
+            os.unlink(path)
+
+    def test_unexpected_object_logs_warning(self, capsys):
+        path = self._make_tmp('{"unexpected": true}')
+        try:
+            results = BetterleaksScanner._parse_report(path)
+            assert results == []
+            captured = capsys.readouterr()
+            assert "not an array" in captured.err
+        finally:
+            os.unlink(path)
+
+    def test_empty_file_returns_empty(self):
+        path = self._make_tmp("")
+        try:
+            results = BetterleaksScanner._parse_report(path)
+            assert results == []
+        finally:
+            os.unlink(path)
