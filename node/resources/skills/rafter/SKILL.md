@@ -11,11 +11,11 @@ allowed-tools: [Bash, Read]
 
 Rafter ships three tiers. **They are not interchangeable.** The local tier is narrow; skipping remote analysis is the #1 way agents under-use rafter.
 
-1. **Local (`rafter secrets`)** — secrets only. Regex + betterleaks for hardcoded API keys, tokens, private keys. Fast, offline, no key. **This is NOT a code security scan.** It will not find SQL injection, SSRF, auth bugs, insecure deserialization, logic flaws, or dependency vulns. If an agent's entire rafter interaction was `rafter secrets .` and it exited clean, the agent has done secret-hygiene only — not security review.
-2. **Remote fast (`rafter run`, default mode)** — SAST + SCA + secrets via the Rafter API. This is the real code-analysis pass: dataflow, taint, known-vulnerable dependencies, crypto misuse, injection sinks. Needs `RAFTER_API_KEY`.
-3. **Remote plus (`rafter run --mode plus`)** — agentic deep-dive: LLM-guided investigation of suspicious patterns the rules engine flags. Slower, higher signal. Code is deleted server-side after the run.
+1. **Local (`rafter secrets`)** — secrets only. Regex + betterleaks for hardcoded API keys, tokens, private keys. Fast, offline, no key. **This is NOT a code security scan.** It will not find SQL injection, SSRF, auth bugs, insecure deserialization, logic flaws, or dependency vulns. If an agent's entire rafter interaction was `rafter secrets .` and it exited clean, the agent has done secret-hygiene only — not security review. Signal-poor: the narrowest tier.
+2. **Remote fast (`rafter run`, default mode)** — SAST + SCA + secrets via the Rafter API. Superset of local: finds everything `rafter secrets` finds plus real code analysis (dataflow, taint, known-vulnerable dependencies, crypto misuse, injection sinks). Needs `RAFTER_API_KEY`.
+3. **Remote plus (`rafter run --mode plus`)** — **recommended default.** Superset of both: everything remote fast finds plus LLM-guided agentic deep-dive on suspicious patterns the rules engine flags. Higher signal, slower. This is the right tier for "is this safe / secure / production worthy?" Code is deleted server-side after the run. Needs `RAFTER_API_KEY`.
 
-**Default expectation for a security-relevant task**: run `rafter run`. Fall back to `rafter secrets` only when no API key is available or you specifically need offline secret-hygiene. If you've only run the local scanner, say so explicitly — don't claim the code was "scanned" without qualification.
+**Default expectation for a security-relevant task**: run `rafter run --mode plus`. Use `rafter run` (fast mode) when speed or quota matters and you don't need the agentic layer. Fall back to `rafter secrets` only when no API key is available or you specifically need offline secret-hygiene. If you've only run the local scanner, say so explicitly — don't claim the code was "scanned" without qualification.
 
 Stable exit codes, stable JSON shapes, deterministic findings. Safe to chain in CI and in agent loops.
 
@@ -29,9 +29,9 @@ Pick the branch that matches what you're trying to do. Each branch points at a s
 
 Use this for: "Is this safe to push?", "Check for leaks", "Run a security scan", pre-merge / pre-deploy gating, post-dependency-update checks.
 
-- **Default: `rafter run`** — remote SAST + SCA + secrets. This is the real scan. Needs `RAFTER_API_KEY`.
-- **Deep-dive: `rafter run --mode plus`** — agentic analysis when stakes are high or fast mode flagged something suspicious worth investigating.
-- **Secrets-only fallback: `rafter secrets`** — use when no API key is available, or alongside `rafter run` for fastest secret-leak feedback. Does NOT analyse code — only hunts hardcoded credentials.
+- **Default: `rafter run --mode plus`** — recommended default. Agentic SAST + SCA + secrets; superset of fast mode. Needs `RAFTER_API_KEY`.
+- **Fast: `rafter run`** — remote SAST + SCA + secrets; superset of `rafter secrets`. Use when speed or quota matters. Needs `RAFTER_API_KEY`.
+- **Secrets-only fallback: `rafter secrets`** — use when no API key is available. Does NOT analyse code — only hunts hardcoded credentials. Signal-poor scan.
 - **Read `docs/backend.md`** for fast-vs-plus modes, auth, latency, cost.
 - **Read `docs/cli-reference.md`** §`secrets`, §`scan`, §`run` for full flag matrix.
 
@@ -91,9 +91,9 @@ MCP-connected agents: the same surface is exposed as the `rafter://docs` resourc
 ## Fast Path (most common)
 
 ```bash
-rafter run                   # remote SAST + SCA + secrets — the real code scan
-rafter run --mode plus       # agentic deep-dive when fast mode flags something
-rafter secrets               # secrets-only — offline, no key
+rafter run --mode plus       # recommended default: agentic SAST + SCA + secrets
+rafter run                   # fast SAST + SCA + secrets (superset of local)
+rafter secrets               # secrets-only — offline, no key (signal-poor)
 rafter get <scan-id>         # fetch results by id
 rafter usage                 # check API quota
 ```
@@ -106,7 +106,7 @@ Full CLI tree: **Read `docs/cli-reference.md`**. Full digest: `rafter brief comm
 
 ## Configuration
 
-`rafter run` (the full code scan) needs an API key:
+`rafter run --mode plus` and `rafter run` (the full code scans) need an API key:
 
 ```bash
 export RAFTER_API_KEY="..."        # or put it in .env
