@@ -17,6 +17,7 @@ from .commands.policy import policy_app
 from .commands.report import report_main
 from .commands.scan import scan_app, secrets_app
 from .commands.skill import skill_app
+from .commands.upgrade import upgrade_app, update_app
 from .utils.formatter import set_agent_mode
 
 app = typer.Typer(
@@ -111,6 +112,8 @@ app.add_typer(mcp_app)
 app.add_typer(notify_app)
 app.add_typer(policy_app)
 app.add_typer(skill_app)
+app.add_typer(upgrade_app)
+app.add_typer(update_app)
 app.command("report")(report_main)
 
 if __name__ == "__main__":

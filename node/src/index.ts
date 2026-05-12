@@ -18,6 +18,7 @@ import { createNotifyCommand } from "./commands/notify.js";
 import { createCompletionCommand } from "./commands/completion.js";
 import { createIssuesCommand } from "./commands/issues/index.js";
 import { createReportCommand } from "./commands/report.js";
+import { createUpgradeCommand } from "./commands/upgrade.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 import { createRequire } from "module";
@@ -83,6 +84,9 @@ program.addCommand(createNotifyCommand());
 
 // HTML security report
 program.addCommand(createReportCommand());
+
+// Upgrade / update — in-CLI self-upgrade
+program.addCommand(createUpgradeCommand());
 
 // Shell completions
 program.addCommand(createCompletionCommand());
