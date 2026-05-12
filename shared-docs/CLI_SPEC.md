@@ -86,6 +86,8 @@ Retrieve results from a scan.
 
 **Vulnerability levels (JSON output):** The `level` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
 
+**Report URL (JSON output):** When the backend returns a `report_id`, the CLI adds a `report_url` field to the JSON output: `"report_url": "https://rafter.so/report/<report_id>"`. This redirect URL opens the scan report in the Rafter web UI. The field is absent when no `report_id` is present (e.g., older API responses). Local scans (`rafter secrets`) never include `report_url`.
+
 ### rafter usage [OPTIONS]
 
 Check API quota and usage statistics.

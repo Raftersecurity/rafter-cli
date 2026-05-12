@@ -505,6 +505,32 @@ class TestHandleScanStatusInteractive:
         _, kwargs = mock_get.call_args
         assert kwargs["params"]["scan_id"] == "my-scan-id"
 
+    @patch("rafter_cli.commands.backend.requests.get")
+    def test_includes_report_url_when_backend_returns_report_id(self, mock_get, capsys):
+        """JSON output includes report_url derived from report_id."""
+        mock_get.return_value = _mock_response(
+            200,
+            json_body={"status": "completed", "scan_id": "s1", "report_id": "rpt-abc", "findings": []},
+        )
+
+        _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "json", True)
+        out = capsys.readouterr().out
+        parsed = json.loads(out)
+        assert parsed["report_url"] == "https://rafter.so/report/rpt-abc"
+        assert parsed["report_id"] == "rpt-abc"
+
+    @patch("rafter_cli.commands.backend.requests.get")
+    def test_no_report_url_when_report_id_absent(self, mock_get, capsys):
+        """JSON output has no report_url when report_id is not in backend response."""
+        mock_get.return_value = _mock_response(
+            200, json_body={"status": "completed", "scan_id": "s1", "findings": []}
+        )
+
+        _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "json", True)
+        out = capsys.readouterr().out
+        parsed = json.loads(out)
+        assert "report_url" not in parsed
+
 
 # ── Live API integration tests ──────────────────────────────────────────
 

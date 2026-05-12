@@ -176,6 +176,31 @@ describe("handleScanStatus", () => {
       })
     );
   });
+
+  it("includes report_url in JSON output when backend returns report_id", async () => {
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { status: "completed", scan_id: "s1", report_id: "rpt-abc", findings: [] },
+    });
+
+    await handleScanStatus("s1", headers, "json");
+    const output = stdoutSpy.mock.calls[0][0] as string;
+    const parsed = JSON.parse(output);
+    expect(parsed.report_url).toBe("https://rafter.so/report/rpt-abc");
+    expect(parsed.report_id).toBe("rpt-abc");
+  });
+
+  it("does not include report_url in JSON output when report_id is absent", async () => {
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { status: "completed", scan_id: "s1", findings: [] },
+    });
+
+    await handleScanStatus("s1", headers, "json");
+    const output = stdoutSpy.mock.calls[0][0] as string;
+    const parsed = JSON.parse(output);
+    expect(parsed.report_url).toBeUndefined();
+  });
 });
 
 // ── runRemoteScan (mocked) ─────────────────────────────────────────────

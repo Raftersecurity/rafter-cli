@@ -47,6 +47,9 @@ export function resolveKey(cliKey?: string): string {
 }
 
 export function writePayload(data: any, fmt?: string, quiet?: boolean): number {
+  if (fmt !== "md" && data?.report_id) {
+    data = { ...data, report_url: `https://rafter.so/report/${data.report_id}` };
+  }
   const payload = fmt === "md" && data.markdown ? data.markdown : JSON.stringify(data, null, quiet ? 0 : 2);
 
   // Stream to stdout for pipelines
