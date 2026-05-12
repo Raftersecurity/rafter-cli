@@ -110,26 +110,52 @@ func TestAppJS_BehaviorMarkers(t *testing.T) {
 	}
 }
 
-// TestIndexHTML_RafterPalette pins a few of the Rafter brand hex codes
-// in the CSS so a future redesign can't accidentally drop the brand
-// without a test breaking.
+// TestIndexHTML_RafterPalette pins the Rafter brand hex codes in the CSS
+// so a future redesign can't accidentally drop the brand without a test
+// breaking. P14 corrected a brand miss: Claude Code orange (#d97757) was
+// retired in favour of the authoritative Rafter green (#2ea44f) from
+// badges/README.md, paired with a cooler dark base.
 func TestIndexHTML_RafterPalette(t *testing.T) {
 	s, ts, _, _ := newTestServerWithStore(t)
 	body := fetchBody(t, ts.URL+"/", s.token)
 
-	// These three hexes are lifted verbatim from the README brand
-	// badges and must stay in sync. Casefold to be robust to either
-	// upper- or lower-case hex digits.
 	lc := strings.ToLower(string(body))
 	for _, hex := range []string{
-		"#141413", // --bg (warm black)
-		"#faf9f5", // --fg (warm off-white)
-		"#d97757", // --accent (Claude Code orange)
+		"#0f1115", // --bg (cool-dark security-tool base)
+		"#e8edf2", // --fg (cool off-white)
+		"#2ea44f", // --rafter-green (PRIMARY accent — from badges/README.md)
 	} {
 		if !strings.Contains(lc, hex) {
 			t.Errorf("brand palette hex %s missing from index.html — Rafter brand contract broken", hex)
 		}
 	}
+
+	// Negative assertion: the previous-restyle Claude Code orange must
+	// NOT appear anywhere. This is the explicit P14 brand-correction
+	// guard.
+	if strings.Contains(lc, "#d97757") {
+		t.Errorf("Claude Code orange (#d97757) still present in index.html — P14 brand correction incomplete; primary accent must be Rafter green (#2ea44f)")
+	}
+}
+
+// TestIndexHTML_DashboardTiles asserts the P14 risk dashboard's four
+// tiles are present on the page. The tile id markers are stable contracts
+// that JS uses to populate counts and that Playwright tests select on.
+func TestIndexHTML_DashboardTiles(t *testing.T) {
+	s, ts, _, _ := newTestServerWithStore(t)
+	body := fetchBody(t, ts.URL+"/", s.token)
+
+	for _, tile := range []string{
+		`data-tile="files-scanned"`,
+		`data-tile="loose-perms"`,
+		`data-tile="env-in-git"`,
+		`data-tile="total-secrets"`,
+	} {
+		mustContain(t, body, tile,
+			"dashboard tile marker "+tile+" — P14 risk dashboard depends on this hook")
+	}
+	mustContain(t, body, `id="dashboard"`,
+		"#dashboard section — the four risk tiles live inside this region")
 }
 
 func mustContain(t *testing.T, body []byte, needle, reason string) {
