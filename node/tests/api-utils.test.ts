@@ -123,4 +123,40 @@ describe("writePayload", () => {
     const output = stdoutSpy.mock.calls[0][0] as string;
     expect(output).toContain("\n");
   });
+
+  it("injects report_url when report_id is present in JSON output", () => {
+    const data = { scan_id: "s1", report_id: "rpt-xyz", findings: [] };
+    writePayload(data, "json");
+
+    const output = stdoutSpy.mock.calls[0][0] as string;
+    const parsed = JSON.parse(output);
+    expect(parsed.report_url).toBe("https://rafter.so/report/rpt-xyz");
+    expect(parsed.report_id).toBe("rpt-xyz");
+  });
+
+  it("does not inject report_url when report_id is absent", () => {
+    const data = { scan_id: "s1", findings: [] };
+    writePayload(data, "json");
+
+    const output = stdoutSpy.mock.calls[0][0] as string;
+    const parsed = JSON.parse(output);
+    expect(parsed.report_url).toBeUndefined();
+  });
+
+  it("does not inject report_url in markdown mode even if report_id is present", () => {
+    const data = { report_id: "rpt-xyz", markdown: "# Results" };
+    writePayload(data, "md");
+
+    const output = stdoutSpy.mock.calls[0][0] as string;
+    expect(output).toBe("# Results");
+    expect(output).not.toContain("report_url");
+  });
+
+  it("report_url snapshot: format is https://rafter.so/report/<id>", () => {
+    const data = { scan_id: "s1", report_id: "abc-123" };
+    writePayload(data, "json");
+
+    const output = stdoutSpy.mock.calls[0][0] as string;
+    expect(JSON.parse(output).report_url).toBe("https://rafter.so/report/abc-123");
+  });
 });

@@ -73,6 +73,8 @@ def resolve_key(cli_opt: str | None) -> str:
 
 def write_payload(data: dict, fmt: str = "json", quiet: bool = False) -> int:
     """Write payload to stdout following UNIX principles."""
+    if fmt != "md" and data.get("report_id"):
+        data = {**data, "report_url": f"https://rafter.so/report/{data['report_id']}"}
     if fmt == "md":
         payload = data.get("markdown", "")
     else:
