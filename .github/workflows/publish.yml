@@ -171,7 +171,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Node 22 — clawhub's transitive dep p-retry@8 requires >=22.
+          # Node 20 produces an EBADENGINE warning but the real failure
+          # surfaces later as a non-obvious runtime error.
+          node-version: "22"
 
       - name: Skip if CLAWHUB_TOKEN is not configured
         id: gate
@@ -210,15 +213,16 @@ jobs:
         env:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
         run: |
-          # Use the token directly via env var rather than a login step —
-          # `clawhub` reads CLAWHUB_TOKEN automatically when present
-          # (clawhub login --token persists to disk; we want stateless CI).
+          # `clawhub` does NOT auto-read CLAWHUB_TOKEN — the CLI requires an
+          # explicit `clawhub login --token` to persist auth before any
+          # publish/show command (rf-zgwj follow-up after first-publish
+          # failure on prod). The persisted token lives in the runner's
+          # ephemeral filesystem and is discarded when the job ends.
+          npx -y clawhub@latest login --token "$CLAWHUB_TOKEN"
           npx -y clawhub@latest whoami
 
       - name: Publish to ClawHub
         if: steps.gate.outputs.skip != 'true'
-        env:
-          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
         run: |
           # `clawhub skill publish` is idempotent: if the version+content
           # fingerprint matches what's already published, it no-ops.
