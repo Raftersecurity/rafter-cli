@@ -179,44 +179,68 @@ firing thousands of inotify events per second:
 ## UI
 
 The embedded inventory UI lives in `internal/server/static/` (one HTML file
-+ one JS file, no build step, no CDN fonts). It's styled to match the Rafter
-brand — warm-black `#141413` background, warm off-white `#faf9f5` body text,
-Claude Code orange `#d97757` accent, and a green `#2ea44f` "watching"
-indicator lifted from the `scanned by Rafter` shield in the parent README.
++ one JS file, no build step, no CDN fonts). P14 corrected an earlier
+brand miss and reshaped the page to put files first:
 
-What you should see on the page:
+**Palette.** Rafter green `#2ea44f` (from `badges/README.md` —
+"scanned by Rafter", "enforced", "clean") on a cool-dark base
+(`--bg #0f1115`, `--bg-card #1a1f26`, `--fg #e8edf2`). Warn orange
+`#d9822c` for permission warnings, danger red `#d6504d` for the
+`.env`-in-git + real-secret combo. Mono font for keys, paths, octals,
+and fingerprints; system sans elsewhere.
 
-- A sticky header bar with the `trove` wordmark, a small `by Rafter` subtag,
-  and pill-shaped summary chips counting secrets per family (e.g.
-  `12 secrets · 4 in .env files · 3 in shell config · 2 in config files`).
-- A drift watcher status badge in the top-right that mirrors the SSE
-  `EventSource.readyState`: green dot + "Watching for changes" when live,
-  amber-pulsing while connecting, grey + "Not watching" if the stream
-  closes. Hovering or focusing it explains what the watcher does.
-- A two-column main grid: a grouped inventory list on the left and a
-  detail panel on the right (which collapses to a bottom sheet on narrow
-  viewports).
-- Groups are named in self-explaining copy, not raw source-type tags:
-  `Environment files (.env, .envrc)`, `Shell config (.zshrc, .bashrc,
-  .profile)`, `Config files (~/.aws, ~/.npmrc, ~/.config/gh, …)`, plus
-  greyed `OS keychain` and `Source code` placeholders subtitled with
-  `coming soon`.
-- Per-entry rows show the key name (mono), a blurred value preview that
-  reveals on click, the basename of the source file, and a mode-octal
-  chip (e.g. `0644`) with a `?` icon. Hovering or keyboard-focusing the
-  `?` shows a plain-English tooltip explaining what that mode means.
-- The detail panel sections read: `Value`, `Notes`, `Found in`,
-  `Audit findings`, `Value history`, `Actions`. (The older `Annotate`
-  label has been renamed to `Notes` everywhere user-visible; the wire
-  endpoint `PUT /api/secrets/{id}/annotation` is unchanged.)
-- Revealing a value POSTs `/api/secrets/{id}/reveal`. Revealed values
-  are in-memory only — they never persist across reloads. A revealed
-  preview becomes click-to-copy.
+What you see on the page:
+
+- **Header.** `trove` wordmark in mono (~22px) with `· by Rafter` in
+  body text. A drift-watcher badge that turns Rafter green when SSE is
+  connected ("Watching for changes"), warn-orange while connecting,
+  muted-grey when closed. A `Re-scan` button and a `⚙` settings stub.
+- **Risk dashboard.** Four tiles at the top, in this order:
+  1. **files with secrets** — distinct files where trove found at least
+     one secret. Tooltip lists the per-source-type breakdown.
+  2. **files with loose perms** — files whose mode is more permissive
+     than `0600` (`0644` / `0640` / `0666` / `0664`). Warn-coloured
+     when `> 0`. Click the tile to filter the list to those files.
+  3. **`.env` in git + secrets** — high-risk headline: `.env` files
+     inside a git working tree that hold at least one secret.
+     Danger-coloured when `> 0`. Tooltip: "These `.env` files live
+     inside a git working tree — they can be accidentally committed.
+     Add them to `.gitignore`."
+  4. **secrets total** — distinct secrets after BLAKE3 dedup across
+     all source files.
+- **File-primary sections.** Three live, collapsible (`<details open>`):
+  `Environment files (.env, .envrc)`, `Shell config`, `Config files`.
+  Two greyed placeholders below: `OS keychain (coming soon)` and
+  `Source code (coming soon, blocked on betterleaks)`.
+- **File rows.** Path on the left (mono), `N secrets` count in the
+  middle, chips on the right: mode-octal with the existing `?` tooltip,
+  `in git` warn-chip if `InGitRepo`, `in history` danger-chip if
+  `AppearsInGitHistory`. World-readable rows expose the
+  one-click `Tighten to 0600` button (still wired to
+  `POST /api/sources/chmod600`). A row's left border turns red on
+  danger / amber on warn so you can scan severity without reading copy.
+- **Expanded file rows.** Click a row to flip it open inline; the
+  per-key UX (blurred preview → click reveal → click-to-copy → Notes
+  / Mark stale / Mark rotated in the detail panel) is unchanged from
+  P13. The older `Annotate` label was renamed to `Notes` everywhere
+  user-visible; the wire endpoint `PUT /api/secrets/{id}/annotation`
+  is unchanged.
+
+The Playwright suite under `playwright/` doubles as the design
+iteration harness — each test takes a screenshot of one state and
+writes it to `docs/screenshots/NN-<step>.png`.
+
+## Design log
+
+See [docs/playwright.md](docs/playwright.md) for the palette, type
+scale, spacing decisions, the screenshot index, and instructions for
+running the iteration loop yourself.
 
 Smoke tests in `internal/server/static_smoke_test.go` lock in the
 structural markers (wordmark, aria-live drift ticker, `data-mode-octal`
-hook, `data-clear-selection` hook, the four reveal-policy strings, brand
-palette hexes) so the page can't silently lose features.
+hook, `data-clear-selection` hook, the four reveal-policy strings,
+the four `data-tile` markers, the Rafter green / cool-dark palette)
+so the page can't silently lose features OR regress on the brand.
 
 ## Build
 
