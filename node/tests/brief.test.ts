@@ -175,15 +175,10 @@ describe("rafter skill — CYOA hierarchy", () => {
     }
   });
 
-  it("sub-docs are mirrored to node/.claude/skills/rafter/docs", () => {
-    const claudeDocs = path.resolve(
-      __dirname,
-      "../.claude/skills/rafter/docs",
-    );
-    for (const slug of RAFTER_SUBDOCS) {
-      expect(existsSync(path.join(claudeDocs, `${slug}.md`))).toBe(true);
-    }
-  });
+  // The dev mirror at node/.claude/skills/rafter/docs/ was deleted in rc-bc9
+  // (1d43dd9) — it had drifted ~2 weeks behind the canonical source at
+  // node/resources/skills/rafter/docs/, which the test above already covers.
+  // No "mirror" assertion is needed.
 
   for (const slug of RAFTER_SUBDOCS) {
     it(`brief ${slug} renders the sub-doc`, () => {
