@@ -142,7 +142,7 @@ All local security commands work offline. No API key required.
 
 ### rafter agent init [OPTIONS]
 
-Initialize local security system. Creates config and detects available development environments. Integrations are **opt-in** — use `--with-*` flags or `--all` to install. There are NO `--skip-*` flags.
+Initialize local security system. Creates config and detects available development environments. Integrations are **opt-in** — use `--with-*` flags or `--all` to install. There are NO `--skip-*` flags; passing any `--skip-<platform>` exits with code 1 and a message pointing to the corresponding `--with-<platform>` flag.
 
 - `--risk-level <level>` — `minimal`, `moderate` (default), or `aggressive`
 - `--with-openclaw` — install OpenClaw integration

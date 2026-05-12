@@ -328,23 +328,39 @@ class TestInstallAiderRead:
 
 
 class TestFlagRejection:
-    """--skip-openclaw and --skip-claude-code are NOT valid flags for `agent init`."""
+    """--skip-* flags are not valid for `agent init`; they must produce a helpful error."""
 
-    def test_skip_openclaw_rejected(self):
+    def test_skip_openclaw_rejected_with_helpful_message(self):
         from typer.testing import CliRunner
         from rafter_cli.__main__ import app
 
         runner = CliRunner()
         result = runner.invoke(app, ["agent", "init", "--skip-openclaw"])
-        assert result.exit_code != 0, f"Expected non-zero exit code, got {result.exit_code}"
+        assert result.exit_code == 1, f"Expected exit code 1, got {result.exit_code}"
+        assert "--with-openclaw" in result.output, "Expected '--with-openclaw' in error output"
+        assert "--skip-* options" in result.output, "Expected '--skip-* options' in error output"
 
-    def test_skip_claude_code_rejected(self):
+    def test_skip_claude_code_rejected_with_helpful_message(self):
         from typer.testing import CliRunner
         from rafter_cli.__main__ import app
 
         runner = CliRunner()
         result = runner.invoke(app, ["agent", "init", "--skip-claude-code"])
-        assert result.exit_code != 0, f"Expected non-zero exit code, got {result.exit_code}"
+        assert result.exit_code == 1, f"Expected exit code 1, got {result.exit_code}"
+        assert "--with-claude-code" in result.output, "Expected '--with-claude-code' in error output"
+        assert "--skip-* options" in result.output, "Expected '--skip-* options' in error output"
+
+    def test_all_skip_flags_rejected(self):
+        """Every platform's --skip-* flag must produce a helpful error."""
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        runner = CliRunner()
+        platforms = ["codex", "gemini", "aider", "cursor", "windsurf", "continue", "betterleaks"]
+        for platform in platforms:
+            result = runner.invoke(app, ["agent", "init", f"--skip-{platform}"])
+            assert result.exit_code == 1, f"--skip-{platform}: expected exit 1, got {result.exit_code}"
+            assert f"--with-{platform}" in result.output, f"--skip-{platform}: expected '--with-{platform}' in output"
 
 
 # ── Opt-in gating tests ──────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { ConfigManager } from "../../core/config-manager.js";
 import { getRafterDir } from "../../core/config-defaults.js";
 import { BinaryManager } from "../../utils/binary-manager.js";
@@ -1028,6 +1028,25 @@ async function askYesNo(question: string, defaultYes = true): Promise<boolean> {
 export function createInitCommand(): Command {
   return new Command("init")
     .description("Initialize agent security system")
+    .configureOutput({
+      outputError: (str, write) => {
+        // Intercept "unknown option '--skip-*'" errors and replace with a
+        // helpful message pointing to --with-* opt-in flags.
+        const skipMatch = str.match(/unknown option '(--skip-\S+)'/);
+        if (skipMatch) {
+          const flag = skipMatch[1];
+          const platform = flag.replace(/^--skip-/, "");
+          write(
+            `error: '${flag}' is not supported.\n\n` +
+            `  rafter agent init uses opt-in flags — there are no --skip-* options.\n` +
+            `  Use '--with-${platform}' instead to install that integration.\n\n` +
+            `  Run 'rafter agent init --help' for all available --with-* flags.\n`,
+          );
+          return;
+        }
+        write(str);
+      },
+    })
     .option("--risk-level <level>", "Set risk level (minimal, moderate, aggressive)", "moderate")
     .option("--with-openclaw", "Install OpenClaw integration")
     .option("--with-claude-code", "Install Claude Code integration")
