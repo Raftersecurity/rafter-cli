@@ -282,8 +282,26 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Wait for npm registry propagation
-        run: sleep 30
+      - name: Wait for npm registry to index the new version (sable-bac)
+        # `npm publish` returns success once the upload lands in npm's
+        # backend, but the public registry can lag on slow-CDN days.
+        # Mirrors the rf-z22y PyPI fix: poll the registry HTTP API for
+        # the exact version, retry up to 6× / ~3 min, fail loud at the
+        # end so the workflow surface stays "npm propagation failed"
+        # rather than the confusing "no matching version".
+        # URL-encoded scope: '@rafter-security/cli' → '@rafter-security%2Fcli'.
+        run: |
+          VERSION="${{ needs.publish-node.outputs.version }}"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -sf "https://registry.npmjs.org/@rafter-security%2Fcli/${VERSION}" -o /dev/null; then
+              echo "npm has @rafter-security/cli@${VERSION} (attempt ${attempt})"
+              exit 0
+            fi
+            echo "Attempt ${attempt}: @rafter-security/cli@${VERSION} not yet on npm, sleeping 30s…"
+            sleep 30
+          done
+          echo "FAIL: npm did not index @rafter-security/cli@${VERSION} within ~3 minutes"
+          exit 1
 
       - name: Install from npm registry
         run: npm install -g @rafter-security/cli@${{ needs.publish-node.outputs.version }}
