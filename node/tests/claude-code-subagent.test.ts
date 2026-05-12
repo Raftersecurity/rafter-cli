@@ -117,11 +117,19 @@ describe("Claude Code rafter sub-agent install (--with-claude-code)", () => {
   it("is idempotent on repeated installs", () => {
     fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
 
-    runCli("agent init --with-claude-code", testHomeDir);
+    // Bumped from default 15s → 30s. rf-of20 flaked on cross-platform
+    // (ubuntu-latest, 18) once: spawnSync with shell:true on cold-start
+    // ubuntu+node-18 occasionally exceeds 15s for two back-to-back
+    // `agent init` runs. Keep diagnostics below so a real install
+    // failure is distinguishable from a missing file.
+    const r1 = runCli("agent init --with-claude-code", testHomeDir, 30_000);
     const subagentPath = path.join(testHomeDir, ".claude", "agents", "rafter.md");
+    expect(r1.exitCode, `first install failed: ${r1.stderr || r1.stdout}`).toBe(0);
+    expect(fs.existsSync(subagentPath), `subagent missing after first install. stdout=${r1.stdout} stderr=${r1.stderr}`).toBe(true);
     const first = fs.readFileSync(subagentPath, "utf-8");
 
-    runCli("agent init --with-claude-code", testHomeDir);
+    const r2 = runCli("agent init --with-claude-code", testHomeDir, 30_000);
+    expect(r2.exitCode, `second install failed: ${r2.stderr || r2.stdout}`).toBe(0);
     const second = fs.readFileSync(subagentPath, "utf-8");
 
     expect(second).toBe(first);
