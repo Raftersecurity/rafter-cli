@@ -1014,8 +1014,40 @@ def init(
         "--dry-run",
         help="Print every file path that would be created, modified, or downloaded — without making any changes (rf-hrtd).",
     ),
+    # Removed --skip-* flags: accepted here only to produce a helpful error.
+    skip_openclaw: bool = typer.Option(False, "--skip-openclaw", hidden=True, help="[removed]"),
+    skip_claude_code: bool = typer.Option(False, "--skip-claude-code", hidden=True, help="[removed]"),
+    skip_codex: bool = typer.Option(False, "--skip-codex", hidden=True, help="[removed]"),
+    skip_gemini: bool = typer.Option(False, "--skip-gemini", hidden=True, help="[removed]"),
+    skip_aider: bool = typer.Option(False, "--skip-aider", hidden=True, help="[removed]"),
+    skip_cursor: bool = typer.Option(False, "--skip-cursor", hidden=True, help="[removed]"),
+    skip_windsurf: bool = typer.Option(False, "--skip-windsurf", hidden=True, help="[removed]"),
+    skip_continue: bool = typer.Option(False, "--skip-continue", hidden=True, help="[removed]"),
+    skip_betterleaks: bool = typer.Option(False, "--skip-betterleaks", hidden=True, help="[removed]"),
 ):
     """Initialize agent security system."""
+    _skip_flags: list[tuple[str, bool]] = [
+        ("--skip-openclaw", skip_openclaw),
+        ("--skip-claude-code", skip_claude_code),
+        ("--skip-codex", skip_codex),
+        ("--skip-gemini", skip_gemini),
+        ("--skip-aider", skip_aider),
+        ("--skip-cursor", skip_cursor),
+        ("--skip-windsurf", skip_windsurf),
+        ("--skip-continue", skip_continue),
+        ("--skip-betterleaks", skip_betterleaks),
+    ]
+    _used_skip = next((flag for flag, val in _skip_flags if val), None)
+    if _used_skip:
+        _platform = _used_skip.replace("--skip-", "")
+        rprint(fmt.error(
+            f"'{_used_skip}' is not supported.\n\n"
+            f"  rafter agent init uses opt-in flags — there are no --skip-* options.\n"
+            f"  Use '--with-{_platform}' instead to install that integration.\n\n"
+            f"  Run 'rafter agent init --help' for all available --with-* flags."
+        ))
+        raise typer.Exit(1)
+
     rprint(fmt.header("Rafter Agent Security Setup"))
     rprint(fmt.divider())
     rprint()

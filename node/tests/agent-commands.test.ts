@@ -210,6 +210,28 @@ describe("agent init", () => {
     expect(r.stderr).toMatch(/unknown option/i);
   });
 
+  it("rejects --skip-openclaw with helpful --with-* error message", () => {
+    const r = runCli("agent init --skip-openclaw", home);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/--with-openclaw/);
+    expect(r.stderr).toMatch(/no --skip-\* options/);
+  });
+
+  it("rejects --skip-claude-code with helpful --with-* error message", () => {
+    const r = runCli("agent init --skip-claude-code", home);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/--with-claude-code/);
+    expect(r.stderr).toMatch(/no --skip-\* options/);
+  });
+
+  it("rejects any --skip-* flag with helpful error (codex, gemini, cursor)", () => {
+    for (const platform of ["codex", "gemini", "cursor", "windsurf", "continue", "aider", "betterleaks"]) {
+      const r = runCli(`agent init --skip-${platform}`, home);
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr).toContain(`--with-${platform}`);
+    }
+  });
+
   it("creates bin and patterns directories", () => {
     runCli("agent init", home);
     expect(fs.existsSync(path.join(home, ".rafter", "bin"))).toBe(true);
