@@ -232,13 +232,11 @@ jobs:
             --version "${{ needs.publish-node.outputs.version }}" \
             --owner rafter
 
-      - name: Verify the publish landed
-        if: steps.gate.outputs.skip != 'true'
-        run: |
-          # Smoke-check: the published version should be reachable via the
-          # public registry. Wait a few seconds for index propagation.
-          sleep 5
-          npx -y clawhub@latest skill show rafter-security --version "${{ needs.publish-node.outputs.version }}"
+      # No verify step — `clawhub skill` is publish-only (rf-u9l4).
+      # The CLI exposes `publish`, `rename`, `merge`, `help` and nothing
+      # else, so we can't do a CLI-driven readback. The `publish` step
+      # itself errors on any auth or registry failure, which is the
+      # contract we rely on.
 
   create-release:
     needs: [publish-node, publish-python]
@@ -315,8 +313,26 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Wait for PyPI registry propagation
-        run: sleep 30
+      - name: Wait for PyPI to index the new version (rf-z22y)
+        # `twine upload` returns success once the upload lands in PyPI's
+        # backend, but the public index (warehouse) can lag behind by up
+        # to a couple of minutes on cold paths. The previous hardcoded
+        # `sleep 30` flaked on v0.8.1. Poll instead: query the JSON API
+        # for the exact version, retry up to 6× / ~3 min, fail loud at
+        # the end so the workflow surface stays "PyPI propagation
+        # failed" rather than "package not found".
+        run: |
+          VERSION="${{ needs.publish-python.outputs.version }}"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -sf "https://pypi.org/pypi/rafter-cli/${VERSION}/json" -o /dev/null; then
+              echo "PyPI has rafter-cli==${VERSION} (attempt ${attempt})"
+              exit 0
+            fi
+            echo "Attempt ${attempt}: rafter-cli==${VERSION} not yet on PyPI, sleeping 30s…"
+            sleep 30
+          done
+          echo "FAIL: PyPI did not index rafter-cli==${VERSION} within ~3 minutes"
+          exit 1
 
       - name: Create fresh venv and install from PyPI
         run: |
