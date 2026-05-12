@@ -1,7 +1,7 @@
 ---
 name: rafter-security
 description: Security toolkit for AI workflows. Use when scanning code or repos for vulnerabilities, auditing third-party skills/MCPs/agent configs before installing, evaluating shell commands before running them, or generating secure design questions for new features. Provides `rafter run` (remote SAST + SCA, needs RAFTER_API_KEY), `rafter secrets` (offline secrets-only), `rafter agent exec --dry-run` (command-risk classification), and `rafter skill review`.
-version: 0.8.0
+version: 0.8.1
 homepage: https://rafter.so
 metadata:
   openclaw:
@@ -15,7 +15,7 @@ metadata:
       - name: RAFTER_API_KEY
         required: false
         description: API key for `rafter run` (remote SAST + SCA + agentic deep-dive). Without it, `rafter secrets` (local secrets scan) still works.
-last_updated: 2026-05-07
+last_updated: 2026-05-12
 ---
 
 # Rafter Security
