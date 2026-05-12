@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-12
+
+### Fixed
+- **CI ClawHub publish auth + Node 22** (#101). The first post-0.8.0 publish failed with `Error: Not logged in. Run: clawhub login` on the `whoami` step — the assumption baked into the original ClawHub wiring that the CLI auto-reads `CLAWHUB_TOKEN` from env was wrong. Added an explicit `clawhub login --token "$CLAWHUB_TOKEN"` line before any `clawhub` call; the persisted token lives in the runner's ephemeral filesystem and is discarded when the job ends. Also bumped `setup-node` in the `publish-clawhub` job from 20 → 22 because clawhub's transitive dep `p-retry@8` requires Node ≥22 (Node 20 surfaced as an `EBADENGINE` warning in the failed run, but would have hit a real runtime error later).
+- **Stale test diagnostic + obsolete assertions across the test suite.** rf-of20 (Claude Code sub-agent idempotency test: diagnostic now surfaces the actual divergence on failure), rf-b1hf (drop obsolete sub-docs mirror assertion in `brief.test.ts` — sub-docs no longer ship under skills root), rf-ax2p (e2e regex updated to match the wrapped "Secrets only" help text). Cross-runtime parity tests + the comprehensive test suite updated for the rf-0pch wrapped-JSON shape and to use `rafter secrets` in place of the deprecated `rafter scan local` alias.
+- **rc-bc9: deleted `node/.claude/skills/`.** A stale development copy of the skill content that drifted from the canonical `node/resources/skills/`. Removing it eliminates the drift class entirely; the resources tree is the single source of truth.
+
 ## [0.8.0] - 2026-05-10
 
 ### Changed
