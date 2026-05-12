@@ -1013,6 +1013,31 @@ Create a GitHub issue from natural language text (stdin, file, or inline).
 - `--dry-run` — show parsed issue without creating it
 - `--quiet` — suppress status messages
 
+### rafter upgrade [OPTIONS]
+
+Alias: `rafter update`
+
+Upgrade rafter to the latest version. Checks the npm registry (Node) or PyPI (Python) for a newer release and prints the correct upgrade command for the detected package manager. In CI environments, exits 0 with no action.
+
+Options:
+- `--check` — Print the latest available version and exit (no installation)
+- `--yes`, `-y` — Run the detected upgrade command automatically without prompting
+
+Exit codes:
+- `0` — success, already up to date, or CI no-op
+- `1` — registry unreachable or upgrade command failed
+
+Package manager detection (Node):
+- Reads `npm_config_user_agent` and `PNPM_HOME` env vars
+- Falls back to binary path heuristics
+- Prints all common options when detection is ambiguous
+
+Package manager detection (Python):
+- Detects pipx via `PIPX_HOME` env var and executable path
+- Detects uv via `uv.lock` in the virtualenv parent directory
+- Detects poetry via `poetry.lock` in the virtualenv parent directory
+- Falls back to `pip install --upgrade`
+
 ### rafter completion <shell>
 
 Generate shell completion scripts.
