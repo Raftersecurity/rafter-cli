@@ -30,7 +30,26 @@ func walkRoot(
 		r.Errors = append(r.Errors, err)
 		return
 	}
-	walkOne(ctx, root, info, allRoots, excludeMatchers, seen, doc, r, now, []string{root})
+	// Seed the git-repo state for the root itself: if the root happens to
+	// already sit inside a git working tree (any ancestor up to filesystem
+	// root has a .git entry), descendants inherit InGitRepo=true.
+	walkOne(ctx, root, info, allRoots, excludeMatchers, seen, doc, r, now, []string{root}, dirInsideGitRepo(root))
+}
+
+// dirInsideGitRepo reports whether dir or any ancestor up to the
+// filesystem root contains a `.git` entry (directory OR file — the
+// file form is the git-submodule convention pointing at gitdir:).
+func dirInsideGitRepo(dir string) bool {
+	for {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
 }
 
 // walkOne handles a single directory entry: dispatches to a scanner
@@ -51,6 +70,7 @@ func walkOne(
 	r *Result,
 	now time.Time,
 	ancestors []string,
+	inGitRepo bool,
 ) {
 	if err := ctx.Err(); err != nil {
 		return
@@ -110,6 +130,16 @@ func walkOne(
 			return
 		}
 		next := append(ancestors, path)
+		// Once we've found a .git entry along this descent, every
+		// descendant inherits InGitRepo=true. If we haven't, check this
+		// directory for one — that single stat is the cache-key per dir
+		// the brief asked for.
+		dirInGit := inGitRepo
+		if !dirInGit {
+			if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+				dirInGit = true
+			}
+		}
 		for _, e := range entries {
 			if err := ctx.Err(); err != nil {
 				return
@@ -120,7 +150,7 @@ func walkOne(
 				r.Errors = append(r.Errors, err)
 				continue
 			}
-			walkOne(ctx, full, child, allRoots, excludeMatchers, seen, doc, r, now, next)
+			walkOne(ctx, full, child, allRoots, excludeMatchers, seen, doc, r, now, next, dirInGit)
 		}
 		return
 	}
@@ -143,10 +173,15 @@ func walkOne(
 		return
 	}
 	for _, fs := range found {
+		src := fs.Source
+		if inGitRepo {
+			t := true
+			src.InGitRepo = &t
+		}
 		out := doc.Upsert(storage.Upsertable{
 			KeyName: fs.KeyName,
 			Value:   fs.Value,
-			Found:   fs.Source,
+			Found:   src,
 			Now:     now,
 		})
 		r.SecretsFound++

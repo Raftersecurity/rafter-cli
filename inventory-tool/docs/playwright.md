@@ -118,3 +118,32 @@ The fixture cleans up after itself. The browser's `pagehide` event
 calls `/api/close`, which trips trove's idle watchdog and shuts down
 the process within ~5s — that's why each test brings up a fresh server
 rather than sharing one across the suite.
+
+## P15 iteration log (scout, direct implementation)
+
+After multiple polecat attempts on this slice were clobbered by the
+sable-* flood in the rig, scout implemented P15 directly. Target was
+inventory-tool/docs/design-refs/01 _ Vault Inspector.png.
+
+### iter-01 — first pass
+
+Built against the new index.html / app.js. The layout, palette, and
+metrics strip all landed in shape, but the page auto-selected the
+first loose-perms file alphabetically (`~/.config/gh/hosts.yml`,
+1 secret) instead of the high-risk `.env.production` (6 secrets, in
+git). Skim story was hurt because the middle column showed a one-row
+table next to four chip-empty sections.
+
+### iter-02 — selection-by-risk
+
+Changed `buildFileIndex` sort order to: loose-perms first, then
+in-git, then secret count descending, then path. The auto-selected
+file is now the busy `.env.production`: 6 detected secrets, three
+chips on the file header (`0644`, `in git`, `6 secrets`), the
+perms-warning callout with the right copy + Fix now, and a full
+secrets table with real Type labels (Stripe / Postgres / SendGrid /
+JWT / GitHub / Resend) inferred from key prefixes.
+
+iter-02 matches the reference's overall density and visual hierarchy.
+The right-rail Audit Log + Mark Reviewed / Snooze + per-secret
+SCORE column stay as placeholders pinned to "lands later" beads.

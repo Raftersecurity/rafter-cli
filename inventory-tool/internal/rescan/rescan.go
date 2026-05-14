@@ -165,6 +165,44 @@ func (r *Rescanner) driveRescan(ctx context.Context) {
 	}()
 }
 
+// Trigger is the user-facing entry point: POST /api/rescan, the
+// settings drawer "Re-scan" button, and any other "do it now" caller.
+// Returns:
+//   - (now, true) if a fresh scan was kicked off
+//   - (in_flight_started_at, false) if one's already running
+//
+// Unlike driveRescan it does NOT consult MaxRescanRate — a deliberate
+// user click should run, not get rate-limited. Coalescing on in-flight
+// runs still applies: a second click during a scan sets `pending` so
+// the scan re-runs once when the current pass finishes, and the second
+// click returns 409.
+func (r *Rescanner) Trigger(ctx context.Context) (time.Time, bool) {
+	r.rateMu.Lock()
+	if r.rescanning {
+		r.pending = true
+		started := r.lastRescan
+		r.rateMu.Unlock()
+		return started, false
+	}
+	now := time.Now()
+	r.rescanning = true
+	r.lastRescan = now
+	r.rateMu.Unlock()
+
+	go func() {
+		r.Rescan(ctx)
+		r.rateMu.Lock()
+		r.rescanning = false
+		hadPending := r.pending
+		r.pending = false
+		r.rateMu.Unlock()
+		if hadPending && ctx.Err() == nil {
+			go r.driveRescan(ctx)
+		}
+	}()
+	return now, true
+}
+
 // waitAndKick sleeps until the rate-limit window opens, then re-enters
 // driveRescan. ctx cancellation is honoured.
 func (r *Rescanner) waitAndKick(ctx context.Context, wait time.Duration) {

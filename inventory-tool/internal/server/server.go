@@ -34,6 +34,16 @@ type Config struct {
 	// watcher's events_dropped counter without giving the server a
 	// direct dependency on internal/watch.
 	StatusExtras func() map[string]any
+
+	// HomeDir is the value of os.UserHomeDir() at startup. Surfaced on
+	// /api/secrets so the UI can render `~/foo` paths.
+	HomeDir string
+
+	// Rescan, if non-nil, is the trigger for POST /api/rescan. Returns
+	// (started_at, true) if a new scan was kicked off, or (in_flight_at,
+	// false) if one was already running. Coalescing lives in the
+	// implementation, not here.
+	Rescan func() (started time.Time, accepted bool)
 }
 
 type Server struct {
@@ -45,6 +55,12 @@ type Server struct {
 	bus          *eventbus.Bus
 	store        *docstore.Store
 	statusExtras func() map[string]any
+	homeDir      string
+
+	// rescanFn, if non-nil, is invoked by POST /api/rescan to trigger an
+	// async filesystem scan. main injects this so the server doesn't
+	// take a dependency on internal/rescan.
+	rescanFn func() (started time.Time, accepted bool)
 }
 
 // New binds to a random port on 127.0.0.1 and prepares (but does not start)
@@ -68,6 +84,8 @@ func New(cfg Config) (*Server, error) {
 		bus:          cfg.Bus,
 		store:        cfg.Store,
 		statusExtras: cfg.StatusExtras,
+		homeDir:      cfg.HomeDir,
+		rescanFn:     cfg.Rescan,
 	}
 	addr := ln.Addr().(*net.TCPAddr)
 	s.url = fmt.Sprintf("http://127.0.0.1:%d/?token=%s", addr.Port, tok)
