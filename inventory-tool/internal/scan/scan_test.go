@@ -371,3 +371,103 @@ func TestScan_FirstSeenLastSeenCorrect(t *testing.T) {
 		t.Errorf("LastSeen regressed: %v -> %v", lastA, doc.Secrets[0].LastSeen)
 	}
 }
+
+// foundInForPath returns the first FoundIn on any Secret in doc whose
+// Path equals path, or nil. Tests use it to inspect the per-source
+// flags populated by the walk (InGitRepo etc.).
+func foundInForPath(doc *storage.Global, path string) *storage.FoundIn {
+	for i := range doc.Secrets {
+		for j := range doc.Secrets[i].FoundIn {
+			if doc.Secrets[i].FoundIn[j].Path == path {
+				return &doc.Secrets[i].FoundIn[j]
+			}
+		}
+	}
+	return nil
+}
+
+func TestScan_InGitRepoTrue_WhenFileUnderGitWorkingTree(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	// Make .git a real directory — the common case.
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	envPath := filepath.Join(repo, ".env")
+	writeFile(t, envPath, "TOKEN=abc123\n")
+
+	doc := storage.Empty()
+	runScan(t, doc, []string{tmp}, nil)
+
+	f := foundInForPath(doc, envPath)
+	if f == nil {
+		t.Fatalf("no FoundIn for %s", envPath)
+	}
+	if f.InGitRepo == nil || !*f.InGitRepo {
+		t.Errorf("expected InGitRepo=true for %s; got %v", envPath, f.InGitRepo)
+	}
+}
+
+func TestScan_InGitRepoFalse_WhenNoEnclosingGit(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, "code", ".env")
+	writeFile(t, envPath, "TOKEN=abc123\n")
+
+	doc := storage.Empty()
+	runScan(t, doc, []string{tmp}, nil)
+
+	f := foundInForPath(doc, envPath)
+	if f == nil {
+		t.Fatalf("no FoundIn for %s", envPath)
+	}
+	if f.InGitRepo != nil && *f.InGitRepo {
+		t.Errorf("expected InGitRepo=false/nil for %s; got true", envPath)
+	}
+}
+
+func TestScan_InGitRepoTrue_SubmoduleGitFile(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "sub")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// .git is a file (submodule convention pointing at parent gitdir).
+	if err := os.WriteFile(filepath.Join(repo, ".git"), []byte("gitdir: ../parent/.git/modules/sub\n"), 0o644); err != nil {
+		t.Fatalf("write .git file: %v", err)
+	}
+	envPath := filepath.Join(repo, ".env")
+	writeFile(t, envPath, "TOKEN=abc123\n")
+
+	doc := storage.Empty()
+	runScan(t, doc, []string{tmp}, nil)
+
+	f := foundInForPath(doc, envPath)
+	if f == nil {
+		t.Fatalf("no FoundIn for %s", envPath)
+	}
+	if f.InGitRepo == nil || !*f.InGitRepo {
+		t.Errorf("expected InGitRepo=true (submodule .git file) for %s; got %v", envPath, f.InGitRepo)
+	}
+}
+
+func TestScan_InGitRepoTrue_DeepNestedFile(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	deep := filepath.Join(repo, "src", "app", "config")
+	envPath := filepath.Join(deep, ".env")
+	writeFile(t, envPath, "TOKEN=abc123\n")
+
+	doc := storage.Empty()
+	runScan(t, doc, []string{tmp}, nil)
+
+	f := foundInForPath(doc, envPath)
+	if f == nil {
+		t.Fatalf("no FoundIn for %s", envPath)
+	}
+	if f.InGitRepo == nil || !*f.InGitRepo {
+		t.Errorf("expected InGitRepo=true (deep file) for %s; got %v", envPath, f.InGitRepo)
+	}
+}

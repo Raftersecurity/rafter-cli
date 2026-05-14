@@ -29,6 +29,10 @@ type secretsListResponse struct {
 	Secrets      []storage.Secret   `json:"secrets"`
 	ScanConfig   storage.ScanConfig `json:"scan_config"`
 	RevealPolicy string             `json:"reveal_policy"`
+	// HomeDir is the value of os.UserHomeDir() at server startup. The UI
+	// uses it to render `~/foo` paths instead of `/home/rome/foo`. Empty
+	// string if HOME is unset.
+	HomeDir string `json:"home_dir"`
 }
 
 func (s *Server) handleSecretsList(w http.ResponseWriter, r *http.Request) {
@@ -45,6 +49,7 @@ func (s *Server) handleSecretsList(w http.ResponseWriter, r *http.Request) {
 		Secrets:      g.Secrets,
 		ScanConfig:   g.ScanConfig,
 		RevealPolicy: g.RevealPolicy,
+		HomeDir:      s.homeDir,
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(&resp); err != nil {

@@ -27,6 +27,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/secrets/{id}/rotated", s.handleSecretMarkRotated)
 
 	mux.HandleFunc("POST /api/sources/chmod600", s.handleSourceChmod600)
+
+	mux.HandleFunc("POST /api/rescan", s.handleRescan)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {

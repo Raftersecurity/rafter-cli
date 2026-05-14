@@ -12,7 +12,7 @@ import (
 //
 // We can't run JS in Go, so these tests assert the most embarrassing
 // regressions: someone deletes a feature wholesale (the wordmark, the
-// drift ticker, the mode-octal hook, the data-clear-selection hook,
+// drift ticker, the metrics strip, the perms-warning fix-now hook,
 // the reveal-policy taxonomy) and the page silently loses behavior.
 //
 // Markers are checked against the bytes the server actually serves —
@@ -43,32 +43,31 @@ func TestIndexHTML_StructuralMarkers(t *testing.T) {
 	s, ts, _, _ := newTestServerWithStore(t)
 	body := fetchBody(t, ts.URL+"/", s.token)
 
-	mustContain(t, body, "trove",
-		"wordmark — without it the product loses its name in the header")
-	mustContain(t, body, "by ",
-		"`by Rafter` subtag — anchors the brand attribution beside the wordmark")
 	mustContain(t, body, "Rafter",
 		"`Rafter` brand mention — required by the brand attribution rule")
+	mustContain(t, body, "trove",
+		"trove product name — must appear somewhere in the page")
 	mustContain(t, body, `aria-live`,
 		"aria-live region — screen readers announce drift updates here")
-	mustContain(t, body, "data-clear-selection",
-		"data-clear-selection hook on #list — JS uses this to find the click-outside zone")
 	mustContain(t, body, "drift-badge",
 		"drift-badge element — SSE readyState feedback lives here")
 	mustContain(t, body, "/static/app.js",
 		"app.js script reference — UI is dead without it")
-	mustContain(t, body, "id=\"toast-region\"",
+	mustContain(t, body, `id="toast-region"`,
 		"toast region — copy/save feedback renders into this node")
+	mustContain(t, body, `id="settings-btn"`,
+		"settings (gear) button — opens the preferences drawer")
+	mustContain(t, body, `id="drawer"`,
+		"settings drawer — reveal-policy / auto-rescan / legend live here")
+	mustContain(t, body, `id="refresh-btn"`,
+		"refresh-scan button — wires to POST /api/rescan")
+	mustContain(t, body, `id="watched-list"`,
+		"watched-paths sidebar list — file-primary navigation")
 }
 
 func TestAppJS_BehaviorMarkers(t *testing.T) {
 	s, ts, _, _ := newTestServerWithStore(t)
 	body := fetchBody(t, ts.URL+"/static/app.js", s.token)
-
-	mustContain(t, body, "data-mode-octal",
-		"mode-octal attribute — Go smoke tests and CSS hooks rely on it; tooltip wiring goes through this")
-	mustContain(t, body, "MODE_TIPS",
-		"mode-octal tooltip table — explains 0644 / 0640 / 0600 to users who don't know unix perms")
 
 	// All four reveal_policy strings must remain present so a future
 	// refactor doesn't silently drop a policy mode from the JS taxonomy.
@@ -80,29 +79,26 @@ func TestAppJS_BehaviorMarkers(t *testing.T) {
 	// Endpoint references — the JS is dead if any of these drop out.
 	for _, ep := range []string{
 		"/api/secrets",
-		"/api/secrets/${encodeURIComponent(s.id)}/reveal",
-		"annotation",
-		"stale",
-		"rotated",
+		"/api/sources/chmod600",
+		"/api/rescan",
 		"/api/events",
+		"/api/heartbeat",
 	} {
 		mustContain(t, body, ep,
 			"endpoint reference ("+ep+") missing from app.js")
 	}
 
-	// The "Notes" rename (was: "Annotate") is a copy-fix that the P9
-	// polecat skipped — pin it so it can't silently regress.
-	mustContain(t, body, "\"Notes\"",
-		"copy fix: section heading should be \"Notes\", not \"Annotate\"")
-	// Only user-visible "Annotate" (capitalized, in string-literal
-	// contexts) is forbidden. The wire endpoint path /api/.../annotation
-	// and internal identifiers like readPanelAnnotation are fine.
+	// Auto-rescan + visibility-aware timer must be present.
+	mustContain(t, body, "auto_rescan",
+		"auto_rescan localStorage key — auto-rescan preference persistence")
+	mustContain(t, body, "document.hidden",
+		"document.hidden check — auto-rescan must pause while tab is hidden")
+
+	// The "Notes" rename: only user-visible "Annotate" forbidden.
 	for _, forbidden := range []string{
 		"\"Annotate\"",
 		"'Annotate'",
 		">Annotate<",
-		"\"annotate\"",
-		"'annotate'",
 	} {
 		if bytes.Contains(body, []byte(forbidden)) {
 			t.Errorf("app.js still contains user-visible token %q — rename to \"Notes\" must be complete", forbidden)
@@ -112,17 +108,16 @@ func TestAppJS_BehaviorMarkers(t *testing.T) {
 
 // TestIndexHTML_RafterPalette pins the Rafter brand hex codes in the CSS
 // so a future redesign can't accidentally drop the brand without a test
-// breaking. P14 corrected a brand miss: Claude Code orange (#d97757) was
-// retired in favour of the authoritative Rafter green (#2ea44f) from
-// badges/README.md, paired with a cooler dark base.
+// breaking. Rafter brand green is the authoritative primary accent
+// (badges/README.md); the near-black base matches the Vault Inspector
+// reference design at docs/design-refs/.
 func TestIndexHTML_RafterPalette(t *testing.T) {
 	s, ts, _, _ := newTestServerWithStore(t)
 	body := fetchBody(t, ts.URL+"/", s.token)
 
 	lc := strings.ToLower(string(body))
 	for _, hex := range []string{
-		"#0f1115", // --bg (cool-dark security-tool base)
-		"#e8edf2", // --fg (cool off-white)
+		"#0a0b0e", // --bg (near-black, matching the Vault Inspector reference)
 		"#2ea44f", // --rafter-green (PRIMARY accent — from badges/README.md)
 	} {
 		if !strings.Contains(lc, hex) {
@@ -130,32 +125,33 @@ func TestIndexHTML_RafterPalette(t *testing.T) {
 		}
 	}
 
-	// Negative assertion: the previous-restyle Claude Code orange must
-	// NOT appear anywhere. This is the explicit P14 brand-correction
-	// guard.
+	// Negative assertion: Claude Code orange must NOT reappear as a
+	// primary accent. It was the original brand-miss in P13.
 	if strings.Contains(lc, "#d97757") {
-		t.Errorf("Claude Code orange (#d97757) still present in index.html — P14 brand correction incomplete; primary accent must be Rafter green (#2ea44f)")
+		t.Errorf("Claude Code orange (#d97757) still present in index.html — brand correction incomplete; primary accent must be Rafter green (#2ea44f)")
 	}
 }
 
-// TestIndexHTML_DashboardTiles asserts the P14 risk dashboard's four
-// tiles are present on the page. The tile id markers are stable contracts
-// that JS uses to populate counts and that Playwright tests select on.
-func TestIndexHTML_DashboardTiles(t *testing.T) {
+// TestIndexHTML_MetricsStrip asserts the five-metric strip from the
+// Vault Inspector reference design is present. The tile keys are stable
+// contracts that JS uses to populate counts and that Playwright tests
+// select on.
+func TestIndexHTML_MetricsStrip(t *testing.T) {
 	s, ts, _, _ := newTestServerWithStore(t)
 	body := fetchBody(t, ts.URL+"/", s.token)
 
 	for _, tile := range []string{
-		`data-tile="files-scanned"`,
-		`data-tile="loose-perms"`,
-		`data-tile="env-in-git"`,
-		`data-tile="total-secrets"`,
+		`data-tile="files"`,
+		`data-tile="secrets"`,
+		`data-tile="overdue"`,
+		`data-tile="soon"`,
+		`data-tile="perm"`,
 	} {
 		mustContain(t, body, tile,
-			"dashboard tile marker "+tile+" — P14 risk dashboard depends on this hook")
+			"metric tile marker "+tile+" — risk dashboard depends on this hook")
 	}
-	mustContain(t, body, `id="dashboard"`,
-		"#dashboard section — the four risk tiles live inside this region")
+	mustContain(t, body, `class="metrics"`,
+		"<section class=\"metrics\"> wrapper — the metric tiles live inside this region")
 }
 
 func mustContain(t *testing.T, body []byte, needle, reason string) {

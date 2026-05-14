@@ -82,18 +82,32 @@ func main() {
 	// would hide the URL for that long. atomic.Pointer keeps the
 	// /api/status closure race-free while the bg goroutine swaps it in.
 	var wch atomic.Pointer[watch.Watcher]
+	var rscn atomic.Pointer[rescanpkg.Rescanner]
 	storeDir := filepath.Dir(storePath)
+
+	homeDir, _ := os.UserHomeDir()
 
 	srv, err := server.New(server.Config{
 		IdleTimeout: *idleTimeout,
 		Bus:         bus,
 		Store:       store,
+		HomeDir:     homeDir,
 		StatusExtras: func() map[string]any {
 			extras := map[string]any{}
 			if w := wch.Load(); w != nil {
 				extras["watch_events_dropped"] = w.EventsDropped()
 			}
 			return extras
+		},
+		Rescan: func() (time.Time, bool) {
+			r := rscn.Load()
+			if r == nil {
+				// Watcher/rescanner still booting; report as in-flight
+				// from now so the UI surfaces "we're trying" rather than
+				// a hard failure during the brief startup window.
+				return time.Now(), false
+			}
+			return r.Trigger(context.Background())
 		},
 	})
 	if err != nil {
@@ -141,6 +155,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "trove: rescanner setup: %v\n", rsErr)
 		}
 		if rs != nil {
+			rscn.Store(rs)
 			if err := rs.Run(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "trove: watcher exited: %v\n", err)
 			}
