@@ -62,6 +62,40 @@ jobs:
             echo "OK: $skill_file version matches ($SKILL_VERSION)"
           done
 
+      - name: Ensure pre-commit rev pins and recipe URLs match package version
+        # sable-vcx — README and recipe docs pin a `rev:` to a specific
+        # release tag (e.g. `rev: v0.7.9`). Bumping package.json/pyproject
+        # without bumping these pins leaves users with stale install
+        # instructions; CHANGELOG [0.6.1] documents this was already fixed
+        # once and drifted again. Same drift class hits the homebrew
+        # formula tarball URL. Fail the release on any drift.
+        run: |
+          VERSION="${{ steps.node-version.outputs.VERSION }}"
+          EXPECTED="v$VERSION"
+          fail=0
+          while IFS=: read -r file lineno match; do
+            actual=$(echo "$match" | sed -n 's/.*rev:[[:space:]]*\(v[0-9.]*\).*/\1/p')
+            if [ "$actual" != "$EXPECTED" ]; then
+              echo "FAIL: $file:$lineno pins rev: $actual but package is $EXPECTED"
+              fail=1
+            fi
+          done < <(grep -rn "^[[:space:]]*rev:[[:space:]]*v[0-9]" \
+              README.md recipes/pre-commit.md shared-docs/CLI_SPEC.md 2>/dev/null)
+          # Homebrew formula URL embeds the version literal in the tarball path.
+          if grep -q "cli/-/cli-${VERSION}\.tgz" recipes/homebrew-formula.rb; then
+            echo "OK: recipes/homebrew-formula.rb URL matches $VERSION"
+          else
+            echo "FAIL: recipes/homebrew-formula.rb URL does not embed version $VERSION"
+            grep -n "registry.npmjs.org/@rafter-security/cli/-/cli-" recipes/homebrew-formula.rb || true
+            fail=1
+          fi
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "Bump the rev: pins and homebrew URL to v$VERSION before releasing."
+            exit 1
+          fi
+          echo "OK: all rev: pins and recipe URLs match v$VERSION"
+
       - name: Check CHANGELOG updated
         run: |
           VERSION="${{ steps.node-version.outputs.VERSION }}"
