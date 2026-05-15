@@ -9,7 +9,7 @@ If you use the [pre-commit](https://pre-commit.com) framework, add this to `.pre
 ```yaml
 repos:
   - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.6.5
+    rev: v0.8.1
     hooks:
       - id: rafter-scan-node   # auto-installs via npm, no global install needed
 ```
