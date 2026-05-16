@@ -1376,6 +1376,7 @@ def init(
         rprint("No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
 
     rprint()
+    rprint("  - Verify: rafter agent verify (confirm hooks + binary integrity)")
     rprint("  - Run: rafter secrets . (test secret scanning)")
     rprint("  - Configure: rafter agent config show")
     rprint()

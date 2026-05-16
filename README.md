@@ -48,10 +48,11 @@ rafter secrets .
 **2. Install the pre-commit hook**
 
 ```sh
-rafter agent init --all
-# → Installs all detected integrations
-# → Downloads Betterleaks (or falls back to built-in scanner)
+rafter agent init                          # interactive: previews changes, then installs detected integrations
+# → For agents/CI: rafter agent init --all (non-interactive, all detected) or --dry-run (preview only)
 ```
+
+> Preview every file Rafter would touch with `rafter agent init --dry-run` before committing to changes. Confirm a finished install at any time with `rafter agent verify`.
 
 **3. Try to commit—hook blocks it**
 
@@ -185,6 +186,7 @@ This command:
 - Auto-detects Claude Code, Codex CLI, OpenClaw, Gemini, Cursor, Windsurf, Continue.dev, and Aider
 - With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
 - With `--with-betterleaks` or `--all`: downloads [Betterleaks](https://github.com/betterleaks/betterleaks) (the gitleaks successor maintained by the original gitleaks authors) for enhanced secret scanning. Falls back to built-in 21-pattern regex scanner.
+- **Binary integrity:** the Betterleaks download is checked against a SHA256 table pinned in this repo's source (`node/src/utils/binary-manager.ts`), so the default install does not trust the release-page `checksums.txt` to authenticate itself. Non-HTTPS download URLs are refused; tarballs that contain symlink/hardlink/device entries are rejected before extraction.
 
 Use `rafter agent list/enable/disable` for granular per-component control after the initial install — toggle any platform on or off without re-running `init`.
 

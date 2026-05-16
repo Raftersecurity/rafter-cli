@@ -1455,6 +1455,7 @@ export function createInitCommand(): Command {
         console.log("No agent environments detected. Install an agent tool and re-run with --with-<tool>.");
       }
       console.log();
+      console.log("  - Verify: rafter agent verify (confirm hooks + binary integrity)");
       console.log("  - Run: rafter secrets . (test secret scanning)");
       console.log("  - Configure: rafter agent config show");
       console.log();
