@@ -172,6 +172,29 @@ jobs:
             || (echo "FAIL: resources/pre-commit-hook.sh not found in tarball" && exit 1)
           echo "OK: resources/pre-commit-hook.sh present in tarball"
 
+      - name: Verify skill docs/ folders ship in tarball
+        # sable-gxo — every SKILL.md references files under its own docs/.
+        # If the docs/ folder is silently stripped from the npm tarball, agents
+        # `Read docs/<x>.md` and get a missing-file error. installSkillDir
+        # copies the source tree recursively, but only matters if the source
+        # tree is in the published package. Fail the release if any expected
+        # docs file is missing.
+        run: |
+          TARBALL=$(ls rafter-security-cli-*.tgz | head -1)
+          missing=0
+          for skill in rafter-secure-design rafter-code-review; do
+            count=$(tar -tzf "$TARBALL" | grep -cE "package/resources/skills/${skill}/docs/.+\.md$" || true)
+            if [ "$count" -lt 1 ]; then
+              echo "FAIL: no docs/*.md files for skill '${skill}' in tarball"
+              missing=1
+            else
+              echo "OK: ${count} docs/*.md file(s) for skill '${skill}' in tarball"
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
       - name: Test install-hook end-to-end from packed tarball
         run: |
           TARBALL=$(ls rafter-security-cli-*.tgz | head -1)
