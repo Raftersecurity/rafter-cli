@@ -17,6 +17,7 @@ Integration snippets for adding Rafter security to your development workflow. Ea
 | [OpenClaw](openclaw.md) | Skill setup for OpenClaw agents |
 | [npx skills](npx-skills.md) | Audit-before-install workflow for `vercel-labs/skills` |
 | [Homebrew Formula](homebrew-formula.rb) | `brew install rafter` tap formula |
+| [COLLAB.md](collab-md.md) | Collaborator-curated repo notes — when to start one, what to put in it (pairs with AGENTS.md) |
 
 ## Quick start
 

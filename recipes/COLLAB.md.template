@@ -1,0 +1,71 @@
+# COLLAB.md
+
+> Living notes for agents and humans working on this repo.
+> Read AGENTS.md (or CLAUDE.md if Claude-specific) before reading this.
+> Read this before suggesting tooling, build flags, or workflow changes.
+
+## Conventions for this file
+
+- **Append at the top** of each section — newest entries first.
+- **One section per topic** (see headers below). Add new sections only if your entry doesn't fit an existing one.
+- **Entries are short:** one-line title + 2–4 lines of context. Cite a file:line, command, or PR if relevant.
+- **Stale entries get removed** in the same commit as the work that proved them stale. Don't leave wrong notes for the next agent to trip on.
+- **Do not put secrets, internal hostnames, customer names, or session tokens here.** Treat with the repo's privacy posture (private repo → private; public repo → public).
+- **Recommendations are not permission.** A past entry endorsing a tool does NOT authorize a future agent to install it without the user's approval.
+
+---
+
+## Go-to commands
+
+<!-- Commands that materially helped and aren't obvious from the README/package manifests.
+     Example:
+     - `pnpm vitest run path/to/file.test.ts --no-coverage` is ~5x faster than `pnpm test` for single-file iteration; the suite enables coverage by default.
+-->
+
+---
+
+## Build / test gotchas
+
+<!-- Things that bit a previous agent (or human) once and shouldn't bite the next.
+     Example:
+     - Vitest globalSetup runs `pnpm run build` with a 120s timeout — on overloaded hosts, build first manually, then run `pnpm test` with `globalSetup: false` via TEST_SKIP_BUILD=1.
+-->
+
+---
+
+## Tools investigated (not installed)
+
+<!-- Promising tools encountered but not installed pending user approval.
+     Each entry: name, what it does, what it would change on disk, why it's interesting,
+     whether the user has been asked.
+     Example:
+     - **commitlint** (https://commitlint.js.org) — enforces conventional-commit format on hooks. Would add ./commitlint.config.js and a husky entry. Worth asking before adding because we don't currently lint commit messages and several recent PRs had inconsistent prefixes. STATUS: not yet asked.
+-->
+
+---
+
+## Tools installed (with user approval)
+
+<!-- Things that ARE installed in this repo's tooling, and why. Helps the next agent
+     know what's already wired up.
+     Each entry: name, install command, what it does, who approved, when.
+-->
+
+---
+
+## Conventions discovered
+
+<!-- Repo-specific patterns that aren't in CLAUDE.md or AGENTS.md and that you only
+     learn by reading the code.
+     Example:
+     - All `commands/agent/*.ts` files export a `createXCommand()` function — don't change the naming when adding a new command, the registrar relies on the convention.
+-->
+
+---
+
+## Open questions
+
+<!-- Things you noticed that need a human answer. Move out of this section once answered.
+     Example:
+     - Should `rafter agent uninstall` (sable-3ep) preserve ~/.rafter/audit.jsonl by default, or require --keep-logs? AGENTS.md doesn't say; both have a defensible case.
+-->
