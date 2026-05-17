@@ -13,7 +13,7 @@ A designer's skill, not a scanner. The goal is to catch the flaw in the whiteboa
 
 ## How to use this skill
 
-1. Identify what's being designed (below). If multiple apply, walk them in the order listed — `threat-modeling` last, as a capstone.
+1. Identify what's being designed (below). If multiple apply, walk them in the order listed — `operational-resilience` after the structural choices, `threat-modeling` last as a capstone.
 2. `Read` only the matching sub-doc. Do not preload them all; pick-and-load keeps the conversation tight.
 3. Work through its questions against the *proposed* design. Capture the answer inline (architecture doc, design RFC, PR description). If you can't answer a question, that's a design gap — resolve it before writing code.
 4. When the design is stable, run the `threat-modeling` walk to stress-test it.
@@ -59,13 +59,19 @@ For: picking a library, adopting a framework, pulling a container base image, in
 
 - **Read `docs/dependencies.md`** — Pick-vs-write, maintenance signal, install-time execution, pinning + lockfiles, SBOM + SCA hooks, vendoring vs. registry, typosquat / slopsquat checks.
 
-### (7) Threat model — STRIDE walk of the full design
+### (7) Operational resilience — what happens when something breaks
+
+For: rate limiting, backup-restore proof, error alerting, transactions and idempotency, fallback for third-party APIs, log destination, circuit breakers, outbound timeouts, incident runbooks. The class of failures that ship in features which "work in dev" but have no plan for breaking — and become security defects the moment they do.
+
+- **Read `docs/operational-resilience.md`** — Numbered list (6/10/12/14/15/19/20/21/23/25 from Rome's curated security-checklist items) phrased as design questions. Pair with `deployment.md` (runtime posture) and `dependencies.md` (external surface).
+
+### (8) Threat model — STRIDE walk of the full design
 
 For: the capstone pass *after* the above decisions are drafted. Also good for any greenfield service review.
 
 - **Read `docs/threat-modeling.md`** — STRIDE applied to the specific design (not the generic checklist). Trust boundaries, data-flow diagrams as prose, abuse cases, negative-space questions ("what did we implicitly assume?").
 
-### (8) Which standards / frameworks should bound this?
+### (9) Which standards / frameworks should bound this?
 
 For: scoping compliance, picking a baseline, answering "how much is enough?"
 
