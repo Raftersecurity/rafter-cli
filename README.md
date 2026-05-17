@@ -52,6 +52,8 @@ rafter agent init                          # interactive: previews changes, then
 # → For agents/CI: rafter agent init --all (non-interactive, all detected) or --dry-run (preview only)
 ```
 
+> **Prerequisite:** `rafter agent init` only installs hooks/skills for agent tools you *already have* (Claude Code, Codex CLI, Cursor, Windsurf, Continue.dev, Aider, Gemini CLI, OpenClaw). On a fresh machine with none of them installed, init prints `No agent environments detected.` and exits cleanly — that's expected, not an error. Install your editor/agent first; the pre-commit hook still works through `rafter agent install-hook`.
+>
 > Preview every file Rafter would touch with `rafter agent init --dry-run` before committing to changes. Confirm a finished install at any time with `rafter agent verify`.
 
 **3. Try to commit—hook blocks it**
