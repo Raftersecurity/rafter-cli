@@ -89,3 +89,4 @@ If the diff spans categories (e.g. a web app that also has an LLM feature), Read
 - Finding from the scanner you don't understand? → `rafter` skill, `docs/finding-triage.md`.
 - Designing a new feature instead of reviewing one? → `rafter-secure-design`.
 - Risky command came up mid-review? → `rafter` skill, `docs/guardrails.md`.
+- Diff adds an outbound HTTP call, a multi-step write, or a new public endpoint? Check the design-time questions in `rafter-secure-design/docs/operational-resilience.md` (Rome items 12/15/19/21/23) — missing rate limit, missing timeout, missing transaction, missing circuit breaker, or missing fallback are review-time defects too, not just design-time omissions.
