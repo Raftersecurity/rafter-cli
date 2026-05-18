@@ -103,9 +103,23 @@ import { AuditLogger } from "../src/core/audit-logger.js";
 
 let client: Client;
 let server: Server;
+// Captures of the cached singletons the server constructed at createServer().
+// Each beforeAll resets these so tests in different describes see the right
+// instance (the integration server caches one set per createServer() call).
+let serverRegexScanner: any;
+let serverBetterleaks: any;
+let serverAuditLogger: any;
 
 async function setupClientServer() {
   server = createServer();
+  // Snapshot the singletons before any beforeEach clearAllMocks wipes mock.results.
+  const rsResults = (RegexScanner as any).mock.results;
+  const blResults = (BetterleaksScanner as any).mock.results;
+  const alResults = (AuditLogger as any).mock.results;
+  serverRegexScanner = rsResults[rsResults.length - 1].value;
+  serverBetterleaks = blResults[blResults.length - 1].value;
+  serverAuditLogger = alResults[alResults.length - 1].value;
+
   client = new Client({ name: "test-client", version: "1.0.0" });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -262,7 +276,7 @@ describe("MCP Server — tool execution end-to-end", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("scan_secrets should return results via MCP protocol", async () => {
-    const scannerInstance = new RegexScanner() as any;
+    const scannerInstance = serverRegexScanner;
     scannerInstance.scanDirectory.mockReturnValue([
       {
         file: "/tmp/secret.env",
@@ -276,8 +290,6 @@ describe("MCP Server — tool execution end-to-end", () => {
         ],
       },
     ]);
-    (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
-
     const result = await client.callTool({ name: "scan_secrets", arguments: { path: "/tmp/dir" } });
 
     expect(result.isError).toBeFalsy();
@@ -290,7 +302,7 @@ describe("MCP Server — tool execution end-to-end", () => {
   });
 
   it("scan_secrets with betterleaks available uses betterleaks", async () => {
-    const blInstance = new BetterleaksScanner() as any;
+    const blInstance = serverBetterleaks;
     blInstance.isAvailable.mockResolvedValue(true);
     blInstance.scanDirectory.mockResolvedValue([
       {
@@ -305,8 +317,6 @@ describe("MCP Server — tool execution end-to-end", () => {
         ],
       },
     ]);
-    (BetterleaksScanner as any).mockImplementation(function () { return blInstance; });
-
     const result = await client.callTool({ name: "scan_secrets", arguments: { path: "/tmp", engine: "auto" } });
 
     const parsed = JSON.parse((result.content as any)[0].text);
@@ -345,9 +355,8 @@ describe("MCP Server — tool execution end-to-end", () => {
   });
 
   it("read_audit_log passes filters correctly", async () => {
-    const loggerInstance = new AuditLogger() as any;
+    const loggerInstance = serverAuditLogger;
     loggerInstance.read.mockReturnValue([]);
-    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
 
     await client.callTool({
       name: "read_audit_log",
