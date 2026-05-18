@@ -54,6 +54,18 @@ export function createServer(): Server {
     { capabilities: { tools: {}, resources: {} } },
   );
 
+  // Instantiate once per server: constructors do non-trivial work (pattern
+  // compilation, log-path resolution). Disk-backed state (config, audit log,
+  // policy) is re-read on each method call, so reusing these is safe.
+  // Caveat: AuditLogger.logPath and RegexScanner custom patterns are resolved
+  // at construction — changing those in .rafter.yml requires an MCP server
+  // restart to take effect.
+  const betterleaks = new BetterleaksScanner();
+  const regexScanner = new RegexScanner();
+  const interceptor = new CommandInterceptor();
+  const auditLogger = new AuditLogger();
+  const configManager = new ConfigManager();
+
   // ── Tools ───────────────────────────────────────────────────────────
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -147,10 +159,9 @@ export function createServer(): Server {
         const engine = (args?.engine as string) || "auto";
 
         if (engine === "betterleaks" || engine === "auto") {
-          const bl = new BetterleaksScanner();
-          if (await bl.isAvailable()) {
+          if (await betterleaks.isAvailable()) {
             try {
-              const results = await bl.scanDirectory(scanPath);
+              const results = await betterleaks.scanDirectory(scanPath);
               return textResult(formatScanResults(results));
             } catch {
               if (engine === "betterleaks") return errorResult("Betterleaks scan failed");
@@ -160,19 +171,17 @@ export function createServer(): Server {
           }
         }
 
-        const scanner = new RegexScanner();
         let results;
         try {
-          results = scanner.scanDirectory(scanPath);
+          results = regexScanner.scanDirectory(scanPath);
         } catch {
-          results = [scanner.scanFile(scanPath)];
+          results = [regexScanner.scanFile(scanPath)];
         }
         return textResult(formatScanResults(results));
       }
 
       case "evaluate_command": {
         const command = args?.command as string;
-        const interceptor = new CommandInterceptor();
         const result = interceptor.evaluate(command);
         const out: Record<string, unknown> = {
           allowed: result.allowed,
@@ -184,8 +193,7 @@ export function createServer(): Server {
       }
 
       case "read_audit_log": {
-        const logger = new AuditLogger();
-        const entries = logger.read({
+        const entries = auditLogger.read({
           limit: (args?.limit as number) ?? 20,
           eventType: args?.event_type as any,
           since: args?.since ? new Date(args.since as string) : undefined,
@@ -194,9 +202,8 @@ export function createServer(): Server {
       }
 
       case "get_config": {
-        const manager = new ConfigManager();
         const key = args?.key as string | undefined;
-        const value = key ? manager.get(key) : manager.load();
+        const value = key ? configManager.get(key) : configManager.load();
         return textResult(value);
       }
 
@@ -271,7 +278,6 @@ export function createServer(): Server {
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
-    const manager = new ConfigManager();
 
     switch (uri) {
       case "rafter://config":
@@ -279,7 +285,7 @@ export function createServer(): Server {
           contents: [{
             uri: "rafter://config",
             mimeType: "application/json",
-            text: JSON.stringify(manager.load(), null, 2),
+            text: JSON.stringify(configManager.load(), null, 2),
           }],
         };
 
@@ -288,7 +294,7 @@ export function createServer(): Server {
           contents: [{
             uri: "rafter://policy",
             mimeType: "application/json",
-            text: JSON.stringify(manager.loadWithPolicy(), null, 2),
+            text: JSON.stringify(configManager.loadWithPolicy(), null, 2),
           }],
         };
 
