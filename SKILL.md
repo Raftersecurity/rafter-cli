@@ -42,7 +42,7 @@ rafter agent init --with-claude-code --with-betterleaks
 |----------|-----------------|---------------------|
 | Claude Code | PreToolUse/PostToolUse hooks + skills | `~/.claude/settings.json` (hooks), `~/.claude/skills/rafter/` (skills) |
 | Codex CLI | Skills | `~/.agents/skills/rafter/` |
-| OpenClaw | Skills | `~/.openclaw/skills/rafter-security.md` |
+| OpenClaw | Skills | `~/.openclaw/workspace/skills/rafter-security/SKILL.md` |
 | Cursor | MCP server | `~/.cursor/mcp.json` |
 | Gemini CLI | MCP server | `~/.gemini/settings.json` |
 | Windsurf | MCP server | `~/.codeium/windsurf/mcp_config.json` |

@@ -201,13 +201,13 @@ OpenClaw has native skill support.
 rafter agent init --with-openclaw
 ```
 
-This installs the security skill to `~/.openclaw/skills/rafter-security.md`.
+This installs the security skill to `~/.openclaw/workspace/skills/rafter-security/SKILL.md` — the canonical ClawHub path OpenClaw auto-discovers at session start.
 
 ## Manual Setup
 
 ```bash
-mkdir -p ~/.openclaw/skills
-rafter brief scanning > ~/.openclaw/skills/rafter-security.md
+mkdir -p ~/.openclaw/workspace/skills/rafter-security
+rafter brief scanning > ~/.openclaw/workspace/skills/rafter-security/SKILL.md
 ```""",
 
     "continue": """\
