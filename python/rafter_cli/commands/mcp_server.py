@@ -6,6 +6,7 @@ import subprocess
 import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
+from typing import Optional
 
 import typer
 
@@ -24,13 +25,28 @@ mcp_app = typer.Typer(
 
 
 # ── Tool handler functions (importable for testing) ────────────────────
+#
+# Each handler accepts optional pre-built component instances so the MCP
+# server can construct them once at startup and reuse them across calls.
+# When called without overrides (e.g. directly from tests), components are
+# built on demand — matching the original per-call behavior.
+#
+# Disk-backed state (config, audit log, policy) is re-read on each method
+# call, so reusing components is safe. Caveat: AuditLogger log path and
+# RegexScanner custom patterns are resolved at construction — changing
+# those in .rafter.yml requires an MCP server restart to take effect.
 
 
-def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
+def handle_scan_secrets(
+    path: str,
+    engine: str = "auto",
+    betterleaks: Optional[BetterleaksScanner] = None,
+    regex_scanner: Optional[RegexScanner] = None,
+) -> list[dict]:
     """Scan files or directories for hardcoded secrets."""
     # Try betterleaks if requested or auto
     if engine in ("betterleaks", "auto"):
-        bl = BetterleaksScanner()
+        bl = betterleaks if betterleaks is not None else BetterleaksScanner()
         if bl.is_available():
             try:
                 results = bl.scan_directory(path)
@@ -59,7 +75,7 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
             raise RuntimeError("Betterleaks not installed")
 
     # Pattern-based scan
-    scanner = RegexScanner()
+    scanner = regex_scanner if regex_scanner is not None else RegexScanner()
     try:
         results = scanner.scan_directory(path)
     except NotADirectoryError:
@@ -82,9 +98,12 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
     ]
 
 
-def handle_evaluate_command(command: str) -> dict:
+def handle_evaluate_command(
+    command: str,
+    interceptor: Optional[CommandInterceptor] = None,
+) -> dict:
     """Evaluate whether a shell command is allowed by Rafter policy."""
-    interceptor = CommandInterceptor()
+    interceptor = interceptor if interceptor is not None else CommandInterceptor()
     result = interceptor.evaluate(command)
     out: dict = {
         "allowed": result.allowed,
@@ -100,9 +119,10 @@ def handle_read_audit_log(
     limit: int = 20,
     event_type: str | None = None,
     since: str | None = None,
+    logger: Optional[AuditLogger] = None,
 ) -> list[dict]:
     """Read Rafter audit log entries."""
-    logger = AuditLogger()
+    logger = logger if logger is not None else AuditLogger()
     since_dt = None
     if since:
         since_dt = datetime.fromisoformat(since)
@@ -116,23 +136,26 @@ def handle_read_audit_log(
     )
 
 
-def handle_get_config(key: str | None = None) -> dict:
+def handle_get_config(
+    key: str | None = None,
+    manager: Optional[ConfigManager] = None,
+) -> dict:
     """Read Rafter configuration."""
-    manager = ConfigManager()
+    manager = manager if manager is not None else ConfigManager()
     if key:
         return {"key": key, "value": manager.get(key)}
     return asdict(manager.load())
 
 
-def handle_get_config_resource() -> str:
+def handle_get_config_resource(manager: Optional[ConfigManager] = None) -> str:
     """Return full config as JSON string."""
-    manager = ConfigManager()
+    manager = manager if manager is not None else ConfigManager()
     return json.dumps(asdict(manager.load()), indent=2)
 
 
-def handle_get_policy_resource() -> str:
+def handle_get_policy_resource(manager: Optional[ConfigManager] = None) -> str:
     """Return merged policy as JSON string."""
-    manager = ConfigManager()
+    manager = manager if manager is not None else ConfigManager()
     return json.dumps(asdict(manager.load_with_policy()), indent=2)
 
 
@@ -186,6 +209,17 @@ def create_mcp_server():
 
     mcp = FastMCP("rafter")
 
+    # Instantiate once per server: constructors do non-trivial work (pattern
+    # compilation, log-path resolution). Disk-backed state is re-read on each
+    # method call so reuse is safe. Caveat: log path and custom patterns are
+    # resolved at construction — changing those in .rafter.yml requires
+    # an MCP server restart.
+    betterleaks = BetterleaksScanner()
+    regex_scanner = RegexScanner()
+    interceptor = CommandInterceptor()
+    audit_logger = AuditLogger()
+    config_manager = ConfigManager()
+
     @mcp.tool()
     def scan_secrets(path: str, engine: str = "auto") -> str:
         """Scan files or directories for hardcoded secrets and credentials.
@@ -194,7 +228,11 @@ def create_mcp_server():
             path: File or directory path to scan.
             engine: Scan engine — auto (default), betterleaks, or patterns.
         """
-        return json.dumps(handle_scan_secrets(path, engine))
+        return json.dumps(handle_scan_secrets(
+            path, engine,
+            betterleaks=betterleaks,
+            regex_scanner=regex_scanner,
+        ))
 
     @mcp.tool()
     def evaluate_command(command: str) -> str:
@@ -203,7 +241,7 @@ def create_mcp_server():
         Args:
             command: Shell command to evaluate.
         """
-        return json.dumps(handle_evaluate_command(command))
+        return json.dumps(handle_evaluate_command(command, interceptor=interceptor))
 
     @mcp.tool()
     def read_audit_log(
@@ -218,7 +256,9 @@ def create_mcp_server():
             event_type: Filter by event type (e.g. command_intercepted, secret_detected).
             since: ISO 8601 timestamp — only return entries after this time.
         """
-        return json.dumps(handle_read_audit_log(limit, event_type, since))
+        return json.dumps(handle_read_audit_log(
+            limit, event_type, since, logger=audit_logger,
+        ))
 
     @mcp.tool()
     def get_config(key: str | None = None) -> str:
@@ -227,7 +267,7 @@ def create_mcp_server():
         Args:
             key: Dot-path config key (e.g. agent.command_policy). Omit for full config.
         """
-        return json.dumps(handle_get_config(key))
+        return json.dumps(handle_get_config(key, manager=config_manager))
 
     @mcp.tool()
     def list_docs(tag: str | None = None) -> str:
@@ -254,12 +294,12 @@ def create_mcp_server():
     @mcp.resource("rafter://config")
     def config_resource() -> str:
         """Current Rafter configuration."""
-        return handle_get_config_resource()
+        return handle_get_config_resource(manager=config_manager)
 
     @mcp.resource("rafter://policy")
     def policy_resource() -> str:
         """Active security policy (merged .rafter.yml + config)."""
-        return handle_get_policy_resource()
+        return handle_get_policy_resource(manager=config_manager)
 
     @mcp.resource("rafter://docs")
     def docs_resource() -> str:
