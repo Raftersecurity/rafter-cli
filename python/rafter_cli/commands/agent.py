@@ -3195,6 +3195,7 @@ from .agent_components import (  # noqa: E402
     _inject_instruction_file,
     get_registry as _components_get_registry,
     record_component_state as _components_record_state,
+    reset_registry_cache as _components_reset_cache,
     resolve_component as _components_resolve,
     snapshot_components as _components_snapshot,
 )
@@ -3317,6 +3318,116 @@ def components_disable(
         except Exception as err:
             rprint(fmt.error(f"Failed to disable {spec.id}: {err}"), file=sys.stderr)
             exit_code = 1
+
+    if exit_code:
+        raise typer.Exit(code=exit_code)
+
+
+# ── uninstall: bulk revert of 'agent init' ─────────────────────────────
+
+@agent_app.command("uninstall")
+def agent_uninstall(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview what would be removed without changing anything"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+    purge: bool = typer.Option(False, "--purge", help="Also delete ~/.rafter (config, bin, patterns, audit log)"),
+    local: bool = typer.Option(False, "--local", help="Operate against ./.rafter and ./.* platform dirs (matches 'agent init --local')"),
+):
+    """Remove all rafter agent integrations installed by 'rafter agent init'."""
+    # --local re-roots HOME at cwd so every component's Path.home()-based
+    # path resolves into the project. Mirrors init's --local semantics
+    # without forking per-component path logic.
+    if local:
+        os.environ["HOME"] = str(Path.cwd())
+        _components_reset_cache()
+
+    home = Path.home()
+    rafter_dir = home / ".rafter"
+    registry = _components_get_registry()
+
+    installed = []
+    for spec in registry:
+        try:
+            if spec.is_installed():
+                installed.append(spec)
+        except Exception:
+            continue
+
+    purge_targets: list[Path] = []
+    if purge:
+        for sub in ("config.json", "audit.jsonl", "bin", "patterns"):
+            p = rafter_dir / sub
+            if p.exists():
+                purge_targets.append(p)
+
+    if not installed and not purge_targets:
+        rprint(fmt.info("Nothing to uninstall — no rafter agent components are installed."))
+        return
+
+    if dry_run:
+        rprint(fmt.info("DRY RUN — no files will be modified."))
+        rprint(fmt.divider())
+        if installed:
+            rprint("Components to remove:")
+            for spec in installed:
+                rprint(f"  REMOVE  {spec.id.ljust(28)} {spec.path}")
+        if purge_targets:
+            rprint("Purge targets:")
+            for p in purge_targets:
+                rprint(f"  DELETE  {p}")
+        if not purge:
+            rprint(fmt.info(
+                "User data preserved: ~/.rafter/audit.jsonl, ~/.rafter/config.json, .rafter.yml (pass --purge to remove)",
+            ))
+        rprint(fmt.info("Re-run without --dry-run to apply."))
+        return
+
+    if not yes:
+        summary = (
+            f"Uninstall {len(installed)} component{'' if len(installed) == 1 else 's'}"
+            + (f" and purge {rafter_dir}" if purge else "")
+            + "?"
+        )
+        # Non-TTY (CI, piped stdin) defaults to "no" — never blocks a script.
+        if not sys.stdin.isatty():
+            rprint(fmt.info(f"{summary} Aborted (non-interactive stdin). Re-run with --yes to confirm."))
+            return
+        confirmed = typer.confirm(summary, default=False)
+        if not confirmed:
+            rprint(fmt.info("Aborted."))
+            return
+
+    exit_code = 0
+    for spec in installed:
+        try:
+            spec.uninstall()
+            _components_record_state(spec.id, False)
+            rprint(fmt.success(f"Removed {spec.id} ({spec.path})"))
+        except Exception as err:
+            rprint(fmt.error(f"Failed to remove {spec.id}: {err}"), file=sys.stderr)
+            exit_code = 1
+
+    if purge:
+        for target in purge_targets:
+            try:
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+                rprint(fmt.success(f"Purged {target}"))
+            except Exception as err:
+                rprint(fmt.error(f"Failed to purge {target}: {err}"), file=sys.stderr)
+                exit_code = 1
+        # Drop the now-empty ~/.rafter shell if nothing else remains.
+        try:
+            if rafter_dir.exists() and not any(rafter_dir.iterdir()):
+                rafter_dir.rmdir()
+        except Exception:
+            pass
+    else:
+        rprint(fmt.info(
+            "Preserved: ~/.rafter/audit.jsonl, ~/.rafter/config.json, .rafter.yml. "
+            "Re-run with --purge to delete them too.",
+        ))
 
     if exit_code:
         raise typer.Exit(code=exit_code)
