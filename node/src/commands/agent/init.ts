@@ -1263,7 +1263,7 @@ export function createInitCommand(): Command {
         const result = await skillManager.installRafterSkillVerbose();
         openclawOk = result.ok;
         if (result.ok) {
-          console.log(fmt.success("Installed Rafter Security skill to ~/.openclaw/skills/rafter-security.md"));
+          console.log(fmt.success(`Installed Rafter Security skill to ${result.destPath}`));
           manager.set("agent.environments.openclaw.enabled", true);
         } else {
           console.log(fmt.error("Failed to install Rafter Security skill"));
