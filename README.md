@@ -478,7 +478,7 @@ Add to any MCP client config:
 |-------|-------------|-----------|-------------------|
 | Claude Code | Hooks + Skills | `~/.claude` | `~/.claude/skills/rafter/` and `rafter-agent-security/` |
 | Codex CLI | Skills | `~/.codex` | `~/.agents/skills/rafter/` and `rafter-agent-security/` |
-| OpenClaw | Skills | `~/.openclaw` | `~/.openclaw/skills/rafter-security.md` |
+| OpenClaw | Skills | `~/.openclaw` | `~/.openclaw/workspace/skills/rafter-security/SKILL.md` |
 | Gemini CLI | MCP server | `~/.gemini` | `~/.gemini/settings.json` |
 | Cursor | MCP server | `~/.cursor` | `~/.cursor/mcp.json` |
 | Windsurf | MCP server | `~/.codeium/windsurf` | `~/.codeium/windsurf/mcp_config.json` |
