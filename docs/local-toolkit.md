@@ -86,6 +86,8 @@ Raw secret values are never included in output. Pipe to `jq`, feed to CI gates, 
 
 **Engine selection:** Uses Betterleaks when available (more patterns), falls back to built-in regex. Override with `--engine betterleaks|patterns|auto`.
 
+> **Known issue (betterleaks 1.1.2):** the bundled Betterleaks build does not detect the AWS access-key class (`AKIA[A-Z0-9]{16}`). The built-in 21-pattern engine catches it. If your secret-coverage story depends on AKIA detection — for example, in a CI gate or pre-commit hook — pass `--engine patterns` until a newer Betterleaks is pinned. The architectural fix (run both engines and union findings by default) is tracked separately; in the meantime, CI smoke tests in this repo use `--engine patterns` for the same reason.
+
 ## Pre-commit hook
 
 Automatically scan staged files before every `git commit`. The most effective way to prevent secrets from entering version control.
