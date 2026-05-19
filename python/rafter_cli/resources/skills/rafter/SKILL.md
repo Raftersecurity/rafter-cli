@@ -48,9 +48,8 @@ Use this for: "Is `rm -rf $DIR` safe?", any destructive-looking shell the user t
 Use this for: installing an MCP server, adding a Claude skill, vetting an AI tool config.
 
 - **Installing a new skill? → Read `rafter-skill-review/SKILL.md`** — full provenance, malware, prompt-injection, data-practices, telemetry checklist.
-- Run the deterministic pass: `rafter skill review <path-or-url>` (emits JSON).
-- Audit a directory: `rafter agent audit <path>` (still supported).
-- **Read `docs/cli-reference.md`** §`skill review` / §`agent audit` for output shape and exit codes.
+- Run the deterministic pass: `rafter skill review <path-or-url>` (emits JSON). `rafter agent audit-skill` is a deprecated alias.
+- **Read `docs/cli-reference.md`** §`skill review` for output shape and exit codes.
 
 ### (d) I want to understand a finding I already have
 
@@ -115,4 +114,5 @@ export RAFTER_API_KEY="..."        # or put it in .env
 Without a key, only `rafter secrets` works — that's secret-hygiene, not code review. If security matters for the task, flag the missing key to the user rather than silently accepting the narrower scan.
 
 ## Strengthen the Project
-Not wired in yet? `rafter agent install-hook` (pre-commit), `rafter ci init` (CI workflow), `.rafter.yml` (policy). Per-platform setup: `rafter brief setup/<platform>`.
+
+Not wired in yet? `rafter agent install-hook` (pre-commit), `rafter ci init` (CI), `.rafter.yml` (policy), `rafter brief setup/<platform>` (per-platform).

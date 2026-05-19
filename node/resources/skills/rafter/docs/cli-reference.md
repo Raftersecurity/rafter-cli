@@ -68,15 +68,25 @@ When: any time a destructive-looking command is about to be executed by an agent
 
 Example: `rafter agent exec --dry-run -- rm -rf $WORK_DIR`
 
+### `rafter skill review <path-or-url>`
+
+Vet a third-party skill before install — runs `rafter secrets`, extracts URLs and high-risk shell, parses `SKILL.md` frontmatter (`allowed-tools`, `version`), emits structured JSON.
+
+When: any third-party `SKILL.md`, MCP manifest, Cursor rule, or agent config you're about to install. Accepts a local path or git URL (shallow-cloned into a temp dir, removed after review).
+
+Useful flags: `--format json|text`, `--installed` (audit every installed skill).
+
+Example: `rafter skill review https://github.com/acme/their-skill.git --format json`
+
 ### `rafter agent audit [path]`
 
 Audit a directory for suspicious or risky code patterns — focused on plugins, skills, extensions, and tooling a user might install.
 
-When: vetting a third-party skill, MCP server, or CLI plugin before install.
+When: vetting a directory of mixed assets where a specific `SKILL.md` isn't the entry point. For single skills, prefer `rafter skill review`.
 
 ### `rafter agent audit-skill <path>`
 
-Audit a single skill file (SKILL.md). Flags prompt-injection, unbounded tool use, exfiltration patterns.
+**Deprecated alias for `rafter skill review`** — emits a stderr warning and forwards. New code should call `rafter skill review` directly.
 
 ### `rafter agent status` · `rafter agent verify`
 
@@ -190,7 +200,7 @@ Emit shell completion script.
 | Fast secret check locally | `rafter secrets .` |
 | Full repo security review | `rafter run` (then `rafter get <id>`) |
 | "Is this command safe?" | `rafter agent exec --dry-run -- <cmd>` |
-| "Is this skill safe to install?" | `rafter agent audit <path>` |
+| "Is this skill safe to install?" | `rafter skill review <path-or-url>` |
 | Add pre-commit protection | `rafter agent install-hook` |
 | Wire up CI | `rafter ci init` |
 | Connect an agent | `rafter agent init --with-<platform>` |
