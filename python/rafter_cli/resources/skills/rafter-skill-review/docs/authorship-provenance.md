@@ -32,7 +32,15 @@ Unsigned does not automatically mean bad. **Changed signatures** (used to sign, 
 - **Registry page**: `npm view <pkg>`, `pip show <pkg>`, plugin marketplace page.
 - **Download count / star count**: high numbers don't prove safety, but sudden spikes after a rename / transfer can indicate squatting.
 - **Transferred ownership**: `npm view <pkg> maintainers` history, `pypi` project audit log, GitHub transfer events. A skill that changed hands recently is a classic supply-chain pattern — the new owner publishes a trojaned version to existing users.
-- **Typo-squat check**: compare name to popular legitimate skills. Levenshtein distance of 1–2 from a well-known name, combined with recent registration, is a strong signal.
+- **Typo-squat check**: compare the name to popular legitimate skills/packages. Levenshtein distance of 1–2 from a well-known name, combined with recent registration, is a strong signal. Quick mechanical check (npm example):
+  ```bash
+  npm view <suspect-pkg> time.created     # is this brand new?
+  npm view <known-good-pkg> time.created  # is the lookalike old?
+  # If suspect is days/weeks old and a single-char edit of an old popular
+  # package, treat as typo-squat until proven otherwise. Examples seen in
+  # the wild: `eslint-config-airbn` (vs `eslint-config-airbnb`),
+  # `requets` (vs `requests`), `crossenv` (vs `cross-env`).
+  ```
 
 ## 5. Parallel artifacts from the same author
 
