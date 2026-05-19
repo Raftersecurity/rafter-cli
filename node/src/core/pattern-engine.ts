@@ -18,11 +18,25 @@ const VARIABLE_NAME_RE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
 const LOWERCASE_IDENT_RE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
 const QUOTED_VALUE_RE = /['"]([^'"]+)['"]/;
 
+interface CompiledPattern {
+  pattern: Pattern;
+  regex: RegExp;
+}
+
 export class PatternEngine {
   private patterns: Pattern[];
+  private compiled: CompiledPattern[];
 
   constructor(patterns: Pattern[]) {
     this.patterns = patterns;
+    // Compile each pattern's regex once. Malformed patterns are skipped
+    // with a stderr warning so a single bad regex can't take down the engine.
+    this.compiled = [];
+    for (const pattern of patterns) {
+      const regex = this.createRegex(pattern.regex);
+      if (regex === null) continue;
+      this.compiled.push({ pattern, regex });
+    }
   }
 
   /**
@@ -31,8 +45,8 @@ export class PatternEngine {
   scan(text: string): PatternMatch[] {
     const matches: PatternMatch[] = [];
 
-    for (const pattern of this.patterns) {
-      const regex = this.createRegex(pattern.regex);
+    for (const { pattern, regex } of this.compiled) {
+      regex.lastIndex = 0;
       let match;
 
       while ((match = regex.exec(text)) !== null) {
@@ -58,8 +72,8 @@ export class PatternEngine {
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
       const line = lines[lineNum];
 
-      for (const pattern of this.patterns) {
-        const regex = this.createRegex(pattern.regex);
+      for (const { pattern, regex } of this.compiled) {
+        regex.lastIndex = 0;
         let match;
 
         while ((match = regex.exec(line)) !== null) {
@@ -84,8 +98,8 @@ export class PatternEngine {
   redactText(text: string): string {
     let redacted = text;
 
-    for (const pattern of this.patterns) {
-      const regex = this.createRegex(pattern.regex);
+    for (const { pattern, regex } of this.compiled) {
+      regex.lastIndex = 0;
       redacted = redacted.replace(regex, (match) =>
         this.isFalsePositive(pattern, match) ? match : this.redact(match)
       );
@@ -123,9 +137,10 @@ export class PatternEngine {
   }
 
   /**
-   * Create RegExp from pattern string, extracting inline flags
+   * Create RegExp from pattern string, extracting inline flags.
+   * Returns null if the pattern is malformed (logs a warning).
    */
-  private createRegex(patternStr: string): RegExp {
+  private createRegex(patternStr: string): RegExp | null {
     // Extract inline flags like (?i) and convert to JS flags
     let flags = "g";
     let pattern = patternStr;
@@ -139,9 +154,9 @@ export class PatternEngine {
     try {
       return new RegExp(pattern, flags);
     } catch (e) {
-      // If pattern is invalid, return a regex that matches nothing
+      // Skip malformed patterns rather than crashing the engine
       console.error(`Invalid regex pattern: ${patternStr}`);
-      return /(?!)/;
+      return null;
     }
   }
 
