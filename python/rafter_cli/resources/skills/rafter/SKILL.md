@@ -15,7 +15,7 @@ Rafter ships three tiers. **They are not interchangeable.** The local tier is na
 2. **Remote fast (`rafter run`, default mode)** — SAST + SCA + secrets via the Rafter API. This is the real code-analysis pass: dataflow, taint, known-vulnerable dependencies, crypto misuse, injection sinks. Needs `RAFTER_API_KEY`.
 3. **Remote plus (`rafter run --mode plus`)** — agentic deep-dive: LLM-guided investigation of suspicious patterns the rules engine flags. Slower, higher signal. Code is deleted server-side after the run.
 
-**Default expectation for a security-relevant task**: run `rafter run`. Fall back to `rafter secrets` only when no API key is available or you specifically need offline secret-hygiene. If you've only run the local scanner, say so explicitly — don't claim the code was "scanned" without qualification.
+**Default expectation for a security-relevant task**: run `rafter run --mode plus` — plus is a superset of fast (adds agentic deep-dives on top of the same SAST+SCA pass), so you do NOT also need to run fast separately. Pick `--mode fast` (the literal flag default) only for cheap iteration where speed matters more than depth. Fall back to `rafter secrets` only when no API key is available or you specifically need offline secret-hygiene. If you've only run the local scanner, say so explicitly — don't claim the code was "scanned" without qualification.
 
 Stable exit codes, stable JSON shapes, deterministic findings. Safe to chain in CI and in agent loops.
 
@@ -29,9 +29,9 @@ Pick the branch that matches what you're trying to do. Each branch points at a s
 
 Use this for: "Is this safe to push?", "Check for leaks", "Run a security scan", pre-merge / pre-deploy gating, post-dependency-update checks.
 
-- **Default: `rafter run`** — remote SAST + SCA + secrets. This is the real scan. Needs `RAFTER_API_KEY`.
-- **Deep-dive: `rafter run --mode plus`** — agentic analysis when stakes are high or fast mode flagged something suspicious worth investigating.
-- **Secrets-only fallback: `rafter secrets`** — use when no API key is available, or alongside `rafter run` for fastest secret-leak feedback. Does NOT analyse code — only hunts hardcoded credentials.
+- **Default: `rafter run --mode plus`** — remote SAST + SCA + secrets PLUS agentic deep-dive. Plus is a SUPERSET of fast; do NOT also run fast separately. Needs `RAFTER_API_KEY`.
+- **Cheap iteration: `rafter run`** — same SAST + SCA + secrets pass without the agentic deep-dive. Pick when speed matters more than depth (mid-implementation, tight CI loops).
+- **Secrets-only fallback: `rafter secrets`** — use when no API key is available. Does NOT analyse code — only hunts hardcoded credentials.
 - **Read `docs/backend.md`** for fast-vs-plus modes, auth, latency, cost.
 - **Read `docs/cli-reference.md`** §`secrets`, §`scan`, §`run` for full flag matrix.
 

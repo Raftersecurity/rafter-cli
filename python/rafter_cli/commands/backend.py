@@ -148,7 +148,7 @@ def register_backend_commands(app: typer.Typer) -> None:
         branch: str = typer.Option(None, "--branch", "-b", help="branch (default: current else main)"),
         api_key: str = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
         fmt: str = typer.Option("md", "--format", "-f", help="json | md"),
-        mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus"),
+        mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus. Prefer plus for any security-relevant scan — it adds agentic deep-dive analysis on top of fast. fast stays cheap for quick iteration."),
         github_token: str = typer.Option(None, "--github-token", envvar="RAFTER_GITHUB_TOKEN", help="GitHub PAT for private repos"),
         skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
         quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
