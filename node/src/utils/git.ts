@@ -1,16 +1,16 @@
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
-export function git(cmd: string): string {
-  return execSync(`git ${cmd}`, { stdio: ["ignore", "pipe", "ignore"] })
+export function git(args: string[]): string {
+  return execFileSync("git", args, { stdio: ["ignore", "pipe", "ignore"] })
     .toString()
     .trim();
 }
 
-export function safeBranch(gitFn: (c: string) => string): string {
+export function safeBranch(gitFn: (a: string[]) => string): string {
   try {
-    return gitFn("symbolic-ref --quiet --short HEAD");
+    return gitFn(["symbolic-ref", "--quiet", "--short", "HEAD"]);
   } catch {
-    return gitFn("rev-parse --short HEAD");
+    return gitFn(["rev-parse", "--short", "HEAD"]);
   }
 }
 
@@ -29,9 +29,9 @@ export function detectRepo(opts: { repo?: string; branch?: string; quiet?: boole
   let branch = opts.branch || branchEnv;
   try {
     if (!repoSlug || !branch) {
-      if (git("rev-parse --is-inside-work-tree") !== "true")
+      if (git(["rev-parse", "--is-inside-work-tree"]) !== "true")
         throw new Error("not a repo");
-      if (!repoSlug) repoSlug = parseRemote(git("remote get-url origin"));
+      if (!repoSlug) repoSlug = parseRemote(git(["remote", "get-url", "origin"]));
       if (!branch) {
         try {
           branch = safeBranch(git);
