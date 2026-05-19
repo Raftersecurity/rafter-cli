@@ -7,6 +7,168 @@
 >
 > Re-audited 2026-04-30 by raftercli/polecats/obsidian against `origin/main`
 > (commit `e366778`, v0.7.7). See "Re-audit (2026-04-30)" section below.
+>
+> Re-audited 2026-05-19 by sable polecat (sable-2vz / B10 follow-up) against
+> `origin/maylist` HEAD `d2d9f6a`, v0.8.1. See "Re-audit (2026-05-19) at v0.8.1"
+> section below. The earlier sections are preserved as history.
+
+## Re-audit (2026-05-19) at v0.8.1
+
+Re-run after the v0.7.7 → v0.8.1 window. Pinned at `origin/maylist` `d2d9f6a`
+(node/package.json v0.8.1, python/pyproject.toml v0.8.1). Host overloaded — no
+test run; audit is code-walk only against `node/src/commands/agent/init.ts`,
+`verify.ts`, `components.ts`, and Python mirrors at `python/rafter_cli/commands/agent.py`.
+
+### Updated state matrix (v0.8.1)
+
+Columns: `Skills` (count of SKILL.md files installed by the init path, of 4
+shipped templates) / `MCP` / `Hooks` / `Instruction file` / `Per-skill rules`
+/ `Sub-agent` / `Verify` (`agent verify` covers it) / `Uninstall` (`agent
+disable`/`uninstall` cleanly tears down).
+
+| Platform     | Skills (init) | MCP                                      | Hooks                                                    | Instruction file               | Per-skill rules                  | Sub-agent                                  | Verify                  | Uninstall (components.ts)       |
+|--------------|---------------|------------------------------------------|----------------------------------------------------------|--------------------------------|----------------------------------|--------------------------------------------|-------------------------|---------------------------------|
+| Claude Code  | **3 of 4**    | yes (`.mcp.json` project / settings user) | yes (`PreToolUse` + `PostToolUse`)                        | CLAUDE.md                      | n/a (uses skills)                | yes (`.claude/agents/rafter.md`)            | yes (file + `--probe`)  | hooks, instructions, skills, mcp |
+| Codex        | **3 of 4**    | n/a (no MCP in Codex)                    | yes (`PreToolUse: Bash\|apply_patch` + `PostToolUse`)     | AGENTS.md                      | n/a                              | n/a (no first-class primitive)              | yes (skills only)        | hooks, skills (no instructions)  |
+| Gemini       | **3 of 4**    | yes (`.gemini/settings.json`)            | yes (`BeforeTool` regex + `AfterTool`)                    | GEMINI.md                      | n/a                              | n/a                                        | yes (MCP only)          | hooks, mcp (no skills, no instructions) |
+| Cursor       | n/a (rules)   | yes (`.cursor/mcp.json`)                 | yes (`preToolUse` + `postToolUse` + `beforeShellExecution`) | per-skill rules (see col)     | **4 of 4** in `.cursor/rules/`   | yes (`.cursor/agents/rafter.md`)            | yes (MCP only)          | hooks, instructions (rules+sub-agent), mcp |
+| Windsurf     | n/a (rules)   | yes (`~/.codeium/windsurf/mcp_config.json`) | none (no hook surface; intentionally not installed)     | inherits root `AGENTS.md`      | **4 of 4** in `.windsurf/rules/` | n/a                                        | yes (MCP only)          | rules, mcp (no AGENTS.md teardown) |
+| Continue.dev | n/a (rules)   | yes (`.continue/config.json`)            | none (no hook surface; pruned in rf-cia phase b)         | none                           | **4 of 4** in `.continue/rules/` | n/a                                        | yes (MCP only)          | rules, mcp                       |
+| Aider        | n/a (read)    | n/a (no native MCP; legacy YAML stripped) | n/a (no hook surface)                                   | RAFTER.md via `read:`          | n/a                              | n/a                                        | yes (read-entry + file) | aider.read                       |
+| OpenClaw     | 1 (ClawHub)   | n/a                                      | n/a                                                     | none                           | n/a                              | n/a                                        | yes (file + legacy hint) | openclaw.skills (**wrong path**) |
+
+Notes:
+
+- "Skills (init) = 3 of 4" for Claude Code / Codex / Gemini reflects the
+  current `AGENT_SKILLS` registry in `node/src/commands/agent/init.ts:27-31`
+  (and Python `_AGENT_SKILLS` at `python/rafter_cli/commands/agent.py:118-122`),
+  which omits `rafter-skill-review`. The dry-run plan, the Cursor /
+  Windsurf / Continue rule lists, and the `components.ts` registry's
+  `COMPONENT_SKILL_NAMES` all enumerate 4. The init path therefore disagrees
+  with `rafter agent enable claude-code.skills` (which installs 4). New gap.
+- "Verify (MCP only)" for Gemini / Cursor / Windsurf / Continue means the
+  platform check confirms the MCP server entry but does NOT confirm hooks
+  fired or rules were copied. `--probe` covers Claude Code only.
+- Components registry IDs (Node + Python): `claude-code.hooks`, `.instructions`,
+  `.skills`, `.mcp`; `codex.hooks`, `.skills`; `cursor.hooks`, `.instructions`
+  (rules + sub-agent), `.mcp`; `gemini.hooks`, `.mcp`; `windsurf.rules`, `.mcp`;
+  `continue.rules`, `.mcp`; `aider.read`; `openclaw.skills`. No `gemini.skills`,
+  no `gemini.instructions`, no `codex.instructions`, no `windsurf.instructions`
+  for AGENTS.md.
+
+### What's improved since v0.7.7
+
+- **Cursor deep support shipped** (rf-svn3, PR #81) — full hook coverage
+  (`preToolUse` + `postToolUse` + `beforeShellExecution`), 4 per-skill rules at
+  `.cursor/rules/<skill>.mdc`, and `.cursor/agents/rafter.md` sub-agent.
+- **Windsurf deep support shipped** (rf-0vr3, PR #84) — pruned silent-no-op
+  hooks install; 4 per-skill rules at `.windsurf/rules/<skill>.md`; root
+  `AGENTS.md` written via `installGlobalInstructions` (Windsurf reads it
+  natively). Windsurf also installs at `--local` scope now.
+- **Aider read-only context shipped** (rf-du2o, PR #85) — `RAFTER.md` write +
+  `read: [..., RAFTER.md]` in `.aider.conf.yml`. Legacy
+  `mcp-server-command: rafter mcp serve` line is stripped on reinstall.
+- **Continue.dev per-skill rules shipped** (rf-acz0, PR #86) — 4 rules at
+  `.continue/rules/<skill>.md` with Continue.dev YAML frontmatter. Continue.dev
+  installs at `--local` scope now.
+- **Codex hook matcher widened** (rf-ovql) — `PreToolUse.matcher` now
+  `"Bash|apply_patch"` so file edits via `apply_patch` actually trigger pretool.
+- **Gemini hook matcher tightened** (rf-044o, PR #87) — `BeforeTool.matcher`
+  now `"run_shell_command|write_file|replace|edit"` matching current Gemini
+  docs verbatim.
+- **`rafter agent verify` overhauled** (rf-65zg, PR #88) — Python now covers
+  all 8 platforms (parity with Node). Both add Continue.dev + Aider checks.
+  New `--json` flag and `--probe` flag (runtime probe for Claude Code).
+- **Onboarding contract published** (rf-o329, PR #89) —
+  `docs/adding-a-platform.md` is the contract any new agent platform
+  integration follows.
+- **OpenClaw rebuilt as a ClawHub skill** (rf-zgwj) — install moved to
+  `~/.openclaw/workspace/skills/rafter-security/SKILL.md` (the canonical
+  ClawHub-discovered path). Returned to `--all`. Legacy `~/.openclaw/skills/
+  rafter-security.md` stripped on reinstall.
+- **Betterleaks migration shipped** (v0.8.0) — gitleaks → betterleaks. Legacy
+  `~/.rafter/bin/gitleaks` is detected by `agent verify` / `status` with an
+  upgrade hint; the `--with-gitleaks` / `--engine gitleaks` / `update-gitleaks`
+  CLI flags have been removed.
+- **Dry-run plan shipped** (rf-hrtd) — `rafter agent init --dry-run` enumerates
+  every file path the install would touch without writing anything.
+- **Component-granular install** — `rafter agent enable/disable <id>` for 17
+  components across all 8 platforms.
+
+### Gaps remaining (file as new beads, `discovered-from:sable-2vz`)
+
+1. **Init path installs 3 skills instead of 4 for Claude Code / Codex / Gemini.**
+   `AGENT_SKILLS` in `node/src/commands/agent/init.ts:27-31` omits
+   `rafter-skill-review`; Python `_AGENT_SKILLS` at `agent.py:118-122` same
+   miss. The dry-run printout, the Cursor / Windsurf / Continue rule lists,
+   and `components.ts:COMPONENT_SKILL_NAMES` all list 4. Result: `rafter
+   agent init --with-claude-code` ships 3 skills but `rafter agent enable
+   claude-code.skills` ships 4. Same divergence for `codex.skills`. Add
+   `rafter-skill-review` to `AGENT_SKILLS` / `_AGENT_SKILLS`.
+
+2. **`openclaw.skills` component points at the legacy path.** `components.ts:976-998`
+   manages `~/.openclaw/skills/rafter-security.md` while the init path
+   (rf-zgwj) ships at `~/.openclaw/workspace/skills/rafter-security/SKILL.md`.
+   `rafter agent disable openclaw.skills` and `agent enable openclaw.skills`
+   operate on the wrong file — disable is a no-op against current installs.
+   Update the component spec to the ClawHub path; mirror in Python.
+
+3. **No component spec for AGENTS.md / GEMINI.md instruction files.** Codex
+   and Gemini write AGENTS.md / GEMINI.md respectively in
+   `installGlobalInstructions`, but `components.ts` has no
+   `codex.instructions` or `gemini.instructions`. `agent disable
+   codex.instructions` is not callable; AGENTS.md is orphaned after Codex
+   teardown. Same for Windsurf which inherits root `AGENTS.md`.
+
+4. **No component spec for Gemini skills.** Gemini install writes 3 skills to
+   `.agents/skills/<name>/SKILL.md` and runs `gemini skills link`, but
+   `components.ts` has no `gemini.skills` entry — user can't `agent disable
+   gemini.skills` to roll back the `gemini skills link` registration.
+
+5. **`agent verify` is shallow for the MCP-only platforms.** Cursor /
+   Windsurf / Continue / Gemini checks confirm only the MCP server entry —
+   they don't confirm hooks are present, rules are copied, or sub-agents
+   exist. Cursor in particular ships hooks + rules + sub-agent + MCP and we
+   verify only MCP. Bring each `checkX` to confirm every surface the install
+   writes for that platform.
+
+6. **`agent verify --probe` covers only Claude Code.** Cursor / Codex /
+   Gemini hooks all invoke `rafter hook pretool` with different `--format`
+   flags. The rf-65zg `--probe` synthesizes a Claude-format payload and asserts
+   `audit.jsonl`. Extend `--probe` to fire one synthetic payload per supported
+   hook format (`--format cursor`, `--format codex`, `--format gemini`) so we
+   catch the rf-luk-style "wrote file but never fires" failure for non-Claude
+   platforms.
+
+7. **`docs/supported-platforms.md` is stale.** Still says "MCP server" for
+   Cursor / Windsurf / Continue / Aider and reports skills installed at
+   `~/.claude/skills/rafter/` and `rafter-agent-security/` (the latter name
+   doesn't exist anywhere in the install path). Doesn't mention per-skill
+   rules, sub-agents, AGENTS.md, RAFTER.md, or the ClawHub OpenClaw path.
+   Lists OpenClaw skill install at `~/.openclaw/skills/rafter-security.md`
+   (legacy). Patched in this commit but the underlying skill set listed in
+   the body should be re-checked against the init path after gap #1 lands.
+
+Beads to file (parent agent — do NOT file these from this sub-task):
+
+- Gap 1 → P1 bug, "init path installs 3 of 4 skills for Claude Code / Codex /
+  Gemini; add rafter-skill-review to AGENT_SKILLS"
+- Gap 2 → P1 bug, "openclaw.skills component points at legacy path"
+- Gap 3 → P2 task, "add codex.instructions / gemini.instructions / windsurf.instructions component specs"
+- Gap 4 → P2 task, "add gemini.skills component spec"
+- Gap 5 → P2 task, "broaden agent verify checks for Cursor / Windsurf / Continue / Gemini beyond MCP entry"
+- Gap 6 → P2 task, "extend agent verify --probe to Cursor / Codex / Gemini hook formats"
+- Gap 7 → P3 docs, "docs/supported-platforms.md content re-check after gap 1 fix"
+
+### Findings unchanged since 2026-04-30
+
+- AGENTS.md as cross-platform context standard (Codex + Windsurf): unchanged
+  and realized at workspace root.
+- `.claude/agents/` is multi-platform (Cursor reads it too): unchanged.
+- Onboarding contract: now shipped at `docs/adding-a-platform.md` (gap closed).
+- All 8 platforms covered by `agent verify` in both Node and Python (gap closed).
+
+
 
 ## Summary
 
