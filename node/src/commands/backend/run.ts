@@ -110,7 +110,7 @@ function addRunOptions(cmd: Command): Command {
     .option("-b, --branch <branch>", "branch (default: current else main)")
     .option("-k, --api-key <key>", "API key or RAFTER_API_KEY env var")
     .option("-f, --format <format>", "json | md", "md")
-    .option("-m, --mode <mode>", "scan mode: fast | plus. Prefer 'plus' for any security-relevant scan — it adds agentic deep-dive analysis on top of fast. 'fast' stays cheap for quick iteration.", "fast")
+    .option("-m, --mode <mode>", "scan mode: fast | plus. 'plus' is a strict SUPERSET of 'fast' (same SAST+SCA+secrets pass + agentic deep-dive) — pick one, do NOT run both. Prefer 'plus' for security-relevant scans; 'fast' for cheap iteration.", "fast")
     .option("--github-token <token>", "GitHub PAT for private repos (or RAFTER_GITHUB_TOKEN env var)")
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages");
