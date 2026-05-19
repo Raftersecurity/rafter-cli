@@ -4,12 +4,12 @@ import { injectInstructionFile } from "./instruction-block.js";
 import { fmt } from "../../utils/formatter.js";
 import fs from "fs";
 import path from "path";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 /** Find the git root directory, or null if not in a git repo */
 function findGitRoot(): string | null {
   try {
-    return execSync("git rev-parse --show-toplevel", {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "ignore"],
