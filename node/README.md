@@ -27,9 +27,8 @@ rafter secrets .
 # Install Rafter into your AI coding agents (Claude Code, Codex, Cursor, etc.)
 rafter agent init --all
 
-# Scan a remote repo (needs RAFTER_API_KEY). Omit --repo to scan the
-# current directory's repo (auto-detected from git remote).
-rafter run --repo owner/repo
+# Scan a remote repo (needs RAFTER_API_KEY)
+rafter run --repo owner/repo --branch main
 ```
 
 See the [root README](https://github.com/Raftersecurity/rafter-cli/blob/main/README.md) for the full command reference, supported platforms, and integration recipes.
