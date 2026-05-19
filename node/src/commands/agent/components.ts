@@ -975,7 +975,13 @@ function aiderRead(): ComponentSpec {
 
 function openclawSkill(): ComponentSpec {
   const home = os.homedir();
-  const skillPath = path.join(home, ".openclaw", "skills", "rafter-security.md");
+  // rf-zgwj moved the install to ClawHub's canonical workspace path so
+  // OpenClaw actually discovers the skill at session start. The legacy
+  // ~/.openclaw/skills/rafter-security.md path was never read by OpenClaw;
+  // we still detect/remove it here as a migration cleanup.
+  const skillDir = path.join(home, ".openclaw", "workspace", "skills", "rafter-security");
+  const skillPath = path.join(skillDir, "SKILL.md");
+  const legacyPath = path.join(home, ".openclaw", "skills", "rafter-security.md");
   return {
     id: "openclaw.skills",
     platform: "openclaw",
@@ -983,10 +989,9 @@ function openclawSkill(): ComponentSpec {
     description: "OpenClaw rafter-security skill",
     detectDir: path.join(home, ".openclaw"),
     path: skillPath,
-    isInstalled: () => fs.existsSync(skillPath),
+    isInstalled: () => fs.existsSync(skillPath) || fs.existsSync(legacyPath),
     install: () => {
-      const dir = path.dirname(skillPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true });
       const template = skillTemplatePath("rafter");
       if (fs.existsSync(template)) {
         fs.copyFileSync(template, skillPath);
@@ -994,6 +999,16 @@ function openclawSkill(): ComponentSpec {
     },
     uninstall: () => {
       if (fs.existsSync(skillPath)) fs.rmSync(skillPath, { force: true });
+      // Best-effort: drop the now-empty skill dir we created.
+      try {
+        if (fs.existsSync(skillDir) && fs.readdirSync(skillDir).length === 0) {
+          fs.rmdirSync(skillDir);
+        }
+      } catch {
+        /* leave it */
+      }
+      // Migration cleanup: also remove the pre-rf-zgwj legacy file if present.
+      if (fs.existsSync(legacyPath)) fs.rmSync(legacyPath, { force: true });
     },
   };
 }
