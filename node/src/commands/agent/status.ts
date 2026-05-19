@@ -2,7 +2,7 @@ import { Command } from "commander";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { getRafterDir, getAuditLogPath, getBinDir } from "../../core/config-defaults.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
@@ -38,12 +38,12 @@ export function createStatusCommand(): Command {
       const localBetterleaks = path.join(getBinDir(), `betterleaks${exeExt}`);
       let betterleaksStatus = "not found — run: rafter agent init --with-betterleaks";
       try {
-        const ver = execSync("betterleaks version", { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+        const ver = execFileSync("betterleaks", ["version"], { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
         betterleaksStatus = `${ver} (PATH)`;
       } catch {
         if (fs.existsSync(localBetterleaks)) {
           try {
-            const ver = execSync(`"${localBetterleaks}" version`, { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+            const ver = execFileSync(localBetterleaks, ["version"], { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
             betterleaksStatus = `${ver} (local)`;
           } catch {
             betterleaksStatus = `${localBetterleaks} (binary error)`;
