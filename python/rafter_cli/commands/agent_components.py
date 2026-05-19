@@ -946,10 +946,16 @@ def _aider_read() -> ComponentSpec:
 def _openclaw_skill() -> ComponentSpec:
     home = Path.home()
     detect_dir = home / ".openclaw"
-    skill_path = detect_dir / "skills" / "rafter-security.md"
+    # rf-zgwj moved the install to ClawHub's canonical workspace path so
+    # OpenClaw actually discovers the skill at session start. The legacy
+    # ~/.openclaw/skills/rafter-security.md path was never read by OpenClaw;
+    # we still detect/remove it here as a migration cleanup.
+    skill_dir = detect_dir / "workspace" / "skills" / "rafter-security"
+    skill_path = skill_dir / "SKILL.md"
+    legacy_path = detect_dir / "skills" / "rafter-security.md"
 
     def install() -> None:
-        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_dir.mkdir(parents=True, exist_ok=True)
         # Try primary skill location, then legacy resource name.
         content = _skill_text("skills", "rafter", "SKILL.md") or _skill_text("rafter-security-skill.md")
         if content is not None:
@@ -958,6 +964,15 @@ def _openclaw_skill() -> ComponentSpec:
     def uninstall() -> None:
         if skill_path.exists():
             skill_path.unlink()
+        # Best-effort: drop the now-empty skill dir we created.
+        try:
+            if skill_dir.exists() and not any(skill_dir.iterdir()):
+                skill_dir.rmdir()
+        except OSError:
+            pass
+        # Migration cleanup: also remove the pre-rf-zgwj legacy file if present.
+        if legacy_path.exists():
+            legacy_path.unlink()
 
     return ComponentSpec(
         id="openclaw.skills",
@@ -966,7 +981,7 @@ def _openclaw_skill() -> ComponentSpec:
         description="OpenClaw rafter-security skill",
         detect_dir=detect_dir,
         path=skill_path,
-        is_installed=lambda: skill_path.exists(),
+        is_installed=lambda: skill_path.exists() or legacy_path.exists(),
         install=install,
         uninstall=uninstall,
     )
