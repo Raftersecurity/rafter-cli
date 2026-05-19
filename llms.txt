@@ -13,7 +13,7 @@ Founded by Rome Thorstenson. Source: [github.com/Raftersecurity/rafter-cli](http
 - **Local (free, offline, no key).** Secret scanning, command interception, policy, hooks, audit log, MCP server, extension/skill review.
 - **Remote — Rafter Code Security Engine (requires `RAFTER_API_KEY`).** Agentic SAST + SCA + secret detection against a GitHub repo, returning a prioritized, fix-oriented report. Triggered by `rafter run` (alias: `rafter scan`).
 
-The two surfaces never overlap. `rafter secrets` is local-only; `rafter run` is remote-only (ode is immediately after analysis). Pick by the task, not by the name.
+The two surfaces never overlap. `rafter secrets` is local-only; `rafter run` is remote-only (code is deleted immediately after analysis). Pick by the task, not by the name.
 
 ## Install
 
@@ -109,9 +109,9 @@ Full schema: [docs.rafter.so/policy](https://docs.rafter.so/policy) (or see `sha
 
 | Platform     | Flag                  | What's installed                    |
 |--------------|-----------------------|-------------------------------------|
-| Claude Code  | `--with-claude-code`  | Pre/PostToolUse hooks + 2 skills    |
-| Codex CLI    | `--with-codex`        | 2 security skills                   |
-| OpenClaw     | `--with-openclaw`     | 1 security skill                    |
+| Claude Code  | `--with-claude-code`  | Pre/PostToolUse hooks + 3 skills    |
+| Codex CLI    | `--with-codex`        | 3 security skills                   |
+| OpenClaw     | `--with-openclaw`     | Rafter Security skill (ClawHub)     |
 | Cursor       | `--with-cursor`       | MCP server + global instructions    |
 | Gemini CLI   | `--with-gemini`       | MCP server config                   |
 | Windsurf     | `--with-windsurf`     | MCP server config                   |
