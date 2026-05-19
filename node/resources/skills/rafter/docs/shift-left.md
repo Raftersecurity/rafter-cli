@@ -12,7 +12,7 @@
 
 The three skills compose: design well (secure-design) → write it → review it (code-review) → detect what slipped through (rafter scan + guardrails).
 
-## `rafter-secure-design` (filed as rf-bcr)
+## `rafter-secure-design`
 
 Use at feature kickoff or during architecture review, *before* code exists. It's a CYOA over design decisions:
 
@@ -29,7 +29,7 @@ rafter brief shift-left      # this doc
 #   Read skills/rafter-secure-design/SKILL.md
 ```
 
-## `rafter-code-review` (landed)
+## `rafter-code-review`
 
 Use during code review — your own or an AI's. A CYOA router into OWASP / MITRE / ASVS walkthroughs phrased as *questions*, not as monolithic audits. It's the *analysis* counterpart to automated scanning.
 
@@ -56,9 +56,4 @@ Pair with `rafter run --mode plus` when you want both a human-style walkthrough 
 
 Do not duplicate. If a sibling skill already owns the topic, Read it and stop — don't re-derive the checklist here.
 
-## Status
-
-- `rafter-code-review` — **landed** (rf-z7j). Ships alongside this skill; invoke directly.
-- `rafter-secure-design` — **landed** (rf-bcr). Ships alongside this skill; invoke directly. Router skill with sub-docs for auth, data storage, API design, ingestion, deployment, dependencies, threat modeling, and standards pointers.
-
-Both are installed — prefer invoking them directly for structured output over re-deriving checklists here.
+Both `rafter-secure-design` and `rafter-code-review` ship alongside this skill — prefer invoking them directly for structured output over re-deriving checklists here.
