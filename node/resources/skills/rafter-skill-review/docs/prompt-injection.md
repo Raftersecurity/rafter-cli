@@ -4,6 +4,22 @@ A skill is a prompt the agent will follow. Anyone who controls the skill content
 
 > The attacker isn't always the skill author. A skill that cites "upstream docs" and `WebFetch`es them on every run imports whatever prompt is currently on that remote page.
 
+## 0. Mechanical first pass
+
+Before reading prose, run the consolidated detector on every markdown file
+in the skill:
+
+```bash
+find <skill> -name '*.md' -print0 \
+  | xargs -0 -n1 rafter scan injection --fail-on medium
+```
+
+This catches the zero-width / bidi / role-override / "ignore previous" /
+hidden-instruction classes mechanically. It is experimental and noisy on
+security-oriented prose (the patterns it flags are also the ones we
+document below). Treat each finding as "stop and read", not as a verdict.
+Sections 1–7 are the human follow-up.
+
 ## 1. Hidden instructions
 
 Grep for:

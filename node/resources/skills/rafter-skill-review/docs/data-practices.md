@@ -58,9 +58,19 @@ Every `process.env.FOO` / `os.environ["FOO"]` is a potential credential sink. En
 
 Skills declare `allowed-tools` in frontmatter. Reconcile:
 
-- **Stated purpose vs. allowed-tools**: a "code review" skill that declares `allowed-tools: [Bash, Write, WebFetch]` is asking for more than the purpose justifies.
-- **Minimal grant**: `Read, Glob, Grep` is usually enough for analysis skills. Each extra tool (`Bash`, `Write`, `WebFetch`, `Edit`) needs a sentence of justification in SKILL.md.
+- **Stated purpose vs. allowed-tools**: a "code review" skill that declares `allowed-tools: [Bash, Write, WebFetch]` is asking for more than the purpose justifies. A markdown formatter asking for `Bash` is the canonical overbroad-grant red flag — reject.
+- **Minimal grant**: `Read, Glob, Grep` is usually enough for analysis skills. Each extra tool (`Bash`, `Write`, `WebFetch`, `Edit`, `NetworkAccess`) needs a sentence of justification in SKILL.md.
 - **Shell calls in `Bash`**: for every shell command the skill invokes, re-run `rafter skill review` worth of checks against that command specifically.
+
+Mechanical check:
+
+```bash
+rg -n '^allowed-tools' <skill>/SKILL.md          # what's granted
+rg -n '^(name|description):' <skill>/SKILL.md    # what's claimed
+```
+
+Write one sentence per granted tool justifying it from the description. If
+you can't, the grant is wider than the purpose. Reject.
 
 ## 6. Silent escalation
 
