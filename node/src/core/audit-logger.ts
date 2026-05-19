@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "crypto";
 import dns from "dns/promises";
 import fs from "fs";
 import net from "net";
+import os from "os";
 import path from "path";
 import { getAuditLogPath } from "./config-defaults.js";
 import { ConfigManager } from "./config-manager.js";
@@ -97,6 +98,29 @@ function isPrivateIp(ip: string): boolean {
   }
 
   return false;
+}
+
+/**
+ * Validate a policy-supplied audit.logPath (from .rafter.yml).
+ *
+ * Resolves the path and requires that it stays under either the project's
+ * own rafter dir (cwd/.rafter — covers --local mode) or the global rafter
+ * dir (~/.rafter). A malicious .rafter.yml could otherwise set the path
+ * to ../../etc/passwd or anywhere else writable; refusing the override
+ * forces those configs to fall back to the default. Empty / undefined
+ * input also returns false (caller falls back to default).
+ */
+function isPolicyLogPathSafe(raw: string | undefined): raw is string {
+  if (!raw || typeof raw !== "string") return false;
+  const resolved = path.resolve(raw);
+  const allowedRoots = [
+    path.resolve(process.cwd(), ".rafter"),
+    path.resolve(os.homedir(), ".rafter"),
+  ];
+  return allowedRoots.some((root) => {
+    const rel = path.relative(root, resolved);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  });
 }
 
 export type EventType =
@@ -240,15 +264,20 @@ export class AuditLogger {
     if (logPath) {
       this.logPath = logPath;
     } else {
-      // Project-local override from .rafter.yml (via loadWithPolicy) beats global
+      // Project-local override from .rafter.yml (via loadWithPolicy) beats global.
+      // The policy value is user-supplied: a malicious .rafter.yml could set
+      // audit.logPath to ../../etc/passwd. Resolve it and require containment
+      // under the project's rafter dir (cwd/.rafter) or the global rafter dir
+      // (~/.rafter). Anything else is silently ignored — we fall back to the
+      // global default rather than letting policy redirect writes off-tree.
       let policyPath: string | undefined;
       try {
         policyPath = this.configManager.loadWithPolicy()?.agent?.audit?.logPath;
       } catch {
         // fall through to global
       }
-      this.logPath = policyPath
-        ? path.resolve(policyPath)
+      this.logPath = isPolicyLogPathSafe(policyPath)
+        ? path.resolve(policyPath as string)
         : getAuditLogPath();
     }
 
