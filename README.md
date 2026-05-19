@@ -24,7 +24,8 @@ See what Rafter does before reading another word.
 **1. Scan a directory for leaked credentials**
 
 ```sh
-# Drop a .env file with a fake AWS key in a test repo
+# Drop into a scratch directory so this demo doesn't touch your real repo
+cd "$(mktemp -d)" && git init -q
 echo "AWS_ACCESS_KEY_ID=AKIA${SAMPLE_AWS_TAIL}" > .env  # e.g. AKIA followed by IOSFODNN7EXAMPLE
 
 rafter secrets .
@@ -60,6 +61,8 @@ rafter agent audit --last 3
 ```
 
 That's the core loop: scan → protect → audit. Everything works offline, no API key needed.
+
+When you're done, exit the scratch dir and clean it up: `SCRATCH="$PWD" && cd - && rm -rf "$SCRATCH"`.
 
 ## What's Free?
 
