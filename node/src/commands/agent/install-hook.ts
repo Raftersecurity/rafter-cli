@@ -2,7 +2,7 @@ import { Command } from "commander";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { fileURLToPath } from 'url';
 import { fmt } from "../../utils/formatter.js";
 
@@ -45,14 +45,14 @@ function getTemplatePath(templateName: string): string {
  */
 async function installLocalHook(hookName: string, templateName: string): Promise<void> {
   try {
-    execSync("git rev-parse --git-dir", { stdio: "pipe" });
+    execFileSync("git", ["rev-parse", "--git-dir"], { stdio: "pipe" });
   } catch (e) {
     console.error(fmt.error("Not in a git repository"));
     console.error("   Run this command from inside a git repository");
     process.exit(1);
   }
 
-  const gitDir = execSync("git rev-parse --git-dir", { encoding: "utf-8" }).trim();
+  const gitDir = execFileSync("git", ["rev-parse", "--git-dir"], { encoding: "utf-8" }).trim();
   const hooksDir = path.resolve(gitDir, "hooks");
   const hookPath = path.join(hooksDir, hookName);
 
@@ -115,7 +115,7 @@ async function installGlobalHook(hookName: string, templateName: string): Promis
   fs.chmodSync(hookPath, 0o755);
 
   try {
-    execSync(`git config --global core.hooksPath "${globalHooksDir}"`, { stdio: "pipe" });
+    execFileSync("git", ["config", "--global", "core.hooksPath", globalHooksDir], { stdio: "pipe" });
     console.log(fmt.success(`Installed Rafter ${hookName} hook globally`));
     console.log(`  Location: ${hookPath}`);
     console.log(`  Git config: core.hooksPath = ${globalHooksDir}`);

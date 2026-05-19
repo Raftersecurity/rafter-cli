@@ -6,7 +6,7 @@ import { SkillManager } from "../../utils/skill-manager.js";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import { createInterface } from "readline";
@@ -974,7 +974,7 @@ function installGeminiSkills(root: string): void {
 function registerGeminiSkills(skillsDir: string): void {
   // Probe for the `gemini` binary. Absence is expected on CI / fresh machines.
   try {
-    execSync("gemini --version", { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
+    execFileSync("gemini", ["--version"], { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
   } catch {
     console.log(fmt.warning(
       "gemini CLI not found on PATH — skipping skill registration. " +
@@ -985,7 +985,7 @@ function registerGeminiSkills(skillsDir: string): void {
 
   // Probe `gemini skills` subcommand (added in 0.35).
   try {
-    execSync("gemini skills --help", { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
+    execFileSync("gemini", ["skills", "--help"], { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
   } catch {
     console.log(fmt.warning(
       "gemini CLI does not support `skills` subcommand (needs ≥ 0.35). " +
@@ -998,7 +998,7 @@ function registerGeminiSkills(skillsDir: string): void {
     const absPath = path.resolve(skillsDir, skill.name);
     if (!fs.existsSync(absPath)) continue;
     try {
-      execSync(`gemini skills link ${JSON.stringify(absPath)}`, {
+      execFileSync("gemini", ["skills", "link", absPath], {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 10000,
       });
@@ -1464,7 +1464,7 @@ export function createInitCommand(): Command {
       try {
         const _require = createRequire(import.meta.url);
         const { version: thisVersion } = _require("../../../package.json");
-        const pathVersion = execSync("rafter --version", {
+        const pathVersion = execFileSync("rafter", ["--version"], {
           encoding: "utf-8",
           timeout: 5000,
           stdio: ["pipe", "pipe", "ignore"],
