@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -33,14 +34,19 @@ _QUOTED_VALUE_RE = re.compile(r"""['\"]([^'\"]+)['\"]""")
 class PatternEngine:
     def __init__(self, patterns: Sequence[Pattern]):
         self._patterns = list(patterns)
-
-    def scan(self, text: str) -> list[PatternMatch]:
-        """Scan text for pattern matches (no line info)."""
-        matches: list[PatternMatch] = []
+        # Compile each pattern's regex once. Malformed patterns are skipped
+        # with a stderr warning so a single bad regex can't take down the engine.
+        self._compiled: list[tuple[Pattern, re.Pattern[str]]] = []
         for pattern in self._patterns:
             compiled = self._compile(pattern.regex)
             if compiled is None:
                 continue
+            self._compiled.append((pattern, compiled))
+
+    def scan(self, text: str) -> list[PatternMatch]:
+        """Scan text for pattern matches (no line info)."""
+        matches: list[PatternMatch] = []
+        for pattern, compiled in self._compiled:
             for m in compiled.finditer(text):
                 if self._is_false_positive(pattern, m.group(0)):
                     continue
@@ -55,10 +61,7 @@ class PatternEngine:
         """Scan text with line/column information."""
         matches: list[PatternMatch] = []
         for line_num, line in enumerate(text.split("\n"), start=1):
-            for pattern in self._patterns:
-                compiled = self._compile(pattern.regex)
-                if compiled is None:
-                    continue
+            for pattern, compiled in self._compiled:
                 for m in compiled.finditer(line):
                     if self._is_false_positive(pattern, m.group(0)):
                         continue
@@ -74,10 +77,7 @@ class PatternEngine:
     def redact_text(self, text: str) -> str:
         """Replace all pattern matches in *text* with redacted versions."""
         result = text
-        for pattern in self._patterns:
-            compiled = self._compile(pattern.regex)
-            if compiled is None:
-                continue
+        for pattern, compiled in self._compiled:
             result = compiled.sub(
                 lambda m, p=pattern: m.group(0) if self._is_false_positive(p, m.group(0)) else self._redact(m.group(0)),
                 result,
@@ -105,7 +105,7 @@ class PatternEngine:
         return False
 
     @staticmethod
-    def _compile(regex_str: str) -> re.Pattern | None:
+    def _compile(regex_str: str) -> re.Pattern[str] | None:
         flags = 0
         pattern = regex_str
         if pattern.startswith("(?i)"):
@@ -114,6 +114,8 @@ class PatternEngine:
         try:
             return re.compile(pattern, flags)
         except re.error:
+            # Skip malformed patterns rather than crashing the engine
+            print(f"Invalid regex pattern: {regex_str}", file=sys.stderr)
             return None
 
     @staticmethod
