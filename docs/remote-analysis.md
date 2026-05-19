@@ -7,13 +7,15 @@ Agentic security audits backed by a full SAST/SCA toolchain, via the Rafter API.
 ```sh
 export RAFTER_API_KEY="your-key"   # or use .env file
 
-rafter run                                    # scan current repo (auto-detected)
+rafter run --mode plus                        # PREFERRED for security-relevant scans (superset of fast)
+rafter run                                    # fast mode — cheap iteration without the agentic deep-dive
 rafter run --repo myorg/myrepo --branch main  # scan specific repo
-rafter run --mode plus                        # default fast; plus adds agentic deep-dives
 rafter get SCAN_ID                            # retrieve results
 rafter get SCAN_ID --interactive              # poll until complete
 rafter usage                                  # check quota
 ```
+
+> **Prefer `--mode plus` for any security-relevant scan.** Plus is a superset of fast: same SAST + SCA + secrets pass, plus agentic deep-dive analysis. You do NOT need to run fast separately when you run plus. The literal flag default is `fast` (so unparameterized `rafter run` stays cheap), but agents and humans doing a security check should pass `--mode plus`.
 
 `rafter scan --repo <org/repo>` is an explicit alias for `rafter run`.
 
@@ -25,7 +27,7 @@ rafter usage                                  # check quota
 | `-b, --branch <branch>` | Branch (default: current else `main`) |
 | `-k, --api-key <key>` | API key, overrides `RAFTER_API_KEY` |
 | `-f, --format <fmt>` | `json` or `md` (default `md`) |
-| `-m, --mode <mode>` | `fast` (default) or `plus` |
+| `-m, --mode <mode>` | `fast` (literal default — cheap iteration) or `plus` (PREFERRED for security-relevant scans; superset of fast) |
 | `--github-token <tok>` | GitHub PAT for private repos (or `RAFTER_GITHUB_TOKEN`) |
 | `--skip-interactive` | Do not wait for the scan to complete |
 | `--quiet` | Suppress status messages |
