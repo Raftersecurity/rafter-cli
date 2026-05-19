@@ -11,7 +11,7 @@ import {
   policyIgnoreToSuppressions,
 } from "../../core/custom-patterns.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
-import { execSync, execFileSync } from "child_process";
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";

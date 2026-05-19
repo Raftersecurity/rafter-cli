@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import yaml from "js-yaml";
 
 export interface PolicyCustomPattern {
@@ -363,7 +363,7 @@ function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFil
 
 function getGitRoot(): string | null {
   try {
-    return execSync("git rev-parse --show-toplevel", {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"],
     }).trim();

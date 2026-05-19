@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { CommandInterceptor } from "../../core/command-interceptor.js";
 import { RegexScanner } from "../../scanners/regex-scanner.js";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import readline from "readline";
 import { fmt } from "../../utils/formatter.js";
 
@@ -69,6 +69,14 @@ export function createExecCommand(): Command {
       }
 
       // Step 5: Execute command
+      // NOTE: `command` is intentionally executed as a shell string here — this
+      // entire command is `rafter agent exec <command>`, where the user explicitly
+      // asked us to run a shell command on their behalf. The risk classifier and
+      // approval flow above (steps 1, 2, 4) gate this call: by the time we reach
+      // execSync, the command has been evaluated and either auto-allowed,
+      // explicitly approved by the user, or overridden via --force. Converting
+      // to array-form would break shell features (pipes, redirects, globbing)
+      // that users legitimately expect.
       try {
         const output = execSync(command, {
           stdio: "inherit",
@@ -92,7 +100,7 @@ function isGitCommand(command: string): boolean {
 async function scanStagedFiles(): Promise<{ secretsFound: boolean; count: number; files: number }> {
   try {
     // Get staged files
-    const stagedFiles = execSync("git diff --cached --name-only", {
+    const stagedFiles = execFileSync("git", ["diff", "--cached", "--name-only"], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"]
     })

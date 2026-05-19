@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import crypto from "crypto";
 import https from "https";
-import { exec, execSync } from "child_process";
+import { exec, execFileSync } from "child_process";
 import { promisify } from "util";
 import { getBinDir } from "../core/config-defaults.js";
 import * as tar from "tar";
@@ -92,9 +92,9 @@ export class BinaryManager {
    * (Homebrew etc.), then ~/.rafter/bin/gitleaks. Read-only — never executes.
    */
   findLegacyGitleaks(): string | null {
-    const cmd = process.platform === "win32" ? "where gitleaks" : "which gitleaks";
+    const finder = process.platform === "win32" ? "where" : "which";
     try {
-      const result = execSync(cmd, { timeout: 5000, encoding: "utf-8" });
+      const result = execFileSync(finder, ["gitleaks"], { timeout: 5000, encoding: "utf-8" });
       const found = result.trim().split("\n")[0].trim();
       if (found) return found;
     } catch { /* not on PATH */ }
@@ -107,9 +107,9 @@ export class BinaryManager {
    * Find betterleaks on system PATH
    */
   findBetterleaksOnPath(): string | null {
-    const cmd = process.platform === "win32" ? "where betterleaks" : "which betterleaks";
+    const finder = process.platform === "win32" ? "where" : "which";
     try {
-      const result = execSync(cmd, { timeout: 5000, encoding: "utf-8" });
+      const result = execFileSync(finder, ["betterleaks"], { timeout: 5000, encoding: "utf-8" });
       const found = result.trim().split("\n")[0].trim();
       return found || null;
     } catch {

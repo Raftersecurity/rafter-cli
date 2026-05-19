@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { CommandInterceptor, CommandEvaluation } from "../../core/command-interceptor.js";
 import { RegexScanner } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 type HookFormat = "claude" | "cursor" | "gemini" | "windsurf";
 
@@ -209,7 +209,7 @@ function evaluateWrite(toolInput: Record<string, any>): HookDecision {
 
 function scanStagedFiles(): { secretsFound: boolean; count: number; files: number } {
   try {
-    const stagedOutput = execSync("git diff --cached --name-only --diff-filter=ACM", {
+    const stagedOutput = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACM"], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"],
     }).trim();
