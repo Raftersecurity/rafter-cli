@@ -142,12 +142,40 @@ def find_git_repo_root(start_dir: Path, max_depth: int = 20) -> str | None:
     return None
 
 
+def _is_policy_log_path_safe(raw: str | None) -> bool:
+    """Validate a policy-supplied audit.log_path (from .rafter.yml).
+
+    Resolves the path and requires that it stays under either the project's
+    own rafter dir (cwd/.rafter — covers --local mode) or the global rafter
+    dir (~/.rafter). A malicious .rafter.yml could otherwise set the path
+    to ../../etc/passwd; refusing the override forces those configs to
+    fall back to the default. Empty / None input returns False.
+    """
+    if not raw or not isinstance(raw, str):
+        return False
+    resolved = Path(raw).expanduser().resolve()
+    allowed_roots = [
+        (Path.cwd() / ".rafter").resolve(),
+        (Path.home() / ".rafter").resolve(),
+    ]
+    for root in allowed_roots:
+        try:
+            resolved.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 class AuditLogger:
     def __init__(self, log_path: Path | None = None):
         if log_path is not None:
             self._path = log_path
         else:
-            # Project-local override from .rafter.yml beats global
+            # Project-local override from .rafter.yml beats global. The policy
+            # value is user-supplied: a malicious .rafter.yml could redirect
+            # writes outside the rafter tree. Containment is enforced by
+            # _is_policy_log_path_safe; rejected paths fall back to default.
             policy_path = None
             try:
                 from .config_manager import ConfigManager
@@ -155,7 +183,11 @@ class AuditLogger:
                 policy_path = merged.agent.audit.log_path
             except Exception:
                 pass
-            self._path = Path(policy_path).expanduser() if policy_path else get_audit_log_path()
+            self._path = (
+                Path(policy_path).expanduser().resolve()
+                if _is_policy_log_path_safe(policy_path)
+                else get_audit_log_path()
+            )
         self._session_id = f"{int(time.time() * 1000)}-{random.randbytes(4).hex()}"
         self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
