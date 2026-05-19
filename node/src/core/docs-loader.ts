@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { loadPolicy, PolicyDocEntry } from "./policy-loader.js";
 import { getRafterDir } from "./config-defaults.js";
 
@@ -73,7 +73,7 @@ function resolvePolicyPath(relative: string): string {
   if (path.isAbsolute(relative)) return relative;
   let root: string;
   try {
-    root = execSync("git rev-parse --show-toplevel", {
+    root = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"],
     }).trim();
