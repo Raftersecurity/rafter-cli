@@ -100,6 +100,8 @@ rafter agent install-hook --push    # install pre-push hook instead of pre-commi
 
 Blocks commits when secrets are detected. Bypass with `git commit --no-verify` (not recommended).
 
+Not sure which path is right (native vs. pre-commit framework, in-repo vs. global)? See the [decision tree in `recipes/pre-commit.md`](../recipes/pre-commit.md#which-install-path-should-i-use).
+
 ### pre-commit framework
 
 Rafter works as a [pre-commit](https://pre-commit.com) hook. Add to your `.pre-commit-config.yaml`:

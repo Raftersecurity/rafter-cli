@@ -2,6 +2,18 @@
 
 Block secrets from entering version control. Rafter scans staged files before every commit and rejects any that contain hardcoded credentials. 21+ built-in credential patterns plus optional Betterleaks integration (the gitleaks successor) for higher-recall detection. Deterministic results, exit code 1 on findings.
 
+## Which install path should I use?
+
+Rafter ships three pre-commit install paths. Use this decision tree to pick one:
+
+- **Do you already use the [pre-commit](https://pre-commit.com) framework?** (i.e. `.pre-commit-config.yaml` lives in your repo)
+  - **Yes** → use the [pre-commit framework](#pre-commit-framework) section below. Add the `rafter-scan-node` (or `-python`) entry to `.pre-commit-config.yaml`. The framework manages the hook for you alongside your other linters.
+  - **No** → do you want the hook in just this repo, or in every repo on this machine?
+    - **Just this repo** → `rafter agent install-hook` (writes `.git/hooks/pre-commit`).
+    - **Every repo on this machine** → `rafter agent install-hook --global` (sets `core.hooksPath`).
+
+Rule of thumb: if your team already standardises on pre-commit, stay in that ecosystem. If not, the native one-command install is the lowest-friction option and works out of the box.
+
 ## Pre-commit framework
 
 If you use the [pre-commit](https://pre-commit.com) framework, add this to `.pre-commit-config.yaml`:
