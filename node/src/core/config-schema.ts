@@ -72,6 +72,20 @@ export interface RafterConfig {
       mode: CommandPolicyMode;
       blockedPatterns: string[];
       requireApproval: string[];
+      /**
+       * When 'approve-dangerous' mode is active, also gate on the built-in
+       * HIGH_PATTERNS regex catalog (rm -rf <anything>, sudo rm, curl|sh,
+       * git push --force, etc.) in addition to the user's requireApproval.
+       *
+       * Default true preserves the historically-safer behavior. Set to false
+       * when your blockedPatterns already covers the catastrophic cases
+       * precisely and you don't want routine `rm -rf node_modules` to gate.
+       *
+       * The CRITICAL_PATTERNS catalog (fork bomb, mkfs, dd of=/dev/sd, etc.)
+       * still always gates — this opt-out does NOT disable the catastrophic
+       * tier.
+       */
+      useBuiltinRiskPatterns?: boolean;
     };
     outputFiltering: {
       redactSecrets: boolean;

@@ -226,6 +226,8 @@ class ConfigManager:
                 config.agent.command_policy.blocked_patterns = cp["blocked_patterns"]
             if cp.get("require_approval") is not None:
                 config.agent.command_policy.require_approval = cp["require_approval"]
+            if isinstance(cp.get("use_builtin_risk_patterns"), bool):
+                config.agent.command_policy.use_builtin_risk_patterns = cp["use_builtin_risk_patterns"]
 
         scan = policy.get("scan")
         if scan:

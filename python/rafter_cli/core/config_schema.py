@@ -49,6 +49,14 @@ class CommandPolicyConfig:
     require_approval: list[str] = field(
         default_factory=lambda: list(_default_require_approval())
     )
+    # When 'approve-dangerous' mode is active, also gate on the built-in
+    # HIGH_PATTERNS regex catalog (rm -rf <anything>, sudo rm, curl|sh,
+    # git push --force, etc.) in addition to the user's require_approval.
+    # Default True preserves the historically-safer behavior. Set to False
+    # when blocked_patterns already covers the catastrophic cases precisely
+    # and routine `rm -rf node_modules` shouldn't gate. CRITICAL_PATTERNS
+    # always gates regardless — this opt-out is for the HIGH tier only.
+    use_builtin_risk_patterns: bool = True
 
 
 @dataclass

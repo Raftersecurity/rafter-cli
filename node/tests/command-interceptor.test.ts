@@ -51,6 +51,39 @@ describe("CommandInterceptor", () => {
       expect(result.allowed).toBe(false);
       expect(result.riskLevel).toBe("critical");
     });
+
+    // sable-9nm: tightened DEFAULT_BLOCKED_PATTERNS — catastrophic rm -rf
+    // variants HARD-BLOCK by default, not just gate.
+    it("should hard-block rm -rf /etc (top-level system dir)", () => {
+      const result = interceptor.evaluate("rm -rf /etc");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(false);
+      expect(result.matchedPattern).toBeDefined();
+    });
+
+    it("should hard-block rm -rf /Users (macOS user dir)", () => {
+      const result = interceptor.evaluate("rm -rf /Users");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(false);
+    });
+
+    it("should hard-block rm -rf $HOME", () => {
+      const result = interceptor.evaluate("rm -rf $HOME");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(false);
+    });
+
+    it("should hard-block rm -rf ~", () => {
+      const result = interceptor.evaluate("rm -rf ~");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(false);
+    });
+
+    it("should hard-block rm -rf /* (bare wildcard at root)", () => {
+      const result = interceptor.evaluate("rm -rf /*");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(false);
+    });
   });
 
   describe("High-risk commands", () => {
