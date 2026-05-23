@@ -17,8 +17,8 @@ export class CommandInterceptor {
   private config: ConfigManager;
   private audit: AuditLogger;
 
-  constructor() {
-    this.config = new ConfigManager();
+  constructor(configPath?: string) {
+    this.config = new ConfigManager(configPath);
     this.audit = new AuditLogger();
   }
 
@@ -78,15 +78,22 @@ export class CommandInterceptor {
         requiresApproval: false
       };
     } else if (policy.mode === "approve-dangerous") {
-      // Assess risk and require approval for high/critical
+      // Assess risk and require approval for high/critical (or critical only,
+      // when commandPolicy.useBuiltinRiskPatterns is explicitly false).
       const riskLevel = this.assessRisk(command);
-      if (riskLevel === "high" || riskLevel === "critical") {
+      const useBuiltin = policy.useBuiltinRiskPatterns !== false;
+      const gateTrips =
+        riskLevel === "critical" || (useBuiltin && riskLevel === "high");
+      if (gateTrips) {
         return {
           command,
           riskLevel,
           allowed: false,
           requiresApproval: true,
-          reason: `High risk command requires approval`
+          reason:
+            riskLevel === "critical"
+              ? `Critical-risk command requires approval`
+              : `High-risk command requires approval`,
         };
       }
       return {
