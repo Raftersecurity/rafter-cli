@@ -56,13 +56,22 @@ class CommandInterceptor:
         mode = policy.mode
         if mode == "approve-dangerous":
             risk = self._assess_risk(command)
-            if risk in ("high", "critical"):
+            # Built-in HIGH_PATTERNS gate is opt-outable via
+            # commandPolicy.useBuiltinRiskPatterns (sable-xvu). CRITICAL_PATTERNS
+            # still always gates so catastrophic damage can't be opted out of.
+            use_builtin = getattr(policy, "use_builtin_risk_patterns", True) is not False
+            gate_trips = risk == "critical" or (use_builtin and risk == "high")
+            if gate_trips:
                 return CommandEvaluation(
                     command=command,
                     risk_level=risk,
                     allowed=False,
                     requires_approval=True,
-                    reason="High risk command requires approval",
+                    reason=(
+                        "Critical-risk command requires approval"
+                        if risk == "critical"
+                        else "High-risk command requires approval"
+                    ),
                 )
 
         return CommandEvaluation(

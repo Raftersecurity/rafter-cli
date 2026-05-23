@@ -16,12 +16,18 @@ function stubPolicy(interceptor: CommandInterceptor, policy: {
   mode?: string;
   blockedPatterns?: string[];
   requireApproval?: string[];
+  useBuiltinRiskPatterns?: boolean;
 } | null) {
   const cfg: any = {
     agent: policy ? { commandPolicy: {
       mode: policy.mode ?? "approve-dangerous",
       blockedPatterns: policy.blockedPatterns ?? [],
       requireApproval: policy.requireApproval ?? [],
+      // Only include the field if the test set it — preserve undefined so the
+      // interceptor's default-true behavior is exercised when omitted.
+      ...(policy.useBuiltinRiskPatterns !== undefined
+        ? { useBuiltinRiskPatterns: policy.useBuiltinRiskPatterns }
+        : {}),
     }} : undefined,
   };
   vi.spyOn((interceptor as any).config, "loadWithPolicy").mockReturnValue(cfg);
@@ -123,7 +129,7 @@ describe("CommandInterceptor — Policy modes", () => {
       expect(result.allowed).toBe(false);
       expect(result.requiresApproval).toBe(true);
       expect(result.riskLevel).toBe("high");
-      expect(result.reason).toContain("High risk");
+      expect(result.reason).toContain("High-risk");
     });
 
     it("should require approval for critical-risk commands", () => {
@@ -522,6 +528,64 @@ describe("CommandInterceptor — Exhaustive risk classification", () => {
     it("grep for dangerous pattern should be low risk (safe prefix)", () => {
       const result = interceptor.evaluate("grep 'sudo rm' /var/log/auth.log");
       expect(result.riskLevel).toBe("low");
+    });
+  });
+
+  // ── sable-xvu: useBuiltinRiskPatterns opt-out ───────────────────────
+
+  describe("useBuiltinRiskPatterns opt-out (sable-xvu)", () => {
+    it("approve-dangerous + opt-out: routine rm -rf does NOT gate", () => {
+      stubPolicy(interceptor, {
+        mode: "approve-dangerous",
+        blockedPatterns: [],
+        requireApproval: [],
+        useBuiltinRiskPatterns: false,
+      });
+      const result = interceptor.evaluate("rm -rf node_modules");
+      expect(result.allowed).toBe(true);
+      expect(result.requiresApproval).toBe(false);
+      // Risk-level is still computed (still 'high' from HIGH_PATTERNS) so the
+      // audit trail records what would have gated under default policy.
+      expect(result.riskLevel).toBe("high");
+    });
+
+    it("approve-dangerous + opt-out: catastrophic rm -rf /etc still gates (CRITICAL)", () => {
+      stubPolicy(interceptor, {
+        mode: "approve-dangerous",
+        blockedPatterns: [],
+        requireApproval: [],
+        useBuiltinRiskPatterns: false,
+      });
+      const result = interceptor.evaluate("rm -rf /etc");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
+      expect(result.riskLevel).toBe("critical");
+    });
+
+    it("approve-dangerous (default useBuiltin=true): routine rm -rf still gates", () => {
+      stubPolicy(interceptor, {
+        mode: "approve-dangerous",
+        blockedPatterns: [],
+        requireApproval: [],
+        // useBuiltinRiskPatterns omitted → default-true behavior preserved
+      });
+      const result = interceptor.evaluate("rm -rf node_modules");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
+      expect(result.riskLevel).toBe("high");
+    });
+
+    it("approve-dangerous + opt-out: user requireApproval patterns still gate", () => {
+      stubPolicy(interceptor, {
+        mode: "approve-dangerous",
+        blockedPatterns: [],
+        requireApproval: ["my-custom-dangerous-cmd"],
+        useBuiltinRiskPatterns: false,
+      });
+      // User pattern fires regardless of useBuiltin
+      const result = interceptor.evaluate("my-custom-dangerous-cmd --really");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
     });
   });
 });

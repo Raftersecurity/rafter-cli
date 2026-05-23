@@ -1045,6 +1045,12 @@ command_policy:
   mode: approve-dangerous
   blocked_patterns: ["rm -rf /"]
   require_approval: ["npm publish"]
+  # Optional. Default true. When false, the `approve-dangerous` mode only
+  # gates on the built-in CRITICAL_PATTERNS catalog (rm -rf / etc) and skips
+  # the HIGH tier (routine rm -rf, sudo rm, git push --force …). Set false
+  # when your blocked_patterns + require_approval already cover the cases
+  # you care about and you don't want HIGH-tier patterns to auto-gate.
+  use_builtin_risk_patterns: true
 scan:
   exclude_paths: ["vendor/", "third_party/"]
   custom_patterns:

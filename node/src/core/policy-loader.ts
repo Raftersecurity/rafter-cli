@@ -36,6 +36,7 @@ export interface PolicyFile {
     mode?: string;
     blockedPatterns?: string[];
     requireApproval?: string[];
+    useBuiltinRiskPatterns?: boolean;
   };
   scan?: {
     excludePaths?: string[];
@@ -111,6 +112,9 @@ function mapPolicy(raw: Record<string, any>): PolicyFile {
     }
     if (Array.isArray(raw.command_policy.require_approval)) {
       policy.commandPolicy.requireApproval = raw.command_policy.require_approval;
+    }
+    if (typeof raw.command_policy.use_builtin_risk_patterns === "boolean") {
+      policy.commandPolicy.useBuiltinRiskPatterns = raw.command_policy.use_builtin_risk_patterns;
     }
   }
 
@@ -272,6 +276,11 @@ function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFil
         console.error(`Warning: "command_policy.require_approval" must be an array of strings — ignoring.`);
         delete policy.commandPolicy.requireApproval;
       }
+    }
+    if (policy.commandPolicy.useBuiltinRiskPatterns !== undefined &&
+        typeof policy.commandPolicy.useBuiltinRiskPatterns !== "boolean") {
+      console.error(`Warning: "command_policy.use_builtin_risk_patterns" must be a boolean — ignoring.`);
+      delete policy.commandPolicy.useBuiltinRiskPatterns;
     }
   }
 

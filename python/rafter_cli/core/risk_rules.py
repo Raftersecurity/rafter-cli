@@ -45,11 +45,41 @@ MEDIUM_PATTERNS: list[str] = [
     r"service", r"kill\s+-9", r"pkill", r"killall",
 ]
 
+# Top-level system directories whose deletion is unrecoverable / unbootable.
+# Mirrors Node's CATASTROPHIC_TARGET_DIRS (system + macOS-bundle dirs).
+_CATASTROPHIC_TARGET_DIRS = (
+    "System|Library|Users|etc|var|usr|bin|sbin|private|opt|dev|root|home|boot|sys|proc|lib|lib64"
+)
+
+# Patterns that always hard-block at the command-interceptor layer, before
+# any approval logic runs. Strings are interpreted as case-insensitive regex
+# — end-anchored where possible so `rm -rf node_modules` does NOT match but
+# `rm -rf /etc` and `rm -rf $HOME` do.
+#
+# Tightened 2026-05-23 (sable-9nm) from a user-validated 18-case regex set
+# after a real personal-config session found the prior defaults gated
+# catastrophic variants instead of hard-blocking them. The HIGH_PATTERNS
+# layer still gates routine `rm -rf` via the `approve-dangerous` policy mode
+# (and that gate is now opt-outable via commandPolicy.useBuiltinRiskPatterns).
 DEFAULT_BLOCKED_PATTERNS: list[str] = [
-    "rm -rf /",
-    ":(){ :|:& };:",
-    "dd if=/dev/zero of=/dev/sda",
-    "> /dev/sda",
+    # Fork bomb
+    r":\(\)\{\s*:\|:&\s*\};:",
+    # Block-device clobber
+    r"dd\s+if=.*\s+of=/dev/sd",
+    r">\s*/dev/sd",
+    r"mkfs\b",
+    # rm aimed at bare / or / followed by nothing useful
+    r"rm\s+(-[a-z]*\s+)*/\s*$",
+    r"rm\s+(-[a-z]*\s+)*/\*\s*$",
+    # rm aimed at $HOME or ~ — irrecoverable for the running user
+    r"rm\s+(-[a-z]*\s+)*\$HOME(/|\s|$)",
+    r"rm\s+(-[a-z]*\s+)*~(/|\s|$)",
+    # rm aimed at bare wildcard or current directory in a way that's almost certainly accidental
+    r"rm\s+(-[a-z]*\s+)*\*\s*$",
+    r"rm\s+(-[a-z]*\s+)*\.\s*$",
+    # rm -rf targeting top-level system directories (any flag order)
+    rf"rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*\s+/({_CATASTROPHIC_TARGET_DIRS})(/|\s|$)",
+    rf"rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*\s+/({_CATASTROPHIC_TARGET_DIRS})(/|\s|$)",
 ]
 
 DEFAULT_REQUIRE_APPROVAL: list[str] = [

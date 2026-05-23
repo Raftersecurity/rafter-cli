@@ -59,6 +59,7 @@ export function getDefaultConfig(): RafterConfig {
         mode: "approve-dangerous",
         blockedPatterns: [...DEFAULT_BLOCKED_PATTERNS],
         requireApproval: [...DEFAULT_REQUIRE_APPROVAL],
+        useBuiltinRiskPatterns: true,
       },
       outputFiltering: {
         redactSecrets: true,

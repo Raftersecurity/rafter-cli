@@ -73,6 +73,8 @@ def _map_policy(raw: dict) -> dict:
             policy["command_policy"]["blocked_patterns"] = cp["blocked_patterns"]
         if isinstance(cp.get("require_approval"), list):
             policy["command_policy"]["require_approval"] = cp["require_approval"]
+        if isinstance(cp.get("use_builtin_risk_patterns"), bool):
+            policy["command_policy"]["use_builtin_risk_patterns"] = cp["use_builtin_risk_patterns"]
 
     scan = raw.get("scan")
     if isinstance(scan, dict):
@@ -215,6 +217,9 @@ def _validate_policy(policy: dict, raw: dict) -> dict:
             if not isinstance(cp["require_approval"], list) or not all(isinstance(v, str) for v in cp["require_approval"]):
                 print('Warning: "command_policy.require_approval" must be an array of strings \u2014 ignoring.', file=sys.stderr)
                 del cp["require_approval"]
+        if "use_builtin_risk_patterns" in cp and not isinstance(cp["use_builtin_risk_patterns"], bool):
+            print('Warning: "command_policy.use_builtin_risk_patterns" must be a boolean \u2014 ignoring.', file=sys.stderr)
+            del cp["use_builtin_risk_patterns"]
 
     scan = policy.get("scan")
     if isinstance(scan, dict):

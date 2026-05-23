@@ -50,11 +50,44 @@ export const MEDIUM_PATTERNS: RegExp[] = [
   /killall/,
 ];
 
+// Top-level system directories whose deletion is unrecoverable / unbootable.
+// Kept identical to CRITICAL_DIRS plus the macOS-bundle dirs an end-user can
+// also be aimed at (System|Library|Users|private|var|dev). Used to build the
+// end-anchored hard-block patterns below.
+const CATASTROPHIC_TARGET_DIRS =
+  "System|Library|Users|etc|var|usr|bin|sbin|private|opt|dev|root|home|boot|sys|proc|lib|lib64";
+
+/**
+ * Patterns that always hard-block at the command-interceptor layer, before
+ * any approval logic runs. Strings are interpreted as case-insensitive regex
+ * (see CommandInterceptor.matchesPattern) — end-anchored where possible so
+ * `rm -rf node_modules` does NOT match but `rm -rf /etc` and `rm -rf $HOME` do.
+ *
+ * Tightened 2026-05-23 from a user-validated 18-case regex set after a real
+ * personal-config session found the prior defaults gated catastrophic
+ * variants instead of hard-blocking them. The HIGH_PATTERNS layer still
+ * gates routine `rm -rf` via the `approve-dangerous` policy mode (and that
+ * gate is now opt-outable via commandPolicy.useBuiltinRiskPatterns).
+ */
 export const DEFAULT_BLOCKED_PATTERNS: string[] = [
-  "rm -rf /",
-  ":(){ :|:& };:",
-  "dd if=/dev/zero of=/dev/sda",
-  "> /dev/sda",
+  // Fork bomb
+  ":\\(\\)\\{\\s*:\\|:&\\s*\\};:",
+  // Block-device clobber
+  "dd\\s+if=.*\\s+of=/dev/sd",
+  ">\\s*/dev/sd",
+  "mkfs\\b",
+  // rm aimed at bare / or / followed by nothing useful
+  "rm\\s+(-[a-z]*\\s+)*/\\s*$",
+  "rm\\s+(-[a-z]*\\s+)*/\\*\\s*$",
+  // rm aimed at $HOME or ~ — irrecoverable for the running user
+  "rm\\s+(-[a-z]*\\s+)*\\$HOME(/|\\s|$)",
+  "rm\\s+(-[a-z]*\\s+)*~(/|\\s|$)",
+  // rm aimed at bare wildcard or current directory in a way that's almost certainly accidental
+  "rm\\s+(-[a-z]*\\s+)*\\*\\s*$",
+  "rm\\s+(-[a-z]*\\s+)*\\.\\s*$",
+  // rm -rf targeting top-level system directories (any flag order)
+  `rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+/(${CATASTROPHIC_TARGET_DIRS})(/|\\s|$)`,
+  `rm\\s+(-[a-z]*f[a-z]*\\s+)*-[a-z]*r[a-z]*\\s+/(${CATASTROPHIC_TARGET_DIRS})(/|\\s|$)`,
 ];
 
 export const DEFAULT_REQUIRE_APPROVAL: string[] = [
