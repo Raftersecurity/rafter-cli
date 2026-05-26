@@ -1424,7 +1424,14 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
         return [r] if r.matches else []
 
 
-def _scan_directory(dir_path: str, engine: str, scan_cfg=None, *, history: bool = False) -> list[ScanResult]:
+def _scan_directory(
+    dir_path: str,
+    engine: str,
+    scan_cfg=None,
+    *,
+    history: bool = False,
+    respect_gitignore: bool = True,
+) -> list[ScanResult]:
     custom = None
     exclude = None
     if scan_cfg:
@@ -1438,10 +1445,10 @@ def _scan_directory(dir_path: str, engine: str, scan_cfg=None, *, history: bool 
             return [ScanResult(file=r.file, matches=r.matches) for r in results]
         except Exception:
             scanner = RegexScanner(custom)
-            return scanner.scan_directory(dir_path, exclude_paths=exclude)
+            return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
     else:
         scanner = RegexScanner(custom)
-        return scanner.scan_directory(dir_path, exclude_paths=exclude)
+        return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
 
 
 def _output_scan_results(
@@ -1674,6 +1681,7 @@ def scan(
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
+    gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
 ):
     """Scan files or directories for secrets. [deprecated: use 'rafter secrets' instead]"""
     print(
@@ -1771,7 +1779,7 @@ def scan(
     if os.path.isdir(resolved_path):
         if not quiet:
             print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg, history=history)
+        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
     else:
         if not quiet:
             print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)

@@ -96,6 +96,7 @@ def scan_local(
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
+    gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
 ):
     """(deprecated alias for 'rafter secrets')."""
     from .agent import (
@@ -220,7 +221,7 @@ def scan_local(
     if os.path.isdir(resolved_path):
         if not quiet:
             print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg, history=history)
+        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
     else:
         if not quiet:
             print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
@@ -256,6 +257,7 @@ def secrets(
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
+    gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
 ):
     """Scan files/directories for hardcoded secrets."""
     return scan_local(
@@ -269,4 +271,5 @@ def secrets(
         baseline=baseline,
         watch=watch,
         history=history,
+        gitignore=gitignore,
     )

@@ -31,6 +31,8 @@ interface ScanOpts {
   baseline?: boolean;
   watch?: boolean;
   history?: boolean;
+  /** Commander maps `--no-gitignore` to `gitignore: false` (default true). */
+  gitignore?: boolean;
 }
 
 interface BaselineEntry {
@@ -81,6 +83,7 @@ export function createScanCommand(): Command {
     .option("--baseline", "Filter findings present in the saved baseline")
     .option("--watch", "Watch for file changes and re-scan on change")
     .option("--history", "Scan git history for secrets (requires betterleaks engine)")
+    .option("--no-gitignore", "Scan files even if .gitignore would exclude them (default: respect .gitignore)")
     .action(async (scanPath, opts: ScanOpts) => {
       // Validate flags before doing any work.
       const validEngines = ["auto", "betterleaks", "patterns"];
@@ -151,7 +154,7 @@ export function createScanCommand(): Command {
         if (!opts.quiet) {
           console.error(`Scanning directory: ${resolvedPath} (${engine})`);
         }
-        results = await scanDirectory(resolvedPath, engine, scanCfg, opts.history);
+        results = await scanDirectory(resolvedPath, engine, scanCfg, opts.history, opts.gitignore);
       } else {
         if (!opts.quiet) {
           console.error(`Scanning file: ${resolvedPath} (${engine})`);
@@ -522,7 +525,11 @@ async function scanDirectory(
   engine: "betterleaks" | "patterns",
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
   history?: boolean,
+  respectGitignore?: boolean,
 ): Promise<ScanResult[]> {
+  // respectGitignore default is true. The patterns engine honors it via
+  // RegexScanner.scanDirectory; betterleaks honors it natively (gitleaks
+  // ancestry — reads .gitignore unless --no-git is set).
   if (engine === "betterleaks") {
     try {
       const bl = new BetterleaksScanner();
@@ -530,11 +537,17 @@ async function scanDirectory(
     } catch (e) {
       console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
       const scanner = new RegexScanner(scanCfg?.customPatterns);
-      return scanner.scanDirectory(dirPath, { excludePaths: scanCfg?.excludePaths });
+      return scanner.scanDirectory(dirPath, {
+        excludePaths: scanCfg?.excludePaths,
+        respectGitignore,
+      });
     }
   } else {
     const scanner = new RegexScanner(scanCfg?.customPatterns);
-    return scanner.scanDirectory(dirPath, { excludePaths: scanCfg?.excludePaths });
+    return scanner.scanDirectory(dirPath, {
+      excludePaths: scanCfg?.excludePaths,
+      respectGitignore,
+    });
   }
 }
 

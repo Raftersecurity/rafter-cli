@@ -1,3 +1,4 @@
+import { spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { PatternEngine, PatternMatch, Pattern } from "../core/pattern-engine.js";
@@ -63,6 +64,15 @@ export class RegexScanner {
     exclude?: string[];
     excludePaths?: string[];
     maxDepth?: number;
+    /**
+     * Honor `.gitignore` (and `.git/info/exclude`, global excludes file,
+     * nested .gitignores) when filtering scanned files. Default true.
+     * Implemented by shelling out to `git check-ignore --stdin --no-index`
+     * inside the scan root's git work tree — exact git semantics, zero deps.
+     * Silently falls back to no-op when the scan root is outside a git repo
+     * or git is missing.
+     */
+    respectGitignore?: boolean;
   }): ScanResult[] {
     const exclude = options?.exclude || [
       "node_modules",
@@ -98,7 +108,10 @@ export class RegexScanner {
     }
 
     const files = this.walkDirectory(dirPath, exclude, options?.maxDepth || 10);
-    return this.scanFiles(files);
+    const filtered = options?.respectGitignore === false
+      ? files
+      : filterGitIgnored(files, dirPath);
+    return this.scanFiles(filtered);
   }
 
   /**
@@ -181,4 +194,68 @@ export class RegexScanner {
     const ext = path.extname(filename).toLowerCase();
     return binaryExtensions.includes(ext);
   }
+}
+
+/**
+ * Filter out files that git would ignore relative to `scanRoot`.
+ *
+ * Uses `git check-ignore --stdin --no-index` inside the scan root's work
+ * tree so every gitignore semantic git itself supports (nested .gitignores,
+ * negations, .git/info/exclude, the configured global excludes file, the
+ * `gitignore` pattern grammar) is honored exactly. Zero new dependencies —
+ * if git isn't installed or the scan root sits outside a work tree, returns
+ * the input unchanged.
+ *
+ * Batched: all candidate paths are piped through one subprocess.
+ */
+function filterGitIgnored(files: string[], scanRoot: string): string[] {
+  if (files.length === 0) return files;
+
+  // Locate the git work tree that owns scanRoot. Bail out (no filter) if
+  // scanRoot is outside a repo or git is missing — the user's `rafter
+  // secrets <dir>` invocation against a non-repo should not error.
+  const probe = spawnSync("git", ["-C", scanRoot, "rev-parse", "--show-toplevel"], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5000,
+  });
+  if (probe.status !== 0) return files;
+  const workTree = probe.stdout.trim();
+  if (!workTree) return files;
+
+  // Send the candidate file list to `git check-ignore --stdin`. It echoes
+  // back (on stdout) only the paths that match a gitignore rule. Use null
+  // delimiters (`-z`) on input and output so paths with spaces, newlines, or
+  // any other shell metacharacter survive intact. `--no-index` makes git
+  // evaluate rules without consulting the index (so an untracked file in a
+  // freshly-cloned repo is still classified).
+  //
+  // The paths in `files` are absolute. `git check-ignore` accepts paths
+  // relative to the work tree OR absolute paths within it; we pass through
+  // unchanged.
+  const stdin = files.join("\0") + "\0";
+  const result = spawnSync(
+    "git",
+    ["-C", workTree, "check-ignore", "--stdin", "--no-index", "-z"],
+    {
+      input: stdin,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+      timeout: 30_000,
+      maxBuffer: 64 * 1024 * 1024,
+    }
+  );
+  // Exit codes: 0 = at least one path matched; 1 = no paths matched;
+  // 128 = error (corrupt repo, bad flag, etc.). Treat 128 as "no filter" so
+  // a broken environment doesn't break a scan.
+  if (result.status !== 0 && result.status !== 1) return files;
+
+  const ignored = new Set<string>();
+  if (result.stdout) {
+    for (const p of result.stdout.split("\0")) {
+      if (p) ignored.add(p);
+    }
+  }
+  if (ignored.size === 0) return files;
+  return files.filter((f) => !ignored.has(f));
 }
