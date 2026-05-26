@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -67,6 +68,7 @@ class RegexScanner:
         dir_path: str,
         exclude_paths: list[str] | None = None,
         max_depth: int = 10,
+        respect_gitignore: bool = True,
     ) -> list[ScanResult]:
         exclude = list(DEFAULT_EXCLUDE)
         if exclude_paths:
@@ -76,6 +78,8 @@ class RegexScanner:
                     exclude.append(cleaned)
 
         files = self._walk(dir_path, exclude, max_depth)
+        if respect_gitignore:
+            files = _filter_gitignored(files, dir_path)
         return self.scan_files(files)
 
     def scan_text(self, text: str) -> list[PatternMatch]:
@@ -110,3 +114,53 @@ class RegexScanner:
         except PermissionError:
             pass
         return files
+
+
+def _filter_gitignored(files: list[str], scan_root: str) -> list[str]:
+    """Drop files git would ignore relative to ``scan_root``.
+
+    Shells out to ``git check-ignore --stdin --no-index -z`` inside the scan
+    root's work tree so every gitignore semantic git supports (nested
+    .gitignores, negations, .git/info/exclude, the configured global excludes
+    file, the full pattern grammar) is honored exactly. Zero new
+    dependencies. Bails out silently — returning the input unchanged — when
+    git is missing or the scan root sits outside a work tree.
+    """
+    if not files:
+        return files
+    # Locate the work tree that owns scan_root.
+    try:
+        probe = subprocess.run(
+            ["git", "-C", scan_root, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return files
+    if probe.returncode != 0:
+        return files
+    work_tree = probe.stdout.strip()
+    if not work_tree:
+        return files
+
+    # Batch every candidate through one `git check-ignore --stdin` call.
+    # Null-delimited I/O preserves paths containing newlines / spaces.
+    stdin = ("\0".join(files) + "\0").encode("utf-8")
+    try:
+        result = subprocess.run(
+            ["git", "-C", work_tree, "check-ignore", "--stdin", "--no-index", "-z"],
+            input=stdin,
+            capture_output=True,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return files
+    # Exit codes: 0 = at least one path ignored; 1 = none; 128 = error.
+    # Anything else => abandon the filter rather than break the scan.
+    if result.returncode not in (0, 1):
+        return files
+    ignored = {p.decode("utf-8") for p in result.stdout.split(b"\0") if p}
+    if not ignored:
+        return files
+    return [f for f in files if f not in ignored]
