@@ -1027,7 +1027,7 @@ Integration with [pre-commit](https://pre-commit.com/):
 ```yaml
 repos:
   - repo: https://github.com/Raftersecurity/rafter-cli
-    rev: v0.5.6
+    rev: v0.8.2
     hooks:
       - id: rafter-scan           # Node.js
       # - id: rafter-scan-python  # Python alternative
