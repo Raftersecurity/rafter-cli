@@ -7,6 +7,11 @@ on:
 
 permissions:
   contents: read
+  # id-token: write is required by npm Trusted Publishing (OIDC). Lets the
+  # publish-node job exchange the GitHub-issued OIDC token for a short-lived
+  # npm publish credential, replacing the long-lived NPM_TOKEN secret. Does
+  # NOT grant write access on its own; just mints the identity token.
+  id-token: write
 
 jobs:
   test-node:
@@ -79,6 +84,13 @@ jobs:
   publish-node:
     needs: [test-node, test-package]
     runs-on: ubuntu-latest
+    # Trusted Publishing requires id-token: write in scope for THIS job (the
+    # top-level grant covers it, but documented here for the job-local audit
+    # trail). Self-hosted runners are NOT supported by npm Trusted Publishing
+    # — ubuntu-latest (GitHub-hosted) is required.
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: ./node
@@ -87,10 +99,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 22 is the floor for npm Trusted Publishing (npm 11.5.1+ required,
+      # which ships with Node 22.14.0+). Earlier versions error out at publish
+      # time with an unhelpful auth message.
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
+
+      # Pin the npm CLI explicitly to ensure >= 11.5.1 even if the bundled
+      # version in node@22 drifts.
+      - name: Ensure npm >= 11.5.1 (Trusted Publishing floor)
+        run: npm install -g npm@latest
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -111,10 +131,16 @@ jobs:
         run: |
           test -f dist/index.js || (echo "Build failed: dist/index.js not found" && exit 1)
 
-      - name: Publish to npm
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Trusted Publishing: no NODE_AUTH_TOKEN / NPM_TOKEN. The npm CLI
+      # exchanges the GitHub OIDC token (id-token: write above) for a
+      # short-lived publish credential, matched against the trusted-publisher
+      # config in the npm package settings (repo=Raftersecurity/rafter-cli,
+      # workflow=publish.yml). --provenance is auto-generated under Trusted
+      # Publishing but the explicit flag makes intent obvious and survives if
+      # someone later flips a default. --access public is preserved for the
+      # scoped package (@rafter-security/cli).
+      - name: Publish to npm (Trusted Publishing — OIDC)
+        run: npm publish --access public --provenance
 
   publish-python:
     runs-on: ubuntu-latest
