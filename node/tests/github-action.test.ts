@@ -379,14 +379,14 @@ describe("test-comprehensive.yml — CI matrix", () => {
   });
 });
 
-// ── publish.yml — release pipeline validation ──────────────────────────
+// ── publish.yaml — release pipeline validation ──────────────────────────
 
-describe("publish.yml — release pipeline", () => {
+describe("publish.yaml — release pipeline", () => {
   let workflow: any;
 
   beforeAll(() => {
     workflow = yaml.load(
-      fs.readFileSync(path.join(WORKFLOWS_DIR, "publish.yml"), "utf-8"),
+      fs.readFileSync(path.join(WORKFLOWS_DIR, "publish.yaml"), "utf-8"),
     );
   });
 
