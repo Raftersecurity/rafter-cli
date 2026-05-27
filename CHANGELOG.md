@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-05-26
+
+### Changed
+- **Local secrets scanner respects `.gitignore` by default.** `rafter secrets <dir>` (and the deprecated alias `rafter agent scan <dir>`) used to walk every file under the target directory regardless of `.gitignore`, surfacing findings in build outputs, vendored deps, and one-off scratch files that the repo had explicitly excluded. The directory walker now batches the candidate file list through `git check-ignore --stdin --no-index -z` inside the scan root's git work tree, so every gitignore semantic git itself supports — nested `.gitignore`, negations, `.git/info/exclude`, the configured global excludes file, the full pattern grammar — is honored exactly. Zero new dependencies. Scans against directories outside a git work tree (or with git missing) silently fall back to the prior behavior. Opt out with `--no-gitignore`. Honored by `rafter secrets`, `rafter agent scan`, and `rafter agent baseline create`. Betterleaks engine already honors `.gitignore` natively (gitleaks ancestry); this change brings the built-in pattern engine to parity. Node + Python.
+
 ## [0.8.1] - 2026-05-12
 
 ### Fixed

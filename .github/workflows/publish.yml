@@ -7,6 +7,11 @@ on:
 
 permissions:
   contents: read
+  # id-token: write is required by npm Trusted Publishing (OIDC). Lets the
+  # publish-node job exchange the GitHub-issued OIDC token for a short-lived
+  # npm publish credential, replacing the long-lived NPM_TOKEN secret. Does
+  # NOT grant write access on its own; just mints the identity token.
+  id-token: write
 
 jobs:
   test-node:
@@ -79,6 +84,13 @@ jobs:
   publish-node:
     needs: [test-node, test-package]
     runs-on: ubuntu-latest
+    # Trusted Publishing requires id-token: write in scope for THIS job (the
+    # top-level grant covers it, but documented here for the job-local audit
+    # trail). Self-hosted runners are NOT supported by npm Trusted Publishing
+    # — ubuntu-latest (GitHub-hosted) is required.
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: ./node
@@ -87,10 +99,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 22 is the floor for npm Trusted Publishing (npm 11.5.1+ required,
+      # which ships with Node 22.14.0+). Earlier versions error out at publish
+      # time with an unhelpful auth message.
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
+
+      # Pin the npm CLI explicitly to ensure >= 11.5.1 even if the bundled
+      # version in node@22 drifts.
+      - name: Ensure npm >= 11.5.1 (Trusted Publishing floor)
+        run: npm install -g npm@latest
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -111,10 +131,16 @@ jobs:
         run: |
           test -f dist/index.js || (echo "Build failed: dist/index.js not found" && exit 1)
 
-      - name: Publish to npm
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Trusted Publishing: no NODE_AUTH_TOKEN / NPM_TOKEN. The npm CLI
+      # exchanges the GitHub OIDC token (id-token: write above) for a
+      # short-lived publish credential, matched against the trusted-publisher
+      # config in the npm package settings (repo=Raftersecurity/rafter-cli,
+      # workflow=publish.yml). --provenance is auto-generated under Trusted
+      # Publishing but the explicit flag makes intent obvious and survives if
+      # someone later flips a default. --access public is preserved for the
+      # scoped package (@rafter-security/cli).
+      - name: Publish to npm (Trusted Publishing — OIDC)
+        run: npm publish --access public --provenance
 
   publish-python:
     runs-on: ubuntu-latest
@@ -232,13 +258,11 @@ jobs:
             --version "${{ needs.publish-node.outputs.version }}" \
             --owner rafter
 
-      - name: Verify the publish landed
-        if: steps.gate.outputs.skip != 'true'
-        run: |
-          # Smoke-check: the published version should be reachable via the
-          # public registry. Wait a few seconds for index propagation.
-          sleep 5
-          npx -y clawhub@latest skill show rafter-security --version "${{ needs.publish-node.outputs.version }}"
+      # No verify step — `clawhub skill` is publish-only (rf-u9l4).
+      # The CLI exposes `publish`, `rename`, `merge`, `help` and nothing
+      # else, so we can't do a CLI-driven readback. The `publish` step
+      # itself errors on any auth or registry failure, which is the
+      # contract we rely on.
 
   create-release:
     needs: [publish-node, publish-python]
@@ -284,8 +308,26 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Wait for npm registry propagation
-        run: sleep 30
+      - name: Wait for npm registry to index the new version (sable-bac)
+        # `npm publish` returns success once the upload lands in npm's
+        # backend, but the public registry can lag on slow-CDN days.
+        # Mirrors the rf-z22y PyPI fix: poll the registry HTTP API for
+        # the exact version, retry up to 6× / ~3 min, fail loud at the
+        # end so the workflow surface stays "npm propagation failed"
+        # rather than the confusing "no matching version".
+        # URL-encoded scope: '@rafter-security/cli' → '@rafter-security%2Fcli'.
+        run: |
+          VERSION="${{ needs.publish-node.outputs.version }}"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -sf "https://registry.npmjs.org/@rafter-security%2Fcli/${VERSION}" -o /dev/null; then
+              echo "npm has @rafter-security/cli@${VERSION} (attempt ${attempt})"
+              exit 0
+            fi
+            echo "Attempt ${attempt}: @rafter-security/cli@${VERSION} not yet on npm, sleeping 30s…"
+            sleep 30
+          done
+          echo "FAIL: npm did not index @rafter-security/cli@${VERSION} within ~3 minutes"
+          exit 1
 
       - name: Install from npm registry
         run: npm install -g @rafter-security/cli@${{ needs.publish-node.outputs.version }}
@@ -315,8 +357,26 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Wait for PyPI registry propagation
-        run: sleep 30
+      - name: Wait for PyPI to index the new version (rf-z22y)
+        # `twine upload` returns success once the upload lands in PyPI's
+        # backend, but the public index (warehouse) can lag behind by up
+        # to a couple of minutes on cold paths. The previous hardcoded
+        # `sleep 30` flaked on v0.8.1. Poll instead: query the JSON API
+        # for the exact version, retry up to 6× / ~3 min, fail loud at
+        # the end so the workflow surface stays "PyPI propagation
+        # failed" rather than "package not found".
+        run: |
+          VERSION="${{ needs.publish-python.outputs.version }}"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -sf "https://pypi.org/pypi/rafter-cli/${VERSION}/json" -o /dev/null; then
+              echo "PyPI has rafter-cli==${VERSION} (attempt ${attempt})"
+              exit 0
+            fi
+            echo "Attempt ${attempt}: rafter-cli==${VERSION} not yet on PyPI, sleeping 30s…"
+            sleep 30
+          done
+          echo "FAIL: PyPI did not index rafter-cli==${VERSION} within ~3 minutes"
+          exit 1
 
       - name: Create fresh venv and install from PyPI
         run: |
