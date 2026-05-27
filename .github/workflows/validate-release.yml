@@ -44,7 +44,7 @@ jobs:
       - name: Ensure ClawHub skill version matches package version
         # rf-zgwj — the SKILL.md frontmatter version is what ClawHub publishes
         # under. Drift here would silently ship a stale version on the next
-        # `clawhub skill publish` (publish.yml). Both the Node and Python
+        # `clawhub skill publish` (publish.yaml). Both the Node and Python
         # resource copies must match the package version exactly.
         run: |
           PACKAGE_VERSION="${{ steps.node-version.outputs.VERSION }}"

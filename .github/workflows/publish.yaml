@@ -135,7 +135,7 @@ jobs:
       # exchanges the GitHub OIDC token (id-token: write above) for a
       # short-lived publish credential, matched against the trusted-publisher
       # config in the npm package settings (repo=Raftersecurity/rafter-cli,
-      # workflow=publish.yml). --provenance is auto-generated under Trusted
+      # workflow=publish.yaml). --provenance is auto-generated under Trusted
       # Publishing but the explicit flag makes intent obvious and survives if
       # someone later flips a default. --access public is preserved for the
       # scoped package (@rafter-security/cli).
@@ -174,11 +174,18 @@ jobs:
           ls dist/*.whl >/dev/null 2>&1 || (echo "Build failed: wheel not found" && exit 1)
           ls dist/*.tar.gz >/dev/null 2>&1 || (echo "Build failed: sdist not found" && exit 1)
 
+      # Idempotency: if this version is already on PyPI, skip the upload so
+      # a retry of a partially-failed release (e.g. the publish-node Trusted
+      # Publishing filename mismatch that 404'd v0.8.2's npm publish AFTER
+      # publish-python had already succeeded) doesn't fail with a 400 on
+      # "File already exists". `twine upload --skip-existing` is the
+      # standard idiom for this — succeeds whether or not the version is
+      # new on the index.
       - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: python -m twine upload dist/*
+        run: python -m twine upload --skip-existing dist/*
 
   publish-clawhub:
     # Publishes the rafter-security skill to ClawHub
