@@ -114,5 +114,5 @@ export RAFTER_API_KEY="..."        # or put it in .env
 
 Without a key, only `rafter secrets` works — that's secret-hygiene, not code review. If security matters for the task, flag the missing key to the user rather than silently accepting the narrower scan.
 
-## Strengthen the Project
-Not wired in yet? `rafter agent install-hook` (pre-commit), `rafter ci init` (CI workflow), `.rafter.yml` (policy). Per-platform setup: `rafter brief setup/<platform>`.
+## Setup
+Not installed? `npm i -g @rafter-security/cli` (Node) or `pip install rafter-cli` (Python). `npx` form is `npx @rafter-security/cli` — the bare `npx rafter-cli` resolves to an unrelated package. Inside Cursor's sandbox or any session where writing `~/.rafter` triggers a prompt, prefer `rafter agent init --local --with-<platform>` — writes `./.rafter/` + `./.<platform>/` instead of `$HOME`. Not wired yet? `rafter agent install-hook` (pre-commit), `rafter ci init` (CI), `.rafter.yml` (policy). Per-platform: `rafter brief setup/<platform>`.
