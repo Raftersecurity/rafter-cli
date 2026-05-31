@@ -15,9 +15,9 @@ inputs:
     required: false
     default: 'fast'
   severity-threshold:
-    description: 'Fail the check if findings at this severity or above are found. Options: critical, high, medium, low, none'
+    description: 'Fail the check if findings at this severity or above are found. Options: critical, high, medium, low, none. Default "none" so first-install never breaks a build; once you''ve triaged the baseline, set to "high" to enforce.'
     required: false
-    default: 'high'
+    default: 'none'
   comment-on-pr:
     description: 'Post scan results as a PR comment'
     required: false
@@ -239,6 +239,7 @@ runs:
         HIGH_COUNT: ${{ steps.results.outputs.high_count }}
         MEDIUM_COUNT: ${{ steps.results.outputs.medium_count }}
         LOW_COUNT: ${{ steps.results.outputs.low_count }}
+        SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
       run: |
         MD_REPORT=$(jq -r '.markdown // empty' "${{ runner.temp }}/rafter-results.md" 2>/dev/null || cat "${{ runner.temp }}/rafter-results.md")
 
@@ -278,6 +279,10 @@ runs:
           echo ""
           echo "</details>"
           echo ""
+          if [ "$FINDINGS_COUNT" -gt 0 ] && [ "$SEVERITY_THRESHOLD" = "none" ]; then
+            echo "> :information_source: This run is report-only. To fail the build on critical/high findings, set \`severity-threshold: high\` in your workflow."
+            echo ""
+          fi
           echo "---"
           echo "<sub>Scan ID: ${SCAN_ID} | Powered by [Rafter](https://rafter.so)</sub>"
         } >> "$COMMENT_FILE"
