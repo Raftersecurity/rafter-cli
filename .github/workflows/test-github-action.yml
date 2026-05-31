@@ -1,0 +1,59 @@
+name: Test github-action/ Composite Action
+
+# Runs on every PR touching github-action/ (the cloud-API variant) and on
+# the same paths landing on main. The Rafter API is NOT exercised — these
+# are pure-bash unit tests of the threshold-eval and PR-comment logic
+# plus a drift detector on action.yml's load-bearing defaults.
+#
+# An end-to-end test against the real Rafter API is a future addition
+# (would require an injectable RAFTER_API_KEY secret and a fixture repo).
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'github-action/**'
+      - '.github/workflows/test-github-action.yml'
+  pull_request:
+    paths:
+      - 'github-action/**'
+      - '.github/workflows/test-github-action.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-threshold-evaluation:
+    name: Threshold-evaluation case statement
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run threshold-eval unit test
+        run: bash github-action/tests/test-threshold-eval.sh
+
+  test-pr-comment-tip:
+    name: PR-comment report-only tip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run PR-comment-tip unit test
+        run: bash github-action/tests/test-pr-comment-tip.sh
+
+  test-action-yml-defaults:
+    name: action.yml drift detector
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run action.yml defaults / drift check
+        run: bash github-action/tests/test-action-yml-defaults.sh
+
+  test-yaml-validity:
+    name: action.yml is valid YAML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate YAML
+        run: |
+          python -c "import yaml; yaml.safe_load(open('github-action/action.yml'))" \
+            && echo "OK: github-action/action.yml parses as valid YAML"
