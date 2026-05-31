@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import yaml
+
 from rafter_cli.commands.agent import (
     _install_claude_code_hooks,
     _install_claude_code_mcp,
@@ -14,7 +16,74 @@ from rafter_cli.commands.agent import (
     _install_continue_dev_mcp,
     _install_continue_dev_rules,
     _install_aider_read,
+    _install_hermes_mcp,
 )
+
+
+class TestInstallHermesMcp:
+    def test_creates_config_from_scratch(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        assert _install_hermes_mcp(tmp_path)
+
+        config_path = tmp_path / ".hermes" / "config.yaml"
+        assert config_path.exists()
+        config = yaml.safe_load(config_path.read_text())
+        assert config["mcp_servers"]["rafter"]["command"] == "rafter"
+        assert config["mcp_servers"]["rafter"]["args"] == ["mcp", "serve"]
+
+    def test_preserves_existing_servers(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hermes_dir = tmp_path / ".hermes"
+        hermes_dir.mkdir()
+        (hermes_dir / "config.yaml").write_text(yaml.safe_dump({
+            "mcp_servers": {
+                "other": {"command": "other", "args": ["go"]},
+            },
+            "log_level": "debug",
+        }))
+
+        _install_hermes_mcp(tmp_path)
+
+        config = yaml.safe_load((hermes_dir / "config.yaml").read_text())
+        assert "other" in config["mcp_servers"]
+        assert "rafter" in config["mcp_servers"]
+        # Non-mcp_servers top-level keys must survive the merge.
+        assert config["log_level"] == "debug"
+
+    def test_idempotent_on_reinstall(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        _install_hermes_mcp(tmp_path)
+        first = (tmp_path / ".hermes" / "config.yaml").read_text()
+
+        _install_hermes_mcp(tmp_path)
+        second = (tmp_path / ".hermes" / "config.yaml").read_text()
+
+        assert first == second, "second install should be a no-op"
+
+    def test_recovers_from_unreadable_yaml(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hermes_dir = tmp_path / ".hermes"
+        hermes_dir.mkdir()
+        # Deliberately broken YAML — installer must not raise; should
+        # warn and write a fresh config containing the rafter entry.
+        (hermes_dir / "config.yaml").write_text("mcp_servers: [this is not\n  a valid: mapping")
+
+        assert _install_hermes_mcp(tmp_path)
+        config = yaml.safe_load((hermes_dir / "config.yaml").read_text())
+        assert "rafter" in config["mcp_servers"]
+
+    def test_replaces_array_shape_mcp_servers(self, tmp_path, monkeypatch):
+        """If a user wrote `mcp_servers:` as a list (wrong shape), the
+        installer must coerce it to a dict rather than blow up."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hermes_dir = tmp_path / ".hermes"
+        hermes_dir.mkdir()
+        (hermes_dir / "config.yaml").write_text(yaml.safe_dump({"mcp_servers": ["junk"]}))
+
+        assert _install_hermes_mcp(tmp_path)
+        config = yaml.safe_load((hermes_dir / "config.yaml").read_text())
+        assert isinstance(config["mcp_servers"], dict)
+        assert config["mcp_servers"]["rafter"]["command"] == "rafter"
 
 
 class TestInstallClaudeCodeHooks:
