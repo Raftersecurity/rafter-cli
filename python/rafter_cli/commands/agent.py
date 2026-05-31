@@ -248,6 +248,7 @@ def _print_dry_run_plan(
     want_windsurf: bool,
     want_continue: bool,
     want_aider: bool,
+    want_hermes: bool,
     want_betterleaks: bool,
     risk_level: str,
 ) -> None:
@@ -354,6 +355,11 @@ def _print_dry_run_plan(
         print("Aider (--with-aider):")
         W(root / "RAFTER.md", "rafter:start/end marker block")
         W(root / ".aider.conf.yml", "appends RAFTER.md to read: list; strips legacy mcp-server-command line")
+
+    if want_hermes:
+        print()
+        print("Hermes (--with-hermes):")
+        W(root / ".hermes" / "config.yaml", "mcp_servers.rafter entry merged into existing YAML")
 
     if want_openclaw:
         print()
@@ -987,6 +993,44 @@ def _install_aider_read(root: Path) -> bool:
     return True
 
 
+def _install_hermes_mcp(root: Path) -> bool:
+    """Install MCP server config for Hermes (<root>/.hermes/config.yaml).
+
+    Hermes uses a YAML config with an ``mcp_servers:`` block (snake_case,
+    unlike Cursor/Windsurf/Claude Code which use ``mcpServers`` camelCase).
+    Schema per server is ``{command, args, env}``. We use PyYAML (already
+    imported) to merge in the rafter entry while preserving any existing
+    servers.
+
+    Hooks (preToolUse/postToolUse equivalents) deferred to a follow-on bead
+    pending confirmation Hermes exposes a hook surface — landing MCP-only as
+    v0 mirrors how Gemini and Continue.dev were initially shipped (sable-gyw).
+    """
+    hermes_dir = root / ".hermes"
+    config_path = hermes_dir / "config.yaml"
+
+    hermes_dir.mkdir(parents=True, exist_ok=True)
+
+    config: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            loaded = yaml.safe_load(config_path.read_text())
+            if isinstance(loaded, dict):
+                config = loaded
+        except yaml.YAMLError:
+            rprint(fmt.warning("Existing Hermes config.yaml was not valid YAML, creating new one"))
+
+    mcp_servers = config.get("mcp_servers")
+    if not isinstance(mcp_servers, dict):
+        mcp_servers = {}
+        config["mcp_servers"] = mcp_servers
+    mcp_servers["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    return True
+
+
 @agent_app.command()
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
@@ -999,6 +1043,7 @@ def init(
     with_cursor: bool = typer.Option(False, "--with-cursor", help="Install Cursor integration"),
     with_windsurf: bool = typer.Option(False, "--with-windsurf", help="Install Windsurf integration"),
     with_continue: bool = typer.Option(False, "--with-continue", help="Install Continue.dev integration"),
+    with_hermes: bool = typer.Option(False, "--with-hermes", help="Install Hermes integration"),
     all_integrations: bool = typer.Option(False, "--all", help="Install all detected integrations and download Betterleaks"),
     update: bool = typer.Option(False, "--update", help="Re-download betterleaks and reinstall integrations without resetting config"),
     local: bool = typer.Option(
@@ -1037,6 +1082,7 @@ def init(
     has_windsurf = scope == "user" and (home / ".codeium" / "windsurf").exists()
     has_continue_dev = scope == "user" and (home / ".continue").exists()
     has_aider = scope == "user" and (home / ".aider.conf.yml").exists()
+    has_hermes = scope == "user" and (home / ".hermes").exists()
 
     # Resolve opt-in flags. In --local scope, --all is restricted to platforms with
     # a project-local config story (claudeCode, codex, gemini, cursor).
@@ -1057,6 +1103,10 @@ def init(
     # Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
     # in cwd) since rf-du2o.
     want_aider = with_aider or all_integrations
+    # Hermes: MCP-only v0 (no hooks confirmed yet). User scope only — Hermes
+    # reads ~/.hermes/config.yaml; project-local install story isn't
+    # established. Excluded from --all in --local for the same reason (sable-gyw).
+    want_hermes = with_hermes or (all_integrations and not local)
     want_betterleaks = with_betterleaks or (all_integrations and not local)
 
     # Show detected environments
@@ -1077,6 +1127,8 @@ def init(
         detected.append("Continue.dev")
     if has_aider:
         detected.append("Aider")
+    if has_hermes:
+        detected.append("Hermes")
 
     if detected:
         rprint(fmt.info(f"Detected environments: {', '.join(detected)}"))
@@ -1102,6 +1154,8 @@ def init(
             rprint(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
         if want_aider and not has_aider:
             rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
+        if want_hermes and not has_hermes:
+            rprint(fmt.warning("Hermes requested but not detected (~/.hermes not found)"))
 
     # --dry-run: print every file path the command would touch, then exit
     # before any filesystem write happens (rf-hrtd). Built from the same
@@ -1118,6 +1172,7 @@ def init(
             want_windsurf=want_windsurf and (has_windsurf or local),
             want_continue=want_continue and (has_continue_dev or local),
             want_aider=want_aider and (has_aider or local),
+            want_hermes=want_hermes and has_hermes,
             want_betterleaks=want_betterleaks,
             risk_level=risk_level,
         )
@@ -1312,6 +1367,18 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Aider integration: {e}"))
 
+    # Install Hermes integration if opted in (sable-gyw).
+    # User scope only — Hermes reads ~/.hermes/config.yaml. MCP-only v0;
+    # hooks deferred pending confirmation Hermes exposes a hook surface.
+    hermes_ok = False
+    if want_hermes and has_hermes:
+        try:
+            hermes_ok = _install_hermes_mcp(root)
+            if hermes_ok:
+                manager.set("agent.environments.hermes.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Hermes integration: {e}"))
+
     # Install global instruction files for platforms that support them
     _install_global_instructions(
         claude_code=claude_code_ok,
@@ -1327,7 +1394,7 @@ def init(
     rprint(fmt.success("Agent security initialized!"))
     rprint()
 
-    any_integration = openclaw_ok or claude_code_ok or codex_ok or gemini_ok or cursor_ok or windsurf_ok or continue_ok or aider_ok
+    any_integration = openclaw_ok or claude_code_ok or codex_ok or gemini_ok or cursor_ok or windsurf_ok or continue_ok or aider_ok or hermes_ok
 
     if any_integration:
         rprint("Next steps:")
@@ -1372,6 +1439,8 @@ def init(
             rprint("  rafter agent init --with-continue        # Continue.dev only")
         if has_aider:
             rprint("  rafter agent init --with-aider           # Aider only")
+        if has_hermes:
+            rprint("  rafter agent init --with-hermes          # Hermes only")
     else:
         rprint("No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
 
