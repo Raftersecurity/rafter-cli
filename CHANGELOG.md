@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-05-31
+
+### Changed
+- **`github-action/` cloud variant: `severity-threshold` default is now `none` (report-only)** (#148). Previously a fresh install with no `severity-threshold` set would fail the build on any critical/high finding — so first-install on a real repo almost always broke CI on day one, the worst possible first impression for a security tool. The default now matches Snyk / CodeQL / Semgrep: scan completes, findings post as a PR comment, SARIF uploads to the Security tab, but the workflow exits 0 regardless of severity. When findings exist under the report-only default, the PR comment includes a one-line tip pointing to `severity-threshold: high` for opt-in enforcement. Workflows that set `severity-threshold` explicitly are unaffected. README updated with an "Enforce in CI (recommended after first scan)" example. Affects only the cloud-API action at `Raftersecurity/rafter-cli/github-action@…`; the root `Raftersecurity/rafter-cli@v…` local-secrets action is unchanged.
+
+### Infrastructure
+- `publish.yaml` migrated to npm Trusted Publishing (OIDC) — no more long-lived `NPM_TOKEN` (#142). Renamed `publish.yml` → `publish.yaml` to match npm's Trusted Publisher manifest, and added `--skip-existing` on the PyPI upload so retries of a partially-failed release no longer error on "File already exists" (#143).
+- `node/package.json` now declares `repository` / `homepage` / `bugs` / `license` / `author` metadata so the npm listing renders sidebar links correctly (#145).
+- Cursor recipe in the rafter SKILL `Setup` section now leads with `--local` for ephemeral / containerized setups (#147).
+
 ## [0.8.2] - 2026-05-26
 
 ### Changed
