@@ -50,17 +50,38 @@ export interface PolicyFile {
   docs?: PolicyDocEntry[];
 }
 
-const POLICY_FILENAMES = [".rafter.yml", ".rafter.yaml"];
+/**
+ * Policy file candidates, in precedence order.
+ *
+ * sable-c1c — the cloud scanner (rafter-backend) reads `.rafter/config.yml`
+ * (subdir + `config.yml`), while the CLI canonical is `.rafter.yml`. To
+ * unbreak customers writing either shape, the CLI now reads both
+ * indefinitely. Precedence: canonical dotfile first; backend file is the
+ * fallback. If both are present, the dotfile wins (canonical).
+ *
+ * Schema compatibility is handled separately in `mapPolicy` — top-level
+ * `exclude_paths` / `custom_patterns` (backend flat shape) is accepted
+ * alongside `scan.exclude_paths` / `scan.custom_patterns` (CLI nested).
+ */
+const POLICY_FILE_CANDIDATES: string[] = [
+  ".rafter.yml",
+  ".rafter.yaml",
+  path.join(".rafter", "config.yml"),
+  path.join(".rafter", "config.yaml"),
+];
 
 /**
- * Find a policy file by walking from cwd up to git root
+ * Find a policy file by walking from cwd up to git root.
+ *
+ * For each directory, check candidates in precedence order; the first hit
+ * wins. The walk only ascends — siblings are not considered.
  */
 export function findPolicyFile(): string | null {
   let dir = process.cwd();
   const root = getGitRoot() || path.parse(dir).root;
 
   while (true) {
-    for (const filename of POLICY_FILENAMES) {
+    for (const filename of POLICY_FILE_CANDIDATES) {
       const candidate = path.join(dir, filename);
       if (fs.existsSync(candidate)) {
         return candidate;
@@ -126,6 +147,23 @@ function mapPolicy(raw: Record<string, any>): PolicyFile {
         severity: p.severity || "high",
       }));
     }
+  }
+
+  // sable-c1c — backend flat-shape compat. rafter-backend reads
+  // exclude_paths / custom_patterns at the top level (no `scan:` nesting),
+  // so customers writing the backend shape get the same behavior locally.
+  // Nested form takes precedence if both are present in the same file.
+  if (!policy.scan?.excludePaths && Array.isArray(raw.exclude_paths)) {
+    policy.scan = policy.scan || {};
+    policy.scan.excludePaths = raw.exclude_paths;
+  }
+  if (!policy.scan?.customPatterns && Array.isArray(raw.custom_patterns)) {
+    policy.scan = policy.scan || {};
+    policy.scan.customPatterns = raw.custom_patterns.map((p: any) => ({
+      name: p.name,
+      regex: p.regex,
+      severity: p.severity || "high",
+    }));
   }
 
   if (Array.isArray(raw.ignore)) {
@@ -228,7 +266,11 @@ function deriveDocId(source: string, kind: "path" | "url"): string {
   return crypto.createHash("sha256").update(source).digest("hex").slice(0, 8);
 }
 
-const VALID_TOP_LEVEL_KEYS = new Set(["version", "risk_level", "command_policy", "scan", "ignore", "audit", "docs"]);
+const VALID_TOP_LEVEL_KEYS = new Set([
+  "version", "risk_level", "command_policy", "scan", "ignore", "audit", "docs",
+  // sable-c1c — backend flat-shape compat keys.
+  "exclude_paths", "custom_patterns",
+]);
 const VALID_RISK_LEVELS = new Set(["minimal", "moderate", "aggressive"]);
 const VALID_COMMAND_MODES = new Set(["allow-all", "approve-dangerous", "deny-list"]);
 const VALID_LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
