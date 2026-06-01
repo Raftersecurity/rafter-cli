@@ -2951,18 +2951,24 @@ def update_betterleaks(
 # ── agent status ─────────────────────────────────────────────────────────
 
 @agent_app.command("status")
-def status():
+def status(
+    json_output: bool = typer.Option(False, "--json", help="Output status as JSON"),
+):
     """Show agent security status dashboard."""
     from ..core.config_schema import get_audit_log_path, get_rafter_dir
 
     rafter_dir = get_rafter_dir()
     audit_path = get_audit_log_path()
+    config_path = rafter_dir / "config.json"
+
+    if json_output:
+        print(json.dumps(_agent_status_json(config_path, audit_path), indent=2))
+        return
 
     print("Rafter Agent Status")
     print("=" * 50)
 
     # --- Config ---
-    config_path = rafter_dir / "config.json"
     if config_path.exists():
         try:
             cfg = ConfigManager().load()
@@ -3097,6 +3103,95 @@ def status():
         print("No events logged yet.")
 
     print()
+
+
+def _agent_status_json(config_path: Path, audit_path: Path) -> dict[str, Any]:
+    return {
+        "installed": config_path.exists(),
+        "version": __version__,
+        "agents_detected": _detect_agent_platforms(),
+        "hooks_installed": _detect_git_hooks(),
+        "betterleaks_available": _betterleaks_available(),
+        "config_path": _format_home_path(config_path),
+        "audit_log_path": _format_home_path(audit_path),
+    }
+
+
+def _detect_agent_platforms() -> list[str]:
+    home = Path.home()
+    candidates = [
+        ("claude-code", home / ".claude"),
+        ("openclaw", home / ".openclaw"),
+        ("codex", home / ".codex"),
+        ("gemini", home / ".gemini"),
+        ("cursor", home / ".cursor"),
+        ("windsurf", home / ".codeium" / "windsurf"),
+        ("continue", home / ".continue"),
+        ("aider", home / ".aider.conf.yml"),
+    ]
+    return [name for name, path in candidates if path.exists()]
+
+
+def _detect_git_hooks() -> list[str]:
+    hooks: set[str] = set()
+    specs = [
+        ("pre-commit", "Rafter Security Pre-Commit Hook"),
+        ("pre-push", "Rafter Security Pre-Push Hook"),
+    ]
+    home = Path.home()
+
+    for hook_name, marker in specs:
+        if _file_contains(home / ".rafter" / "git-hooks" / hook_name, marker):
+            hooks.add(hook_name)
+
+    try:
+        git_dir = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        ).stdout.strip()
+        hooks_dir = Path(git_dir).resolve() / "hooks"
+        for hook_name, marker in specs:
+            if _file_contains(hooks_dir / hook_name, marker):
+                hooks.add(hook_name)
+    except Exception:
+        pass
+
+    return sorted(hooks)
+
+
+def _betterleaks_available() -> bool:
+    bm = BinaryManager()
+    if shutil.which("betterleaks"):
+        try:
+            result = subprocess.run(
+                ["betterleaks", "version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+    return bm.get_betterleaks_path().exists() or bool(bm.find_legacy_gitleaks())
+
+
+def _file_contains(path: Path, needle: str) -> bool:
+    try:
+        return needle in path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+
+
+def _format_home_path(path: Path) -> str:
+    home = Path.home()
+    try:
+        return f"~/{path.relative_to(home).as_posix()}"
+    except ValueError:
+        return str(path)
 
 
 # ── baseline ─────────────────────────────────────────────────────────
