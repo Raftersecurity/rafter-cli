@@ -839,6 +839,62 @@ def _continue_mcp() -> ComponentSpec:
     )
 
 
+def _hermes_mcp() -> ComponentSpec:
+    """Hermes MCP server entry (~/.hermes/config.yaml).
+
+    Hermes uses a YAML config with a snake_case ``mcp_servers:`` block (unlike
+    the camelCase ``mcpServers`` of Cursor/Windsurf/Claude Code). MCP-only v0 —
+    hooks deferred pending confirmation Hermes exposes a hook surface (sable-gyw).
+    """
+    home = Path.home()
+    detect_dir = home / ".hermes"
+    config_path = detect_dir / "config.yaml"
+
+    def read_yaml() -> dict[str, Any]:
+        if not config_path.exists():
+            return {}
+        try:
+            loaded = yaml.safe_load(config_path.read_text())
+        except (OSError, yaml.YAMLError):
+            return {}
+        return loaded if isinstance(loaded, dict) else {}
+
+    def is_installed() -> bool:
+        servers = read_yaml().get("mcp_servers")
+        return isinstance(servers, dict) and bool(servers.get("rafter"))
+
+    def install() -> None:
+        detect_dir.mkdir(parents=True, exist_ok=True)
+        cfg = read_yaml()
+        servers = cfg.get("mcp_servers")
+        if not isinstance(servers, dict):
+            servers = {}
+            cfg["mcp_servers"] = servers
+        servers["rafter"] = dict(RAFTER_MCP_ENTRY)
+        config_path.write_text(yaml.safe_dump(cfg))
+
+    def uninstall() -> None:
+        if not config_path.exists():
+            return
+        cfg = read_yaml()
+        servers = cfg.get("mcp_servers")
+        if isinstance(servers, dict) and "rafter" in servers:
+            del servers["rafter"]
+            config_path.write_text(yaml.safe_dump(cfg))
+
+    return ComponentSpec(
+        id="hermes.mcp",
+        platform="hermes",
+        kind="mcp",
+        description="Hermes MCP server entry (~/.hermes/config.yaml)",
+        detect_dir=detect_dir,
+        path=config_path,
+        is_installed=is_installed,
+        install=install,
+        uninstall=uninstall,
+    )
+
+
 _AIDER_LEGACY_MCP_BLOCK_RE = re.compile(
     r"\n?#\s*Rafter security MCP server\s*\nmcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?",
 )
@@ -997,6 +1053,7 @@ def get_registry() -> list[ComponentSpec]:
             _continue_rules(),
             _continue_mcp(),
             _aider_read(),
+            _hermes_mcp(),
             _openclaw_skill(),
         ]
     return _REGISTRY
