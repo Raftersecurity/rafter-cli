@@ -60,6 +60,89 @@ describe("Policy file parsing (via .rafter.yml)", () => {
     expect(found).toBe(path.join(tmpDir, ".rafter.yaml"));
   });
 
+  // sable-c1c — read backend's file path too (.rafter/config.yml), and
+  // accept its flat-shape schema (exclude_paths at top level).
+  describe("backend file-path + schema compat (sable-c1c)", () => {
+    it("finds .rafter/config.yml as a fallback when no dotfile exists", async () => {
+      fs.mkdirSync(path.join(tmpDir, ".rafter"));
+      fs.writeFileSync(path.join(tmpDir, ".rafter", "config.yml"), "version: '1'\n");
+      const found = await findPolicyFresh();
+      expect(found).toBe(path.join(tmpDir, ".rafter", "config.yml"));
+    });
+
+    it("finds .rafter/config.yaml as a fallback (alternate extension)", async () => {
+      fs.mkdirSync(path.join(tmpDir, ".rafter"));
+      fs.writeFileSync(path.join(tmpDir, ".rafter", "config.yaml"), "version: '1'\n");
+      const found = await findPolicyFresh();
+      expect(found).toBe(path.join(tmpDir, ".rafter", "config.yaml"));
+    });
+
+    it("dotfile wins when both .rafter.yml and .rafter/config.yml exist", async () => {
+      fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), "version: 'dot'\n");
+      fs.mkdirSync(path.join(tmpDir, ".rafter"));
+      fs.writeFileSync(path.join(tmpDir, ".rafter", "config.yml"), "version: 'subdir'\n");
+      const found = await findPolicyFresh();
+      expect(found).toBe(path.join(tmpDir, ".rafter.yml"));
+      const policy = await loadPolicyFresh();
+      expect(policy?.version).toBe("dot");
+    });
+
+    it("accepts top-level exclude_paths (backend flat shape) from .rafter/config.yml", async () => {
+      fs.mkdirSync(path.join(tmpDir, ".rafter"));
+      fs.writeFileSync(
+        path.join(tmpDir, ".rafter", "config.yml"),
+        "exclude_paths:\n  - scripts/\n  - components/common/Mermaid.tsx\n",
+      );
+      const policy = await loadPolicyFresh();
+      expect(policy?.scan?.excludePaths).toEqual([
+        "scripts/",
+        "components/common/Mermaid.tsx",
+      ]);
+    });
+
+    it("accepts top-level custom_patterns (backend flat shape)", async () => {
+      fs.mkdirSync(path.join(tmpDir, ".rafter"));
+      fs.writeFileSync(
+        path.join(tmpDir, ".rafter", "config.yml"),
+        "custom_patterns:\n  - name: Foo\n    regex: 'foo-[a-z0-9]+'\n    severity: high\n",
+      );
+      const policy = await loadPolicyFresh();
+      expect(policy?.scan?.customPatterns?.[0]?.name).toBe("Foo");
+    });
+
+    it("accepts the backend flat shape inside a .rafter.yml dotfile too", async () => {
+      // A customer who used to write .rafter/config.yml may copy the same
+      // shape into a .rafter.yml dotfile — should still work.
+      fs.writeFileSync(
+        path.join(tmpDir, ".rafter.yml"),
+        "exclude_paths:\n  - tests/**\n",
+      );
+      const policy = await loadPolicyFresh();
+      expect(policy?.scan?.excludePaths).toEqual(["tests/**"]);
+    });
+
+    it("nested scan.exclude_paths wins over top-level when both are present", async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, ".rafter.yml"),
+        "exclude_paths:\n  - flat\nscan:\n  exclude_paths:\n    - nested\n",
+      );
+      const policy = await loadPolicyFresh();
+      expect(policy?.scan?.excludePaths).toEqual(["nested"]);
+    });
+
+    it("does not warn on top-level exclude_paths / custom_patterns (compat keys)", async () => {
+      const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      fs.writeFileSync(
+        path.join(tmpDir, ".rafter.yml"),
+        "exclude_paths:\n  - foo/\ncustom_patterns: []\n",
+      );
+      await loadPolicyFresh();
+      const warnings = warnSpy.mock.calls.flat().join("\n");
+      expect(warnings).not.toMatch(/Unknown policy key "exclude_paths"/);
+      expect(warnings).not.toMatch(/Unknown policy key "custom_patterns"/);
+    });
+  });
+
   it("parses valid policy with all sections", async () => {
     const yml = `
 version: "1"
