@@ -30,6 +30,25 @@ func (s *Server) routes(mux *http.ServeMux) {
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	// Lock the page down to its own origin. The load-bearing directive is
+	// connect-src 'self': the UI reveals plaintext secrets, so even if an
+	// XSS slipped past the textContent/escapeHtml discipline in app.js, the
+	// browser would refuse to ship those values to any other host — the
+	// "nothing leaves this computer" promise enforced below the JS layer.
+	// 'unsafe-inline' is needed only for style (the embedded <style> block
+	// and a handful of inline style attributes); scripts stay 'self' with
+	// no inline-script escape hatch.
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'none'; "+
+			"script-src 'self'; "+
+			"style-src 'self' 'unsafe-inline'; "+
+			"img-src 'self' data:; "+
+			"connect-src 'self'; "+
+			"base-uri 'none'; "+
+			"form-action 'none'; "+
+			"frame-ancestors 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	_, _ = w.Write(indexHTML)
 }
 
