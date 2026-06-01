@@ -1,7 +1,10 @@
 # trove
 
-> **Status: scaffold (v0.0.0).** Runtime shell only. No scanners, no storage,
-> no keystore reads. See spec for the v1 surface.
+> **Status: v0.1 — file/config/shellrc scanning + live UI shipped.** Storage,
+> fingerprint dedup, drift watching, and a browser inventory built for
+> non-technical people are all landed. Still gated: OS keystore reads
+> (`rc-4fc`) and source-code scan via betterleaks (`rc-ksy`). See spec for the
+> full v1 surface.
 
 `trove` is the inventory tool from the Rafter 2.0 Secret Management project — a
 read-only, annotate-only auditor for secrets that already live in plaintext on
@@ -77,10 +80,18 @@ on launch when `ScanConfig.Roots` is empty.
   edits the user metadata, and `POST /api/secrets/{id}/{stale,rotated}`
   expose the two action buttons from the spec. Keystore and source-code
   reveals return 422 (not yet supported).
-- `internal/server/static/`: the embedded inventory UI. List grouped
-  by source, side panel for annotation, click-to-reveal for plaintext
-  sources, debounced auto-save on annotation edits, live SSE updates
-  when the drift watcher fires.
+- `internal/server/static/`: the embedded inventory UI, written for
+  people who have never opened a terminal. Dark Rafter aesthetic
+  (matches the `docs/design-refs/` Vault Inspector). Every technical
+  signal is translated at the edge: octal permissions become "anyone on
+  this computer can read it", `found_in.length > 1` becomes "stored in N
+  places", `value_history` becomes "changed N times". A "Worth a look"
+  triage section floats exposed/duplicated secrets to the top; a stat
+  row summarises the whole picture; the detail panel explains *what each
+  finding means* and offers a copy-paste fix (never an auto-mutation).
+  Side panel annotation with friendly labels + inline help, click-to-
+  reveal (read on demand, never persisted), debounced auto-save, live
+  SSE updates when the drift watcher fires.
 
 The keystore reader lands in subsequent commits.
 
@@ -89,6 +100,13 @@ The keystore reader lands in subsequent commits.
 - **Zero mutations to `.env` files in any code path.** Ever. The audit surface
   is read + annotate only.
 - Never bind to `0.0.0.0`. Never reuse a port. Never log the session token.
+- The served page carries a strict Content-Security-Policy
+  (`default-src 'none'`, `connect-src 'self'`, no inline scripts). This is
+  the "nothing leaves this computer" promise enforced below the JS layer:
+  even an XSS could not exfiltrate a revealed secret to a remote host.
+  The frontend renders all scanned data via `textContent`/escaped HTML and
+  only allows `http(s)` annotation links — keep both invariants if you edit
+  `internal/server/static/`.
 - Keystore-read code must NOT land before the `rafter-secure-design` walk
   (see bead **rc-4fc**).
 - Source-code scan must NOT land before betterleaks lands in raftercli (bead
