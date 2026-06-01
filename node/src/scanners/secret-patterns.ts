@@ -95,6 +95,14 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
     description: "Twilio API Key detected"
   },
 
+  // HashiCorp Vault
+  {
+    name: "HashiCorp Vault Token",
+    regex: "hvs\\.[a-zA-Z0-9_-]{90,}",
+    severity: "critical",
+    description: "HashiCorp Vault service token detected"
+  },
+
   // Generic patterns
   {
     name: "Generic API Key",
