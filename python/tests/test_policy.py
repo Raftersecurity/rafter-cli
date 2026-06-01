@@ -4,7 +4,68 @@ from __future__ import annotations
 import json
 
 from rafter_cli.commands.policy import _generate_claude_config
-from rafter_cli.core.policy_loader import _validate_policy, _map_policy
+from rafter_cli.core.policy_loader import _validate_policy, _map_policy, find_policy_file, load_policy
+
+
+class TestBackendCompat:
+    """sable-c1c — CLI reads .rafter/config.yml indefinitely and accepts
+    backend's flat-shape schema alongside the canonical nested form."""
+
+    def test_finds_subdir_config_yml_as_fallback(self, tmp_path, monkeypatch):
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        (tmp_path / ".rafter").mkdir()
+        (tmp_path / ".rafter" / "config.yml").write_text("version: '1'\n")
+        monkeypatch.chdir(tmp_path)
+        assert find_policy_file() == tmp_path / ".rafter" / "config.yml"
+
+    def test_finds_subdir_config_yaml_as_fallback(self, tmp_path, monkeypatch):
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        (tmp_path / ".rafter").mkdir()
+        (tmp_path / ".rafter" / "config.yaml").write_text("version: '1'\n")
+        monkeypatch.chdir(tmp_path)
+        assert find_policy_file() == tmp_path / ".rafter" / "config.yaml"
+
+    def test_dotfile_wins_over_subdir(self, tmp_path, monkeypatch):
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        (tmp_path / ".rafter.yml").write_text("version: 'dot'\n")
+        (tmp_path / ".rafter").mkdir()
+        (tmp_path / ".rafter" / "config.yml").write_text("version: 'subdir'\n")
+        monkeypatch.chdir(tmp_path)
+        assert find_policy_file() == tmp_path / ".rafter.yml"
+        policy = load_policy()
+        assert policy["version"] == "dot"
+
+    def test_top_level_exclude_paths_accepted(self):
+        raw = {"exclude_paths": ["scripts/", "components/common/Mermaid.tsx"]}
+        result = _validate_policy(_map_policy(raw), raw)
+        assert result["scan"]["exclude_paths"] == ["scripts/", "components/common/Mermaid.tsx"]
+
+    def test_top_level_custom_patterns_accepted(self):
+        raw = {
+            "custom_patterns": [
+                {"name": "Foo", "regex": "foo-[a-z0-9]+", "severity": "high"},
+            ],
+        }
+        result = _validate_policy(_map_policy(raw), raw)
+        assert result["scan"]["custom_patterns"][0]["name"] == "Foo"
+
+    def test_nested_wins_over_top_level(self):
+        raw = {
+            "exclude_paths": ["flat"],
+            "scan": {"exclude_paths": ["nested"]},
+        }
+        result = _validate_policy(_map_policy(raw), raw)
+        assert result["scan"]["exclude_paths"] == ["nested"]
+
+    def test_no_warnings_for_compat_keys(self, capsys):
+        raw = {"exclude_paths": ["foo/"], "custom_patterns": []}
+        _validate_policy(_map_policy(raw), raw)
+        err = capsys.readouterr().err
+        assert "exclude_paths" not in err
+        assert "custom_patterns" not in err
 
 
 class TestGenerateClaudeConfig:
