@@ -3111,7 +3111,7 @@ def _agent_status_json(config_path: Path, audit_path: Path) -> dict[str, Any]:
         "version": __version__,
         "agents_detected": _detect_agent_platforms(),
         "hooks_installed": _detect_git_hooks(),
-        "gitleaks_available": _betterleaks_available(),
+        "betterleaks_available": _betterleaks_available(),
         "config_path": _format_home_path(config_path),
         "audit_log_path": _format_home_path(audit_path),
     }

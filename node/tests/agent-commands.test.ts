@@ -674,7 +674,7 @@ describe("agent status", () => {
       installed: false,
       version: expect.any(String),
       agents_detected: [],
-      gitleaks_available: expect.any(Boolean),
+      betterleaks_available: expect.any(Boolean),
       config_path: "~/.rafter/config.json",
       audit_log_path: "~/.rafter/audit.jsonl",
     });

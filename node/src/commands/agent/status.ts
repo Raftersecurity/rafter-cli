@@ -14,7 +14,7 @@ interface AgentStatusJson {
   version: string;
   agents_detected: string[];
   hooks_installed: string[];
-  gitleaks_available: boolean;
+  betterleaks_available: boolean;
   config_path: string;
   audit_log_path: string;
 }
@@ -204,7 +204,7 @@ function buildStatusJson(home: string, configPath: string, auditPath: string): A
     version: getPkgVersion(),
     agents_detected: detectAgents(home),
     hooks_installed: detectGitHooks(home),
-    gitleaks_available: isBetterleaksAvailable(),
+    betterleaks_available: isBetterleaksAvailable(),
     config_path: formatHomePath(configPath, home),
     audit_log_path: formatHomePath(auditPath, home),
   };

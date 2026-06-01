@@ -24,7 +24,7 @@ class TestAgentStatusJson:
         assert isinstance(payload["version"], str)
         assert payload["agents_detected"] == []
         assert isinstance(payload["hooks_installed"], list)
-        assert isinstance(payload["gitleaks_available"], bool)
+        assert isinstance(payload["betterleaks_available"], bool)
         assert payload["config_path"] == "~/.rafter/config.json"
         assert payload["audit_log_path"] == "~/.rafter/audit.jsonl"
         assert "Rafter Agent Status" not in result.output

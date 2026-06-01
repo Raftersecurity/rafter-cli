@@ -819,7 +819,7 @@ Show agent security status dashboard. Displays config summary, installed integra
   "version": "0.8.3",
   "agents_detected": ["claude-code", "cursor"],
   "hooks_installed": ["pre-commit"],
-  "gitleaks_available": true,
+  "betterleaks_available": true,
   "config_path": "~/.rafter/config.json",
   "audit_log_path": "~/.rafter/audit.jsonl"
 }
