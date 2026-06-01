@@ -128,6 +128,7 @@ export function createStatusCommand(): Command {
         { name: "Cursor", flag: "--with-cursor", configDir: path.join(home, ".cursor"), configFile: path.join(home, ".cursor", "mcp.json"), needle: "rafter" },
         { name: "Windsurf", flag: "--with-windsurf", configDir: path.join(home, ".codeium", "windsurf"), configFile: path.join(home, ".codeium", "windsurf", "mcp_config.json"), needle: "rafter" },
         { name: "Continue.dev", flag: "--with-continue", configDir: path.join(home, ".continue"), configFile: path.join(home, ".continue", "config.json"), needle: "rafter" },
+        { name: "Hermes", flag: "--with-hermes", configDir: path.join(home, ".hermes"), configFile: path.join(home, ".hermes", "config.yaml"), needle: "rafter" },
       ];
 
       for (const agent of mcpAgents) {
@@ -220,6 +221,7 @@ function detectAgents(home: string): string[] {
     ["windsurf", path.join(home, ".codeium", "windsurf")],
     ["continue", path.join(home, ".continue")],
     ["aider", path.join(home, ".aider.conf.yml")],
+    ["hermes", path.join(home, ".hermes")],
   ];
   return candidates
     .filter(([, p]) => fs.existsSync(p))

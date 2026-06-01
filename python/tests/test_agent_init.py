@@ -86,6 +86,69 @@ class TestInstallHermesMcp:
         assert config["mcp_servers"]["rafter"]["command"] == "rafter"
 
 
+class TestHermesDetection:
+    """sable-gyw item 6 — Hermes must surface in verify / status / list."""
+
+    def test_check_hermes_not_detected(self, tmp_path, monkeypatch):
+        from rafter_cli.commands.agent import _check_hermes
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        result = _check_hermes()
+        assert not result.passed
+        assert result.optional
+        assert "not detected" in result.detail.lower()
+
+    def test_check_hermes_pass_after_install(self, tmp_path, monkeypatch):
+        from rafter_cli.commands.agent import _check_hermes, _install_hermes_mcp
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        _install_hermes_mcp(tmp_path)
+        result = _check_hermes()
+        assert result.passed
+        assert "configured" in result.detail.lower()
+
+    def test_check_hermes_warns_when_config_lacks_rafter(self, tmp_path, monkeypatch):
+        from rafter_cli.commands.agent import _check_hermes
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hermes_dir = tmp_path / ".hermes"
+        hermes_dir.mkdir()
+        (hermes_dir / "config.yaml").write_text(yaml.safe_dump({"mcp_servers": {"other": {"command": "other"}}}))
+        result = _check_hermes()
+        assert not result.passed
+        assert result.optional  # warn, not hard fail
+
+    def test_detect_agent_platforms_includes_hermes(self, tmp_path, monkeypatch):
+        from rafter_cli.commands.agent import _detect_agent_platforms
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".hermes").mkdir()
+        assert "hermes" in _detect_agent_platforms()
+
+    def test_hermes_mcp_component_registered(self, tmp_path, monkeypatch):
+        from rafter_cli.commands import agent_components
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        agent_components.reset_registry_cache()
+        try:
+            ids = [c.id for c in agent_components.get_registry()]
+            assert "hermes.mcp" in ids
+        finally:
+            agent_components.reset_registry_cache()
+
+    def test_hermes_mcp_component_install_uninstall(self, tmp_path, monkeypatch):
+        from rafter_cli.commands import agent_components
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        agent_components.reset_registry_cache()
+        try:
+            spec = agent_components.resolve_component("hermes.mcp")
+            assert spec is not None
+            assert not spec.is_installed()
+            spec.install()
+            assert spec.is_installed()
+            config = yaml.safe_load((tmp_path / ".hermes" / "config.yaml").read_text())
+            assert config["mcp_servers"]["rafter"]["command"] == "rafter"
+            spec.uninstall()
+            assert not spec.is_installed()
+        finally:
+            agent_components.reset_registry_cache()
+
+
 class TestInstallClaudeCodeHooks:
     def test_creates_settings_from_scratch(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)

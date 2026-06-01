@@ -2518,6 +2518,34 @@ def _check_aider() -> _CheckResult:
     return _CheckResult(name, True, f"RAFTER.md + read: entry in {conf}")
 
 
+def _check_hermes() -> _CheckResult:
+    """Check if Hermes integration is healthy (sable-gyw).
+
+    Hermes uses ~/.hermes/config.yaml with a snake_case ``mcp_servers:`` block
+    (MCP-only v0 — no hook surface confirmed yet).
+    """
+    name = "Hermes"
+    home = Path.home()
+    hermes_dir = home / ".hermes"
+
+    if not hermes_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-hermes' to enable", optional=True)
+
+    config_path = hermes_dir / "config.yaml"
+    if not config_path.exists():
+        return _CheckResult(name, False, f"Config not found: {config_path} — run 'rafter agent init --with-hermes'", optional=True)
+
+    try:
+        loaded = yaml.safe_load(config_path.read_text()) or {}
+    except (OSError, yaml.YAMLError) as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    servers = loaded.get("mcp_servers") if isinstance(loaded, dict) else None
+    if not (isinstance(servers, dict) and servers.get("rafter")):
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-hermes'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
 def _probe_claude_code() -> _CheckResult:
     """Runtime probe of the Claude Code hook integration (rf-65zg).
 
@@ -2618,6 +2646,7 @@ def verify(
         _check_windsurf(),
         _check_continue_dev(),
         _check_aider(),
+        _check_hermes(),
     ]
 
     if probe:
@@ -3046,6 +3075,7 @@ def status(
         {"name": "Cursor", "flag": "--with-cursor", "config_dir": home / ".cursor", "config_file": home / ".cursor" / "mcp.json", "needle": "rafter"},
         {"name": "Windsurf", "flag": "--with-windsurf", "config_dir": home / ".codeium" / "windsurf", "config_file": home / ".codeium" / "windsurf" / "mcp_config.json", "needle": "rafter"},
         {"name": "Continue.dev", "flag": "--with-continue", "config_dir": home / ".continue", "config_file": home / ".continue" / "config.json", "needle": "rafter"},
+        {"name": "Hermes", "flag": "--with-hermes", "config_dir": home / ".hermes", "config_file": home / ".hermes" / "config.yaml", "needle": "rafter"},
     ]
 
     for agent in mcp_agents:
@@ -3128,6 +3158,7 @@ def _detect_agent_platforms() -> list[str]:
         ("windsurf", home / ".codeium" / "windsurf"),
         ("continue", home / ".continue"),
         ("aider", home / ".aider.conf.yml"),
+        ("hermes", home / ".hermes"),
     ]
     return [name for name, path in candidates if path.exists()]
 
