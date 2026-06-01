@@ -107,6 +107,7 @@ def scan_local(
         _output_sarif,
         _watch_and_scan,
         _apply_baseline,
+        _apply_exclude_paths,
         _load_baseline_entries,
     )
     from ..core.config_manager import ConfigManager
@@ -164,6 +165,9 @@ def scan_local(
             resolved = os.path.join(repo_root, f)
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
+        # sable-yz0 — honor scan.exclude_paths in --diff mode too.
+        exclude = scan_cfg.exclude_paths if scan_cfg else None
+        all_results = _apply_exclude_paths(all_results, exclude, repo_root)
         filtered = _apply_baseline(all_results, baseline_entries)
         _output_scan_results(filtered, json_output, quiet, f"files changed since {diff}", format=format, suppressions=suppressions)
         return
@@ -201,6 +205,9 @@ def scan_local(
             resolved = os.path.join(repo_root, f)
             if os.path.isfile(resolved):
                 all_results.extend(_scan_file(resolved, eng, custom_patterns))
+        # sable-yz0 — honor scan.exclude_paths in --staged mode too.
+        exclude = scan_cfg.exclude_paths if scan_cfg else None
+        all_results = _apply_exclude_paths(all_results, exclude, repo_root)
         filtered = _apply_baseline(all_results, baseline_entries)
         _output_scan_results(filtered, json_output, quiet, "staged files", format=format, suppressions=suppressions)
         return
