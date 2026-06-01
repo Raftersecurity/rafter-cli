@@ -303,6 +303,37 @@ function checkAider(): CheckResult {
   return { name, passed: true, detail: `RAFTER.md + read: entry in ${conf}` };
 }
 
+function checkHermes(): CheckResult {
+  // Hermes uses ~/.hermes/config.yaml with a snake_case `mcp_servers:` block
+  // (MCP-only v0 — no hook surface confirmed yet; sable-gyw).
+  const name = "Hermes";
+  const homeDir = os.homedir();
+  const hermesDir = path.join(homeDir, ".hermes");
+
+  if (!fs.existsSync(hermesDir)) {
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-hermes' to enable` };
+  }
+
+  const configPath = path.join(hermesDir, "config.yaml");
+  if (!fs.existsSync(configPath)) {
+    return { name, passed: false, optional: true, detail: `Config not found: ${configPath} — run 'rafter agent init --with-hermes'` };
+  }
+
+  try {
+    const loaded = yaml.load(fs.readFileSync(configPath, "utf-8"));
+    const servers = (loaded && typeof loaded === "object" && !Array.isArray(loaded))
+      ? (loaded as Record<string, any>).mcp_servers
+      : undefined;
+    const hasRafterMcp = servers && typeof servers === "object" && servers.rafter != null;
+    if (!hasRafterMcp) {
+      return { name, passed: false, optional: true, detail: "Rafter MCP server not configured — run 'rafter agent init --with-hermes'" };
+    }
+    return { name, passed: true, detail: "MCP server configured" };
+  } catch (e) {
+    return { name, passed: false, optional: true, detail: `Cannot read config: ${e}` };
+  }
+}
+
 /**
  * Probe the Claude Code hook integration end-to-end (rf-65zg).
  *
@@ -406,6 +437,7 @@ export function createVerifyCommand(): Command {
         checkWindsurf(),
         checkContinueDev(),
         checkAider(),
+        checkHermes(),
       ];
 
       if (opts.probe) {
