@@ -882,6 +882,61 @@ function continueMcp(): ComponentSpec {
 }
 
 /**
+ * Hermes MCP server entry (~/.hermes/config.yaml).
+ *
+ * Hermes uses a YAML config with a snake_case `mcp_servers:` block (unlike the
+ * camelCase `mcpServers` of Cursor/Windsurf/Claude Code). Per-server schema is
+ * {command, args, env}. MCP-only v0 — hooks deferred pending confirmation
+ * Hermes exposes a hook surface (sable-gyw).
+ */
+function hermesMcp(): ComponentSpec {
+  const home = os.homedir();
+  const configPath = path.join(home, ".hermes", "config.yaml");
+
+  const readYaml = (): Record<string, any> => {
+    if (!fs.existsSync(configPath)) return {};
+    try {
+      const loaded = yaml.load(fs.readFileSync(configPath, "utf-8"));
+      if (loaded && typeof loaded === "object" && !Array.isArray(loaded)) {
+        return loaded as Record<string, any>;
+      }
+    } catch { /* unparseable — treat as empty */ }
+    return {};
+  };
+
+  return {
+    id: "hermes.mcp",
+    platform: "hermes",
+    kind: "mcp",
+    description: "Hermes MCP server entry (~/.hermes/config.yaml)",
+    detectDir: path.join(home, ".hermes"),
+    path: configPath,
+    isInstalled: () => {
+      const servers = readYaml().mcp_servers;
+      return !!(servers && typeof servers === "object" && !Array.isArray(servers) && servers.rafter);
+    },
+    install: () => {
+      const dir = path.join(home, ".hermes");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const cfg = readYaml();
+      if (!cfg.mcp_servers || typeof cfg.mcp_servers !== "object" || Array.isArray(cfg.mcp_servers)) {
+        cfg.mcp_servers = {};
+      }
+      cfg.mcp_servers.rafter = { ...RAFTER_MCP_ENTRY };
+      fs.writeFileSync(configPath, yaml.dump(cfg), "utf-8");
+    },
+    uninstall: () => {
+      if (!fs.existsSync(configPath)) return;
+      const cfg = readYaml();
+      const servers = cfg.mcp_servers;
+      if (servers && typeof servers === "object" && !Array.isArray(servers) && removeKey(servers, "rafter")) {
+        fs.writeFileSync(configPath, yaml.dump(cfg), "utf-8");
+      }
+    },
+  };
+}
+
+/**
  * Aider read-only context: writes RAFTER.md and adds it to .aider.conf.yml `read:`.
  *
  * Replaces the prior `aider.mcp` component, pruned in rf-du2o because Aider
@@ -1021,6 +1076,7 @@ export function getComponentRegistry(): ComponentSpec[] {
       continueRules(),
       continueMcp(),
       aiderRead(),
+      hermesMcp(),
       openclawSkill(),
     ];
   }

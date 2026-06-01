@@ -150,3 +150,71 @@ describe("agent init --with-hermes", () => {
     expect(fs.existsSync(path.join(home, ".hermes", "config.yaml"))).toBe(false);
   });
 });
+
+describe("Hermes detection in verify / status / list", () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = createTempHome();
+    fs.mkdirSync(path.join(home, ".hermes"), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("agent status reports Hermes installed after init", () => {
+    runCli(["agent", "init", "--with-hermes"], home);
+    const r = runCli(["agent", "status"], home);
+    expect(r.stdout + r.stderr).toMatch(/Hermes:\s+MCP installed/);
+  });
+
+  it("agent status reports detected-but-missing when ~/.hermes exists without rafter", () => {
+    const r = runCli(["agent", "status"], home);
+    expect(r.stdout + r.stderr).toMatch(/Hermes:\s+detected but MCP missing/);
+  });
+
+  it("agent status --json includes hermes in agents_detected", () => {
+    const r = runCli(["agent", "status", "--json"], home);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.agents_detected).toContain("hermes");
+  });
+
+  it("agent verify --json marks Hermes pass after init", () => {
+    runCli(["agent", "init", "--with-hermes"], home);
+    const r = runCli(["agent", "verify", "--json"], home);
+    const parsed = JSON.parse(r.stdout);
+    const hermes = parsed.checks.find((c: any) => c.name === "Hermes");
+    expect(hermes).toBeDefined();
+    expect(hermes.status).toBe("pass");
+  });
+
+  it("agent verify --json warns (not fails) when Hermes config lacks rafter", () => {
+    fs.writeFileSync(
+      path.join(home, ".hermes", "config.yaml"),
+      yaml.dump({ mcp_servers: { other: { command: "other" } } }),
+      "utf-8",
+    );
+    const r = runCli(["agent", "verify", "--json"], home);
+    const parsed = JSON.parse(r.stdout);
+    const hermes = parsed.checks.find((c: any) => c.name === "Hermes");
+    expect(hermes.status).toBe("warn");
+  });
+
+  it("agent list includes the hermes.mcp component", () => {
+    const r = runCli(["agent", "list", "--json"], home);
+    const parsed = JSON.parse(r.stdout);
+    const ids = parsed.components.map((c: any) => c.id);
+    expect(ids).toContain("hermes.mcp");
+  });
+
+  it("hermes.mcp reports installed=true in list after init", () => {
+    runCli(["agent", "init", "--with-hermes"], home);
+    const r = runCli(["agent", "list", "--json"], home);
+    const parsed = JSON.parse(r.stdout);
+    const hermes = parsed.components.find((c: any) => c.id === "hermes.mcp");
+    expect(hermes).toBeDefined();
+    expect(hermes.installed).toBe(true);
+    expect(hermes.detected).toBe(true);
+  });
+});
