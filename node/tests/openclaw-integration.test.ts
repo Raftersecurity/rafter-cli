@@ -174,6 +174,66 @@ describe("OpenClaw Integration", () => {
       );
       expect(result.stdout).toContain("Installed Rafter Security skill");
     });
+
+    it("init success message reports the canonical workspace path, not the legacy path (rf-zgwj)", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
+      const result = runCli("agent init --with-openclaw", testHomeDir);
+      expect(result.stdout).toContain("Installed Rafter Security skill");
+      // Must name the real destination, not the legacy ~/.openclaw/skills/*.md
+      expect(result.stdout).toContain(SKILL_FILE_REL);
+      expect(result.stdout).not.toMatch(/\.openclaw\/skills\/rafter-security\.md/);
+    });
+  });
+
+  // ── `agent status` / `agent verify` reporting (sable-1vq) ──────────
+  //
+  // Regression guard: status checked the legacy flat path, so after a correct
+  // canonical install it falsely reported "skill missing" — while verify (which
+  // reads the canonical path) reported it installed. Both must agree.
+
+  describe("OpenClaw status reporting", () => {
+    it("status reports 'skill installed' at the canonical path after init", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
+      runCli("agent init --with-openclaw", testHomeDir);
+
+      const result = runCli("agent status", testHomeDir);
+      expect(result.stdout).toMatch(/OpenClaw:\s+skill installed/);
+      expect(result.stdout).toContain(SKILL_FILE_REL);
+      expect(result.stdout).not.toMatch(/OpenClaw:\s+detected but skill missing/);
+    });
+
+    it("status and verify agree after a canonical install", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
+      runCli("agent init --with-openclaw", testHomeDir);
+
+      const status = runCli("agent status", testHomeDir);
+      const verify = runCli("agent verify", testHomeDir);
+      expect(status.stdout).toMatch(/OpenClaw:\s+skill installed/);
+      expect(verify.stdout).toMatch(/OpenClaw.*skill installed/);
+    });
+
+    it("status shows 'detected but skill missing' when ~/.openclaw exists without a skill", () => {
+      fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
+      const result = runCli("agent status", testHomeDir);
+      expect(result.stdout).toMatch(/OpenClaw:\s+detected but skill missing/);
+    });
+
+    it("status surfaces a migration hint when only the legacy flat file exists", () => {
+      const legacyDir = path.join(testHomeDir, ".openclaw", "skills");
+      fs.mkdirSync(legacyDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(legacyDir, "rafter-security.md"),
+        "---\nname: rafter-security\nversion: 0.6.0\n---\n# old\n",
+        "utf-8",
+      );
+      const result = runCli("agent status", testHomeDir);
+      expect(result.stdout).toMatch(/OpenClaw:\s+legacy skill at .* \(not loaded\)/);
+    });
+
+    it("status reports 'not detected' when ~/.openclaw is absent", () => {
+      const result = runCli("agent status", testHomeDir);
+      expect(result.stdout).toMatch(/OpenClaw:\s+not detected/);
+    });
   });
 
   // ── 3. Idempotency ────────────────────────────────────────────────

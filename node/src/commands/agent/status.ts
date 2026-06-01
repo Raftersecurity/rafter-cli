@@ -8,6 +8,7 @@ import { getRafterDir, getAuditLogPath, getBinDir } from "../../core/config-defa
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { BinaryManager } from "../../utils/binary-manager.js";
+import { SkillManager } from "../../utils/skill-manager.js";
 
 interface AgentStatusJson {
   installed: boolean;
@@ -101,12 +102,19 @@ export function createStatusCommand(): Command {
       console.log(`PostToolUse:  ${posttoolOk ? "installed" : "not installed — run: rafter agent init --with-claude-code"}`);
 
       // --- OpenClaw skill ---
-      const skillPath = path.join(home, ".openclaw", "skills", "rafter-security.md");
-      const openclawDir = path.join(home, ".openclaw");
-      if (fs.existsSync(skillPath)) {
-        console.log(`OpenClaw:     skill installed (${skillPath})`);
-      } else if (fs.existsSync(openclawDir)) {
-        console.log("OpenClaw:     detected but skill missing — run: rafter agent init --with-openclaw");
+      // rf-zgwj moved the skill to the canonical ClawHub workspace path
+      // (~/.openclaw/workspace/skills/rafter-security/SKILL.md) and strips the
+      // legacy flat file. Detect via SkillManager so this matches `agent verify`
+      // and the installer — checking the legacy path here is a false negative.
+      const skillManager = new SkillManager();
+      if (skillManager.isRafterSkillInstalled()) {
+        console.log(`OpenClaw:     skill installed (${skillManager.getRafterSkillPath()})`);
+      } else if (skillManager.isOpenClawInstalled()) {
+        if (skillManager.hasLegacyRafterSkill()) {
+          console.log(`OpenClaw:     legacy skill at ${skillManager.getLegacyRafterSkillPath()} (not loaded) — run: rafter agent init --with-openclaw to migrate`);
+        } else {
+          console.log("OpenClaw:     detected but skill missing — run: rafter agent init --with-openclaw");
+        }
       } else {
         console.log("OpenClaw:     not detected (optional)");
       }

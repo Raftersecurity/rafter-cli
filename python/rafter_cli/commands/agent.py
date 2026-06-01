@@ -3085,11 +3085,18 @@ def status(
     print(f"PostToolUse:  {posttool_status}")
 
     # --- OpenClaw skill ---
-    skill_path = Path.home() / ".openclaw" / "skills" / "rafter-security.md"
-    if skill_path.exists():
-        print(f"OpenClaw:     skill installed ({skill_path})")
-    elif (Path.home() / ".openclaw").exists():
-        print("OpenClaw:     detected but skill missing — run: rafter agent init --with-openclaw")
+    # rf-zgwj moved the skill to the canonical ClawHub workspace path
+    # (~/.openclaw/workspace/skills/rafter-security/SKILL.md) and strips the
+    # legacy flat file. Detect via SkillManager so this matches `agent verify`
+    # and the installer — checking the legacy path here is a false negative.
+    skill_manager = SkillManager()
+    if skill_manager.is_rafter_skill_installed():
+        print(f"OpenClaw:     skill installed ({skill_manager.get_rafter_skill_path()})")
+    elif skill_manager.is_openclaw_installed():
+        if skill_manager.has_legacy_rafter_skill():
+            print(f"OpenClaw:     legacy skill at {skill_manager.get_legacy_rafter_skill_path()} (not loaded) — run: rafter agent init --with-openclaw to migrate")
+        else:
+            print("OpenClaw:     detected but skill missing — run: rafter agent init --with-openclaw")
     else:
         print("OpenClaw:     not detected (optional)")
 
