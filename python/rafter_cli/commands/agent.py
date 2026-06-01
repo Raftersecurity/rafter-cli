@@ -1493,6 +1493,68 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
         return [r] if r.matches else []
 
 
+def _path_matches_exclude_pattern(rel_path: str, pattern: str) -> bool:
+    """Mirror of Node ``pathMatchesExcludePattern`` (sable-yz0).
+
+    Rules (any one matches → exclude):
+      1. Exact match: ``rel_path == pattern``.
+      2. Directory-prefix: ``rel_path`` starts with ``pattern + "/"``.
+         Trailing ``/`` on the pattern is ignored.
+      3. Dir-name anywhere: any segment of ``rel_path`` equals ``pattern``.
+         Preserves the RegexScanner walker's existing dir-name behavior.
+      4. Glob: if pattern has ``* ? [``, use fnmatch with auto-anchor
+         (try ``pattern`` and ``**/pattern``) — mirrors Node ``matchGlob``.
+    """
+    import fnmatch as _fnmatch
+    rel = rel_path.replace("\\", "/")
+    p = pattern.replace("\\", "/").rstrip("/")
+    if not p:
+        return False
+    if rel == p:
+        return True
+    if rel.startswith(p + "/"):
+        return True
+    if p in rel.split("/"):
+        return True
+    if any(c in p for c in "*?["):
+        if _fnmatch.fnmatch(rel, p):
+            return True
+        if not p.startswith("/") and not p.startswith("**"):
+            if _fnmatch.fnmatch(rel, "**/" + p) or _fnmatch.fnmatch(rel, "*/" + p):
+                return True
+    return False
+
+
+def _apply_exclude_paths(
+    results: list[ScanResult],
+    exclude_paths: list[str] | None,
+    scan_root: str,
+) -> list[ScanResult]:
+    """Strip findings whose path matches any ``scan.exclude_paths`` entry.
+
+    Chokepoint that fixes sable-yz0 across both scan engines AND the staged
+    / diff modes. See the Node ``applyExcludePaths`` docstring for the full
+    rationale — both engines previously bypassed the policy on the
+    happy-path, and the existing walker-level filter only matched
+    directory NAMES, missing every multi-segment path users wrote.
+    """
+    if not exclude_paths:
+        return results
+    root = os.path.abspath(scan_root).replace("\\", "/")
+    kept: list[ScanResult] = []
+    for r in results:
+        abs_p = os.path.abspath(r.file).replace("\\", "/")
+        if abs_p == root:
+            rel = ""
+        elif abs_p.startswith(root + "/"):
+            rel = abs_p[len(root) + 1 :]
+        else:
+            rel = abs_p
+        if not any(_path_matches_exclude_pattern(rel, pat) for pat in exclude_paths):
+            kept.append(r)
+    return kept
+
+
 def _scan_directory(
     dir_path: str,
     engine: str,
@@ -1511,13 +1573,15 @@ def _scan_directory(
         try:
             bl = BetterleaksScanner()
             results = bl.scan_directory(dir_path, use_git=history)
-            return [ScanResult(file=r.file, matches=r.matches) for r in results]
+            results = [ScanResult(file=r.file, matches=r.matches) for r in results]
         except Exception:
             scanner = RegexScanner(custom)
-            return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+            results = scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
     else:
         scanner = RegexScanner(custom)
-        return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+        results = scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+    # sable-yz0 — post-filter chokepoint. See _apply_exclude_paths docstring.
+    return _apply_exclude_paths(results, exclude, dir_path)
 
 
 def _output_scan_results(
