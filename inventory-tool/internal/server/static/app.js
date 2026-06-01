@@ -465,7 +465,7 @@
           " can open it and see this secret in plain text. On your own laptop that's usually low-risk, but on a shared or work machine it's worth tightening." }),
         el("div", { class: "f-actions" }, [
           el("button", { class: "sm", title: "Copies a one-line command. Paste it into a terminal (or send it to whoever set up your computer) to make the file private to you. trove won't run it for you.",
-            onclick: () => copy("chmod 600 " + ex.path, "Command copied — paste it into a terminal"), text: "Copy the fix" }),
+            onclick: () => copy("chmod 600 " + shQuote(ex.path), "Command copied — paste it into a terminal"), text: "Copy the fix" }),
           el("span", { class: "loc-sub", html: "makes the file readable by <b style=\"color:var(--text-dim)\">you only</b>" }),
         ]),
       ]);
@@ -600,6 +600,11 @@
     document.body.removeChild(ta);
   }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+  // POSIX single-quote a path so a scanned filename with spaces or shell
+  // metacharacters (a "; rm -rf ~", $(...), backticks) can't turn the
+  // copy-paste chmod command into something else when the user pastes it
+  // into a terminal. Wrap in '…' and escape embedded quotes as '\''.
+  function shQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
   // Only let http(s) links through to an href. A user could paste a
   // "javascript:" URL into the rotate-link field; this stops it from
   // ever becoming a clickable script. Returns null for anything unsafe.
