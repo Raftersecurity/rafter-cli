@@ -665,6 +665,42 @@ describe("agent status", () => {
     expect(r.stdout).toContain("Total events:");
   });
 
+  it("outputs machine-readable JSON status", () => {
+    const r = runCli("agent status --json", home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).not.toContain("Rafter Agent Status");
+    const payload = JSON.parse(r.stdout);
+    expect(payload).toMatchObject({
+      installed: false,
+      version: expect.any(String),
+      agents_detected: [],
+      betterleaks_available: expect.any(Boolean),
+      config_path: "~/.rafter/config.json",
+      audit_log_path: "~/.rafter/audit.jsonl",
+    });
+    expect(Array.isArray(payload.hooks_installed)).toBe(true);
+  });
+
+  it("reports detected agents and installed git hooks in JSON status", () => {
+    runCli("agent init --with-claude-code", home);
+    fs.mkdirSync(path.join(home, ".cursor"), { recursive: true });
+
+    const hooksDir = path.join(home, ".rafter", "git-hooks");
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(hooksDir, "pre-commit"),
+      "#!/bin/sh\n# Rafter Security Pre-Commit Hook\n",
+      { mode: 0o755 },
+    );
+
+    const r = runCli("agent status --json", home);
+    expect(r.exitCode).toBe(0);
+    const payload = JSON.parse(r.stdout);
+    expect(payload.installed).toBe(true);
+    expect(payload.agents_detected).toEqual(expect.arrayContaining(["claude-code", "cursor"]));
+    expect(payload.hooks_installed).toContain("pre-commit");
+  });
+
   it("surfaces a legacy gitleaks install with an upgrade hint", () => {
     runCli("agent init", home);
     // Drop a fake legacy gitleaks binary in ~/.rafter/bin/gitleaks.
