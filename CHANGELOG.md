@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-06-01
+
+### Fixed
+- **`rafter secrets` now honors `.rafter.yml scan.exclude_paths` on both engines** (#152, sable-yz0). Customer report: planting fake secrets in three `scan.exclude_paths` entries AND a non-excluded path → all three got flagged, `exclude_paths` silently ignored. Two root causes: (1) `BetterleaksScanner.scanDirectory()` never received `excludePaths`, so the `auto`-engine happy-path (the default when the binary is on disk) silently dropped customer policy; (2) the patterns engine's walker only matched entries against single directory NAMES (`entry.name`), so multi-segment paths like `components/common/Mermaid.tsx` got no filtering at all. Fix: post-filter chokepoint after both engines (and `--staged` / `--diff` modes) with path-aware semantics — exact path, directory-prefix (trailing `/` normalized), dir-name-anywhere (preserves the historical walker behavior for `node_modules`-style entries), and globs via minimatch (Node) / fnmatch (Python). Customer's exact repro now passes on both engines.
+
+### Changed
+- **CLI reads `.rafter/config.yml` indefinitely + accepts backend's flat-shape schema** (#154, sable-c1c). The cloud scanner (`rafter-backend`) reads policy at `.rafter/config.yml` (subdir + `config.yml`) with `exclude_paths` / `custom_patterns` flat at the top level, while the CLI canonical is `.rafter.yml` with `scan.*` nested. Customers writing either shape used to get honored by only one tool. CLI now reads all four candidates in precedence order (`.rafter.yml` → `.rafter.yaml` → `.rafter/config.yml` → `.rafter/config.yaml`) and accepts both schemas in either file — nested `scan.*` wins over top-level on collision. No deprecation; backend's file path stays a first-class location. Backend pairs this with `.rafter.yml` fallback + `scan.*` schema compat on their side to complete the bilateral alignment.
+
+### Added
+- **Hermes platform support** (#151, sable-gyw). `rafter agent init --with-hermes` merges the Rafter MCP server into `~/.hermes/config.yaml` under `mcp_servers.rafter` (snake_case, distinct from Cursor/Windsurf's `mcpServers` camelCase). Existing servers and other top-level YAML keys are preserved. Recipe at `recipes/hermes.md`. MCP-only v0 — hook surface deferred pending Hermes documenting one, mirroring how Gemini and Continue.dev were initially shipped. Brings the supported-platforms list to nine.
+- **`rafter agent status --json`** (#153). Reports installed state, version, detected agents, installed git hooks, scanner availability, and config / audit paths. Schema documented in `shared-docs/CLI_SPEC.md`.
+
 ## [0.8.3] - 2026-05-31
 
 ### Changed
