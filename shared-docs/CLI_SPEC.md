@@ -809,6 +809,22 @@ With `--probe`, an additional `Claude Code (probe)` check appears as the last en
 
 Show agent security status dashboard. Displays config summary, installed integrations, audit log summary, and recent events.
 
+- `--json` — output machine-readable status JSON
+
+**JSON schema (`--json`):**
+
+```json
+{
+  "installed": true,
+  "version": "0.8.3",
+  "agents_detected": ["claude-code", "cursor"],
+  "hooks_installed": ["pre-commit"],
+  "gitleaks_available": true,
+  "config_path": "~/.rafter/config.json",
+  "audit_log_path": "~/.rafter/audit.jsonl"
+}
+```
+
 ### rafter agent update-betterleaks [OPTIONS]
 
 Update (or reinstall) the managed betterleaks binary.

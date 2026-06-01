@@ -3,24 +3,41 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { execSync } from "child_process";
+import { fileURLToPath } from "url";
 import { getRafterDir, getAuditLogPath, getBinDir } from "../../core/config-defaults.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { BinaryManager } from "../../utils/binary-manager.js";
 
+interface AgentStatusJson {
+  installed: boolean;
+  version: string;
+  agents_detected: string[];
+  hooks_installed: string[];
+  gitleaks_available: boolean;
+  config_path: string;
+  audit_log_path: string;
+}
+
 export function createStatusCommand(): Command {
   return new Command("status")
     .description("Show agent security status dashboard")
-    .action(async () => {
+    .option("--json", "Output status as JSON")
+    .action(async (opts: { json?: boolean }) => {
       const rafterDir = getRafterDir();
       const auditPath = getAuditLogPath();
       const home = os.homedir();
+      const configPath = path.join(rafterDir, "config.json");
+
+      if (opts.json) {
+        console.log(JSON.stringify(buildStatusJson(home, configPath, auditPath), null, 2));
+        return;
+      }
 
       console.log("Rafter Agent Status");
       console.log("=".repeat(50));
 
       // --- Config ---
-      const configPath = path.join(rafterDir, "config.json");
       if (fs.existsSync(configPath)) {
         try {
           const cfg = new ConfigManager().load();
@@ -179,4 +196,111 @@ export function createStatusCommand(): Command {
 
       console.log();
     });
+}
+
+function buildStatusJson(home: string, configPath: string, auditPath: string): AgentStatusJson {
+  return {
+    installed: fs.existsSync(configPath),
+    version: getPkgVersion(),
+    agents_detected: detectAgents(home),
+    hooks_installed: detectGitHooks(home),
+    gitleaks_available: isBetterleaksAvailable(),
+    config_path: formatHomePath(configPath, home),
+    audit_log_path: formatHomePath(auditPath, home),
+  };
+}
+
+function detectAgents(home: string): string[] {
+  const candidates: Array<[string, string]> = [
+    ["claude-code", path.join(home, ".claude")],
+    ["openclaw", path.join(home, ".openclaw")],
+    ["codex", path.join(home, ".codex")],
+    ["gemini", path.join(home, ".gemini")],
+    ["cursor", path.join(home, ".cursor")],
+    ["windsurf", path.join(home, ".codeium", "windsurf")],
+    ["continue", path.join(home, ".continue")],
+    ["aider", path.join(home, ".aider.conf.yml")],
+  ];
+  return candidates
+    .filter(([, p]) => fs.existsSync(p))
+    .map(([name]) => name);
+}
+
+function detectGitHooks(home: string): string[] {
+  const hooks = new Set<string>();
+  const specs: Array<[string, string]> = [
+    ["pre-commit", "Rafter Security Pre-Commit Hook"],
+    ["pre-push", "Rafter Security Pre-Push Hook"],
+  ];
+
+  for (const [hookName, marker] of specs) {
+    const globalHook = path.join(home, ".rafter", "git-hooks", hookName);
+    if (fileContains(globalHook, marker)) hooks.add(hookName);
+  }
+
+  try {
+    const gitDir = execSync("git rev-parse --git-dir", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+      timeout: 5000,
+    }).trim();
+    const hooksDir = path.resolve(gitDir, "hooks");
+    for (const [hookName, marker] of specs) {
+      if (fileContains(path.join(hooksDir, hookName), marker)) hooks.add(hookName);
+    }
+  } catch {
+    // Not in a git repository, or git unavailable.
+  }
+
+  return [...hooks].sort();
+}
+
+function isBetterleaksAvailable(): boolean {
+  const exeExt = process.platform === "win32" ? ".exe" : "";
+  const localBetterleaks = path.join(getBinDir(), `betterleaks${exeExt}`);
+  try {
+    execSync("betterleaks version", {
+      timeout: 5000,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    return true;
+  } catch {
+    if (fs.existsSync(localBetterleaks)) return true;
+    return Boolean(new BinaryManager().findLegacyGitleaks());
+  }
+}
+
+function fileContains(filePath: string, needle: string): boolean {
+  try {
+    return fs.readFileSync(filePath, "utf-8").includes(needle);
+  } catch {
+    return false;
+  }
+}
+
+function formatHomePath(filePath: string, home: string): string {
+  const relative = path.relative(home, filePath);
+  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+    return path.join("~", relative).replace(/\\/g, "/");
+  }
+  return filePath;
+}
+
+function getPkgVersion(): string {
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    let dir = path.dirname(__filename);
+    for (let i = 0; i < 6; i++) {
+      const candidate = path.join(dir, "package.json");
+      if (fs.existsSync(candidate)) {
+        const pkg = JSON.parse(fs.readFileSync(candidate, "utf-8"));
+        if (pkg.version) return pkg.version;
+      }
+      dir = path.dirname(dir);
+    }
+  } catch {
+    // fall through
+  }
+  return "unknown";
 }
