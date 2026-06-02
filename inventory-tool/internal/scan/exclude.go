@@ -56,6 +56,35 @@ func compileExcludes(patterns []string) []excludeMatcher {
 	return out
 }
 
+// Excluder is the exported, reusable form of a compiled exclude set so
+// other packages (notably internal/watch) can prune the same
+// directories the scanner skips — without re-implementing the spec's
+// `**/X/` / `~/X/` / basename pattern language. Zero value is unusable;
+// build one with NewExcluder.
+type Excluder struct {
+	matchers []excludeMatcher
+}
+
+// NewExcluder compiles the spec exclude patterns into a reusable
+// matcher. Returns nil for an empty pattern set so callers can cheaply
+// skip the check with a nil guard.
+func NewExcluder(patterns []string) *Excluder {
+	if len(patterns) == 0 {
+		return nil
+	}
+	return &Excluder{matchers: compileExcludes(patterns)}
+}
+
+// MatchDir reports whether a directory path is excluded. It evaluates
+// every rule as if the path is a directory, which is exactly what a
+// directory watcher needs.
+func (e *Excluder) MatchDir(path string) bool {
+	if e == nil {
+		return false
+	}
+	return matchExcluded(path, true, e.matchers)
+}
+
 // matchExcluded reports whether path is matched by any compiled rule.
 // dir-only rules (`**/node_modules/`) only fire on directories;
 // file-only rules (`**/.DS_Store`) only on files. Absolute-anchored
