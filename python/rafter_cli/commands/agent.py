@@ -2895,11 +2895,50 @@ def _generate_manual_review_prompt(
 Provide a clear risk rating (LOW/MEDIUM/HIGH/CRITICAL) and actionable recommendations."""
 
 
+def _display_deep_scan(deep, skill_name: str) -> None:
+    """Render human-readable skill-scanner (deep engine) results."""
+    print("\n\U0001f50e Deep Scan Results (skill-scanner)")
+    print("═" * 60)
+    if not deep.available:
+        print("⚠️  skill-scanner not available")
+        return
+    if deep.error:
+        print(f"⚠️  Deep scan error: {deep.error}")
+        return
+    actionable = [f for f in deep.findings if f.severity in ("critical", "high", "medium")]
+    if not actionable:
+        print("✓ No critical/high/medium findings")
+    else:
+        print(f"⚠️  {len(actionable)} finding(s) (max severity: {deep.max_severity})")
+        for f in actionable[:10]:
+            loc = f" (line {f.line})" if f.line else ""
+            print(f"   • [{f.severity.upper()}] {f.category}: {f.title}{loc}")
+        if len(actionable) > 10:
+            print(f"   ... and {len(actionable) - 10} more")
+    if deep.analyzers_used:
+        print(f"   analyzers: {', '.join(deep.analyzers_used)} (offline only)")
+    print()
+
+
 @agent_app.command("audit-skill")
 def audit_skill(
     skill_path: str = typer.Argument(..., help="Path to skill file to audit"),
     skip_openclaw: bool = typer.Option(False, "--skip-openclaw", help="Skip OpenClaw integration, show manual review prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+    deep: bool = typer.Option(
+        False,
+        "--deep",
+        help=(
+            "Run the optional DEEP engine (Cisco AI Defense skill-scanner) in "
+            "addition to the quick scan. Offline analyzers only — no LLM/cloud/"
+            "network. Requires `cisco-ai-skill-scanner` to be installed."
+        ),
+    ),
+    engine: str = typer.Option(
+        None,
+        "--engine",
+        help="Deep engine selector. 'skill-scanner' is equivalent to --deep.",
+    ),
 ) -> None:
     """[deprecated] Security audit of a Claude Code skill file — use `rafter skill review` instead."""
     if not json_output:
@@ -2928,10 +2967,43 @@ def audit_skill(
     if not json_output:
         _display_quick_scan(quick_scan, skill_name)
 
+    # Optional DEEP engine (skill-scanner) — opt-in via --deep or
+    # --engine skill-scanner. Offline analyzers only; preserves our
+    # no-telemetry default (sable-7g7).
+    want_deep = deep or (engine == "skill-scanner")
+    if engine is not None and engine != "skill-scanner":
+        print(
+            f"Error: unknown --engine '{engine}' (supported: skill-scanner)",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=2)
+
+    deep_result = None
+    if want_deep:
+        from ..scanners.skill_scanner import SkillScanner
+
+        scanner = SkillScanner()
+        if not scanner.is_available():
+            # --deep requested but tool missing: clear hint, non-zero exit,
+            # don't crash.
+            from ..scanners.skill_scanner import INSTALL_HINT
+
+            print(INSTALL_HINT, file=sys.stderr)
+            raise typer.Exit(code=2)
+        deep_result = scanner.scan_path(str(resolved))
+        if deep_result.error:
+            print(f"Error: deep scan failed: {deep_result.error}", file=sys.stderr)
+            raise typer.Exit(code=2)
+        if not json_output:
+            _display_deep_scan(deep_result, skill_name)
+
     # Check OpenClaw availability
     skill_manager = SkillManager()
     openclaw_available = skill_manager.is_openclaw_installed()
     rafter_skill_installed = skill_manager.is_rafter_skill_installed()
+
+    quick_has_findings = quick_scan.secrets > 0 or len(quick_scan.high_risk_commands) > 0
+    deep_has_findings = deep_result.has_findings if deep_result else False
 
     if json_output:
         result = {
@@ -2945,7 +3017,14 @@ def audit_skill(
             "openClawAvailable": openclaw_available,
             "rafterSkillInstalled": rafter_skill_installed,
         }
-        has_findings = quick_scan.secrets > 0 or len(quick_scan.high_risk_commands) > 0
+        if deep_result is not None:
+            result["deepScan"] = {
+                "engine": "skill-scanner",
+                "maxSeverity": deep_result.max_severity,
+                "analyzersUsed": deep_result.analyzers_used,
+                "findings": [f.to_dict() for f in deep_result.findings],
+            }
+        has_findings = quick_has_findings or deep_has_findings
         print(json.dumps(result, indent=2))
         raise typer.Exit(code=1 if has_findings else 0)
 
@@ -2982,7 +3061,7 @@ def audit_skill(
 
     print()
 
-    if quick_scan.secrets > 0 or len(quick_scan.high_risk_commands) > 0:
+    if quick_has_findings or deep_has_findings:
         raise typer.Exit(code=1)
 
 
