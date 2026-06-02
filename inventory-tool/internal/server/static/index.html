@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>trove — your secrets, mapped</title>
+<title>Rafter Secrets — your secrets, mapped</title>
 <meta name="referrer" content="no-referrer">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2304080c'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='%234ed589' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='1.5' fill='%234ed589'/%3E%3C/svg%3E">
 <style>
@@ -318,17 +318,98 @@
   .empty p { margin: 0 auto; max-width: 46ch; font-size: 13px; }
 
   .skeleton { color: var(--faint); padding: 40px 4px; font-size: 13px; }
+
+  /* ---- rebrand chrome -------------------------------------------- */
+  .brand .logo {
+    width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0;
+    background: var(--green);
+    -webkit-mask: radial-gradient(circle at 50% 50%, transparent 3px, #000 3.5px) ,
+                  conic-gradient(#000 0 0);
+    mask: none;
+    box-shadow: inset 0 0 0 2px #04140b;
+  }
+  .brand .mark { font-family: var(--sans); font-weight: 650; font-size: 15px; letter-spacing: -0.01em; color: var(--text); }
+  .brand .mark .sub { color: var(--muted); font-weight: 500; }
+
+  /* segmented view toggle */
+  .segmented { display: inline-flex; background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 9px; padding: 2px; gap: 2px; }
+  .segmented button {
+    background: transparent; border: none; color: var(--muted);
+    padding: 4px 11px; font-size: 12px; border-radius: 7px;
+  }
+  .segmented button:hover { background: var(--raised); color: var(--text-dim); }
+  .segmented button.active { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-2); }
+
+  /* project chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .chip {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: #142028; border: 1px solid #21425e; color: var(--blue);
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  }
+  .chip.add { background: transparent; border-style: dashed; border-color: var(--border-2); color: var(--muted); cursor: pointer; }
+  .chip.add:hover { color: var(--text); border-color: var(--muted); }
+  .chip .x { cursor: pointer; color: var(--faint); }
+  .chip .x:hover { color: var(--red); }
+  .entry .chips { margin-top: 3px; }
+
+  /* manual badge */
+  .badge-manual { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: #1d2733; color: var(--muted); border: 1px solid var(--border-2); }
+
+  /* ---- folder tree view ------------------------------------------ */
+  .tree { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); overflow: hidden; }
+  .tree-row {
+    display: flex; align-items: center; gap: 8px; padding: 7px 14px;
+    border-top: 1px solid var(--border); font-size: 13px; cursor: default;
+  }
+  .tree-row:first-child { border-top: none; }
+  .tree-row.dir { color: var(--text-dim); font-family: var(--mono); font-size: 12.5px; }
+  .tree-row.secret { cursor: pointer; }
+  .tree-row.secret:hover { background: var(--raised); }
+  .tree-row.secret.selected { background: #10202c; box-shadow: inset 2px 0 0 var(--focus); }
+  .tree-row .twig { color: var(--faint); font-family: var(--mono); }
+  .tree-row .dir-ico { color: var(--muted); display: flex; }
+  .tree-row .dir-count { margin-left: auto; font-size: 11px; color: var(--faint); }
+  .tree-row.outlier .dir-count { color: var(--amber); }
+  .tree-row .k { font-family: var(--mono); font-size: 12.5px; color: var(--text); }
+
+  /* ---- modal / add form ------------------------------------------ */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(2,5,8,0.66); backdrop-filter: blur(2px);
+    display: flex; align-items: flex-start; justify-content: center; padding-top: 8vh; z-index: 50;
+  }
+  .modal {
+    width: 520px; max-width: calc(100vw - 32px); max-height: 84vh; overflow: auto;
+    background: var(--panel); border: 1px solid var(--border-2); border-radius: 14px;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6); padding: 22px 24px 26px;
+  }
+  .modal h2 { margin: 0 0 4px; font-size: 17px; font-weight: 650; }
+  .modal .sub { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+  .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .helpcard {
+    border: 1px solid var(--border-2); border-radius: 10px; background: var(--panel-2);
+    padding: 12px 14px; margin-bottom: 16px; font-size: 12.5px; color: var(--text-dim); line-height: 1.55;
+  }
+  .helpcard b { color: var(--text); }
+  .helpcard ul { margin: 8px 0 0; padding-left: 18px; }
+  .helpcard li { margin-bottom: 3px; }
 </style>
 </head>
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="mark">trove<span class="dot">.</span></span>
-    <span class="by">by Rafter</span>
+    <span class="logo" aria-hidden="true"></span>
+    <span class="mark">Rafter<span class="sub"> Secrets</span></span>
+  </div>
+  <div class="segmented" id="view-toggle" role="tablist" aria-label="View">
+    <button data-view="secret" class="active" role="tab">By secret</button>
+    <button data-view="folder" role="tab">By folder</button>
+    <button data-view="project" role="tab">By project</button>
   </div>
   <div class="spacer"></div>
   <div class="toast" id="toast" aria-live="polite"></div>
-  <div class="scan-status" id="scan-status" title="trove re-checks automatically whenever a watched file changes.">
+  <button id="add-secret-btn" class="primary sm">+ Add a secret</button>
+  <div class="scan-status" id="scan-status" title="Rafter Secrets re-checks automatically whenever a watched file changes.">
     <span class="live"></span>
     <span id="scan-status-text">watching for changes</span>
   </div>
@@ -336,7 +417,7 @@
 
 <div class="reassure">
   <span class="shield" aria-hidden="true">&#x1F6E1;</span>
-  <span><b>trove only reads.</b> It never changes your files, never moves your secrets, and nothing ever leaves this computer.</span>
+  <span><b>Rafter Secrets only reads.</b> It never changes your files, never moves your secrets, and nothing ever leaves this computer.</span>
 </div>
 
 <main>
@@ -345,6 +426,8 @@
   </div>
   <aside id="panel-wrap"><div id="panel"></div></aside>
 </main>
+
+<div id="modal-root"></div>
 
 <script src="/static/app.js"></script>
 </body>

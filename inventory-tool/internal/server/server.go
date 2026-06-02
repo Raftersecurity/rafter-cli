@@ -68,7 +68,10 @@ func New(cfg Config) (*Server, error) {
 	s.routes(mux)
 
 	s.httpSrv = &http.Server{
-		Handler:           s.requireToken(mux),
+		// guard (Host/Origin trust-boundary checks) wraps requireToken
+		// (session-token auth) wraps the routes. Host vetting runs before
+		// the token check so a DNS-rebinding probe never reaches auth.
+		Handler:           s.guard(s.requireToken(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return s, nil

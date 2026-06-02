@@ -12,9 +12,12 @@ package server
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/scan"
@@ -56,6 +59,78 @@ func (s *Server) handleSecretsList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(buf.Bytes())
+}
+
+// addSecretRequest is the wire shape for POST /api/secrets — a secret
+// the user adds by hand (e.g. a key kept in a password manager, or one
+// they want to start tracking before trove has scanned its file). The
+// annotation block carries the project tags / rotate link / notes.
+type addSecretRequest struct {
+	KeyName    string          `json:"key_name"`
+	Path       string          `json:"path"`
+	Annotation annotationPatch `json:"annotation"`
+}
+
+func (s *Server) handleSecretCreate(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "store not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var req addSecretRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	req.KeyName = strings.TrimSpace(req.KeyName)
+	if req.KeyName == "" {
+		writeJSONErr(w, http.StatusBadRequest, "key_name is required")
+		return
+	}
+
+	// Synthetic, collision-proof id. The "manual:" prefix keeps it
+	// clearly distinct from a real BLAKE3 fingerprint and lets the UI
+	// render manual entries differently.
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "id generation failed")
+		return
+	}
+	id := "manual:" + hex.EncodeToString(suffix)
+
+	ann := storage.Annotation{
+		SourceURL: req.Annotation.SourceURL,
+		Owner:     req.Annotation.Owner,
+		Notes:     req.Annotation.Notes,
+		RotateURL: req.Annotation.RotateURL,
+		Tags:      req.Annotation.Tags,
+	}
+
+	// Copy the created entry out under the lock — the pointer AddManual
+	// returns points into g.Secrets and a later Update could reslice it.
+	var (
+		createdCopy storage.Secret
+		ok          bool
+	)
+	if err := s.store.Update(func(g *storage.Global) bool {
+		c := g.AddManual(id, req.KeyName, strings.TrimSpace(req.Path), ann, time.Now().UTC())
+		if c == nil {
+			return false
+		}
+		createdCopy = *c
+		ok = true
+		return true
+	}); err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "save failed: "+err.Error())
+		return
+	}
+	if !ok {
+		writeJSONErr(w, http.StatusInternalServerError, "could not create secret")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(createdCopy)
 }
 
 type revealRequest struct {

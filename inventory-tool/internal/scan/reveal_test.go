@@ -90,3 +90,12 @@ func TestResolveValue_KeyMissing(t *testing.T) {
 		t.Errorf("err = %v, want ErrSecretNotFound", err)
 	}
 }
+
+func TestResolveValue_RefusesManualSource(t *testing.T) {
+	// A manual entry carries a path the user typed; reveal must never
+	// open it — it returns ErrUnsupportedSource regardless of the path.
+	_, err := ResolveValue(storage.FoundIn{SourceType: storage.SourceManual, Path: "/etc/passwd"}, "anything")
+	if err != ErrUnsupportedSource {
+		t.Fatalf("manual source reveal err = %v, want ErrUnsupportedSource", err)
+	}
+}

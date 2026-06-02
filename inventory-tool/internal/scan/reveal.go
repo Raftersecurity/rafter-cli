@@ -34,6 +34,11 @@ var ErrSecretNotFound = errors.New("scan: secret not found at source")
 // path that the scanner re-reads cleanly but where no matching entry
 // exists, it returns ErrSecretNotFound.
 func ResolveValue(found storage.FoundIn, keyName string) (string, error) {
+	// Manual entries are user-typed metadata, not a scanned value —
+	// never open the path the user wrote, just refuse the reveal.
+	if found.SourceType == storage.SourceManual {
+		return "", ErrUnsupportedSource
+	}
 	if found.Path == "" {
 		return "", ErrUnsupportedSource
 	}

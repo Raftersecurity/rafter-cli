@@ -25,6 +25,10 @@ const (
 	SourceKeystore   = "keystore"
 	SourceShellRC    = "shell-rc"
 	SourceSourceCode = "source-code"
+	// SourceManual marks a location the user typed in when adding a
+	// secret by hand. trove never reads it (reveal refuses manual
+	// sources) — it's metadata for the user's own reference.
+	SourceManual = "manual"
 )
 
 // Reveal-policy tags for Global.RevealPolicy. Spec § Reveal & auth UX names

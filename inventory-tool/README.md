@@ -87,23 +87,41 @@ on launch when `ScanConfig.Roots` is empty.
   mark-rotated) goes through the same lock, so a click in the UI
   during a rescan blocks briefly rather than racing the scanner.
 - `internal/server/secrets.go`: `GET /api/secrets` returns the live
-  inventory; `POST /api/secrets/{id}/reveal` reads the value from
-  disk on demand (via `scan.ResolveValue`), `PUT /api/secrets/{id}/annotation`
-  edits the user metadata, and `POST /api/secrets/{id}/{stale,rotated}`
-  expose the two action buttons from the spec. Keystore and source-code
-  reveals return 422 (not yet supported).
-- `internal/server/static/`: the embedded inventory UI, written for
-  people who have never opened a terminal. Dark Rafter aesthetic
-  (matches the `docs/design-refs/` Vault Inspector). Every technical
-  signal is translated at the edge: octal permissions become "anyone on
-  this computer can read it", `found_in.length > 1` becomes "stored in N
-  places", `value_history` becomes "changed N times". A "Worth a look"
-  triage section floats exposed/duplicated secrets to the top; a stat
-  row summarises the whole picture; the detail panel explains *what each
-  finding means* and offers a copy-paste fix (never an auto-mutation).
-  Side panel annotation with friendly labels + inline help, click-to-
-  reveal (read on demand, never persisted), debounced auto-save, live
-  SSE updates when the drift watcher fires.
+  inventory; `POST /api/secrets` adds a **user-curated (manual) entry**
+  — a synthetic `manual:<rand>` id, no scanned value, an optional
+  display-only path; `POST /api/secrets/{id}/reveal` reads the value from
+  disk on demand (via `scan.ResolveValue`; manual + keystore + source-code
+  sources return 422), `PUT /api/secrets/{id}/annotation` edits the user
+  metadata (including project tags), and `POST /api/secrets/{id}/{stale,rotated}`
+  expose the two action buttons from the spec.
+- `internal/server/auth.go`: a `guard` middleware wraps token auth with
+  the browser trust-boundary checks a localhost secrets viewer must not
+  skip — a **Host allowlist** (rejects non-loopback Host headers, so DNS
+  rebinding never reaches a handler) and an **Origin check** on every
+  state-changing request (defends CSRF alongside the SameSite=Strict
+  cookie). Same-origin in-page fetches pass; cross-site does not.
+- `internal/server/static/`: the embedded inventory UI, branded
+  **Rafter Secrets** (the user-facing name; the binary/module are still
+  `trove` pending the repo move), written for people who have never
+  opened a terminal. Dark Rafter aesthetic (matches the
+  `docs/design-refs/` Vault Inspector). Every technical signal is
+  translated at the edge: octal permissions become "readable by any app
+  or AI agent on this computer" (the agent framing is deliberate — a
+  plaintext secret is readable by every coding agent the user runs),
+  `found_in.length > 1` becomes "stored in N places", `value_history`
+  becomes "changed N times". Three views via a header toggle: **By
+  secret** (default — one row per deduped credential), **By folder** (a
+  path hierarchy that surfaces outliers and flags directories holding
+  agent-readable secrets), and **By project** (grouped by the user's
+  tags). Secrets are tracked at the credential level; projects are
+  one-click chips on the detail panel. A "Worth a look" triage section
+  floats exposed/duplicated secrets to the top; a stat row summarises the
+  picture; the detail panel explains *what each finding means* and offers
+  a copy-paste fix (never an auto-mutation). **"+ Add a secret"** opens a
+  form (with a short "what's worth tracking" guide) that POSTs a manual
+  entry. Click-to-reveal reads on demand (never persisted; manual entries
+  have no value to reveal), debounced auto-save, live SSE updates when the
+  drift watcher fires.
 
 The keystore reader lands in subsequent commits.
 
