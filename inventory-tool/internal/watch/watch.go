@@ -18,8 +18,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/Raftersecurity/rafter-cli/inventory-tool/internal/scan"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -28,6 +30,25 @@ import (
 // rename it on top of the target, which fires multiple events in close
 // succession; the debounce collapses them into a single scan.
 const DefaultDebounce = 500 * time.Millisecond
+
+// DefaultMaxWatchDirs caps how many directories the watcher will ever
+// register. The cap is a hard backstop against resource exhaustion: on
+// macOS fsnotify's kqueue backend opens ONE file descriptor per watched
+// directory, so an unbounded walk of $HOME blows past the default
+// `ulimit -n` (256) and the whole process starts failing with "too many
+// open files" — taking the scanner and HTTP server down with it. With
+// the scan excludes applied (which prune node_modules/.git/.cache/…) a
+// real home directory lands far below this; the cap only bites on
+// pathological trees, where a partial watch + periodic rescan is a much
+// better outcome than a dead UI.
+const DefaultMaxWatchDirs = 4096
+
+// ErrWatchLimit is returned (wrapped) when the watcher stops registering
+// directories because it hit the dir cap or the OS refused a new watch
+// with EMFILE/ENOSPC. It is non-fatal: the watcher keeps serving events
+// for everything it did register, and the caller should fall back to
+// periodic/manual rescans for the rest.
+var ErrWatchLimit = errors.New("watch: directory watch limit reached; live updates cover a subset of the scan scope")
 
 // Watcher subscribes to filesystem changes under a set of roots and
 // invokes a callback when a debounce window passes after the last event.
@@ -45,6 +66,17 @@ type Watcher struct {
 	mu       sync.Mutex
 	added    map[string]struct{}
 	excludes []string
+
+	// excluder prunes the same directories the scanner skips
+	// (node_modules, .git, ~/Library, …). Without it the watcher walks
+	// vastly more of the tree than the scan ever reads. nil == no scan
+	// excludes configured.
+	excluder *scan.Excluder
+	// maxDirs caps total registered directories; see DefaultMaxWatchDirs.
+	maxDirs int
+	// limited records that addTree stopped early (cap hit or the OS
+	// refused a watch with EMFILE/ENOSPC). Read via Limited().
+	limited bool
 }
 
 // Config bundles the watcher's construction-time options.
@@ -61,6 +93,16 @@ type Config struct {
 	// rescan→save→event→rescan loop the trove global-store directory
 	// would otherwise produce when scanned-and-watched at $HOME.
 	ExcludeDirs []string
+	// Excludes is the user's spec-language exclude pattern set (the same
+	// list the scanner uses: `**/node_modules/`, `~/Library/`, …). The
+	// watcher prunes these so it doesn't register a watch on every
+	// build-output and cache directory under the roots. Passing the
+	// scan config's Excludes here is what keeps a $HOME-wide watch from
+	// exhausting file descriptors.
+	Excludes []string
+	// MaxWatchDirs caps total registered directories. Zero or negative
+	// means DefaultMaxWatchDirs.
+	MaxWatchDirs int
 }
 
 // New constructs a Watcher and registers every directory at-or-below
@@ -81,11 +123,17 @@ func NewWithConfig(cfg Config) (*Watcher, error) {
 	if err != nil {
 		return nil, err
 	}
+	maxDirs := cfg.MaxWatchDirs
+	if maxDirs <= 0 {
+		maxDirs = DefaultMaxWatchDirs
+	}
 	w := &Watcher{
 		fsw:      fsw,
 		debounce: debounce,
 		added:    make(map[string]struct{}),
 		excludes: canonDirs(cfg.ExcludeDirs),
+		excluder: scan.NewExcluder(cfg.Excludes),
+		maxDirs:  maxDirs,
 	}
 	w.roots = canonDirs(cfg.Roots)
 	var firstErr error
@@ -94,7 +142,20 @@ func NewWithConfig(cfg Config) (*Watcher, error) {
 			firstErr = err
 		}
 	}
+	if w.Limited() && firstErr == nil {
+		firstErr = ErrWatchLimit
+	}
 	return w, firstErr
+}
+
+// Limited reports whether the watcher stopped registering directories
+// before covering the whole scope (cap hit, or the OS refused a watch
+// with EMFILE/ENOSPC). When true, callers should rely on periodic /
+// manual rescans for full coverage.
+func (w *Watcher) Limited() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.limited
 }
 
 // canonDirs runs Abs + EvalSymlinks on each entry, dropping any path
@@ -172,7 +233,7 @@ func (w *Watcher) Run(ctx context.Context, onChange func(), onError func(error))
 			// boundary check); a rescan will discard anything outside.
 			if ev.Op&fsnotify.Create != 0 {
 				if info, err := os.Lstat(ev.Name); err == nil && info.IsDir() {
-					if w.insideAnyRoot(ev.Name) && !w.isExcluded(ev.Name) {
+					if w.insideAnyRoot(ev.Name) && !w.isExcluded(ev.Name) && !w.excluder.MatchDir(ev.Name) {
 						_ = w.addTree(ev.Name)
 					}
 				}
@@ -218,6 +279,12 @@ func (w *Watcher) Close() error {
 // whole watcher.
 func (w *Watcher) addTree(root string) error {
 	var firstErr error
+	// errStop is a sentinel used to abort the WalkDir early once we've
+	// hit the watch cap or the OS has run out of descriptors/inotify
+	// watches. WalkDir treats any non-nil, non-SkipDir return as fatal
+	// to the walk, which is exactly what we want — there's no point
+	// statting the rest of $HOME once we can't register more watches.
+	errStop := errors.New("watch: stop")
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if firstErr == nil {
@@ -234,10 +301,19 @@ func (w *Watcher) addTree(root string) error {
 		if d.Type()&os.ModeSymlink != 0 {
 			return filepath.SkipDir
 		}
-		if w.isExcluded(path) {
+		// Prune the same directories the scanner skips (node_modules,
+		// .git, ~/Library, caches, build output). This is the load-
+		// bearing line: it keeps the watch count proportional to the
+		// user's actual source tree instead of every cache on disk.
+		if w.isExcluded(path) || w.excluder.MatchDir(path) {
 			return filepath.SkipDir
 		}
 		w.mu.Lock()
+		if len(w.added) >= w.maxDirs {
+			w.limited = true
+			w.mu.Unlock()
+			return errStop
+		}
 		_, dup := w.added[path]
 		if !dup {
 			w.added[path] = struct{}{}
@@ -247,12 +323,26 @@ func (w *Watcher) addTree(root string) error {
 			return nil
 		}
 		if err := w.fsw.Add(path); err != nil {
+			// Out of file descriptors / inotify watches: stop here
+			// rather than spin through the rest of the tree issuing
+			// failing Adds (each of which can leak the partial state).
+			// The watcher keeps serving everything registered so far.
+			if errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE) || errors.Is(err, syscall.ENOSPC) {
+				w.mu.Lock()
+				delete(w.added, path) // the Add didn't take
+				w.limited = true
+				w.mu.Unlock()
+				return errStop
+			}
 			if firstErr == nil {
 				firstErr = err
 			}
 		}
 		return nil
 	})
+	if errors.Is(walkErr, errStop) {
+		walkErr = nil
+	}
 	if walkErr != nil && firstErr == nil {
 		firstErr = walkErr
 	}

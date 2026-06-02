@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -31,6 +32,16 @@ func main() {
 		rescan      = flag.Bool("rescan", false, "run a filesystem scan and exit (no UI)")
 	)
 	flag.Parse()
+
+	// Give the process as many file descriptors as the OS will allow
+	// before the watcher starts opening them. macOS defaults the soft
+	// limit to 256, which a whole-disk watch blows through almost
+	// instantly; raising soft→hard buys the headroom the watcher cap
+	// then bounds. Best-effort — a failure here just means we lean
+	// harder on the cap.
+	if _, err := raiseFileLimit(); err != nil {
+		fmt.Fprintf(os.Stderr, "trove: could not raise open-file limit (%v); continuing with watch caps\n", err)
+	}
 
 	storePath, err := storage.DefaultPath()
 	if err != nil {
@@ -109,8 +120,16 @@ func main() {
 	wch, wchErr := watch.NewWithConfig(watch.Config{
 		Roots:       doc.ScanConfig.Roots,
 		ExcludeDirs: []string{storeDir},
+		// Hand the watcher the SAME excludes the scanner uses so it
+		// prunes node_modules/.git/caches/Library instead of opening a
+		// file descriptor for every one of them. Without this a $HOME-
+		// wide scope exhausts FDs and the UI dies with "too many open
+		// files" — the exact failure reported on a whole-disk run.
+		Excludes: doc.ScanConfig.Excludes,
 	})
-	if wchErr != nil {
+	if errors.Is(wchErr, watch.ErrWatchLimit) {
+		fmt.Fprintf(os.Stderr, "trove: watching a subset of your scan scope (%s); trove will still re-scan periodically and on changes it can see. Narrow your scan roots in settings for full live coverage.\n", wchErr)
+	} else if wchErr != nil {
 		fmt.Fprintf(os.Stderr, "trove: watcher partial setup: %v\n", wchErr)
 	}
 
@@ -131,6 +150,13 @@ func main() {
 				fmt.Fprintf(os.Stderr, "trove: watcher exited: %v\n", err)
 			}
 		}()
+		// Kick off one scan immediately so the UI shows the current
+		// inventory on launch instead of an empty list that only fills
+		// in when a watched file later changes. Runs in the background
+		// so the server is already accepting connections (and the SSE
+		// scan_started/scan_complete frames drive the UI's loading
+		// state) while a large $HOME is walked.
+		go rs.Rescan(ctx)
 	}
 
 	if !*noOpen {

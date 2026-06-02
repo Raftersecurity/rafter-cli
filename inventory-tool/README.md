@@ -53,11 +53,23 @@ A `--rescan` flag on `trove` triggers a non-interactive scan and
 persists the updated store. The first-run wizard fires automatically
 on launch when `ScanConfig.Roots` is empty.
 
-- `internal/watch`: fsnotify-backed drift watcher. Registers every
-  directory under each scan root, debounces fs events into a single
+- `internal/watch`: fsnotify-backed drift watcher. Registers
+  directories under each scan root, debounces fs events into a single
   rescan trigger, and picks up new subdirectories as they appear.
-  The trove store directory is excluded so the save-after-scan write
-  doesn't loop the watcher.
+  **It applies the same `ScanConfig.Excludes` the scanner uses** so it
+  never opens a watch on `node_modules`/`.git`/caches/`~/Library`, and
+  it **caps the number of watched directories** (`DefaultMaxWatchDirs`)
+  and stops cleanly on `EMFILE`/`ENOSPC`. This is what keeps a default
+  `$HOME` scope from exhausting file descriptors — on macOS fsnotify's
+  kqueue backend opens one FD per watched directory, so an unbounded
+  walk used to die with "too many open files" and take the scanner and
+  UI down with it. When the cap or an OS limit is hit the watcher
+  returns `ErrWatchLimit` (non-fatal): live coverage is partial and the
+  periodic/launch rescans fill the rest. The trove store directory is
+  excluded so the save-after-scan write doesn't loop the watcher.
+  `cmd/trove` also raises `RLIMIT_NOFILE` soft→hard at startup for
+  headroom, and runs one scan on launch so the UI shows the current
+  inventory immediately instead of waiting for the first file change.
 - `internal/eventbus`: in-process pub/sub broker for drift signals.
   Slow subscribers have events dropped rather than blocking the
   publisher, so a stalled browser tab can't stall the rescanner.

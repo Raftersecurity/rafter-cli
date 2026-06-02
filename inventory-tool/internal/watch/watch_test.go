@@ -217,3 +217,59 @@ func TestRoots_CopiedAndCanonicalised(t *testing.T) {
 		t.Error("Roots() returned a shared slice")
 	}
 }
+
+func TestNewWithConfig_AppliesScanExcludes(t *testing.T) {
+	root := t.TempDir()
+	// A real source dir we DO want watched, and a node_modules tree we
+	// do NOT — exactly the shape that exhausts FDs on a $HOME scan.
+	if err := os.MkdirAll(filepath.Join(root, "src", "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "node_modules", "left-pad", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w, err := NewWithConfig(Config{
+		Roots:    []string{root},
+		Excludes: []string{"**/node_modules/"},
+	})
+	if err != nil {
+		t.Fatalf("NewWithConfig: %v", err)
+	}
+	defer w.Close()
+
+	for p := range w.added {
+		if filepath.Base(p) == "node_modules" ||
+			filepath.Dir(p) == filepath.Join(root, "node_modules") ||
+			filepath.Base(p) == "left-pad" || filepath.Base(p) == "deep" {
+			t.Errorf("watched an excluded path: %s", p)
+		}
+	}
+	// root + src + src/pkg = 3; node_modules subtree excluded.
+	if got := len(w.added); got != 3 {
+		t.Errorf("watched dirs = %d, want 3 (node_modules pruned)", got)
+	}
+}
+
+func TestNewWithConfig_CapsWatchedDirs(t *testing.T) {
+	root := t.TempDir()
+	// 10 sibling dirs under root → 11 candidate dirs (root + 10).
+	for i := 0; i < 10; i++ {
+		if err := os.MkdirAll(filepath.Join(root, "d"+string(rune('0'+i))), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w, err := NewWithConfig(Config{Roots: []string{root}, MaxWatchDirs: 4})
+	if err == nil {
+		t.Fatalf("expected ErrWatchLimit, got nil")
+	}
+	if err != ErrWatchLimit {
+		t.Fatalf("err = %v, want ErrWatchLimit", err)
+	}
+	defer w.Close()
+	if got := len(w.added); got > 4 {
+		t.Errorf("watched dirs = %d, want <= cap 4", got)
+	}
+	if !w.Limited() {
+		t.Error("Limited() = false, want true after hitting the cap")
+	}
+}
