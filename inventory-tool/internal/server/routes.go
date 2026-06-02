@@ -21,6 +21,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
 	mux.HandleFunc("GET /api/secrets", s.handleSecretsList)
+	mux.HandleFunc("POST /api/secrets", s.handleSecretCreate)
 	mux.HandleFunc("POST /api/secrets/{id}/reveal", s.handleSecretReveal)
 	mux.HandleFunc("PUT /api/secrets/{id}/annotation", s.handleSecretAnnotate)
 	mux.HandleFunc("POST /api/secrets/{id}/stale", s.handleSecretMarkStale)

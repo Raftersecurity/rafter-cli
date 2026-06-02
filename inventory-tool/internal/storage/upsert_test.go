@@ -243,3 +243,30 @@ func readFile(t *testing.T, path string) []byte {
 	}
 	return b
 }
+
+func TestAddManual(t *testing.T) {
+	g := Empty()
+	now := time.Now().UTC()
+	s := g.AddManual("manual:abc", "MY_KEY", "~/secrets/x", Annotation{Tags: []string{"proj"}}, now)
+	if s == nil {
+		t.Fatal("AddManual returned nil for a fresh id")
+	}
+	if s.ValueFingerprint != "" || s.ValuePreview != "" {
+		t.Errorf("manual entry should have no scanned value, got fp=%q preview=%q", s.ValueFingerprint, s.ValuePreview)
+	}
+	if len(s.FoundIn) != 1 || s.FoundIn[0].SourceType != SourceManual || s.FoundIn[0].Path != "~/secrets/x" {
+		t.Errorf("manual FoundIn wrong: %+v", s.FoundIn)
+	}
+	if len(g.Secrets) != 1 {
+		t.Fatalf("want 1 secret, got %d", len(g.Secrets))
+	}
+	// duplicate id refused
+	if dup := g.AddManual("manual:abc", "OTHER", "", Annotation{}, now); dup != nil {
+		t.Error("AddManual should refuse a duplicate id")
+	}
+	// no-path entry has empty FoundIn
+	s2 := g.AddManual("manual:def", "NOPATH", "", Annotation{}, now)
+	if s2 == nil || len(s2.FoundIn) != 0 {
+		t.Errorf("no-path manual entry should have empty FoundIn, got %+v", s2)
+	}
+}

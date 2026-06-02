@@ -147,6 +147,45 @@ func (g *Global) Upsert(u Upsertable) UpsertResult {
 	return UpsertResult{Outcome: OutcomeCreated, Secret: &g.Secrets[len(g.Secrets)-1]}
 }
 
+// AddManual appends a user-curated Secret — one the user added by hand
+// rather than one a scan discovered. It has no scanned value, so
+// ValueFingerprint/ValuePreview stay empty and the synthetic id (caller-
+// supplied, conventionally "manual:<rand>") never collides with a real
+// BLAKE3 fingerprint. An optional path is stored as a SourceManual
+// FoundIn purely for display. Returns a pointer to the new entry, or nil
+// if id already exists.
+//
+// Manual entries persist across rescans untouched (scans only add/drift,
+// never delete). If a later scan observes a real secret with the same
+// KeyName at the same path, the normal drift path adopts this entry and
+// upgrades it to a real fingerprint, preserving the user's notes.
+func (g *Global) AddManual(id, keyName, path string, ann Annotation, now time.Time) *Secret {
+	for i := range g.Secrets {
+		if g.Secrets[i].ID == id {
+			return nil
+		}
+	}
+	if ann.Tags == nil {
+		ann.Tags = []string{}
+	}
+	found := []FoundIn{}
+	if path != "" {
+		found = append(found, FoundIn{SourceType: SourceManual, Path: path})
+	}
+	g.Secrets = append(g.Secrets, Secret{
+		ID:               id,
+		KeyName:          keyName,
+		ValueFingerprint: "",
+		ValuePreview:     "",
+		FoundIn:          found,
+		Annotation:       ann,
+		FirstSeen:        now,
+		LastSeen:         now,
+		ValueHistory:     []ValueHistoryEntry{},
+	})
+	return &g.Secrets[len(g.Secrets)-1]
+}
+
 // MarkStale sets Annotation.Stale = true on the Secret with the given
 // id. The entry is NOT removed; the value_history and FoundIn list
 // stay intact so the audit UI can show "previously seen at X". Returns
