@@ -199,6 +199,20 @@ describe("Secret patterns — coverage matrix", () => {
     });
   });
 
+  describe("HashiCorp Vault Token", () => {
+    it("detects hvs service token", () => {
+      const token = fakeSecret("hv" + "s.", "A".repeat(90));
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("HashiCorp Vault"))).toBe(true);
+    });
+
+    it("ignores short hvs-like strings", () => {
+      const token = fakeSecret("hv" + "s.", "A".repeat(32));
+      const r = scanString(token + "\n");
+      expect(r.matches.filter((m) => m.pattern.name.includes("HashiCorp Vault"))).toHaveLength(0);
+    });
+  });
+
   // ── Generic patterns ──────────────────────────────────────────────
 
   describe("Generic API Key", () => {
