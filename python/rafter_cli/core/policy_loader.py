@@ -9,20 +9,41 @@ from pathlib import Path
 from ..utils.git import get_git_root
 
 
+#: Policy file candidates, in precedence order (sable-c1c).
+#:
+#: The cloud scanner (rafter-backend) reads ``.rafter/config.yml`` (subdir
+#: + ``config.yml``), while the CLI canonical is ``.rafter.yml``. The CLI
+#: reads both indefinitely so customers writing either shape get the same
+#: behavior locally. Canonical dotfile takes precedence; backend file is
+#: the fallback. Schema compatibility (top-level ``exclude_paths`` /
+#: ``custom_patterns`` vs nested ``scan.*``) is handled in ``_map_policy``.
+POLICY_FILE_CANDIDATES: list[Path] = [
+    Path(".rafter.yml"),
+    Path(".rafter.yaml"),
+    Path(".rafter") / "config.yml",
+    Path(".rafter") / "config.yaml",
+]
+
+# Back-compat alias for code outside this module that imported the previous
+# constant. Resolves to the canonical-dotfile names only (subset).
 POLICY_FILENAMES = [".rafter.yml", ".rafter.yaml"]
 _KNOWN_DOC_KEYS = {"id", "path", "url", "description", "tags", "cache"}
 
 
 def find_policy_file() -> Path | None:
-    """Walk from cwd up to git root looking for a policy file."""
+    """Walk from cwd up to git root looking for a policy file.
+
+    Returns the first candidate that exists, in the precedence order
+    declared by ``POLICY_FILE_CANDIDATES``.
+    """
     cwd = Path.cwd()
     root = get_git_root()
     stop = Path(root) if root else cwd.anchor and Path(cwd.anchor)
 
     current = cwd
     while True:
-        for name in POLICY_FILENAMES:
-            candidate = current / name
+        for candidate_rel in POLICY_FILE_CANDIDATES:
+            candidate = current / candidate_rel
             if candidate.exists():
                 return candidate
         parent = current.parent
@@ -83,6 +104,22 @@ def _map_policy(raw: dict) -> dict:
             policy["scan"]["custom_patterns"] = [
                 {"name": p.get("name", ""), "regex": p.get("regex", ""), "severity": p.get("severity", "high")}
                 for p in scan["custom_patterns"]
+            ]
+
+    # sable-c1c — backend flat-shape compat. rafter-backend reads
+    # exclude_paths / custom_patterns at the top level (no `scan:` nesting),
+    # so customers writing the backend shape get the same behavior locally.
+    # Nested form takes precedence if both are present in the same file.
+    if "scan" not in policy or not policy["scan"].get("exclude_paths"):
+        if isinstance(raw.get("exclude_paths"), list):
+            policy.setdefault("scan", {})
+            policy["scan"]["exclude_paths"] = raw["exclude_paths"]
+    if "scan" not in policy or not policy["scan"].get("custom_patterns"):
+        if isinstance(raw.get("custom_patterns"), list):
+            policy.setdefault("scan", {})
+            policy["scan"]["custom_patterns"] = [
+                {"name": p.get("name", ""), "regex": p.get("regex", ""), "severity": p.get("severity", "high")}
+                for p in raw["custom_patterns"]
             ]
 
     ignore = raw.get("ignore")
@@ -179,7 +216,11 @@ def _derive_doc_id(source: str, kind: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()[:8]
 
 
-_VALID_TOP_LEVEL_KEYS = {"version", "risk_level", "command_policy", "scan", "ignore", "audit", "docs"}
+_VALID_TOP_LEVEL_KEYS = {
+    "version", "risk_level", "command_policy", "scan", "ignore", "audit", "docs",
+    # sable-c1c — backend flat-shape compat keys.
+    "exclude_paths", "custom_patterns",
+}
 _VALID_RISK_LEVELS = {"minimal", "moderate", "aggressive"}
 _VALID_COMMAND_MODES = {"allow-all", "approve-dangerous", "deny-list"}
 _VALID_LOG_LEVELS = {"debug", "info", "warn", "error"}

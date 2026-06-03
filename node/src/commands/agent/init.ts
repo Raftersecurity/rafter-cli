@@ -48,6 +48,7 @@ function printDryRunPlan(plan: {
   wantWindsurf: boolean;
   wantContinue: boolean;
   wantAider: boolean;
+  wantHermes: boolean;
   wantBetterleaks: boolean;
   riskLevel: string;
 }): void {
@@ -159,6 +160,12 @@ function printDryRunPlan(plan: {
     console.log("Aider (--with-aider):");
     W(path.join(plan.root, "RAFTER.md"), "rafter:start/end marker block");
     W(path.join(plan.root, ".aider.conf.yml"), "appends RAFTER.md to read: list; strips legacy mcp-server-command line");
+  }
+
+  if (plan.wantHermes) {
+    console.log();
+    console.log("Hermes (--with-hermes):");
+    W(path.join(plan.root, ".hermes", "config.yaml"), "mcp_servers.rafter entry merged into existing YAML");
   }
 
   if (plan.wantOpenClaw) {
@@ -832,6 +839,50 @@ function installContinueDevMcp(root: string): boolean {
  *
  * Returns true on success.
  */
+/**
+ * Install MCP server config for Hermes (<root>/.hermes/config.yaml).
+ *
+ * Hermes uses a YAML config with an `mcp_servers:` block (snake_case, unlike
+ * Cursor/Windsurf/Claude Code which use `mcpServers` camelCase). Schema per
+ * server is {command, args, env}. We use js-yaml (already a dep, used by
+ * installAiderRead and elsewhere) to merge in the rafter entry while
+ * preserving any existing servers.
+ *
+ * Hooks (preToolUse/postToolUse equivalents) deferred to a follow-on bead
+ * pending confirmation Hermes exposes a hook surface — landing MCP-only as
+ * v0 mirrors how Gemini and Continue.dev were initially shipped.
+ */
+function installHermesMcp(root: string): boolean {
+  const hermesDir = path.join(root, ".hermes");
+  const configPath = path.join(hermesDir, "config.yaml");
+
+  if (!fs.existsSync(hermesDir)) {
+    fs.mkdirSync(hermesDir, { recursive: true });
+  }
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(configPath)) {
+    const raw = fs.readFileSync(configPath, "utf-8");
+    try {
+      const loaded = yaml.load(raw);
+      if (loaded && typeof loaded === "object" && !Array.isArray(loaded)) {
+        config = loaded as Record<string, any>;
+      }
+    } catch {
+      console.log(fmt.warning(`Existing Hermes config.yaml was not valid YAML, creating new one`));
+    }
+  }
+
+  if (!config.mcp_servers || typeof config.mcp_servers !== "object" || Array.isArray(config.mcp_servers)) {
+    config.mcp_servers = {};
+  }
+  config.mcp_servers.rafter = { ...RAFTER_MCP_ENTRY };
+
+  fs.writeFileSync(configPath, yaml.dump(config), "utf-8");
+  console.log(fmt.success(`Installed Rafter MCP server to ${configPath}`));
+  return true;
+}
+
 function installAiderRead(root: string): boolean {
   const rafterMdPath = path.join(root, "RAFTER.md");
   const configPath = path.join(root, ".aider.conf.yml");
@@ -1037,6 +1088,7 @@ export function createInitCommand(): Command {
     .option("--with-cursor", "Install Cursor integration")
     .option("--with-windsurf", "Install Windsurf integration")
     .option("--with-continue", "Install Continue.dev integration")
+    .option("--with-hermes", "Install Hermes integration")
     .option("--with-betterleaks", "Download and install Betterleaks binary")
     .option("--all", "Install all detected integrations and download Betterleaks")
     .option("-i, --interactive", "Guided setup — prompts for each detected integration")
@@ -1076,6 +1128,7 @@ export function createInitCommand(): Command {
       const hasWindsurf = scope === "user" && fs.existsSync(path.join(os.homedir(), ".codeium", "windsurf"));
       const hasContinueDev = scope === "user" && fs.existsSync(path.join(os.homedir(), ".continue"));
       const hasAider = scope === "user" && fs.existsSync(path.join(os.homedir(), ".aider.conf.yml"));
+      const hasHermes = scope === "user" && fs.existsSync(path.join(os.homedir(), ".hermes"));
 
       // Resolve opt-in flags (--all enables all detected, --interactive prompts).
       // In --local scope, --all is restricted to platforms that have a project-local
@@ -1099,6 +1152,10 @@ export function createInitCommand(): Command {
       // Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
       // in cwd) since rf-du2o.
       let wantAider = opts.withAider || opts.all;
+      // Hermes: MCP-only v0 (no hooks confirmed yet). User scope only — Hermes
+      // reads ~/.hermes/config.yaml; the project-local install story isn't
+      // established. Excluded from --all in --local for the same reason.
+      let wantHermes = opts.withHermes || (opts.all && !opts.local);
       let wantBetterleaks = opts.withBetterleaks || (opts.all && !opts.local);
 
       // Interactive mode: prompt for each detected integration
@@ -1114,6 +1171,7 @@ export function createInitCommand(): Command {
         if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP + hooks?");
         if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP server?");
         if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
+        if (hasHermes && !wantHermes) wantHermes = await askYesNo("Install Hermes MCP server?");
         if (!wantBetterleaks) wantBetterleaks = await askYesNo("Download Betterleaks binary (enhanced scanning)?");
         console.log();
       }
@@ -1128,6 +1186,7 @@ export function createInitCommand(): Command {
       if (hasWindsurf) detected.push("Windsurf");
       if (hasContinueDev) detected.push("Continue.dev");
       if (hasAider) detected.push("Aider");
+      if (hasHermes) detected.push("Hermes");
 
       if (detected.length > 0) {
         console.log(fmt.info(`Detected environments: ${detected.join(", ")}`));
@@ -1146,6 +1205,7 @@ export function createInitCommand(): Command {
         if (wantWindsurf && !hasWindsurf) console.log(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
         if (wantContinue && !hasContinueDev) console.log(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
         if (wantAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
+        if (wantHermes && !hasHermes) console.log(fmt.warning("Hermes requested but not detected (~/.hermes not found)"));
       }
 
       // --dry-run: print every file path the command would touch, then
@@ -1164,6 +1224,7 @@ export function createInitCommand(): Command {
           wantWindsurf: wantWindsurf && (hasWindsurf || opts.local),
           wantContinue: wantContinue && (hasContinueDev || opts.local),
           wantAider: wantAider && (hasAider || opts.local),
+          wantHermes: wantHermes && hasHermes,
           wantBetterleaks,
           riskLevel: opts.riskLevel,
         });
@@ -1263,7 +1324,7 @@ export function createInitCommand(): Command {
         const result = await skillManager.installRafterSkillVerbose();
         openclawOk = result.ok;
         if (result.ok) {
-          console.log(fmt.success("Installed Rafter Security skill to ~/.openclaw/skills/rafter-security.md"));
+          console.log(fmt.success(`Installed Rafter Security skill to ${result.destPath}`));
           manager.set("agent.environments.openclaw.enabled", true);
         } else {
           console.log(fmt.error("Failed to install Rafter Security skill"));
@@ -1408,6 +1469,19 @@ export function createInitCommand(): Command {
         }
       }
 
+      // Install Hermes integration if opted in (sable-gyw).
+      // User scope only — Hermes reads ~/.hermes/config.yaml. MCP-only v0;
+      // hooks deferred pending confirmation Hermes exposes a hook surface.
+      let hermesOk = false;
+      if (wantHermes && hasHermes) {
+        try {
+          hermesOk = installHermesMcp(root);
+          if (hermesOk) manager.set("agent.environments.hermes.enabled", true);
+        } catch (e) {
+          console.error(fmt.error(`Failed to install Hermes integration: ${e}`));
+        }
+      }
+
       // Install global instruction files for platforms that support them.
       // Cursor is intentionally absent — Cursor uses per-skill rules + the
       // rafter sub-agent installed in the Cursor branch above (rf-svn3).
@@ -1451,6 +1525,7 @@ export function createInitCommand(): Command {
         if (hasWindsurf) console.log("  rafter agent init --with-windsurf        # Windsurf only");
         if (hasContinueDev) console.log("  rafter agent init --with-continue        # Continue.dev only");
         if (hasAider) console.log("  rafter agent init --with-aider           # Aider only");
+        if (hasHermes) console.log("  rafter agent init --with-hermes          # Hermes only");
       } else {
         console.log("No agent environments detected. Install an agent tool and re-run with --with-<tool>.");
       }

@@ -17,6 +17,7 @@ import os from "os";
 import path from "path";
 import { fmt } from "../../utils/formatter.js";
 import { createRequire } from "module";
+import { minimatch } from "minimatch";
 
 const _require = createRequire(import.meta.url);
 const { version: CLI_VERSION } = _require("../../../package.json");
@@ -50,6 +51,70 @@ function loadBaselineEntries(): BaselineEntry[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Does `relPath` (forward-slash relative path) match an `exclude_paths`
+ * entry from `.rafter.yml`?
+ *
+ * sable-yz0 — single source of truth for `scan.exclude_paths` semantics
+ * across both scan engines and the staged / diff modes. Rules (any one
+ * matches → exclude):
+ *
+ *   1. Exact match: `relPath === pattern` (the pattern is the full file path)
+ *   2. Directory-prefix: `relPath` starts with `pattern + "/"` (the pattern
+ *      is a directory; everything under it is excluded). Trailing "/" on
+ *      the pattern is ignored — `scripts/` and `scripts` mean the same.
+ *   3. Dir-name anywhere: any segment of `relPath` equals `pattern` (preserves
+ *      the historical RegexScanner walker behavior — `node_modules` skips
+ *      `pkg/foo/node_modules/...` too).
+ *   4. Glob: if `pattern` contains `* ? [`, run it through minimatch with
+ *      `dot:true, matchBase:true`. Same defaults as `policyIgnoreToSuppressions`.
+ */
+function pathMatchesExcludePattern(relPath: string, pattern: string): boolean {
+  const rel = relPath.replace(/\\/g, "/");
+  const p = pattern.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!p) return false;
+  if (rel === p) return true;
+  if (rel.startsWith(p + "/")) return true;
+  if (rel.split("/").includes(p)) return true;
+  if (/[*?[]/.test(p)) {
+    if (minimatch(rel, p, { dot: true, matchBase: true })) return true;
+    // Auto-anchor relative globs so `foo/**` matches anywhere in the tree.
+    if (!p.startsWith("/") && !p.startsWith("**")) {
+      if (minimatch(rel, "**/" + p, { dot: true })) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Strip findings whose file path matches any `scan.exclude_paths` entry.
+ * Called at the `scanDirectory` chokepoint so both the betterleaks and
+ * patterns engines get the same filter (and the same semantics).
+ *
+ * `scanRoot` is the absolute directory the scan was rooted at; finding
+ * paths are converted to scan-root-relative before matching, so users
+ * write `components/common/Mermaid.tsx` in their `.rafter.yml`, not the
+ * absolute path on the CI runner.
+ */
+function applyExcludePaths(
+  results: ScanResult[],
+  excludePaths: string[] | undefined,
+  scanRoot: string,
+): ScanResult[] {
+  if (!excludePaths || excludePaths.length === 0) return results;
+  const root = path.resolve(scanRoot).replace(/\\/g, "/");
+  return results.filter((r) => {
+    const abs = path.resolve(r.file).replace(/\\/g, "/");
+    let rel = abs;
+    if (abs === root) {
+      rel = "";
+    } else if (abs.startsWith(root + "/")) {
+      rel = abs.slice(root.length + 1);
+    }
+    return !excludePaths.some((pat) => pathMatchesExcludePattern(rel, pat));
+  });
 }
 
 function applyBaseline(results: ScanResult[], entries: BaselineEntry[]): ScanResult[] {
@@ -391,7 +456,11 @@ async function scanDiffFiles(
       allResults.push(...results);
     }
 
-    outputScanResults(applyBaseline(allResults, baselineEntries), opts, `files changed since ${ref}`, true, suppressions);
+    // sable-yz0 — honor scan.exclude_paths in --diff mode too (was previously
+    // dropped). Use the repo root as scanRoot so user-relative paths in
+    // .rafter.yml resolve consistently with the directory-scan behavior.
+    const filteredDiff = applyExcludePaths(allResults, scanCfg?.excludePaths, repoRoot);
+    outputScanResults(applyBaseline(filteredDiff, baselineEntries), opts, `files changed since ${ref}`, true, suppressions);
   } catch (error: any) {
     if (error.status === 128) {
       console.error("Error: Not in a git repository or invalid ref");
@@ -449,7 +518,9 @@ async function scanStagedFiles(
       allResults.push(...results);
     }
 
-    outputScanResults(applyBaseline(allResults, baselineEntries), opts, "staged files", true, suppressions);
+    // sable-yz0 — honor scan.exclude_paths in --staged mode too.
+    const filteredStaged = applyExcludePaths(allResults, scanCfg?.excludePaths, repoRoot);
+    outputScanResults(applyBaseline(filteredStaged, baselineEntries), opts, "staged files", true, suppressions);
   } catch (error: any) {
     if (error.status === 128) {
       console.error("Error: Not in a git repository");
@@ -530,25 +601,40 @@ async function scanDirectory(
   // respectGitignore default is true. The patterns engine honors it via
   // RegexScanner.scanDirectory; betterleaks honors it natively (gitleaks
   // ancestry — reads .gitignore unless --no-git is set).
+  let results: ScanResult[];
   if (engine === "betterleaks") {
     try {
       const bl = new BetterleaksScanner();
-      return await bl.scanDirectory(dirPath, { useGit: history ?? false });
+      results = await bl.scanDirectory(dirPath, { useGit: history ?? false });
     } catch (e) {
       console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
       const scanner = new RegexScanner(scanCfg?.customPatterns);
-      return scanner.scanDirectory(dirPath, {
+      results = scanner.scanDirectory(dirPath, {
         excludePaths: scanCfg?.excludePaths,
         respectGitignore,
       });
     }
   } else {
     const scanner = new RegexScanner(scanCfg?.customPatterns);
-    return scanner.scanDirectory(dirPath, {
+    results = scanner.scanDirectory(dirPath, {
       excludePaths: scanCfg?.excludePaths,
       respectGitignore,
     });
   }
+  // sable-yz0 — post-filter by `.rafter.yml scan.exclude_paths`. Two bugs
+  // motivated this chokepoint:
+  //   1. The betterleaks happy-path above never received excludePaths,
+  //      so `auto`-engine scans (the default when betterleaks is on disk)
+  //      silently ignored user policy.
+  //   2. The patterns engine's walker only matches `excludePaths` entries
+  //      against single directory NAMES (`entry.name`), so a customer
+  //      writing `components/common/Mermaid.tsx` (file path) or
+  //      `supabase/migrations/foo.sql` (multi-segment path) got no
+  //      filtering at all.
+  // The post-filter applies the same path-aware semantics to BOTH engines
+  // (exact path, directory-prefix, dir-name-anywhere, glob via minimatch),
+  // catching whatever leaks through the walker-level optimization.
+  return applyExcludePaths(results, scanCfg?.excludePaths, dirPath);
 }
 
 /**

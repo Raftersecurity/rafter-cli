@@ -248,6 +248,7 @@ def _print_dry_run_plan(
     want_windsurf: bool,
     want_continue: bool,
     want_aider: bool,
+    want_hermes: bool,
     want_betterleaks: bool,
     risk_level: str,
 ) -> None:
@@ -354,6 +355,11 @@ def _print_dry_run_plan(
         print("Aider (--with-aider):")
         W(root / "RAFTER.md", "rafter:start/end marker block")
         W(root / ".aider.conf.yml", "appends RAFTER.md to read: list; strips legacy mcp-server-command line")
+
+    if want_hermes:
+        print()
+        print("Hermes (--with-hermes):")
+        W(root / ".hermes" / "config.yaml", "mcp_servers.rafter entry merged into existing YAML")
 
     if want_openclaw:
         print()
@@ -987,6 +993,44 @@ def _install_aider_read(root: Path) -> bool:
     return True
 
 
+def _install_hermes_mcp(root: Path) -> bool:
+    """Install MCP server config for Hermes (<root>/.hermes/config.yaml).
+
+    Hermes uses a YAML config with an ``mcp_servers:`` block (snake_case,
+    unlike Cursor/Windsurf/Claude Code which use ``mcpServers`` camelCase).
+    Schema per server is ``{command, args, env}``. We use PyYAML (already
+    imported) to merge in the rafter entry while preserving any existing
+    servers.
+
+    Hooks (preToolUse/postToolUse equivalents) deferred to a follow-on bead
+    pending confirmation Hermes exposes a hook surface — landing MCP-only as
+    v0 mirrors how Gemini and Continue.dev were initially shipped (sable-gyw).
+    """
+    hermes_dir = root / ".hermes"
+    config_path = hermes_dir / "config.yaml"
+
+    hermes_dir.mkdir(parents=True, exist_ok=True)
+
+    config: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            loaded = yaml.safe_load(config_path.read_text())
+            if isinstance(loaded, dict):
+                config = loaded
+        except yaml.YAMLError:
+            rprint(fmt.warning("Existing Hermes config.yaml was not valid YAML, creating new one"))
+
+    mcp_servers = config.get("mcp_servers")
+    if not isinstance(mcp_servers, dict):
+        mcp_servers = {}
+        config["mcp_servers"] = mcp_servers
+    mcp_servers["rafter"] = {**_RAFTER_MCP_ENTRY}
+
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    return True
+
+
 @agent_app.command()
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
@@ -999,6 +1043,7 @@ def init(
     with_cursor: bool = typer.Option(False, "--with-cursor", help="Install Cursor integration"),
     with_windsurf: bool = typer.Option(False, "--with-windsurf", help="Install Windsurf integration"),
     with_continue: bool = typer.Option(False, "--with-continue", help="Install Continue.dev integration"),
+    with_hermes: bool = typer.Option(False, "--with-hermes", help="Install Hermes integration"),
     all_integrations: bool = typer.Option(False, "--all", help="Install all detected integrations and download Betterleaks"),
     update: bool = typer.Option(False, "--update", help="Re-download betterleaks and reinstall integrations without resetting config"),
     local: bool = typer.Option(
@@ -1037,6 +1082,7 @@ def init(
     has_windsurf = scope == "user" and (home / ".codeium" / "windsurf").exists()
     has_continue_dev = scope == "user" and (home / ".continue").exists()
     has_aider = scope == "user" and (home / ".aider.conf.yml").exists()
+    has_hermes = scope == "user" and (home / ".hermes").exists()
 
     # Resolve opt-in flags. In --local scope, --all is restricted to platforms with
     # a project-local config story (claudeCode, codex, gemini, cursor).
@@ -1057,6 +1103,10 @@ def init(
     # Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
     # in cwd) since rf-du2o.
     want_aider = with_aider or all_integrations
+    # Hermes: MCP-only v0 (no hooks confirmed yet). User scope only — Hermes
+    # reads ~/.hermes/config.yaml; project-local install story isn't
+    # established. Excluded from --all in --local for the same reason (sable-gyw).
+    want_hermes = with_hermes or (all_integrations and not local)
     want_betterleaks = with_betterleaks or (all_integrations and not local)
 
     # Show detected environments
@@ -1077,6 +1127,8 @@ def init(
         detected.append("Continue.dev")
     if has_aider:
         detected.append("Aider")
+    if has_hermes:
+        detected.append("Hermes")
 
     if detected:
         rprint(fmt.info(f"Detected environments: {', '.join(detected)}"))
@@ -1102,6 +1154,8 @@ def init(
             rprint(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
         if want_aider and not has_aider:
             rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
+        if want_hermes and not has_hermes:
+            rprint(fmt.warning("Hermes requested but not detected (~/.hermes not found)"))
 
     # --dry-run: print every file path the command would touch, then exit
     # before any filesystem write happens (rf-hrtd). Built from the same
@@ -1118,6 +1172,7 @@ def init(
             want_windsurf=want_windsurf and (has_windsurf or local),
             want_continue=want_continue and (has_continue_dev or local),
             want_aider=want_aider and (has_aider or local),
+            want_hermes=want_hermes and has_hermes,
             want_betterleaks=want_betterleaks,
             risk_level=risk_level,
         )
@@ -1312,6 +1367,18 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Aider integration: {e}"))
 
+    # Install Hermes integration if opted in (sable-gyw).
+    # User scope only — Hermes reads ~/.hermes/config.yaml. MCP-only v0;
+    # hooks deferred pending confirmation Hermes exposes a hook surface.
+    hermes_ok = False
+    if want_hermes and has_hermes:
+        try:
+            hermes_ok = _install_hermes_mcp(root)
+            if hermes_ok:
+                manager.set("agent.environments.hermes.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install Hermes integration: {e}"))
+
     # Install global instruction files for platforms that support them
     _install_global_instructions(
         claude_code=claude_code_ok,
@@ -1327,7 +1394,7 @@ def init(
     rprint(fmt.success("Agent security initialized!"))
     rprint()
 
-    any_integration = openclaw_ok or claude_code_ok or codex_ok or gemini_ok or cursor_ok or windsurf_ok or continue_ok or aider_ok
+    any_integration = openclaw_ok or claude_code_ok or codex_ok or gemini_ok or cursor_ok or windsurf_ok or continue_ok or aider_ok or hermes_ok
 
     if any_integration:
         rprint("Next steps:")
@@ -1372,6 +1439,8 @@ def init(
             rprint("  rafter agent init --with-continue        # Continue.dev only")
         if has_aider:
             rprint("  rafter agent init --with-aider           # Aider only")
+        if has_hermes:
+            rprint("  rafter agent init --with-hermes          # Hermes only")
     else:
         rprint("No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
 
@@ -1424,6 +1493,68 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
         return [r] if r.matches else []
 
 
+def _path_matches_exclude_pattern(rel_path: str, pattern: str) -> bool:
+    """Mirror of Node ``pathMatchesExcludePattern`` (sable-yz0).
+
+    Rules (any one matches → exclude):
+      1. Exact match: ``rel_path == pattern``.
+      2. Directory-prefix: ``rel_path`` starts with ``pattern + "/"``.
+         Trailing ``/`` on the pattern is ignored.
+      3. Dir-name anywhere: any segment of ``rel_path`` equals ``pattern``.
+         Preserves the RegexScanner walker's existing dir-name behavior.
+      4. Glob: if pattern has ``* ? [``, use fnmatch with auto-anchor
+         (try ``pattern`` and ``**/pattern``) — mirrors Node ``matchGlob``.
+    """
+    import fnmatch as _fnmatch
+    rel = rel_path.replace("\\", "/")
+    p = pattern.replace("\\", "/").rstrip("/")
+    if not p:
+        return False
+    if rel == p:
+        return True
+    if rel.startswith(p + "/"):
+        return True
+    if p in rel.split("/"):
+        return True
+    if any(c in p for c in "*?["):
+        if _fnmatch.fnmatch(rel, p):
+            return True
+        if not p.startswith("/") and not p.startswith("**"):
+            if _fnmatch.fnmatch(rel, "**/" + p) or _fnmatch.fnmatch(rel, "*/" + p):
+                return True
+    return False
+
+
+def _apply_exclude_paths(
+    results: list[ScanResult],
+    exclude_paths: list[str] | None,
+    scan_root: str,
+) -> list[ScanResult]:
+    """Strip findings whose path matches any ``scan.exclude_paths`` entry.
+
+    Chokepoint that fixes sable-yz0 across both scan engines AND the staged
+    / diff modes. See the Node ``applyExcludePaths`` docstring for the full
+    rationale — both engines previously bypassed the policy on the
+    happy-path, and the existing walker-level filter only matched
+    directory NAMES, missing every multi-segment path users wrote.
+    """
+    if not exclude_paths:
+        return results
+    root = os.path.abspath(scan_root).replace("\\", "/")
+    kept: list[ScanResult] = []
+    for r in results:
+        abs_p = os.path.abspath(r.file).replace("\\", "/")
+        if abs_p == root:
+            rel = ""
+        elif abs_p.startswith(root + "/"):
+            rel = abs_p[len(root) + 1 :]
+        else:
+            rel = abs_p
+        if not any(_path_matches_exclude_pattern(rel, pat) for pat in exclude_paths):
+            kept.append(r)
+    return kept
+
+
 def _scan_directory(
     dir_path: str,
     engine: str,
@@ -1442,13 +1573,15 @@ def _scan_directory(
         try:
             bl = BetterleaksScanner()
             results = bl.scan_directory(dir_path, use_git=history)
-            return [ScanResult(file=r.file, matches=r.matches) for r in results]
+            results = [ScanResult(file=r.file, matches=r.matches) for r in results]
         except Exception:
             scanner = RegexScanner(custom)
-            return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+            results = scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
     else:
         scanner = RegexScanner(custom)
-        return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+        results = scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+    # sable-yz0 — post-filter chokepoint. See _apply_exclude_paths docstring.
+    return _apply_exclude_paths(results, exclude, dir_path)
 
 
 def _output_scan_results(
@@ -2449,6 +2582,34 @@ def _check_aider() -> _CheckResult:
     return _CheckResult(name, True, f"RAFTER.md + read: entry in {conf}")
 
 
+def _check_hermes() -> _CheckResult:
+    """Check if Hermes integration is healthy (sable-gyw).
+
+    Hermes uses ~/.hermes/config.yaml with a snake_case ``mcp_servers:`` block
+    (MCP-only v0 — no hook surface confirmed yet).
+    """
+    name = "Hermes"
+    home = Path.home()
+    hermes_dir = home / ".hermes"
+
+    if not hermes_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-hermes' to enable", optional=True)
+
+    config_path = hermes_dir / "config.yaml"
+    if not config_path.exists():
+        return _CheckResult(name, False, f"Config not found: {config_path} — run 'rafter agent init --with-hermes'", optional=True)
+
+    try:
+        loaded = yaml.safe_load(config_path.read_text()) or {}
+    except (OSError, yaml.YAMLError) as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    servers = loaded.get("mcp_servers") if isinstance(loaded, dict) else None
+    if not (isinstance(servers, dict) and servers.get("rafter")):
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-hermes'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
 def _probe_claude_code() -> _CheckResult:
     """Runtime probe of the Claude Code hook integration (rf-65zg).
 
@@ -2549,6 +2710,7 @@ def verify(
         _check_windsurf(),
         _check_continue_dev(),
         _check_aider(),
+        _check_hermes(),
     ]
 
     if probe:
@@ -2882,18 +3044,24 @@ def update_betterleaks(
 # ── agent status ─────────────────────────────────────────────────────────
 
 @agent_app.command("status")
-def status():
+def status(
+    json_output: bool = typer.Option(False, "--json", help="Output status as JSON"),
+):
     """Show agent security status dashboard."""
     from ..core.config_schema import get_audit_log_path, get_rafter_dir
 
     rafter_dir = get_rafter_dir()
     audit_path = get_audit_log_path()
+    config_path = rafter_dir / "config.json"
+
+    if json_output:
+        print(json.dumps(_agent_status_json(config_path, audit_path), indent=2))
+        return
 
     print("Rafter Agent Status")
     print("=" * 50)
 
     # --- Config ---
-    config_path = rafter_dir / "config.json"
     if config_path.exists():
         try:
             cfg = ConfigManager().load()
@@ -2946,11 +3114,18 @@ def status():
     print(f"PostToolUse:  {posttool_status}")
 
     # --- OpenClaw skill ---
-    skill_path = Path.home() / ".openclaw" / "skills" / "rafter-security.md"
-    if skill_path.exists():
-        print(f"OpenClaw:     skill installed ({skill_path})")
-    elif (Path.home() / ".openclaw").exists():
-        print("OpenClaw:     detected but skill missing — run: rafter agent init --with-openclaw")
+    # rf-zgwj moved the skill to the canonical ClawHub workspace path
+    # (~/.openclaw/workspace/skills/rafter-security/SKILL.md) and strips the
+    # legacy flat file. Detect via SkillManager so this matches `agent verify`
+    # and the installer — checking the legacy path here is a false negative.
+    skill_manager = SkillManager()
+    if skill_manager.is_rafter_skill_installed():
+        print(f"OpenClaw:     skill installed ({skill_manager.get_rafter_skill_path()})")
+    elif skill_manager.is_openclaw_installed():
+        if skill_manager.has_legacy_rafter_skill():
+            print(f"OpenClaw:     legacy skill at {skill_manager.get_legacy_rafter_skill_path()} (not loaded) — run: rafter agent init --with-openclaw to migrate")
+        else:
+            print("OpenClaw:     detected but skill missing — run: rafter agent init --with-openclaw")
     else:
         print("OpenClaw:     not detected (optional)")
 
@@ -2971,6 +3146,7 @@ def status():
         {"name": "Cursor", "flag": "--with-cursor", "config_dir": home / ".cursor", "config_file": home / ".cursor" / "mcp.json", "needle": "rafter"},
         {"name": "Windsurf", "flag": "--with-windsurf", "config_dir": home / ".codeium" / "windsurf", "config_file": home / ".codeium" / "windsurf" / "mcp_config.json", "needle": "rafter"},
         {"name": "Continue.dev", "flag": "--with-continue", "config_dir": home / ".continue", "config_file": home / ".continue" / "config.json", "needle": "rafter"},
+        {"name": "Hermes", "flag": "--with-hermes", "config_dir": home / ".hermes", "config_file": home / ".hermes" / "config.yaml", "needle": "rafter"},
     ]
 
     for agent in mcp_agents:
@@ -3028,6 +3204,96 @@ def status():
         print("No events logged yet.")
 
     print()
+
+
+def _agent_status_json(config_path: Path, audit_path: Path) -> dict[str, Any]:
+    return {
+        "installed": config_path.exists(),
+        "version": __version__,
+        "agents_detected": _detect_agent_platforms(),
+        "hooks_installed": _detect_git_hooks(),
+        "betterleaks_available": _betterleaks_available(),
+        "config_path": _format_home_path(config_path),
+        "audit_log_path": _format_home_path(audit_path),
+    }
+
+
+def _detect_agent_platforms() -> list[str]:
+    home = Path.home()
+    candidates = [
+        ("claude-code", home / ".claude"),
+        ("openclaw", home / ".openclaw"),
+        ("codex", home / ".codex"),
+        ("gemini", home / ".gemini"),
+        ("cursor", home / ".cursor"),
+        ("windsurf", home / ".codeium" / "windsurf"),
+        ("continue", home / ".continue"),
+        ("aider", home / ".aider.conf.yml"),
+        ("hermes", home / ".hermes"),
+    ]
+    return [name for name, path in candidates if path.exists()]
+
+
+def _detect_git_hooks() -> list[str]:
+    hooks: set[str] = set()
+    specs = [
+        ("pre-commit", "Rafter Security Pre-Commit Hook"),
+        ("pre-push", "Rafter Security Pre-Push Hook"),
+    ]
+    home = Path.home()
+
+    for hook_name, marker in specs:
+        if _file_contains(home / ".rafter" / "git-hooks" / hook_name, marker):
+            hooks.add(hook_name)
+
+    try:
+        git_dir = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        ).stdout.strip()
+        hooks_dir = Path(git_dir).resolve() / "hooks"
+        for hook_name, marker in specs:
+            if _file_contains(hooks_dir / hook_name, marker):
+                hooks.add(hook_name)
+    except Exception:
+        pass
+
+    return sorted(hooks)
+
+
+def _betterleaks_available() -> bool:
+    bm = BinaryManager()
+    if shutil.which("betterleaks"):
+        try:
+            result = subprocess.run(
+                ["betterleaks", "version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+    return bm.get_betterleaks_path().exists() or bool(bm.find_legacy_gitleaks())
+
+
+def _file_contains(path: Path, needle: str) -> bool:
+    try:
+        return needle in path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+
+
+def _format_home_path(path: Path) -> str:
+    home = Path.home()
+    try:
+        return f"~/{path.relative_to(home).as_posix()}"
+    except ValueError:
+        return str(path)
 
 
 # ── baseline ─────────────────────────────────────────────────────────

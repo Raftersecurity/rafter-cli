@@ -157,7 +157,7 @@ at session start:
   "initialized": true,
   "risk_level": "moderate",
   "command_policy": "approve-dangerous",
-  "gitleaks_available": true,
+  "betterleaks_available": true,
   "hooks_installed": { "pre_tool_use": true, "post_tool_use": true },
   "project_policy": ".rafter.yml found",
   "last_scan": "2026-03-05T10:00:00Z",

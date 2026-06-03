@@ -245,7 +245,7 @@ Total: roughly 7-8 days of focused work for full parity. CI integration tests pe
 
 ## Out of scope for rf-cia
 
-- New platform support (Hermes / future Continue extensions / etc.) — track separately under rf-01b and similar.
+- New platform support — track separately. (Hermes landed under sable-gyw: MCP-only v0 via `--with-hermes`, with init/verify/status/list detection in both runtimes; hooks deferred pending a confirmed Hermes hook surface.)
 - Sub-agent equivalents on Codex/Cursor/etc. — none of those platforms have a first-class sub-agent primitive today. Watch quarterly.
 - The `rafter review` standalone command — separate bead rf-0z9, on hold for user review.
 
