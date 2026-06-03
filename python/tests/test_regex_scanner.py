@@ -64,6 +64,18 @@ def test_scan_text(scanner):
     assert len(matches) > 0
 
 
+def test_scan_text_detects_hashicorp_vault_token(scanner):
+    token = "hv" + "s." + ("A" * 90)
+    matches = scanner.scan_text(token)
+    assert any(m.pattern.name == "HashiCorp Vault Token" for m in matches)
+
+
+def test_scan_text_ignores_short_hashicorp_vault_like_string(scanner):
+    token = "hv" + "s." + ("A" * 32)
+    matches = scanner.scan_text(token)
+    assert not any(m.pattern.name == "HashiCorp Vault Token" for m in matches)
+
+
 def test_has_secrets(scanner):
     assert scanner.has_secrets("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij")
     assert not scanner.has_secrets("just a normal string")

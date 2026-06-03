@@ -88,6 +88,13 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
         severity="critical",
         description="Twilio API Key detected",
     ),
+    # HashiCorp Vault
+    Pattern(
+        name="HashiCorp Vault Token",
+        regex=r"hvs\.[a-zA-Z0-9_-]{90,}",
+        severity="critical",
+        description="HashiCorp Vault service token detected",
+    ),
     # Generic
     Pattern(
         name="Generic API Key",
