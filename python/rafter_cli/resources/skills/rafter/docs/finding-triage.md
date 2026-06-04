@@ -55,8 +55,15 @@ If the finding is a leaked secret that was committed:
 
 Suppress only when the finding is a real false positive *for this context*, with a written reason. Two mechanisms:
 
-- **Inline**: `// rafter-ignore: HARDCODED_API_KEY — test fixture, not a real key`
-- **Baseline**: `rafter agent baseline` snapshots current findings; only *new* findings fail future scans. Good for adopting Rafter on a legacy codebase without a big bang.
+- **`.rafter.yml`**: add an `ignore:` rule naming the path(s), the rule(s), and a `reason` (your evidence). Repo-tied; persists across scans:
+  ```yaml
+  ignore:
+    - paths: ["tests/fixtures/**", "src/legacy/config.py"]
+      rules: ["AWS Access Key"]   # omit `rules` to suppress every finding on those paths
+      reason: "fake test keys — no live path"
+  ```
+  Match `rules` on the finding's **rule name** (case-insensitive), not a hashed `R-…` id. On a local `rafter scan`, suppressed findings move into a `_suppressed[]` array and don't affect the exit code — you only fail on a *non-suppressed* finding. Docs: https://docs.rafter.so/suppression
+- **Baseline**: `rafter agent baseline create` snapshots current findings; scan with `rafter scan --baseline` so only *new* findings surface. Good for adopting Rafter on a legacy codebase without a big bang.
 
 Never suppress by:
 - Commenting out the rule globally.
