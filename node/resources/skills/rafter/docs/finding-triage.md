@@ -59,7 +59,7 @@ Suppress only when the finding is a real false positive *for this context*, with
   ```yaml
   ignore:
     - paths: ["tests/fixtures/**", "src/legacy/config.py"]
-      rules: ["AWS Access Key"]   # omit `rules` to suppress every finding on those paths
+      rules: ["AWS Access Key ID"]   # omit `rules` to suppress every finding on those paths
       reason: "fake test keys — no live path"
   ```
   Match `rules` on the finding's **rule name** (case-insensitive), not a hashed `R-…` id. On a local `rafter scan`, suppressed findings move into a `_suppressed[]` array and don't affect the exit code — you only fail on a *non-suppressed* finding. Docs: https://docs.rafter.so/suppression
