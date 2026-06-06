@@ -90,3 +90,43 @@ class TestNonHttpsRefused:
                 bm.bin_dir / "_test.bin",
                 lambda _: None,
             )
+
+
+class TestIsManagedBetterleaksStale:
+    """sable-o4k — detect a stale managed binary so the scanner can auto-update
+    instead of silently returning zero findings."""
+
+    def test_false_when_not_installed(self, monkeypatch):
+        bm = BinaryManager()
+        monkeypatch.setattr(bm, "is_betterleaks_installed", lambda: False)
+        assert bm.is_managed_betterleaks_stale() is False
+
+    def test_false_when_version_matches_pinned(self, monkeypatch):
+        bm = BinaryManager()
+        monkeypatch.setattr(bm, "is_betterleaks_installed", lambda: True)
+        monkeypatch.setattr(bm, "get_betterleaks_version", lambda: BETTERLEAKS_VERSION)
+        assert bm.is_managed_betterleaks_stale() is False
+
+    def test_false_with_extra_text_around_pinned_version(self, monkeypatch):
+        bm = BinaryManager()
+        monkeypatch.setattr(bm, "is_betterleaks_installed", lambda: True)
+        monkeypatch.setattr(bm, "get_betterleaks_version", lambda: f"betterleaks version {BETTERLEAKS_VERSION}")
+        assert bm.is_managed_betterleaks_stale() is False
+
+    def test_true_for_older_betterleaks(self, monkeypatch):
+        bm = BinaryManager()
+        monkeypatch.setattr(bm, "is_betterleaks_installed", lambda: True)
+        monkeypatch.setattr(bm, "get_betterleaks_version", lambda: "1.0.0")
+        assert bm.is_managed_betterleaks_stale() is True
+
+    def test_true_for_leftover_gitleaks_8x(self, monkeypatch):
+        bm = BinaryManager()
+        monkeypatch.setattr(bm, "is_betterleaks_installed", lambda: True)
+        monkeypatch.setattr(bm, "get_betterleaks_version", lambda: "8.18.0")
+        assert bm.is_managed_betterleaks_stale() is True
+
+    def test_false_when_version_unknown(self, monkeypatch):
+        bm = BinaryManager()
+        monkeypatch.setattr(bm, "is_betterleaks_installed", lambda: True)
+        monkeypatch.setattr(bm, "get_betterleaks_version", lambda: "unknown")
+        assert bm.is_managed_betterleaks_stale() is False

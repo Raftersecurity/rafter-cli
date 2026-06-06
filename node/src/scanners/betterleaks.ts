@@ -195,7 +195,11 @@ export class BetterleaksScanner {
       }
       const parsed = JSON.parse(content);
       if (!Array.isArray(parsed)) {
-        console.error("[rafter] Warning: Betterleaks output is not an array — possible version mismatch");
+        // sable-o4k — a stale/incompatible binary emits a non-array shape and
+        // would otherwise silently yield zero findings. The managed binary is
+        // auto-updated upstream; this covers a stale binary on PATH, which we
+        // can't safely overwrite — so point the user at the fix.
+        console.error("[rafter] Warning: Betterleaks output is not an array — possible version mismatch. Run: rafter agent update-betterleaks");
         return [];
       }
       return parsed;

@@ -91,6 +91,12 @@ export interface RafterConfig {
       excludePaths?: string[];
       customPatterns?: ScanCustomPattern[];
       ignore?: ScanIgnoreRule[];
+      /**
+       * sable-o4k — auto-update a stale rafter-managed betterleaks binary at
+       * scan time. Default true. Set false (YAML: `scan.auto_update_betterleaks`)
+       * to opt out, e.g. in CI that provisions its own binary.
+       */
+      autoUpdateBetterleaks?: boolean;
     };
     /**
      * Fine-grained per-component install state. Keys are component IDs like
