@@ -160,6 +160,51 @@ describe("BinaryManager version detection", () => {
   });
 });
 
+// ── isManagedBetterleaksStale (sable-o4k) ───────────────────────────
+
+describe("BinaryManager isManagedBetterleaksStale", () => {
+  it("returns false when no managed binary is installed", async () => {
+    const bm = new BinaryManager();
+    vi.spyOn(bm, "isBetterleaksInstalled").mockReturnValue(false);
+    expect(await bm.isManagedBetterleaksStale()).toBe(false);
+  });
+
+  it("returns false when the installed version matches the pinned version", async () => {
+    const bm = new BinaryManager();
+    vi.spyOn(bm, "isBetterleaksInstalled").mockReturnValue(true);
+    vi.spyOn(bm, "getBetterleaksVersion").mockResolvedValue(BETTERLEAKS_VERSION);
+    expect(await bm.isManagedBetterleaksStale()).toBe(false);
+  });
+
+  it("tolerates extra text around the pinned version (e.g. 'betterleaks 1.1.2')", async () => {
+    const bm = new BinaryManager();
+    vi.spyOn(bm, "isBetterleaksInstalled").mockReturnValue(true);
+    vi.spyOn(bm, "getBetterleaksVersion").mockResolvedValue(`betterleaks version ${BETTERLEAKS_VERSION}`);
+    expect(await bm.isManagedBetterleaksStale()).toBe(false);
+  });
+
+  it("returns true for a leftover older betterleaks", async () => {
+    const bm = new BinaryManager();
+    vi.spyOn(bm, "isBetterleaksInstalled").mockReturnValue(true);
+    vi.spyOn(bm, "getBetterleaksVersion").mockResolvedValue("1.0.0");
+    expect(await bm.isManagedBetterleaksStale()).toBe(true);
+  });
+
+  it("returns true for a leftover gitleaks-era binary (8.x)", async () => {
+    const bm = new BinaryManager();
+    vi.spyOn(bm, "isBetterleaksInstalled").mockReturnValue(true);
+    vi.spyOn(bm, "getBetterleaksVersion").mockResolvedValue("8.18.0");
+    expect(await bm.isManagedBetterleaksStale()).toBe(true);
+  });
+
+  it("returns false when the version can't be determined (don't churn)", async () => {
+    const bm = new BinaryManager();
+    vi.spyOn(bm, "isBetterleaksInstalled").mockReturnValue(true);
+    vi.spyOn(bm, "getBetterleaksVersion").mockResolvedValue("unknown");
+    expect(await bm.isManagedBetterleaksStale()).toBe(false);
+  });
+});
+
 // ── verifyBetterleaksVerbose ────────────────────────────────────────
 
 describe("BinaryManager verifyBetterleaksVerbose", () => {

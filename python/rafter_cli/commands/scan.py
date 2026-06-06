@@ -97,6 +97,7 @@ def scan_local(
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
+    auto_update: bool = typer.Option(True, "--auto-update/--no-auto-update", help="Auto-update a stale managed betterleaks binary; --no-auto-update falls back to the patterns engine instead (default: on)"),
 ):
     """(deprecated alias for 'rafter secrets')."""
     from .agent import (
@@ -121,6 +122,10 @@ def scan_local(
         [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns]
         if scan_cfg.custom_patterns else None
     )
+
+    # sable-o4k — stale-binary auto-update is on unless the CLI flag or the
+    # scan.auto_update_betterleaks config key opts out. Either disables it.
+    auto_update_enabled = auto_update and scan_cfg.auto_update_betterleaks
 
     # Combine policy-derived ignore rules with .rafterignore. Policy first so
     # an explicit reason wins over a bare .rafterignore line.
@@ -159,7 +164,7 @@ def scan_local(
             cwd=git_cwd,
         ).stdout.strip()
 
-        eng = _select_engine(engine, quiet)
+        eng = _select_engine(engine, quiet, auto_update_enabled)
         all_results = []
         for f in changed:
             resolved = os.path.join(repo_root, f)
@@ -199,7 +204,7 @@ def scan_local(
             cwd=git_cwd,
         ).stdout.strip()
 
-        eng = _select_engine(engine, quiet)
+        eng = _select_engine(engine, quiet, auto_update_enabled)
         all_results = []
         for f in staged_files:
             resolved = os.path.join(repo_root, f)
@@ -220,10 +225,10 @@ def scan_local(
 
     # --watch
     if watch:
-        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions)
+        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
-    eng = _select_engine(engine, quiet)
+    eng = _select_engine(engine, quiet, auto_update_enabled)
 
     if os.path.isdir(resolved_path):
         if not quiet:
@@ -265,6 +270,7 @@ def secrets(
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
+    auto_update: bool = typer.Option(True, "--auto-update/--no-auto-update", help="Auto-update a stale managed betterleaks binary; --no-auto-update falls back to the patterns engine instead (default: on)"),
 ):
     """Scan files/directories for hardcoded secrets."""
     return scan_local(
@@ -279,4 +285,5 @@ def secrets(
         watch=watch,
         history=history,
         gitignore=gitignore,
+        auto_update=auto_update,
     )

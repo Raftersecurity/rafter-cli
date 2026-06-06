@@ -201,6 +201,10 @@ class ConfigManager:
                             continue
                         valid.append(p)
                     scan[key] = valid
+            for key in ("autoUpdateBetterleaks", "auto_update_betterleaks"):
+                if key in scan and not isinstance(scan[key], bool):
+                    print(f'rafter: config "scan.{key}" must be a boolean — using default.', file=sys.stderr)
+                    del scan[key]
 
     # ------------------------------------------------------------------
     # Policy-merged config
@@ -237,6 +241,8 @@ class ConfigManager:
                 config.agent.scan.custom_patterns = [
                     ScanCustomPattern(**p) for p in scan["custom_patterns"]
                 ]
+            if scan.get("auto_update_betterleaks") is not None:
+                config.agent.scan.auto_update_betterleaks = scan["auto_update_betterleaks"]
 
         if policy.get("ignore"):
             from .config_schema import ScanIgnoreRule
@@ -322,6 +328,12 @@ class ConfigManager:
                     for p in (agent_raw.get("scan") or {}).get("custom_patterns", (agent_raw.get("scan") or {}).get("customPatterns", []))
                 ],
                 ignore=cls._parse_ignore_rules((agent_raw.get("scan") or {}).get("ignore", [])),
+                auto_update_betterleaks=bool(
+                    (agent_raw.get("scan") or {}).get(
+                        "auto_update_betterleaks",
+                        (agent_raw.get("scan") or {}).get("autoUpdateBetterleaks", True),
+                    )
+                ),
             ),
             components=agent_raw.get("components") or {},
         )

@@ -1,6 +1,8 @@
 import { Command } from "commander";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { BetterleaksScanner } from "../../scanners/betterleaks.js";
+import { BinaryManager, BETTERLEAKS_VERSION } from "../../utils/binary-manager.js";
+import { askYesNo } from "../../utils/prompt.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import {
@@ -34,6 +36,11 @@ interface ScanOpts {
   history?: boolean;
   /** Commander maps `--no-gitignore` to `gitignore: false` (default true). */
   gitignore?: boolean;
+  /**
+   * Commander maps `--no-auto-update` to `autoUpdate: false` (default true).
+   * sable-o4k — opt out of auto-updating a stale managed betterleaks binary.
+   */
+  autoUpdate?: boolean;
 }
 
 interface BaselineEntry {
@@ -149,6 +156,7 @@ export function createScanCommand(): Command {
     .option("--watch", "Watch for file changes and re-scan on change")
     .option("--history", "Scan git history for secrets (requires betterleaks engine)")
     .option("--no-gitignore", "Scan files even if .gitignore would exclude them (default: respect .gitignore)")
+    .option("--no-auto-update", "Do not auto-update a stale managed betterleaks binary; fall back to the patterns engine instead")
     .action(async (scanPath, opts: ScanOpts) => {
       // Validate flags before doing any work.
       const validEngines = ["auto", "betterleaks", "patterns"];
@@ -209,7 +217,7 @@ export function createScanCommand(): Command {
       }
 
       // Determine scan engine
-      const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
+      const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
 
       // Determine if path is file or directory
       const stats = fs.statSync(resolvedPath);
@@ -413,7 +421,7 @@ function outputScanResults(
 async function scanDiffFiles(
   ref: string,
   opts: ScanOpts,
-  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[] },
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[]; autoUpdateBetterleaks?: boolean },
   baselineEntries: BaselineEntry[] = [],
   scanPath?: string,
   suppressions: Suppression[] = [],
@@ -443,7 +451,7 @@ async function scanDiffFiles(
       stdio: ["pipe", "pipe", "ignore"],
     }).trim();
 
-    const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
+    const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
 
     const allResults: ScanResult[] = [];
     for (const file of changedFiles) {
@@ -475,7 +483,7 @@ async function scanDiffFiles(
  */
 async function scanStagedFiles(
   opts: ScanOpts,
-  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[] },
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[]; autoUpdateBetterleaks?: boolean },
   baselineEntries: BaselineEntry[] = [],
   scanPath?: string,
   suppressions: Suppression[] = [],
@@ -505,7 +513,7 @@ async function scanStagedFiles(
       stdio: ["pipe", "pipe", "ignore"],
     }).trim();
 
-    const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
+    const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
 
     const allResults: ScanResult[] = [];
     for (const file of stagedFiles) {
@@ -531,9 +539,18 @@ async function scanStagedFiles(
 }
 
 /**
- * Select scan engine based on availability and user preference
+ * Select scan engine based on availability and user preference.
+ *
+ * `autoUpdate` (default true) controls sable-o4k behavior: when the resolved
+ * engine is betterleaks but the managed binary is stale, auto-update it before
+ * scanning. The caller resolves this from `--no-auto-update` and the
+ * `scan.auto_update_betterleaks` config key.
  */
-async function selectEngine(preference: string, quiet: boolean): Promise<"betterleaks" | "patterns"> {
+async function selectEngine(
+  preference: string,
+  quiet: boolean,
+  autoUpdate = true,
+): Promise<"betterleaks" | "patterns"> {
   if (preference === "patterns") {
     return "patterns";
   }
@@ -547,7 +564,7 @@ async function selectEngine(preference: string, quiet: boolean): Promise<"better
       }
       return "patterns";
     }
-    return "betterleaks";
+    return ensureBetterleaksUsable(quiet, autoUpdate);
   }
 
   if (preference !== "auto") {
@@ -558,8 +575,74 @@ async function selectEngine(preference: string, quiet: boolean): Promise<"better
   // Auto mode: try Betterleaks, fall back to patterns
   const bl = new BetterleaksScanner();
   const available = await bl.isAvailable();
+  if (!available) return "patterns";
 
-  return available ? "betterleaks" : "patterns";
+  return ensureBetterleaksUsable(quiet, autoUpdate);
+}
+
+/**
+ * sable-o4k — guard against a stale rafter-managed betterleaks binary silently
+ * returning zero findings (a leftover binary from an older rafter parses fine
+ * with `version` but emits a JSON shape the current parser rejects).
+ *
+ * When the managed binary is stale we auto-update it to the pinned version
+ * (default on; opt out with `--no-auto-update` or `scan.auto_update_betterleaks:
+ * false`). In an interactive TTY we confirm first. If the update is disabled,
+ * declined, or fails, we degrade to the patterns engine and print a CTA rather
+ * than scanning with a binary that yields nothing.
+ */
+async function ensureBetterleaksUsable(
+  quiet: boolean,
+  autoUpdate: boolean,
+): Promise<"betterleaks" | "patterns"> {
+  const bm = new BinaryManager();
+  if (!(await bm.isManagedBetterleaksStale())) return "betterleaks";
+
+  const current = await bm.getBetterleaksVersion();
+  const cta = "Fix manually with: rafter agent update-betterleaks";
+  const stale = `Stale betterleaks binary (${current}; expected v${BETTERLEAKS_VERSION})`;
+
+  if (!autoUpdate) {
+    if (!quiet) {
+      console.error(fmt.warning(`${stale}. Auto-update is off — using the patterns engine for this scan. ${cta}`));
+    }
+    return "patterns";
+  }
+
+  // Only prompt when there's a human at a TTY; otherwise auto-update proceeds
+  // (default on) so non-interactive runs aren't left with a broken engine.
+  if (process.stdin.isTTY && !quiet) {
+    const ok = await askYesNo(`${stale}. Update it now?`, true);
+    if (!ok) {
+      console.error(fmt.warning(`Skipped — using the patterns engine for this scan. ${cta}`));
+      return "patterns";
+    }
+  }
+
+  if (!quiet) console.error(fmt.info(`Updating betterleaks to v${BETTERLEAKS_VERSION}...`));
+  try {
+    await bm.downloadBetterleaks((m) => { if (!quiet) console.error(`   ${m}`); }, BETTERLEAKS_VERSION);
+    if (!quiet) console.error(fmt.success(`Betterleaks updated to v${BETTERLEAKS_VERSION}.`));
+    return "betterleaks";
+  } catch (e) {
+    if (!quiet) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(fmt.warning(`Betterleaks update failed (${msg}) — using the patterns engine for this scan. ${cta}`));
+    }
+    return "patterns";
+  }
+}
+
+/**
+ * Resolve whether stale-binary auto-update is enabled, from the CLI flag
+ * (`--no-auto-update` → `opts.autoUpdate === false`) and the
+ * `scan.auto_update_betterleaks` config key. Either opting out disables it.
+ */
+export function autoUpdateEnabled(
+  opts: { autoUpdate?: boolean },
+  scanCfg?: { autoUpdateBetterleaks?: boolean },
+): boolean {
+  return opts.autoUpdate !== false && scanCfg?.autoUpdateBetterleaks !== false;
 }
 
 /**
@@ -568,7 +651,7 @@ async function selectEngine(preference: string, quiet: boolean): Promise<"better
 async function scanFile(
   filePath: string,
   engine: "betterleaks" | "patterns",
-  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; autoUpdateBetterleaks?: boolean },
 ): Promise<ScanResult[]> {
   if (engine === "betterleaks") {
     try {
@@ -594,7 +677,7 @@ async function scanFile(
 async function scanDirectory(
   dirPath: string,
   engine: "betterleaks" | "patterns",
-  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }> },
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; autoUpdateBetterleaks?: boolean },
   history?: boolean,
   respectGitignore?: boolean,
 ): Promise<ScanResult[]> {
@@ -643,13 +726,13 @@ async function scanDirectory(
 async function watchAndScan(
   watchPath: string,
   opts: ScanOpts,
-  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[] },
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[]; autoUpdateBetterleaks?: boolean },
   suppressions: Suppression[] = [],
 ): Promise<void> {
   const { watch } = await import("chokidar");
   const logger = new AuditLogger();
 
-  const engine = await selectEngine(opts.engine || "auto", opts.quiet || false);
+  const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
 
   if (!opts.quiet) {
     console.error(fmt.info(`Watching ${watchPath} for changes (${engine}). Press Ctrl+C to exit.`));

@@ -105,6 +105,8 @@ def _map_policy(raw: dict) -> dict:
                 {"name": p.get("name", ""), "regex": p.get("regex", ""), "severity": p.get("severity", "high")}
                 for p in scan["custom_patterns"]
             ]
+        if isinstance(scan.get("auto_update_betterleaks"), bool):
+            policy["scan"]["auto_update_betterleaks"] = scan["auto_update_betterleaks"]
 
     # sable-c1c — backend flat-shape compat. rafter-backend reads
     # exclude_paths / custom_patterns at the top level (no `scan:` nesting),
@@ -279,6 +281,12 @@ def _validate_policy(policy: dict, raw: dict) -> dict:
                 scan["custom_patterns"] = valid_patterns
             else:
                 del scan["custom_patterns"]
+
+    # sable-o4k — only a bool reaches the mapped policy (the mapping guards the
+    # type), so warn directly off the raw value when present but malformed.
+    raw_scan = raw.get("scan")
+    if isinstance(raw_scan, dict) and "auto_update_betterleaks" in raw_scan and not isinstance(raw_scan["auto_update_betterleaks"], bool):
+        print('Warning: "scan.auto_update_betterleaks" must be a boolean — ignoring.', file=sys.stderr)
 
     ignore = policy.get("ignore")
     if ignore is not None:

@@ -102,6 +102,10 @@ function validateConfig(raw: any): RafterConfig {
           return true;
         });
       }
+      if (scan.autoUpdateBetterleaks !== undefined && typeof scan.autoUpdateBetterleaks !== "boolean") {
+        console.error('Warning: config "agent.scan.autoUpdateBetterleaks" must be a boolean — using default.');
+        delete scan.autoUpdateBetterleaks;
+      }
     }
   }
 
@@ -286,6 +290,9 @@ export class ConfigManager {
       }
       if (policy.scan.customPatterns) {
         config.agent.scan.customPatterns = policy.scan.customPatterns;
+      }
+      if (policy.scan.autoUpdateBetterleaks !== undefined) {
+        config.agent.scan.autoUpdateBetterleaks = policy.scan.autoUpdateBetterleaks;
       }
     }
 

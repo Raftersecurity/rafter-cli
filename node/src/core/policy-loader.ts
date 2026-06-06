@@ -40,6 +40,7 @@ export interface PolicyFile {
   scan?: {
     excludePaths?: string[];
     customPatterns?: PolicyCustomPattern[];
+    autoUpdateBetterleaks?: boolean;
   };
   ignore?: PolicyIgnoreRule[];
   audit?: {
@@ -146,6 +147,9 @@ function mapPolicy(raw: Record<string, any>): PolicyFile {
         regex: p.regex,
         severity: p.severity || "high",
       }));
+    }
+    if (typeof raw.scan.auto_update_betterleaks === "boolean") {
+      policy.scan.autoUpdateBetterleaks = raw.scan.auto_update_betterleaks;
     }
   }
 
@@ -349,6 +353,13 @@ function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFil
           delete policy.scan.customPatterns;
         }
       }
+    }
+    // sable-o4k — only a boolean reaches policy.scan (mapping guards the type),
+    // so warn directly off the raw value when it's present but malformed.
+    if (raw.scan && typeof raw.scan === "object" &&
+        raw.scan.auto_update_betterleaks !== undefined &&
+        typeof raw.scan.auto_update_betterleaks !== "boolean") {
+      console.error(`Warning: "scan.auto_update_betterleaks" must be a boolean — ignoring.`);
     }
   }
 

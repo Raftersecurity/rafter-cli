@@ -304,6 +304,7 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
 - `--history` — scan the full git history for previously-committed secrets (requires `--engine betterleaks`; invokes `betterleaks git` against the repo history)
 - `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree.
+- `--auto-update` / `--no-auto-update` — auto-update a **stale rafter-managed betterleaks binary** before scanning (default: on). A leftover binary from an older rafter (a gitleaks-8.x install from before the rename, or an older betterleaks) runs `version` fine but emits a JSON shape the current parser rejects, which would otherwise silently yield **zero findings** on the default engine. When the managed binary's version doesn't match the pinned one, rafter downloads the pinned version (prompting first in an interactive TTY). `--no-auto-update` (or `scan.auto_update_betterleaks: false`) skips the update and falls back to the **patterns** engine for that scan, printing a one-line CTA (`rafter agent update-betterleaks`) — never a silent zero. Only the rafter-managed binary at `~/.rafter/bin/betterleaks` is auto-updated; a binary on `PATH` is left untouched (a non-array parse there warns with the same CTA).
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
 
@@ -1068,6 +1069,11 @@ scan:
     - name: "Internal API Key"
       regex: "INTERNAL_[A-Z0-9]{32}"
       severity: critical
+  # Default: true. Set false to stop rafter from auto-updating a stale managed
+  # betterleaks binary at scan time (e.g. in CI that provisions its own binary);
+  # rafter then falls back to the patterns engine instead. Equivalent to passing
+  # --no-auto-update on every scan. See `rafter secrets --no-auto-update`.
+  auto_update_betterleaks: true
 ignore:
   - paths: ["tests/fixtures/**", "*.example.env"]
     rules: ["AWS Access Key", "Generic API Key"]

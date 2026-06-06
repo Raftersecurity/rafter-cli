@@ -293,6 +293,25 @@ export class BinaryManager {
   }
 
   /**
+   * sable-o4k — detect a stale rafter-managed betterleaks binary. A leftover
+   * binary from an older rafter (a gitleaks-8.x install from before the rename,
+   * or an older betterleaks) runs `version` fine but emits a JSON report shape
+   * the current parser rejects, silently yielding zero findings on the default
+   * engine. We treat the managed binary as stale whenever its reported version
+   * doesn't contain the pinned BETTERLEAKS_VERSION rafter ships and parses
+   * against. PATH binaries are out of scope: we can't safely overwrite a
+   * user-managed install, and they may be a compatible different version.
+   * Read-only — never downloads.
+   */
+  async isManagedBetterleaksStale(): Promise<boolean> {
+    if (!this.isBetterleaksInstalled()) return false;
+    const version = await this.getBetterleaksVersion();
+    // "unknown" (binary errored) / "not installed" — can't tell; don't churn.
+    if (version === "unknown" || version === "not installed") return false;
+    return !version.includes(BETTERLEAKS_VERSION);
+  }
+
+  /**
    * Get platform string for download URL
    */
   private getPlatformString(): string {
