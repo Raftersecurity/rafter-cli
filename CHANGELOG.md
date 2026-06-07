@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Auto-update a stale managed betterleaks binary at scan time** (sable-o4k). A leftover `~/.rafter/bin/betterleaks` from an older rafter (a gitleaks-8.x install from before the rename, or an older betterleaks) runs `version` fine but emits a JSON report shape the current parser rejects — the parser returned `[]` with only a stderr warning, so the default `--engine betterleaks` path silently reported **zero findings** for anyone upgrading from `<0.8` to `>=0.8`. `rafter secrets` / `scan local` now detect a stale managed binary at engine-selection (reported version doesn't contain the pinned `BETTERLEAKS_VERSION`) and auto-update it to the pinned version before scanning. Default on; opt out with `--no-auto-update` or `scan.auto_update_betterleaks: false` (e.g. CI that provisions its own binary) — either disables it. In an interactive TTY the update is confirmed first. If the update is disabled, declined, or fails, the scan degrades to the patterns engine and prints a one-line CTA (`rafter agent update-betterleaks`) instead of a silent zero. Only the rafter-managed binary is auto-updated; a stale binary on `PATH` (which we can't safely overwrite) now warns with the same CTA via the parser. Node + Python.
+
+### Changed
+- **Purge remaining user-facing deprecated-alias references** (sable-8vh). `rafter secrets` is the canonical local secret-scan command; `rafter scan local` and `rafter agent scan` remain back-compat aliases (`agent scan` warns at runtime, `scan local` stays a quiet hidden alias to avoid breaking migrated CI). This pass mops up the last user-facing surfaces that still taught a deprecated form: `python/README.md` quick-reference (taught `rafter agent scan`), the `Dockerfile` usage comments, and `demo.tape`. README, recipes, and `CLI_SPEC.md` were already canonical. No code or behavior change.
+
 ## [0.8.4] - 2026-06-01
 
 ### Fixed

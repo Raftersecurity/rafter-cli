@@ -73,7 +73,7 @@ Sleep 15s
 Type "# 3. Scan for secrets"
 Enter
 
-Type 'rafter scan local . ; echo "^ exit code: $?"'
+Type 'rafter secrets . ; echo "^ exit code: $?"'
 Enter
 Sleep 5s
 

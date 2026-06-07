@@ -40,9 +40,9 @@ rafter agent init --all          # install all detected integrations
 rafter agent init --local        # write config to ./.rafter (ephemeral/benchmark)
 rafter agent list                # show detected integrations + status
 rafter agent enable claude-code  # toggle a single platform on/off
-rafter agent scan .              # scan for secrets
-rafter agent scan --diff HEAD~1  # scan changed files
-rafter agent scan --history      # scan full git history (betterleaks engine)
+rafter secrets .                 # scan for secrets
+rafter secrets --diff HEAD~1     # scan changed files
+rafter secrets --history         # scan full git history (betterleaks engine)
 rafter agent exec "git commit"   # execute with risk assessment
 rafter agent audit               # view security logs
 rafter agent audit --verify      # verify tamper-evident hash chain

@@ -4,12 +4,12 @@
 #   docker build -t rafter/cli .
 #
 # Usage:
-#   docker run --rm -v "$(pwd):/workspace" rafter/cli scan local /workspace
-#   docker run --rm -v "$(pwd):/workspace" rafter/cli scan local /workspace --format json
+#   docker run --rm -v "$(pwd):/workspace" rafter/cli secrets /workspace
+#   docker run --rm -v "$(pwd):/workspace" rafter/cli secrets /workspace --format json
 #
 # In CI (e.g. GitLab CI, Jenkins):
 #   image: rafter/cli
-#   script: rafter scan local . --quiet
+#   script: rafter secrets . --quiet
 #
 # Exit codes: 0 = clean, 1 = secrets found, 2 = scanner error
 
