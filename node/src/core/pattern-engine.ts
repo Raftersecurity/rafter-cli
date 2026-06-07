@@ -11,6 +11,12 @@ export interface PatternMatch {
   line?: number;
   column?: number;
   redacted?: string;
+  /**
+   * Which scan engine(s) surfaced this finding (sable-j85). Set only when a
+   * scan runs more than one engine (`auto` mode → `both`). Single-engine
+   * scans leave it undefined — the engine is already implied by `--engine`.
+   */
+  engines?: string[];
 }
 
 const GENERIC_PATTERN_NAMES = new Set(["Generic API Key", "Generic Secret"]);

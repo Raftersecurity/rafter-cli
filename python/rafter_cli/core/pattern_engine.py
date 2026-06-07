@@ -21,6 +21,10 @@ class PatternMatch:
     line: int | None = None
     column: int | None = None
     redacted: str = ""
+    # Which scan engine(s) surfaced this finding (sable-j85). Set only when a
+    # scan runs more than one engine (``auto`` mode → ``both``). Single-engine
+    # scans leave it None — the engine is already implied by ``--engine``.
+    engines: list[str] | None = None
 
 
 _GENERIC_PATTERN_NAMES = frozenset({"Generic API Key", "Generic Secret"})

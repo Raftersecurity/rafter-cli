@@ -7,8 +7,9 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { RegexScanner } from "../../scanners/regex-scanner.js";
+import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { BetterleaksScanner } from "../../scanners/betterleaks.js";
+import { unionScanResults } from "../../scanners/union.js";
 import { CommandInterceptor } from "../../core/command-interceptor.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
@@ -25,6 +26,7 @@ interface ScanResultOutput {
     severity: string;
     line: number | undefined;
     redacted: string;
+    engines?: string[];
   }>;
 }
 
@@ -36,6 +38,8 @@ function formatScanResults(results: Array<{ file: string; matches: any[] }>): Sc
       severity: m.pattern.severity,
       line: m.line,
       redacted: m.redacted || m.match.slice(0, 4) + "****",
+      // sable-j85 — engine attribution, set only for both-engine (auto) scans.
+      ...(m.engines ? { engines: m.engines } : {}),
     })),
   }));
 }
@@ -146,28 +150,43 @@ export function createServer(): Server {
         const scanPath = args?.path as string;
         const engine = (args?.engine as string) || "auto";
 
-        if (engine === "betterleaks" || engine === "auto") {
+        const runPatterns = (): ScanResult[] => {
+          const scanner = new RegexScanner();
+          try {
+            return scanner.scanDirectory(scanPath);
+          } catch {
+            return [scanner.scanFile(scanPath)];
+          }
+        };
+
+        if (engine === "betterleaks") {
           const bl = new BetterleaksScanner();
-          if (await bl.isAvailable()) {
-            try {
-              const results = await bl.scanDirectory(scanPath);
-              return textResult(formatScanResults(results));
-            } catch {
-              if (engine === "betterleaks") return errorResult("Betterleaks scan failed");
-            }
-          } else if (engine === "betterleaks") {
-            return errorResult("Betterleaks not installed");
+          if (!(await bl.isAvailable())) return errorResult("Betterleaks not installed");
+          try {
+            return textResult(formatScanResults(await bl.scanDirectory(scanPath)));
+          } catch {
+            return errorResult("Betterleaks scan failed");
           }
         }
 
-        const scanner = new RegexScanner();
-        let results;
-        try {
-          results = scanner.scanDirectory(scanPath);
-        } catch {
-          results = [scanner.scanFile(scanPath)];
+        if (engine === "auto") {
+          // sable-j85 — run BOTH engines and union, so a betterleaks miss
+          // (e.g. AWS access keys) is still caught by patterns. Degrades to
+          // patterns-only when betterleaks is unavailable or errors.
+          const bl = new BetterleaksScanner();
+          if (await bl.isAvailable()) {
+            try {
+              const blResults = await bl.scanDirectory(scanPath);
+              return textResult(formatScanResults(unionScanResults(blResults, runPatterns())));
+            } catch {
+              // betterleaks failed — fall through to patterns-only.
+            }
+          }
+          return textResult(formatScanResults(runPatterns()));
         }
-        return textResult(formatScanResults(results));
+
+        // patterns (and any unrecognized value — the tool schema enums this).
+        return textResult(formatScanResults(runPatterns()));
       }
 
       case "evaluate_command": {

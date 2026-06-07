@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { BetterleaksScanner } from "../../scanners/betterleaks.js";
+import { unionScanResults } from "../../scanners/union.js";
 import { BinaryManager, BETTERLEAKS_VERSION } from "../../utils/binary-manager.js";
 import { askYesNo } from "../../utils/prompt.js";
 import { ConfigManager } from "../../core/config-manager.js";
@@ -351,6 +352,9 @@ function outputScanResults(
         line: m.line ?? null,
         column: m.column ?? null,
         redacted: m.redacted || "",
+        // sable-j85 — present only for `auto`-mode (both-engine) scans, so
+        // consumers can tell which engine surfaced each finding.
+        ...(m.engines ? { engines: m.engines } : {}),
       })),
     }));
     const out: { _note: string; scan_mode: string; triage_applied: boolean; results: typeof filesOut; _suppressed?: SuppressedFinding[] } = {
@@ -538,8 +542,21 @@ async function scanStagedFiles(
   }
 }
 
+/** Engine the scanners dispatch on. `both` (sable-j85) runs betterleaks and
+ * patterns and unions the findings; it is only ever produced internally by
+ * `auto` mode, never typed by a user. */
+type ResolvedEngine = "betterleaks" | "patterns" | "both";
+
 /**
  * Select scan engine based on availability and user preference.
+ *
+ * `auto` (the default) resolves to `both` whenever betterleaks is available
+ * and usable — rafter then runs both engines and unions their findings
+ * (sable-j85), so a miss in one (betterleaks 1.1.x does not detect AWS access
+ * keys — sable-h2y) is still caught by the other. It degrades to
+ * `patterns`-only when betterleaks is absent or a stale binary can't be
+ * refreshed. Explicit `--engine betterleaks` / `--engine patterns` stay
+ * single-engine.
  *
  * `autoUpdate` (default true) controls sable-o4k behavior: when the resolved
  * engine is betterleaks but the managed binary is stale, auto-update it before
@@ -550,7 +567,7 @@ async function selectEngine(
   preference: string,
   quiet: boolean,
   autoUpdate = true,
-): Promise<"betterleaks" | "patterns"> {
+): Promise<ResolvedEngine> {
   if (preference === "patterns") {
     return "patterns";
   }
@@ -572,12 +589,13 @@ async function selectEngine(
     process.exit(2);
   }
 
-  // Auto mode: try Betterleaks, fall back to patterns
+  // Auto mode: run BOTH engines when betterleaks is usable; otherwise patterns.
   const bl = new BetterleaksScanner();
   const available = await bl.isAvailable();
   if (!available) return "patterns";
 
-  return ensureBetterleaksUsable(quiet, autoUpdate);
+  const usable = await ensureBetterleaksUsable(quiet, autoUpdate);
+  return usable === "betterleaks" ? "both" : "patterns";
 }
 
 /**
@@ -650,9 +668,32 @@ export function autoUpdateEnabled(
  */
 async function scanFile(
   filePath: string,
-  engine: "betterleaks" | "patterns",
+  engine: ResolvedEngine,
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; autoUpdateBetterleaks?: boolean },
 ): Promise<ScanResult[]> {
+  const runPatterns = (): ScanResult[] => {
+    const scanner = new RegexScanner(scanCfg?.customPatterns);
+    const result = scanner.scanFile(filePath);
+    return result.matches.length > 0 ? [result] : [];
+  };
+
+  if (engine === "both") {
+    // sable-j85 — kick off betterleaks (async subprocess) first, run the
+    // synchronous regex scan while it works, then union. A betterleaks failure
+    // degrades to patterns-only rather than losing the scan.
+    const blPromise = (async (): Promise<ScanResult[]> => {
+      try {
+        const result = await new BetterleaksScanner().scanFile(filePath);
+        return result.matches.length > 0 ? [result] : [];
+      } catch {
+        console.error(fmt.warning("Betterleaks scan failed, using patterns only for this run"));
+        return [];
+      }
+    })();
+    const patternsResults = runPatterns();
+    return unionScanResults(await blPromise, patternsResults);
+  }
+
   if (engine === "betterleaks") {
     try {
       const bl = new BetterleaksScanner();
@@ -660,15 +701,11 @@ async function scanFile(
       return result.matches.length > 0 ? [result] : [];
     } catch (e) {
       console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
-      const scanner = new RegexScanner(scanCfg?.customPatterns);
-      const result = scanner.scanFile(filePath);
-      return result.matches.length > 0 ? [result] : [];
+      return runPatterns();
     }
-  } else {
-    const scanner = new RegexScanner(scanCfg?.customPatterns);
-    const result = scanner.scanFile(filePath);
-    return result.matches.length > 0 ? [result] : [];
   }
+
+  return runPatterns();
 }
 
 /**
@@ -676,7 +713,7 @@ async function scanFile(
  */
 async function scanDirectory(
   dirPath: string,
-  engine: "betterleaks" | "patterns",
+  engine: ResolvedEngine,
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; autoUpdateBetterleaks?: boolean },
   history?: boolean,
   respectGitignore?: boolean,
@@ -684,25 +721,39 @@ async function scanDirectory(
   // respectGitignore default is true. The patterns engine honors it via
   // RegexScanner.scanDirectory; betterleaks honors it natively (gitleaks
   // ancestry — reads .gitignore unless --no-git is set).
+  const runPatterns = (): ScanResult[] => {
+    const scanner = new RegexScanner(scanCfg?.customPatterns);
+    return scanner.scanDirectory(dirPath, {
+      excludePaths: scanCfg?.excludePaths,
+      respectGitignore,
+    });
+  };
+
   let results: ScanResult[];
-  if (engine === "betterleaks") {
+  if (engine === "both") {
+    // sable-j85 — start betterleaks (async subprocess) first, walk the tree
+    // with the synchronous patterns engine while it runs, then union. The
+    // exclude-paths post-filter below applies to the merged set.
+    const blPromise = (async (): Promise<ScanResult[]> => {
+      try {
+        return await new BetterleaksScanner().scanDirectory(dirPath, { useGit: history ?? false });
+      } catch {
+        console.error(fmt.warning("Betterleaks scan failed, using patterns only for this run"));
+        return [];
+      }
+    })();
+    const patternsResults = runPatterns();
+    results = unionScanResults(await blPromise, patternsResults);
+  } else if (engine === "betterleaks") {
     try {
       const bl = new BetterleaksScanner();
       results = await bl.scanDirectory(dirPath, { useGit: history ?? false });
     } catch (e) {
       console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
-      const scanner = new RegexScanner(scanCfg?.customPatterns);
-      results = scanner.scanDirectory(dirPath, {
-        excludePaths: scanCfg?.excludePaths,
-        respectGitignore,
-      });
+      results = runPatterns();
     }
   } else {
-    const scanner = new RegexScanner(scanCfg?.customPatterns);
-    results = scanner.scanDirectory(dirPath, {
-      excludePaths: scanCfg?.excludePaths,
-      respectGitignore,
-    });
+    results = runPatterns();
   }
   // sable-yz0 — post-filter by `.rafter.yml scan.exclude_paths`. Two bugs
   // motivated this chokepoint:
