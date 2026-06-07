@@ -58,6 +58,77 @@ class TestScanSecrets:
             with pytest.raises(RuntimeError, match="not installed"):
                 handle_scan_secrets("/tmp", engine="betterleaks")
 
+    def test_auto_runs_both_engines_and_unions(self):
+        """sable-j85 — auto mode unions betterleaks + patterns findings."""
+        from rafter_cli.core.pattern_engine import Pattern, PatternMatch
+        from rafter_cli.scanners.regex_scanner import ScanResult
+
+        def m(name, match, line, sev="high"):
+            return PatternMatch(
+                pattern=Pattern(name=name, regex="", severity=sev),
+                match=match, line=line, redacted=match,
+            )
+
+        # betterleaks: a generic key + a private key on /tmp/secret.env.
+        bl_results = [ScanResult(file="/tmp/secret.env", matches=[
+            m("generic-api-key", "sk-1234567890abcdef", 3),
+            m("private-key", "-----BEGIN PRIVATE KEY-----", 9, "critical"),
+        ])]
+        # patterns: re-finds the private key (dedup) + an AWS key betterleaks
+        # misses (sable-h2y) on a second file.
+        pat_results = [
+            ScanResult(file="/tmp/secret.env", matches=[
+                m("Private Key", "-----BEGIN PRIVATE KEY-----", 9, "critical"),
+            ]),
+            ScanResult(file="/tmp/creds.txt", matches=[
+                m("AWS Access Key ID", "AKIAIOSFODNN7EXAMPLE1", 1),
+            ]),
+        ]
+
+        with patch("rafter_cli.commands.mcp_server.BetterleaksScanner") as mock_bl, \
+             patch("rafter_cli.commands.mcp_server.RegexScanner") as mock_rx:
+            mock_bl.return_value.is_available.return_value = True
+            mock_bl.return_value.scan_directory.return_value = bl_results
+            mock_rx.return_value.scan_directory.return_value = pat_results
+
+            results = handle_scan_secrets("/tmp", engine="auto")
+
+        by_file = {r["file"]: r for r in results}
+        assert set(by_file) == {"/tmp/secret.env", "/tmp/creds.txt"}
+
+        env = by_file["/tmp/secret.env"]["matches"]
+        generic = next(x for x in env if x["pattern"] == "generic-api-key")
+        assert generic["engines"] == ["betterleaks"]
+        priv = next(x for x in env if x["pattern"] == "private-key")
+        assert priv["engines"] == ["betterleaks", "patterns"]
+
+        creds = by_file["/tmp/creds.txt"]["matches"]
+        assert len(creds) == 1
+        assert creds[0]["pattern"] == "AWS Access Key ID"
+        assert creds[0]["engines"] == ["patterns"]
+
+    def test_auto_degrades_to_patterns_when_betterleaks_errors(self):
+        from rafter_cli.core.pattern_engine import Pattern, PatternMatch
+        from rafter_cli.scanners.regex_scanner import ScanResult
+
+        pat_results = [ScanResult(file="/tmp/creds.txt", matches=[PatternMatch(
+            pattern=Pattern(name="AWS Access Key ID", regex="", severity="high"),
+            match="AKIAIOSFODNN7EXAMPLE1", line=1, redacted="AKIA****",
+        )])]
+
+        with patch("rafter_cli.commands.mcp_server.BetterleaksScanner") as mock_bl, \
+             patch("rafter_cli.commands.mcp_server.RegexScanner") as mock_rx:
+            mock_bl.return_value.is_available.return_value = True
+            mock_bl.return_value.scan_directory.side_effect = OSError("boom")
+            mock_rx.return_value.scan_directory.return_value = pat_results
+
+            results = handle_scan_secrets("/tmp", engine="auto")
+
+        assert len(results) == 1
+        assert results[0]["matches"][0]["pattern"] == "AWS Access Key ID"
+        # Single-engine fallback → no engine attribution.
+        assert "engines" not in results[0]["matches"][0]
+
 
 class TestEvaluateCommand:
     def test_safe_command_allowed(self):

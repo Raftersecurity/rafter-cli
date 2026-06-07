@@ -299,7 +299,7 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `--format <format>` — output format: `text`, `json`, or `sarif` (default: `text`)
 - `--staged` — scan git staged files only
 - `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
-- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default).
+- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default). In `auto` mode rafter runs **both** engines when betterleaks is available and unions the findings (deduplicated conservatively by file + line + column + matched text — when the two engines extract a secret slightly differently it is reported once per engine rather than risk collapsing two distinct findings), so a secret one engine misses (e.g. betterleaks 1.1.x does not flag AWS access keys) is still caught by the other. Each finding then carries an `engines` array attributing which engine(s) surfaced it. `auto` degrades to patterns-only when betterleaks is absent or a stale binary can't be refreshed. `--engine betterleaks` / `--engine patterns` stay single-engine and omit the `engines` field.
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
 - `--history` — scan the full git history for previously-committed secrets (requires `--engine betterleaks`; invokes `betterleaks git` against the repo history)
@@ -331,7 +331,8 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
           },
           "line": 42,
           "column": 7,
-          "redacted": "AKIA************MPLE"
+          "redacted": "AKIA************MPLE",
+          "engines": ["patterns"]
         }
       ]
     }
@@ -360,6 +361,7 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
 | `results[].matches[].line` | number\|null | 1-based line number, null if unknown |
 | `results[].matches[].column` | number\|null | 1-based column number, null if unknown |
 | `results[].matches[].redacted` | string | Redacted secret value (first/last 4 chars visible for values >8 chars, fully masked otherwise) |
+| `results[].matches[].engines` | array | **Present only in `auto` (both-engine) mode.** Which engine(s) surfaced this finding — `["betterleaks"]`, `["patterns"]`, or `["betterleaks","patterns"]` when both flagged the same secret. Omitted entirely for single-engine (`--engine betterleaks` / `--engine patterns`) scans. |
 
 The raw secret value is never included in JSON output.
 
@@ -896,7 +898,7 @@ Start MCP server over stdio transport. Exposes 6 tools and 3 resources.
 
 **`scan_secrets` inputs:**
 - `path` (required) — file or directory path to scan
-- `engine` (optional) — `auto` (default), `betterleaks`, or `patterns`.
+- `engine` (optional) — `auto` (default), `betterleaks`, or `patterns`. As with the CLI, `auto` runs **both** engines and unions the findings (each match carries an `engines` attribution array); single-engine modes omit `engines`.
 
 **`evaluate_command` output schema:**
 ```json

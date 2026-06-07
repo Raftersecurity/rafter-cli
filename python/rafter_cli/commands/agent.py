@@ -30,6 +30,7 @@ from ..core.pattern_engine import PatternEngine
 from ..scanners.betterleaks import BetterleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
+from ..scanners.union import union_scan_results
 from ..utils.formatter import fmt, is_agent_mode, print_stderr
 from ..utils.skill_manager import SkillManager
 from ..utils.binary_manager import BinaryManager, BETTERLEAKS_VERSION
@@ -1454,7 +1455,15 @@ def init(
 
 
 def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> str:
-    """Return 'betterleaks' or 'patterns'.
+    """Return 'betterleaks', 'patterns', or 'both'.
+
+    ``auto`` (the default) resolves to ``both`` whenever betterleaks is
+    available and usable — rafter then runs both engines and unions their
+    findings (sable-j85), so a miss in one (betterleaks 1.1.x does not detect
+    AWS access keys — sable-h2y) is still caught by the other. It degrades to
+    ``patterns``-only when betterleaks is absent or a stale binary can't be
+    refreshed. Explicit ``--engine betterleaks`` / ``--engine patterns`` stay
+    single-engine.
 
     ``auto_update`` (default True) controls sable-o4k behavior: when the
     resolved engine is betterleaks but the managed binary is stale, auto-update
@@ -1479,10 +1488,11 @@ def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> st
             return "patterns"
         return _ensure_betterleaks_usable(quiet, auto_update)
 
-    # auto
+    # auto — run BOTH engines when betterleaks is usable; otherwise patterns.
     if not available:
         return "patterns"
-    return _ensure_betterleaks_usable(quiet, auto_update)
+    usable = _ensure_betterleaks_usable(quiet, auto_update)
+    return "both" if usable == "betterleaks" else "patterns"
 
 
 def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
@@ -1536,19 +1546,33 @@ def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
 
 
 def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanResult]:
+    def run_patterns() -> list[ScanResult]:
+        scanner = RegexScanner(custom_patterns)
+        r = scanner.scan_file(file_path)
+        return [r] if r.matches else []
+
+    if engine == "both":
+        # sable-j85 — run both engines and union. A betterleaks failure
+        # degrades to patterns-only rather than losing the scan.
+        bl_results: list[ScanResult] = []
+        try:
+            bl = BetterleaksScanner()
+            result = bl.scan_file(file_path)
+            if result.matches:
+                bl_results = [ScanResult(file=result.file, matches=result.matches)]
+        except Exception:
+            print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
+        return union_scan_results(bl_results, run_patterns())
+
     if engine == "betterleaks":
         try:
             bl = BetterleaksScanner()
             result = bl.scan_file(file_path)
             return [ScanResult(file=result.file, matches=result.matches)] if result.matches else []
         except Exception:
-            scanner = RegexScanner(custom_patterns)
-            r = scanner.scan_file(file_path)
-            return [r] if r.matches else []
-    else:
-        scanner = RegexScanner(custom_patterns)
-        r = scanner.scan_file(file_path)
-        return [r] if r.matches else []
+            return run_patterns()
+
+    return run_patterns()
 
 
 def _path_matches_exclude_pattern(rel_path: str, pattern: str) -> bool:
@@ -1627,17 +1651,29 @@ def _scan_directory(
         custom = [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns] if scan_cfg.custom_patterns else None
         exclude = scan_cfg.exclude_paths or None
 
-    if engine == "betterleaks":
+    def run_patterns() -> list[ScanResult]:
+        scanner = RegexScanner(custom)
+        return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+
+    if engine == "both":
+        # sable-j85 — run both engines and union; the exclude-paths post-filter
+        # below applies to the merged set.
+        bl_results: list[ScanResult] = []
+        try:
+            bl = BetterleaksScanner()
+            bl_results = [ScanResult(file=r.file, matches=r.matches) for r in bl.scan_directory(dir_path, use_git=history)]
+        except Exception:
+            print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
+        results = union_scan_results(bl_results, run_patterns())
+    elif engine == "betterleaks":
         try:
             bl = BetterleaksScanner()
             results = bl.scan_directory(dir_path, use_git=history)
             results = [ScanResult(file=r.file, matches=r.matches) for r in results]
         except Exception:
-            scanner = RegexScanner(custom)
-            results = scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+            results = run_patterns()
     else:
-        scanner = RegexScanner(custom)
-        results = scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+        results = run_patterns()
     # sable-yz0 — post-filter chokepoint. See _apply_exclude_paths docstring.
     return _apply_exclude_paths(results, exclude, dir_path)
 
@@ -1663,7 +1699,9 @@ def _output_scan_results(
         files_out = [
             {"file": r.file, "matches": [
                 {"pattern": {"name": m.pattern.name, "severity": m.pattern.severity, "description": m.pattern.description or ""},
-                 "line": m.line, "column": m.column, "redacted": m.redacted}
+                 "line": m.line, "column": m.column, "redacted": m.redacted,
+                 # sable-j85 — present only for auto-mode (both-engine) scans.
+                 **({"engines": m.engines} if m.engines else {})}
                 for m in r.matches
             ]}
             for r in kept_results
