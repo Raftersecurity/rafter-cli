@@ -1,8 +1,53 @@
 import { Command } from "commander";
 import { CommandInterceptor, CommandEvaluation } from "../../core/command-interceptor.js";
-import { RegexScanner } from "../../scanners/regex-scanner.js";
+import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
-import { execSync } from "child_process";
+import { ConfigManager } from "../../core/config-manager.js";
+import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
+import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
+import type { ScanIgnoreRule } from "../../core/config-schema.js";
+import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
+import fs from "fs";
+import path from "path";
+
+/**
+ * Subset of `cfg.agent.scan` the hook consumes. The hook is patterns-only by
+ * design (no betterleaks subprocess — it runs on every tool call and must stay
+ * fast), so betterleaks version skew can never affect it. It still honors the
+ * same `.rafter.yml` policy the CLI does — custom patterns, `exclude_paths`,
+ * and `ignore` suppressions — so the hook and `rafter secrets` agree (sable-55u).
+ */
+type HookScanCfg = {
+  customPatterns?: Array<{ name: string; regex: string; severity: string }>;
+  excludePaths?: string[];
+  ignore?: ScanIgnoreRule[];
+};
+
+/**
+ * Load the policy-merged scan config + suppression list the same way scan.ts
+ * does, so hook decisions match `rafter secrets`. Policy discovery and
+ * `.rafterignore` loading key off `process.cwd()`; `cwd` lets tests point the
+ * lookup at a temp repo without a process-wide chdir leaking across tests.
+ */
+function loadScanConfig(cwd: string = process.cwd()): {
+  scanCfg: HookScanCfg | undefined;
+  suppressions: Suppression[];
+} {
+  const prev = process.cwd();
+  const restore = path.resolve(cwd) !== path.resolve(prev);
+  if (restore) {
+    try { process.chdir(cwd); } catch { /* ignore — fall back to current cwd */ }
+  }
+  try {
+    const cfg = new ConfigManager().loadWithPolicy();
+    const scanCfg = cfg.agent?.scan as HookScanCfg | undefined;
+    return { scanCfg, suppressions: collectSuppressions(scanCfg?.ignore) };
+  } finally {
+    if (restore) {
+      try { process.chdir(prev); } catch { /* ignore */ }
+    }
+  }
+}
 
 type HookFormat = "claude" | "cursor" | "gemini" | "windsurf";
 
@@ -169,10 +214,15 @@ function evaluateBash(command: string): HookDecision {
   if (trimmed.startsWith("git commit") || trimmed.startsWith("git push")) {
     const scanResult = scanStagedFiles();
     if (scanResult.secretsFound) {
-      audit.logSecretDetected("staged files", `${scanResult.count} secret(s)`, "blocked");
+      // Audit per file so the log records WHICH file + pattern, not a bare count.
+      for (const r of scanResult.findings) {
+        const rel = path.relative(scanResult.repoRoot, r.file) || path.basename(r.file);
+        const names = [...new Set(r.matches.map((m) => m.pattern.name))];
+        audit.logSecretDetected(rel, names.join(", "), "blocked");
+      }
       return {
         decision: "deny",
-        reason: `${scanResult.count} secret(s) detected in ${scanResult.files} staged file(s). Run 'rafter secrets --staged' for details.`,
+        reason: formatStagedSecretReason(scanResult),
       };
     }
   }
@@ -188,49 +238,136 @@ function evaluateWrite(toolInput: Record<string, any>): HookDecision {
     return { decision: "allow" };
   }
 
-  const scanner = new RegexScanner();
-  if (scanner.hasSecrets(content)) {
-    const matches = scanner.scanText(content);
-    const names = [...new Set(matches.map(m => m.pattern.name))];
-    const audit = new AuditLogger();
-    audit.logSecretDetected(
-      toolInput.file_path || "file content",
-      names.join(", "),
-      "blocked",
-    );
-    return {
-      decision: "deny",
-      reason: `Secret detected in file content: ${names.join(", ")}`,
-    };
+  // Route through the same config pipeline as scan.ts so the hook honors
+  // custom patterns, exclude_paths, and ignore rules from .rafter.yml.
+  const { scanCfg, suppressions } = loadScanConfig();
+  const scanner = new RegexScanner(scanCfg?.customPatterns);
+  const matches = scanner.scanText(content);
+  if (matches.length === 0) {
+    return { decision: "allow" };
   }
 
-  return { decision: "allow" };
+  const filePath = toolInput.file_path || "file content";
+  // Apply exclude_paths + suppressions keyed on the target file path, so a
+  // write to a policy-excluded path is allowed (matching `rafter secrets`).
+  const afterExclude = applyExcludePaths(
+    [{ file: filePath, matches }],
+    scanCfg?.excludePaths,
+    process.cwd(),
+  );
+  const { results: kept } = applySuppressions(afterExclude, suppressions);
+  const keptMatches = kept[0]?.matches ?? [];
+  if (keptMatches.length === 0) {
+    return { decision: "allow" };
+  }
+
+  const names = [...new Set(keptMatches.map((m) => m.pattern.name))];
+  const audit = new AuditLogger();
+  audit.logSecretDetected(filePath, names.join(", "), "blocked");
+  return {
+    decision: "deny",
+    reason: `Secret detected in ${filePath}: ${names.join(", ")}`,
+  };
 }
 
-function scanStagedFiles(): { secretsFound: boolean; count: number; files: number } {
-  try {
-    const stagedOutput = execSync("git diff --cached --name-only --diff-filter=ACM", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "ignore"],
-    }).trim();
+interface StagedScanResult {
+  secretsFound: boolean;
+  count: number;
+  files: number;
+  /** Per-file findings kept after exclude_paths + suppressions. */
+  findings: ScanResult[];
+  /** Repo root, for rendering finding paths relative to the user's tree. */
+  repoRoot: string;
+}
 
+/**
+ * Scan the git staged files for secrets, routed through the SAME config-aware
+ * pipeline as `rafter secrets --staged` (sable-55u). The hook previously ran
+ * RegexScanner directly on the raw staged list with no config — no custom
+ * patterns, no exclude_paths, no suppressions — so it phantom-blocked commits
+ * on findings the CLI would suppress. Now it loads `.rafter.yml`, applies
+ * exclude_paths and ignore rules, and reports which file + pattern matched.
+ *
+ * Still patterns-only (no betterleaks): the hook is on the hot path and must
+ * stay fast, and betterleaks version skew therefore cannot affect it.
+ *
+ * `cwd` exists for tests; production callers use the inherited process cwd.
+ */
+export function scanStagedFiles(cwd: string = process.cwd()): StagedScanResult {
+  const gitOpts: ExecSyncOptionsWithStringEncoding = {
+    cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"],
+  };
+  const empty: StagedScanResult = {
+    secretsFound: false, count: 0, files: 0, findings: [], repoRoot: cwd,
+  };
+  try {
+    const repoRoot = execSync("git rev-parse --show-toplevel", gitOpts).trim() || cwd;
+
+    const stagedOutput = execSync(
+      "git diff --cached --name-only --diff-filter=ACM",
+      gitOpts,
+    ).trim();
     if (!stagedOutput) {
-      return { secretsFound: false, count: 0, files: 0 };
+      return { ...empty, repoRoot };
     }
 
-    const stagedFiles = stagedOutput.split("\n").filter(f => f.trim());
-    const scanner = new RegexScanner();
-    const results = scanner.scanFiles(stagedFiles);
-    const totalMatches = results.reduce((sum, r) => sum + r.matches.length, 0);
+    const stagedFiles = stagedOutput.split("\n").filter((f) => f.trim());
+    const { scanCfg, suppressions } = loadScanConfig(cwd);
+    const scanner = new RegexScanner(scanCfg?.customPatterns);
+
+    const raw: ScanResult[] = [];
+    for (const file of stagedFiles) {
+      const filePath = path.resolve(repoRoot, file);
+      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) continue;
+      const r = scanner.scanFile(filePath);
+      if (r.matches.length > 0) raw.push(r);
+    }
+
+    const afterExclude = applyExcludePaths(raw, scanCfg?.excludePaths, repoRoot);
+    const { results: kept } = applySuppressions(afterExclude, suppressions);
+    const count = kept.reduce((sum, r) => sum + r.matches.length, 0);
 
     return {
-      secretsFound: results.length > 0,
-      count: totalMatches,
-      files: results.length,
+      secretsFound: kept.length > 0,
+      count,
+      files: kept.length,
+      findings: kept,
+      repoRoot,
     };
   } catch {
-    return { secretsFound: false, count: 0, files: 0 };
+    return empty;
   }
+}
+
+/** Cap on individual findings listed in a deny reason before truncating. */
+const MAX_REASON_FINDINGS = 10;
+
+/**
+ * Render a deny reason that names each offending file + pattern (+ line when
+ * known) instead of a bare count, so the agent knows what to fix without a
+ * second `rafter secrets` run. Truncates long lists.
+ */
+export function formatStagedSecretReason(scan: StagedScanResult): string {
+  const lines: string[] = [];
+  let shown = 0;
+  outer: for (const r of scan.findings) {
+    const rel = path.relative(scan.repoRoot, r.file) || path.basename(r.file);
+    for (const m of r.matches) {
+      if (shown >= MAX_REASON_FINDINGS) {
+        lines.push(`  …and ${scan.count - shown} more`);
+        break outer;
+      }
+      const loc = m.line ? `:${m.line}` : "";
+      lines.push(`  ${rel}${loc} — ${m.pattern.name}`);
+      shown++;
+    }
+  }
+  return [
+    `${scan.count} secret(s) detected in ${scan.files} staged file(s):`,
+    ...lines,
+    "Hook scan is pattern-only (betterleaks version is irrelevant). " +
+      "Run 'rafter secrets --staged' for full detail, or add an exclude_paths/ignore rule to .rafter.yml if this is a false positive.",
+  ].join("\n");
 }
 
 const STDIN_TIMEOUT_MS = 5000;

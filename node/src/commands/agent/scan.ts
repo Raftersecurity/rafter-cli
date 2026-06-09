@@ -106,7 +106,7 @@ function pathMatchesExcludePattern(relPath: string, pattern: string): boolean {
  * write `components/common/Mermaid.tsx` in their `.rafter.yml`, not the
  * absolute path on the CI runner.
  */
-function applyExcludePaths(
+export function applyExcludePaths(
   results: ScanResult[],
   excludePaths: string[] | undefined,
   scanRoot: string,
@@ -259,7 +259,7 @@ export function createSecretsCommand(): Command {
  * Order matters — first match wins, and policy rules are checked first so an
  * explicit reason wins over a bare .rafterignore line covering the same finding.
  */
-function collectSuppressions(policyIgnore?: ScanIgnoreRule[]): Suppression[] {
+export function collectSuppressions(policyIgnore?: ScanIgnoreRule[]): Suppression[] {
   return [...policyIgnoreToSuppressions(policyIgnore), ...loadSuppressions()];
 }
 

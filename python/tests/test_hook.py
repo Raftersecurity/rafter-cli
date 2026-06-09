@@ -57,11 +57,26 @@ class TestEvaluateBash:
             assert result["decision"] == "allow"
 
     def test_git_commit_with_secrets(self):
+        from rafter_cli.core.pattern_engine import Pattern, PatternMatch
+        from rafter_cli.scanners.regex_scanner import ScanResult
+
+        pat = Pattern(name="AWS Access Key ID", regex="x", severity="high")
+        finding = ScanResult(
+            file="/repo/secrets.env",
+            matches=[PatternMatch(pattern=pat, match="AKIA", line=3),
+                     PatternMatch(pattern=pat, match="AKIA", line=7)],
+        )
         with patch("rafter_cli.commands.hook._scan_staged_files") as mock_scan:
-            mock_scan.return_value = {"secrets_found": True, "count": 2, "files": 1}
+            mock_scan.return_value = {
+                "secrets_found": True, "count": 2, "files": 1,
+                "findings": [finding], "repo_root": "/repo",
+            }
             result = _evaluate_bash("git commit -m 'test'")
             assert result["decision"] == "deny"
             assert "2 secret(s)" in result["reason"]
+            # Verbose reason names the file + pattern (sable-55u UX ask 1)
+            assert "secrets.env" in result["reason"]
+            assert "AWS Access Key ID" in result["reason"]
 
     def test_git_push_scans_staged(self):
         with patch("rafter_cli.commands.hook._scan_staged_files") as mock_scan:

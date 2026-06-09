@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 
@@ -180,22 +181,117 @@ def _normalize_posttool_input(raw: dict, fmt: str) -> tuple[str, dict | None]:
     return raw.get("tool_name", "unknown"), raw.get("tool_response")
 
 
+def _load_scan_config():
+    """Load the policy-merged scan config + suppression list the same way
+    scan.py does, so hook decisions match ``rafter secrets`` (sable-55u).
+
+    Returns ``(scan_cfg, suppressions, custom_patterns)``. The hook is
+    patterns-only by design (no betterleaks subprocess — it runs on every
+    tool call and must stay fast), so betterleaks version skew can never
+    affect it; it still honors custom patterns, ``exclude_paths``, and
+    ``ignore`` from ``.rafter.yml``.
+    """
+    from ..core.config_manager import ConfigManager
+    from ..core.custom_patterns import load_suppressions, policy_ignore_to_suppressions
+
+    cfg = ConfigManager().load_with_policy()
+    scan_cfg = cfg.agent.scan
+    custom_patterns = (
+        [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns]
+        if scan_cfg and scan_cfg.custom_patterns else None
+    )
+    # Policy ignore rules first so an explicit reason wins over a bare
+    # .rafterignore line covering the same finding.
+    suppressions = policy_ignore_to_suppressions(scan_cfg.ignore if scan_cfg else None) + load_suppressions()
+    return scan_cfg, suppressions, custom_patterns
+
+
+# Cap on individual findings listed in a deny reason before truncating.
+_MAX_REASON_FINDINGS = 10
+
+
+def _format_staged_secret_reason(result: dict) -> str:
+    """Render a deny reason that names each offending file + pattern (+ line
+    when known) instead of a bare count, so the agent knows what to fix
+    without a second ``rafter secrets`` run. Truncates long lists.
+    """
+    repo_root = result.get("repo_root") or os.getcwd()
+    lines: list[str] = []
+    shown = 0
+    for r in result["findings"]:
+        try:
+            rel = os.path.relpath(r.file, repo_root)
+        except ValueError:
+            rel = os.path.basename(r.file)
+        for m in r.matches:
+            if shown >= _MAX_REASON_FINDINGS:
+                lines.append(f"  …and {result['count'] - shown} more")
+                break
+            loc = f":{m.line}" if m.line else ""
+            lines.append(f"  {rel}{loc} — {m.pattern.name}")
+            shown += 1
+        else:
+            continue
+        break
+    return "\n".join([
+        f"{result['count']} secret(s) detected in {result['files']} staged file(s):",
+        *lines,
+        "Hook scan is pattern-only (betterleaks version is irrelevant). "
+        "Run 'rafter secrets --staged' for full detail, or add an exclude_paths/ignore "
+        "rule to .rafter.yml if this is a false positive.",
+    ])
+
+
 def _scan_staged_files() -> dict:
+    """Scan git staged files, routed through the SAME config-aware pipeline
+    as ``rafter secrets --staged`` (sable-55u). Previously the hook ran
+    RegexScanner directly on the raw staged list with no config, so it
+    phantom-blocked commits on findings the CLI would suppress.
+    """
+    empty = {"secrets_found": False, "count": 0, "files": 0, "findings": [], "repo_root": os.getcwd()}
     try:
+        repo_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        ).stdout.strip() or os.getcwd()
+
         output = subprocess.run(
             ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
             capture_output=True, text=True,
         ).stdout.strip()
         if not output:
-            return {"secrets_found": False, "count": 0, "files": 0}
+            return {**empty, "repo_root": repo_root}
         staged = [f for f in output.split("\n") if f.strip()]
-        scanner = RegexScanner()
-        results = scanner.scan_files(staged)
-        total = sum(len(r.matches) for r in results)
-        return {"secrets_found": len(results) > 0, "count": total, "files": len(results)}
+
+        from ..core.custom_patterns import apply_suppressions
+        from .agent import _apply_exclude_paths
+
+        scan_cfg, suppressions, custom_patterns = _load_scan_config()
+        scanner = RegexScanner(custom_patterns)
+
+        raw = []
+        for f in staged:
+            resolved = os.path.join(repo_root, f)
+            if not os.path.isfile(resolved):
+                continue
+            r = scanner.scan_file(resolved)
+            if r.matches:
+                raw.append(r)
+
+        exclude = scan_cfg.exclude_paths if scan_cfg else None
+        after_exclude = _apply_exclude_paths(raw, exclude, repo_root)
+        kept, _suppressed = apply_suppressions(after_exclude, suppressions)
+        total = sum(len(r.matches) for r in kept)
+        return {
+            "secrets_found": len(kept) > 0,
+            "count": total,
+            "files": len(kept),
+            "findings": kept,
+            "repo_root": repo_root,
+        }
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
         print(f"rafter: staged file scan failed: {exc}", file=sys.stderr)
-        return {"secrets_found": False, "count": 0, "files": 0}
+        return empty
 
 
 def _evaluate_bash(command: str) -> dict:
@@ -218,11 +314,18 @@ def _evaluate_bash(command: str) -> dict:
     if trimmed.startswith(("git commit", "git push")):
         result = _scan_staged_files()
         if result["secrets_found"]:
-            audit.log_secret_detected("staged files", f"{result['count']} secret(s)", "blocked")
+            # Audit per file so the log records WHICH file + pattern, not a bare count.
+            repo_root = result.get("repo_root") or os.getcwd()
+            for r in result["findings"]:
+                try:
+                    rel = os.path.relpath(r.file, repo_root)
+                except ValueError:
+                    rel = os.path.basename(r.file)
+                names = list({m.pattern.name for m in r.matches})
+                audit.log_secret_detected(rel, ", ".join(names), "blocked")
             return {
                 "decision": "deny",
-                "reason": f"{result['count']} secret(s) detected in {result['files']} staged file(s). "
-                          "Run 'rafter secrets --staged' for details.",
+                "reason": _format_staged_secret_reason(result),
             }
 
     audit.log_command_intercepted(command, True, "allowed")
@@ -234,19 +337,32 @@ def _evaluate_write(tool_input: dict) -> dict:
     if not content:
         return {"decision": "allow"}
 
-    scanner = RegexScanner()
-    if scanner.has_secrets(content):
-        matches = scanner.scan_text(content)
-        names = list({m.pattern.name for m in matches})
-        audit = AuditLogger()
-        audit.log_secret_detected(
-            tool_input.get("file_path", "file content"),
-            ", ".join(names),
-            "blocked",
-        )
-        return {"decision": "deny", "reason": f"Secret detected in file content: {', '.join(names)}"}
+    # Route through the same config pipeline as scan.py so the hook honors
+    # custom patterns, exclude_paths, and ignore rules from .rafter.yml.
+    from ..core.custom_patterns import apply_suppressions
+    from ..scanners.regex_scanner import ScanResult
+    from .agent import _apply_exclude_paths
 
-    return {"decision": "allow"}
+    scan_cfg, suppressions, custom_patterns = _load_scan_config()
+    scanner = RegexScanner(custom_patterns)
+    matches = scanner.scan_text(content)
+    if not matches:
+        return {"decision": "allow"}
+
+    file_path = tool_input.get("file_path", "file content")
+    # Apply exclude_paths + suppressions keyed on the target file path, so a
+    # write to a policy-excluded path is allowed (matching `rafter secrets`).
+    exclude = scan_cfg.exclude_paths if scan_cfg else None
+    after_exclude = _apply_exclude_paths([ScanResult(file=file_path, matches=matches)], exclude, os.getcwd())
+    kept, _suppressed = apply_suppressions(after_exclude, suppressions)
+    kept_matches = kept[0].matches if kept else []
+    if not kept_matches:
+        return {"decision": "allow"}
+
+    names = list({m.pattern.name for m in kept_matches})
+    audit = AuditLogger()
+    audit.log_secret_detected(file_path, ", ".join(names), "blocked")
+    return {"decision": "deny", "reason": f"Secret detected in {file_path}: {', '.join(names)}"}
 
 
 @hook_app.command("pretool")

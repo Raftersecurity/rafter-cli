@@ -873,6 +873,8 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 
 - `--format <format>` — output format: `claude` (default, also works for Codex/Continue), `cursor`, `gemini`, `windsurf`
 
+On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
+
 ### rafter hook posttool [OPTIONS]
 
 PostToolUse hook handler. Reads tool output from stdin, redacts any secrets found, and writes JSON to stdout.
