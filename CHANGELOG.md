@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-06-10
+
 ### Fixed
 - **`hook pretool` staged-commit scan now honors `.rafter.yml` (matches `rafter secrets`)** (sable-55u). User report: `rafter hook pretool` blocked a `git commit` with "1 secret(s) detected in 1 staged file(s)" while `rafter secrets --staged` reported zero, on a 24-file diff with a large `package-lock.json`. Root cause: the hook's staged-file scan (and its `Write`/`Edit` content scan) ran `RegexScanner` directly on the raw files with **no config** — no custom patterns, no `scan.exclude_paths`, no `ignore` suppressions — so it phantom-blocked on a patterns false positive the CLI would have suppressed or excluded. (The user's "`rafter secrets` → zero" was a separate, now-fixed stale-betterleaks false negative — sable-o4k/sable-j85 — and the "not an array" warning is a CLI-path red herring: the hook never invokes betterleaks.) The hook now loads the policy-merged config via `ConfigManager.loadWithPolicy()` and applies the same `collectSuppressions → applyExcludePaths → applySuppressions` pipeline as `scan` before counting, so hook and CLI agree. The hook stays patterns-only by design (it runs on every tool call and must stay fast), which means betterleaks version skew can never affect it. Two UX improvements folded in: (1) the deny reason and audit log now name each offending `file:line — Pattern` instead of a bare count; (2) the reason notes the hook is pattern-only and points at `rafter secrets --staged` / an `exclude_paths`/`ignore` rule for false positives. Node + Python.
 
