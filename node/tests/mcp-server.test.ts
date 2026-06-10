@@ -72,6 +72,7 @@ vi.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
 
 import { BetterleaksScanner } from "../src/scanners/betterleaks.js";
 import { RegexScanner } from "../src/scanners/regex-scanner.js";
+import { unionScanResults } from "../src/scanners/union.js";
 import { CommandInterceptor } from "../src/core/command-interceptor.js";
 import { AuditLogger } from "../src/core/audit-logger.js";
 import { ConfigManager } from "../src/core/config-manager.js";
@@ -88,28 +89,41 @@ import { ConfigManager } from "../src/core/config-manager.js";
  * Simulate the scan_secrets tool handler from server.ts
  */
 async function handleScanSecrets(scanPath: string, engine: string = "auto") {
-  if (engine === "betterleaks" || engine === "auto") {
+  const runPatterns = (): Array<{ file: string; matches: any[] }> => {
+    const scanner = new RegexScanner();
+    try {
+      return scanner.scanDirectory(scanPath) as any;
+    } catch {
+      return [scanner.scanFile(scanPath)];
+    }
+  };
+
+  if (engine === "betterleaks") {
     const bl = new BetterleaksScanner();
-    if (await bl.isAvailable()) {
-      try {
-        const results = await bl.scanDirectory(scanPath);
-        return formatScanResults(results);
-      } catch {
-        if (engine === "betterleaks") throw new Error("Betterleaks scan failed");
-      }
-    } else if (engine === "betterleaks") {
-      throw new Error("Betterleaks not installed");
+    if (!(await bl.isAvailable())) throw new Error("Betterleaks not installed");
+    try {
+      return formatScanResults(await bl.scanDirectory(scanPath));
+    } catch {
+      throw new Error("Betterleaks scan failed");
     }
   }
 
-  const scanner = new RegexScanner();
-  let results: Array<{ file: string; matches: any[] }>;
-  try {
-    results = scanner.scanDirectory(scanPath);
-  } catch {
-    results = [scanner.scanFile(scanPath)];
+  if (engine === "auto") {
+    // sable-j85 — auto runs BOTH engines and unions; degrade to patterns-only
+    // when betterleaks is unavailable or errors.
+    const bl = new BetterleaksScanner();
+    if (await bl.isAvailable()) {
+      try {
+        const blResults = await bl.scanDirectory(scanPath);
+        return formatScanResults(unionScanResults(blResults as any, runPatterns() as any));
+      } catch {
+        // fall through to patterns-only
+      }
+    }
+    return formatScanResults(runPatterns());
   }
-  return formatScanResults(results);
+
+  return formatScanResults(runPatterns());
 }
 
 function formatScanResults(results: Array<{ file: string; matches: any[] }>) {
@@ -120,6 +134,7 @@ function formatScanResults(results: Array<{ file: string; matches: any[] }>) {
       severity: m.pattern.severity,
       line: m.line,
       redacted: m.redacted || m.match.slice(0, 4) + "****",
+      ...(m.engines ? { engines: m.engines } : {}),
     })),
   }));
 }
@@ -259,7 +274,8 @@ describe("MCP Server — scan_secrets", () => {
     );
   });
 
-  it("should use betterleaks when available in auto mode", async () => {
+  it("should run BOTH engines and union findings in auto mode (sable-j85)", async () => {
+    // betterleaks finds a generic key AND a private key on the same file.
     const blInstance = new BetterleaksScanner() as any;
     blInstance.isAvailable.mockResolvedValue(true);
     blInstance.scanDirectory.mockResolvedValue([
@@ -272,16 +288,102 @@ describe("MCP Server — scan_secrets", () => {
             line: 3,
             redacted: "sk-1****cdef",
           },
+          {
+            pattern: { name: "private-key", severity: "critical", regex: "" },
+            match: "-----BEGIN PRIVATE KEY-----",
+            line: 9,
+            redacted: "----****----",
+          },
         ],
       },
     ]);
     (BetterleaksScanner as any).mockImplementation(function () { return blInstance; });
 
+    // patterns re-finds the private key (same file+line+text → dedup) and
+    // ALSO catches an AWS key betterleaks misses (sable-h2y) on a second file.
+    const scannerInstance = new RegexScanner() as any;
+    scannerInstance.scanDirectory.mockReturnValue([
+      {
+        file: "/tmp/secret.env",
+        matches: [
+          {
+            pattern: { name: "Private Key", severity: "critical", regex: "" },
+            match: "-----BEGIN PRIVATE KEY-----",
+            line: 9,
+            redacted: "----****----",
+          },
+        ],
+      },
+      {
+        file: "/tmp/creds.txt",
+        matches: [
+          {
+            pattern: { name: "AWS Access Key ID", severity: "high", regex: "" },
+            match: "AKIAIOSFODNN7EXAMPLE1",
+            line: 1,
+            redacted: "AKIA****PLE1",
+          },
+        ],
+      },
+    ]);
+    (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
+
     const results = await handleScanSecrets("/tmp", "auto");
 
+    // Both engines were consulted.
     expect(blInstance.scanDirectory).toHaveBeenCalledWith("/tmp");
+    expect(scannerInstance.scanDirectory).toHaveBeenCalled();
+
+    // Two files surfaced: secret.env (betterleaks first) then creds.txt.
+    expect(results).toHaveLength(2);
+    const env = results.find((r) => r.file === "/tmp/secret.env")!;
+    const creds = results.find((r) => r.file === "/tmp/creds.txt")!;
+
+    // secret.env: generic-api-key (betterleaks-only) + private key (deduped).
+    expect(env.matches).toHaveLength(2);
+    const generic = env.matches.find((m) => m.pattern === "generic-api-key")!;
+    expect(generic.engines).toEqual(["betterleaks"]);
+
+    // The private key fired in both engines → deduped, betterleaks rule-id
+    // kept, both engines recorded.
+    const priv = env.matches.find((m) => m.pattern === "private-key")!;
+    expect(priv).toBeDefined();
+    expect(priv.engines).toEqual(["betterleaks", "patterns"]);
+
+    // The AWS key betterleaks missed is still reported, attributed to patterns.
+    expect(creds.matches).toHaveLength(1);
+    expect(creds.matches[0].pattern).toBe("AWS Access Key ID");
+    expect(creds.matches[0].engines).toEqual(["patterns"]);
+  });
+
+  it("should degrade to patterns-only when betterleaks errors in auto mode", async () => {
+    const blInstance = new BetterleaksScanner() as any;
+    blInstance.isAvailable.mockResolvedValue(true);
+    blInstance.scanDirectory.mockRejectedValue(new Error("betterleaks boom"));
+    (BetterleaksScanner as any).mockImplementation(function () { return blInstance; });
+
+    const scannerInstance = new RegexScanner() as any;
+    scannerInstance.scanDirectory.mockReturnValue([
+      {
+        file: "/tmp/creds.txt",
+        matches: [
+          {
+            pattern: { name: "AWS Access Key ID", severity: "high", regex: "" },
+            match: "AKIAIOSFODNN7EXAMPLE1",
+            line: 1,
+            redacted: "AKIA****PLE1",
+          },
+        ],
+      },
+    ]);
+    (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
+
+    const results = await handleScanSecrets("/tmp", "auto");
+
     expect(results).toHaveLength(1);
-    expect(results[0].matches[0].pattern).toBe("generic-api-key");
+    expect(results[0].matches[0].pattern).toBe("AWS Access Key ID");
+    // Single-engine fallback path → no engine attribution.
+    expect(results[0].matches[0].engines).toBeUndefined();
   });
 });
 

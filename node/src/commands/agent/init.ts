@@ -9,7 +9,7 @@ import os from "os";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
-import { createInterface } from "readline";
+import { askYesNo } from "../../utils/prompt.js";
 import { fmt } from "../../utils/formatter.js";
 import { injectInstructionFile } from "./instruction-block.js";
 import yaml from "js-yaml";
@@ -1061,19 +1061,6 @@ function registerGeminiSkills(skillsDir: string): void {
       ));
     }
   }
-}
-
-async function askYesNo(question: string, defaultYes = true): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  const suffix = defaultYes ? "[Y/n]" : "[y/N]";
-  return new Promise((resolve) => {
-    rl.question(`  ${question} ${suffix} `, (answer) => {
-      rl.close();
-      const trimmed = answer.trim().toLowerCase();
-      if (trimmed === "") resolve(defaultYes);
-      else resolve(trimmed === "y" || trimmed === "yes");
-    });
-  });
 }
 
 export function createInitCommand(): Command {

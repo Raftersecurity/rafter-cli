@@ -812,3 +812,41 @@ describe("E2E: RegexScanner API with realistic files", () => {
     }
   });
 });
+
+// ── sable-j85: auto mode runs BOTH engines and unions findings ──────────────
+
+import { BetterleaksScanner } from "../src/scanners/betterleaks.js";
+
+describe("E2E: auto (both-engine) scanning (sable-j85)", () => {
+  let tmpDir: string;
+  let blAvailable = false;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-e2e-both-"));
+    blAvailable = await new BetterleaksScanner().isAvailable();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("default engine catches an AWS key (betterleaks misses these — sable-h2y) with patterns attribution", async () => {
+    if (!blAvailable) {
+      // Without betterleaks, auto == patterns and there is no union to assert.
+      return;
+    }
+    // AKIA keys are exactly what betterleaks 1.1.x fails to detect; the
+    // patterns engine must still surface them under the default engine.
+    fs.writeFileSync(path.join(tmpDir, "creds.txt"), "AWS_KEY=" + fakeSecret("AKIA", "IOSFODNN7EXAMPLE") + "\n");
+
+    const r = rafter(["secrets", tmpDir, "--json"]); // default engine = auto = both
+    expect(r.exitCode).toBe(1);
+    const out = JSON.parse(r.stdout);
+    const allMatches = out.results.flatMap((f: any) => f.matches);
+    const aws = allMatches.find((m: any) => /aws/i.test(m.pattern.name));
+    expect(aws).toBeDefined();
+    // Engine attribution is present in both-engine mode and includes patterns.
+    expect(Array.isArray(aws.engines)).toBe(true);
+    expect(aws.engines).toContain("patterns");
+  });
+});

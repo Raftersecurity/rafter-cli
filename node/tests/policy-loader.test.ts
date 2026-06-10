@@ -181,6 +181,35 @@ audit:
     expect(policy!.audit?.logLevel).toBe("info");
   });
 
+  it("maps scan.auto_update_betterleaks: false (sable-o4k)", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, ".rafter.yml"),
+      "scan:\n  auto_update_betterleaks: false\n",
+    );
+    const policy = await loadPolicyFresh();
+    expect(policy!.scan?.autoUpdateBetterleaks).toBe(false);
+  });
+
+  it("maps scan.auto_update_betterleaks: true (sable-o4k)", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, ".rafter.yml"),
+      "scan:\n  auto_update_betterleaks: true\n",
+    );
+    const policy = await loadPolicyFresh();
+    expect(policy!.scan?.autoUpdateBetterleaks).toBe(true);
+  });
+
+  it("warns and ignores a non-boolean scan.auto_update_betterleaks (sable-o4k)", async () => {
+    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    fs.writeFileSync(
+      path.join(tmpDir, ".rafter.yml"),
+      "scan:\n  auto_update_betterleaks: maybe\n",
+    );
+    const policy = await loadPolicyFresh();
+    expect(policy!.scan?.autoUpdateBetterleaks).toBeUndefined();
+    expect(stderrSpy.mock.calls.some((c) => String(c[0]).includes("auto_update_betterleaks"))).toBe(true);
+  });
+
   it("warns on unknown top-level keys", async () => {
     const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const yml = `

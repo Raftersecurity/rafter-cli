@@ -299,11 +299,12 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `--format <format>` — output format: `text`, `json`, or `sarif` (default: `text`)
 - `--staged` — scan git staged files only
 - `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
-- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default).
+- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default). In `auto` mode rafter runs **both** engines when betterleaks is available and unions the findings (deduplicated conservatively by file + line + column + matched text — when the two engines extract a secret slightly differently it is reported once per engine rather than risk collapsing two distinct findings), so a secret one engine misses (e.g. betterleaks 1.1.x does not flag AWS access keys) is still caught by the other. Each finding then carries an `engines` array attributing which engine(s) surfaced it. `auto` degrades to patterns-only when betterleaks is absent or a stale binary can't be refreshed. `--engine betterleaks` / `--engine patterns` stay single-engine and omit the `engines` field.
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
 - `--history` — scan the full git history for previously-committed secrets (requires `--engine betterleaks`; invokes `betterleaks git` against the repo history)
 - `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree.
+- `--auto-update` / `--no-auto-update` — auto-update a **stale rafter-managed betterleaks binary** before scanning (default: on). A leftover binary from an older rafter (a gitleaks-8.x install from before the rename, or an older betterleaks) runs `version` fine but emits a JSON shape the current parser rejects, which would otherwise silently yield **zero findings** on the default engine. When the managed binary's version doesn't match the pinned one, rafter downloads the pinned version (prompting first in an interactive TTY). `--no-auto-update` (or `scan.auto_update_betterleaks: false`) skips the update and falls back to the **patterns** engine for that scan, printing a one-line CTA (`rafter agent update-betterleaks`) — never a silent zero. Only the rafter-managed binary at `~/.rafter/bin/betterleaks` is auto-updated; a binary on `PATH` is left untouched (a non-array parse there warns with the same CTA).
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
 
@@ -330,7 +331,8 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
           },
           "line": 42,
           "column": 7,
-          "redacted": "AKIA************MPLE"
+          "redacted": "AKIA************MPLE",
+          "engines": ["patterns"]
         }
       ]
     }
@@ -359,6 +361,7 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
 | `results[].matches[].line` | number\|null | 1-based line number, null if unknown |
 | `results[].matches[].column` | number\|null | 1-based column number, null if unknown |
 | `results[].matches[].redacted` | string | Redacted secret value (first/last 4 chars visible for values >8 chars, fully masked otherwise) |
+| `results[].matches[].engines` | array | **Present only in `auto` (both-engine) mode.** Which engine(s) surfaced this finding — `["betterleaks"]`, `["patterns"]`, or `["betterleaks","patterns"]` when both flagged the same secret. Omitted entirely for single-engine (`--engine betterleaks` / `--engine patterns`) scans. |
 
 The raw secret value is never included in JSON output.
 
@@ -870,6 +873,8 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 
 - `--format <format>` — output format: `claude` (default, also works for Codex/Continue), `cursor`, `gemini`, `windsurf`
 
+On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
+
 ### rafter hook posttool [OPTIONS]
 
 PostToolUse hook handler. Reads tool output from stdin, redacts any secrets found, and writes JSON to stdout.
@@ -895,7 +900,7 @@ Start MCP server over stdio transport. Exposes 6 tools and 3 resources.
 
 **`scan_secrets` inputs:**
 - `path` (required) — file or directory path to scan
-- `engine` (optional) — `auto` (default), `betterleaks`, or `patterns`.
+- `engine` (optional) — `auto` (default), `betterleaks`, or `patterns`. As with the CLI, `auto` runs **both** engines and unions the findings (each match carries an `engines` attribution array); single-engine modes omit `engines`.
 
 **`evaluate_command` output schema:**
 ```json
@@ -1068,6 +1073,11 @@ scan:
     - name: "Internal API Key"
       regex: "INTERNAL_[A-Z0-9]{32}"
       severity: critical
+  # Default: true. Set false to stop rafter from auto-updating a stale managed
+  # betterleaks binary at scan time (e.g. in CI that provisions its own binary);
+  # rafter then falls back to the patterns engine instead. Equivalent to passing
+  # --no-auto-update on every scan. See `rafter secrets --no-auto-update`.
+  auto_update_betterleaks: true
 ignore:
   - paths: ["tests/fixtures/**", "*.example.env"]
     rules: ["AWS Access Key", "Generic API Key"]

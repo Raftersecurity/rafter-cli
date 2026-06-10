@@ -14,7 +14,8 @@ from ..core.command_interceptor import CommandInterceptor
 from ..core.config_manager import ConfigManager
 from ..core.docs_loader import fetch_doc, list_docs, resolve_doc_selector
 from ..scanners.betterleaks import BetterleaksScanner
-from ..scanners.regex_scanner import RegexScanner
+from ..scanners.regex_scanner import RegexScanner, ScanResult
+from ..scanners.union import union_scan_results
 
 mcp_app = typer.Typer(
     name="mcp",
@@ -26,45 +27,7 @@ mcp_app = typer.Typer(
 # ── Tool handler functions (importable for testing) ────────────────────
 
 
-def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
-    """Scan files or directories for hardcoded secrets."""
-    # Try betterleaks if requested or auto
-    if engine in ("betterleaks", "auto"):
-        bl = BetterleaksScanner()
-        if bl.is_available():
-            try:
-                results = bl.scan_directory(path)
-                return [
-                    {
-                        "file": r.file,
-                        "matches": [
-                            {
-                                "pattern": m.pattern.name,
-                                "severity": m.pattern.severity,
-                                "line": m.line,
-                                "redacted": m.redacted or m.match[:4] + "****",
-                            }
-                            for m in r.matches
-                        ],
-                    }
-                    for r in results
-                ]
-            except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
-                if engine == "betterleaks":
-                    raise
-                print(f"rafter: betterleaks scan failed, falling back to patterns: {exc}", file=sys.stderr)
-                # Fall through to patterns on auto
-
-        elif engine == "betterleaks":
-            raise RuntimeError("Betterleaks not installed")
-
-    # Pattern-based scan
-    scanner = RegexScanner()
-    try:
-        results = scanner.scan_directory(path)
-    except NotADirectoryError:
-        results = [scanner.scan_file(path)]
-
+def _format_scan_results(results: list[ScanResult]) -> list[dict]:
     return [
         {
             "file": r.file,
@@ -74,12 +37,47 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
                     "severity": m.pattern.severity,
                     "line": m.line,
                     "redacted": m.redacted or m.match[:4] + "****",
+                    # sable-j85 — engine attribution, set only for both-engine scans.
+                    **({"engines": m.engines} if m.engines else {}),
                 }
                 for m in r.matches
             ],
         }
         for r in results
     ]
+
+
+def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
+    """Scan files or directories for hardcoded secrets."""
+    def run_patterns() -> list[ScanResult]:
+        scanner = RegexScanner()
+        try:
+            return scanner.scan_directory(path)
+        except NotADirectoryError:
+            return [scanner.scan_file(path)]
+
+    if engine == "betterleaks":
+        bl = BetterleaksScanner()
+        if not bl.is_available():
+            raise RuntimeError("Betterleaks not installed")
+        return _format_scan_results(bl.scan_directory(path))
+
+    if engine == "auto":
+        # sable-j85 — run BOTH engines and union, so a betterleaks miss
+        # (e.g. AWS access keys) is still caught by patterns. Degrades to
+        # patterns-only when betterleaks is unavailable or errors.
+        bl = BetterleaksScanner()
+        if bl.is_available():
+            try:
+                bl_results = bl.scan_directory(path)
+                return _format_scan_results(union_scan_results(bl_results, run_patterns()))
+            except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
+                print(f"rafter: betterleaks scan failed, falling back to patterns: {exc}", file=sys.stderr)
+                # Fall through to patterns-only.
+        return _format_scan_results(run_patterns())
+
+    # patterns (and any unrecognized value — the tool schema enums this).
+    return _format_scan_results(run_patterns())
 
 
 def handle_evaluate_command(command: str) -> dict:

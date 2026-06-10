@@ -67,6 +67,24 @@ class TestBackendCompat:
         assert "exclude_paths" not in err
         assert "custom_patterns" not in err
 
+    def test_auto_update_betterleaks_false_mapped(self):
+        """sable-o4k — scan.auto_update_betterleaks opt-out is mapped."""
+        raw = {"scan": {"auto_update_betterleaks": False}}
+        result = _validate_policy(_map_policy(raw), raw)
+        assert result["scan"]["auto_update_betterleaks"] is False
+
+    def test_auto_update_betterleaks_true_mapped(self):
+        raw = {"scan": {"auto_update_betterleaks": True}}
+        result = _validate_policy(_map_policy(raw), raw)
+        assert result["scan"]["auto_update_betterleaks"] is True
+
+    def test_auto_update_betterleaks_non_bool_warned_and_ignored(self, capsys):
+        raw = {"scan": {"auto_update_betterleaks": "maybe"}}
+        result = _validate_policy(_map_policy(raw), raw)
+        err = capsys.readouterr().err
+        assert "auto_update_betterleaks" in err
+        assert "auto_update_betterleaks" not in result.get("scan", {})
+
 
 class TestGenerateClaudeConfig:
     def test_valid_json(self):

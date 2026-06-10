@@ -15,6 +15,9 @@ import os from "os";
 import { CommandInterceptor } from "../src/core/command-interceptor.js";
 import { RegexScanner } from "../src/scanners/regex-scanner.js";
 import { AuditLogger } from "../src/core/audit-logger.js";
+// Real hook internals — exercised directly so the config-aware staged scan
+// (sable-55u) is actually covered, not a reproduced copy of it.
+import { scanStagedFiles, formatStagedSecretReason } from "../src/commands/hook/pretool.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -53,36 +56,10 @@ MIIBPAIBAAJBALRiMLAB9pm5DhB2m1pGv43example1234567890abcdefghijklmn
 opqrstuvwxyz1234567890ABCDEFGHIJKLMNOPQRSTUV==
 -----END RSA PRIVATE KEY-----`;
 
-// ── Reproduced core logic from pretool.ts ────────────────────────────────
-// We reproduce the logic here to test against real git state without
-// needing to pipe through stdin.
-
-function scanStagedFiles(cwd: string): { secretsFound: boolean; count: number; files: number } {
-  try {
-    const stagedOutput = execSync(
-      "git diff --cached --name-only --diff-filter=ACM",
-      gitExecOpts(cwd),
-    ).trim();
-
-    if (!stagedOutput) {
-      return { secretsFound: false, count: 0, files: 0 };
-    }
-
-    const stagedFiles = stagedOutput.split("\n").filter((f) => f.trim());
-    const absolutePaths = stagedFiles.map((f) => path.join(cwd, f));
-    const scanner = new RegexScanner();
-    const results = scanner.scanFiles(absolutePaths);
-    const totalMatches = results.reduce((sum, r) => sum + r.matches.length, 0);
-
-    return {
-      secretsFound: results.length > 0,
-      count: totalMatches,
-      files: results.length,
-    };
-  } catch {
-    return { secretsFound: false, count: 0, files: 0 };
-  }
-}
+// ── Bridge to the real hook logic ────────────────────────────────────────
+// Mirrors evaluateBash()'s git-commit branch but calls the REAL config-aware
+// scanStagedFiles()/formatStagedSecretReason() so tests cover the shipped code
+// path. scanStagedFiles takes an explicit cwd so we avoid a process-wide chdir.
 
 function evaluateBashWithGit(
   command: string,
@@ -103,10 +80,7 @@ function evaluateBashWithGit(
   if (trimmed.startsWith("git commit") || trimmed.startsWith("git push")) {
     const scanResult = scanStagedFiles(cwd);
     if (scanResult.secretsFound) {
-      return {
-        decision: "deny",
-        reason: `${scanResult.count} secret(s) detected in ${scanResult.files} staged file(s). Run 'rafter secrets --staged' for details.`,
-      };
+      return { decision: "deny", reason: formatStagedSecretReason(scanResult) };
     }
   }
 
@@ -336,6 +310,65 @@ describe("Hook Integration — Real Git Repos", () => {
       // Deletion should NOT trigger a secret scan (only ACM — add/copy/modify)
       const result = scanStagedFiles(repoDir);
       expect(result.secretsFound).toBe(false);
+    });
+  });
+
+  // ── sable-55u: hook honors .rafter.yml so it agrees with `rafter secrets` ─
+
+  describe("scanStagedFiles — config-aware (.rafter.yml) — sable-55u", () => {
+    it("allows a commit when the offending file is in scan.exclude_paths", () => {
+      const envFile = path.join(repoDir, "secrets.env");
+      fs.writeFileSync(envFile, `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+      // Without config this commit is blocked (covered above). With an
+      // exclude_paths entry the hook must agree with the CLI and allow it.
+      fs.writeFileSync(
+        path.join(repoDir, ".rafter.yml"),
+        "scan:\n  exclude_paths:\n    - secrets.env\n",
+      );
+      execSync("git add secrets.env .rafter.yml", gitExecOpts(repoDir));
+
+      const result = scanStagedFiles(repoDir);
+      expect(result.secretsFound).toBe(false);
+      expect(result.files).toBe(0);
+    });
+
+    it("allows a commit when an ignore rule suppresses the pattern", () => {
+      const envFile = path.join(repoDir, "fixtures.env");
+      fs.writeFileSync(envFile, `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+      fs.writeFileSync(
+        path.join(repoDir, ".rafter.yml"),
+        "ignore:\n  - paths: ['fixtures.env']\n    rules: ['AWS Access Key ID']\n    reason: test fixture\n",
+      );
+      execSync("git add fixtures.env .rafter.yml", gitExecOpts(repoDir));
+
+      const result = scanStagedFiles(repoDir);
+      expect(result.secretsFound).toBe(false);
+    });
+
+    it("still blocks files NOT covered by exclude_paths", () => {
+      fs.writeFileSync(path.join(repoDir, "ignored.env"), `KEY=${FAKE_AWS_KEY}\n`);
+      fs.writeFileSync(path.join(repoDir, "real.env"), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+      fs.writeFileSync(
+        path.join(repoDir, ".rafter.yml"),
+        "scan:\n  exclude_paths:\n    - ignored.env\n",
+      );
+      execSync("git add ignored.env real.env .rafter.yml", gitExecOpts(repoDir));
+
+      const result = scanStagedFiles(repoDir);
+      expect(result.secretsFound).toBe(true);
+      expect(result.files).toBe(1);
+      expect(result.findings[0].file).toContain("real.env");
+    });
+
+    it("deny reason names the file + pattern, not a bare count", () => {
+      fs.writeFileSync(path.join(repoDir, "leak.env"), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+      execSync("git add leak.env", gitExecOpts(repoDir));
+
+      const result = scanStagedFiles(repoDir);
+      const reason = formatStagedSecretReason(result);
+      expect(reason).toContain("leak.env");
+      expect(reason).toContain("AWS Access Key ID");
+      expect(reason).toContain("rafter secrets --staged");
     });
   });
 

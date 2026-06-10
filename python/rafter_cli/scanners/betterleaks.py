@@ -175,8 +175,14 @@ class BetterleaksScanner:
                 return []
 
             if not isinstance(parsed, list):
+                # sable-o4k — a stale/incompatible binary emits a non-array
+                # shape and would otherwise silently yield zero findings. The
+                # managed binary is auto-updated upstream; this covers a stale
+                # binary on PATH, which we can't safely overwrite — so point the
+                # user at the fix.
                 print(
-                    "[rafter] Warning: Betterleaks output is not an array — possible version mismatch",
+                    "[rafter] Warning: Betterleaks output is not an array — possible version mismatch. "
+                    "Run: rafter agent update-betterleaks",
                     file=sys.stderr,
                 )
                 return []

@@ -30,9 +30,10 @@ from ..core.pattern_engine import PatternEngine
 from ..scanners.betterleaks import BetterleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
+from ..scanners.union import union_scan_results
 from ..utils.formatter import fmt, is_agent_mode, print_stderr
 from ..utils.skill_manager import SkillManager
-from ..utils.binary_manager import BinaryManager
+from ..utils.binary_manager import BinaryManager, BETTERLEAKS_VERSION
 
 agent_app = typer.Typer(name="agent", help="Agent security features", no_args_is_help=True)
 
@@ -1453,8 +1454,22 @@ def init(
 # ── scan ─────────────────────────────────────────────────────────────
 
 
-def _select_engine(preference: str, quiet: bool) -> str:
-    """Return 'betterleaks' or 'patterns'."""
+def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> str:
+    """Return 'betterleaks', 'patterns', or 'both'.
+
+    ``auto`` (the default) resolves to ``both`` whenever betterleaks is
+    available and usable — rafter then runs both engines and unions their
+    findings (sable-j85), so a miss in one (betterleaks 1.1.x does not detect
+    AWS access keys — sable-h2y) is still caught by the other. It degrades to
+    ``patterns``-only when betterleaks is absent or a stale binary can't be
+    refreshed. Explicit ``--engine betterleaks`` / ``--engine patterns`` stay
+    single-engine.
+
+    ``auto_update`` (default True) controls sable-o4k behavior: when the
+    resolved engine is betterleaks but the managed binary is stale, auto-update
+    it before scanning. The caller resolves this from ``--no-auto-update`` and
+    the ``scan.auto_update_betterleaks`` config key.
+    """
     valid_engines = ("auto", "betterleaks", "patterns")
     if preference not in valid_engines:
         print(f"Invalid engine: {preference}. Valid values: {', '.join(valid_engines)}", file=sys.stderr)
@@ -1471,26 +1486,93 @@ def _select_engine(preference: str, quiet: bool) -> str:
             if not quiet:
                 print_stderr(fmt.warning("Betterleaks requested but not available, using patterns"))
             return "patterns"
+        return _ensure_betterleaks_usable(quiet, auto_update)
+
+    # auto — run BOTH engines when betterleaks is usable; otherwise patterns.
+    if not available:
+        return "patterns"
+    usable = _ensure_betterleaks_usable(quiet, auto_update)
+    return "both" if usable == "betterleaks" else "patterns"
+
+
+def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
+    """sable-o4k — guard against a stale rafter-managed betterleaks binary
+    silently returning zero findings (a leftover binary from an older rafter
+    parses fine with ``version`` but emits a JSON shape the current parser
+    rejects).
+
+    When the managed binary is stale we auto-update it to the pinned version
+    (default on; opt out with ``--no-auto-update`` or
+    ``scan.auto_update_betterleaks: false``). In an interactive TTY we confirm
+    first. If the update is disabled, declined, or fails, we degrade to the
+    patterns engine and print a CTA rather than scanning with a binary that
+    yields nothing.
+    """
+    bm = BinaryManager()
+    if not bm.is_managed_betterleaks_stale():
         return "betterleaks"
 
-    # auto
-    return "betterleaks" if available else "patterns"
+    current = bm.get_betterleaks_version()
+    cta = "Fix manually with: rafter agent update-betterleaks"
+    stale = f"Stale betterleaks binary ({current}; expected v{BETTERLEAKS_VERSION})"
+
+    if not auto_update:
+        if not quiet:
+            print_stderr(fmt.warning(f"{stale}. Auto-update is off — using the patterns engine for this scan. {cta}"))
+        return "patterns"
+
+    # Only prompt when there's a human at a TTY; otherwise auto-update proceeds
+    # (default on) so non-interactive runs aren't left with a broken engine.
+    if sys.stdin.isatty() and not quiet:
+        answer = input(f"  {stale}. Update it now? [Y/n] ").strip().lower()
+        if answer not in ("", "y", "yes"):
+            print_stderr(fmt.warning(f"Skipped — using the patterns engine for this scan. {cta}"))
+            return "patterns"
+
+    if not quiet:
+        print_stderr(fmt.info(f"Updating betterleaks to v{BETTERLEAKS_VERSION}..."))
+    try:
+        bm.download_betterleaks(
+            (lambda m: print_stderr(f"   {m}")) if not quiet else None,
+            BETTERLEAKS_VERSION,
+        )
+        if not quiet:
+            print_stderr(fmt.success(f"Betterleaks updated to v{BETTERLEAKS_VERSION}."))
+        return "betterleaks"
+    except Exception as exc:  # noqa: BLE001 — degrade to patterns on any failure
+        if not quiet:
+            print_stderr(fmt.warning(f"Betterleaks update failed ({exc}) — using the patterns engine for this scan. {cta}"))
+        return "patterns"
 
 
 def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanResult]:
+    def run_patterns() -> list[ScanResult]:
+        scanner = RegexScanner(custom_patterns)
+        r = scanner.scan_file(file_path)
+        return [r] if r.matches else []
+
+    if engine == "both":
+        # sable-j85 — run both engines and union. A betterleaks failure
+        # degrades to patterns-only rather than losing the scan.
+        bl_results: list[ScanResult] = []
+        try:
+            bl = BetterleaksScanner()
+            result = bl.scan_file(file_path)
+            if result.matches:
+                bl_results = [ScanResult(file=result.file, matches=result.matches)]
+        except Exception:
+            print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
+        return union_scan_results(bl_results, run_patterns())
+
     if engine == "betterleaks":
         try:
             bl = BetterleaksScanner()
             result = bl.scan_file(file_path)
             return [ScanResult(file=result.file, matches=result.matches)] if result.matches else []
         except Exception:
-            scanner = RegexScanner(custom_patterns)
-            r = scanner.scan_file(file_path)
-            return [r] if r.matches else []
-    else:
-        scanner = RegexScanner(custom_patterns)
-        r = scanner.scan_file(file_path)
-        return [r] if r.matches else []
+            return run_patterns()
+
+    return run_patterns()
 
 
 def _path_matches_exclude_pattern(rel_path: str, pattern: str) -> bool:
@@ -1569,17 +1651,29 @@ def _scan_directory(
         custom = [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns] if scan_cfg.custom_patterns else None
         exclude = scan_cfg.exclude_paths or None
 
-    if engine == "betterleaks":
+    def run_patterns() -> list[ScanResult]:
+        scanner = RegexScanner(custom)
+        return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+
+    if engine == "both":
+        # sable-j85 — run both engines and union; the exclude-paths post-filter
+        # below applies to the merged set.
+        bl_results: list[ScanResult] = []
+        try:
+            bl = BetterleaksScanner()
+            bl_results = [ScanResult(file=r.file, matches=r.matches) for r in bl.scan_directory(dir_path, use_git=history)]
+        except Exception:
+            print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
+        results = union_scan_results(bl_results, run_patterns())
+    elif engine == "betterleaks":
         try:
             bl = BetterleaksScanner()
             results = bl.scan_directory(dir_path, use_git=history)
             results = [ScanResult(file=r.file, matches=r.matches) for r in results]
         except Exception:
-            scanner = RegexScanner(custom)
-            results = scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+            results = run_patterns()
     else:
-        scanner = RegexScanner(custom)
-        results = scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+        results = run_patterns()
     # sable-yz0 — post-filter chokepoint. See _apply_exclude_paths docstring.
     return _apply_exclude_paths(results, exclude, dir_path)
 
@@ -1605,7 +1699,9 @@ def _output_scan_results(
         files_out = [
             {"file": r.file, "matches": [
                 {"pattern": {"name": m.pattern.name, "severity": m.pattern.severity, "description": m.pattern.description or ""},
-                 "line": m.line, "column": m.column, "redacted": m.redacted}
+                 "line": m.line, "column": m.column, "redacted": m.redacted,
+                 # sable-j85 — present only for auto-mode (both-engine) scans.
+                 **({"engines": m.engines} if m.engines else {})}
                 for m in r.matches
             ]}
             for r in kept_results
@@ -1674,6 +1770,7 @@ def _watch_and_scan(
     custom_patterns,
     scan_cfg,
     suppressions: list | None = None,
+    auto_update: bool = True,
 ) -> None:
     """Watch a path for changes and re-scan on each change. Ctrl+C exits."""
     try:
@@ -1684,7 +1781,7 @@ def _watch_and_scan(
         raise typer.Exit(code=2)
 
     logger = AuditLogger()
-    eng = _select_engine(engine, quiet)
+    eng = _select_engine(engine, quiet, auto_update)
 
     if not quiet:
         print_stderr(fmt.info(f"Watching {watch_path} for changes ({eng}). Press Ctrl+C to exit."))
@@ -1815,6 +1912,7 @@ def scan(
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
     history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
+    auto_update: bool = typer.Option(True, "--auto-update/--no-auto-update", help="Auto-update a stale managed betterleaks binary; --no-auto-update falls back to the patterns engine instead (default: on)"),
 ):
     """Scan files or directories for secrets. [deprecated: use 'rafter secrets' instead]"""
     print(
@@ -1830,6 +1928,10 @@ def scan(
         [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns]
         if scan_cfg.custom_patterns else None
     )
+
+    # sable-o4k — stale-binary auto-update is on unless the CLI flag or the
+    # scan.auto_update_betterleaks config key opts out. Either disables it.
+    auto_update_enabled = auto_update and scan_cfg.auto_update_betterleaks
 
     from ..core.custom_patterns import load_suppressions, policy_ignore_to_suppressions
     suppressions = policy_ignore_to_suppressions(scan_cfg.ignore) + load_suppressions()
@@ -1856,7 +1958,7 @@ def scan(
         if not quiet:
             print(f"Scanning {len(changed)} file(s) changed since {diff}...", file=sys.stderr)
 
-        eng = _select_engine(engine, quiet)
+        eng = _select_engine(engine, quiet, auto_update_enabled)
         all_results: list[ScanResult] = []
         for f in changed:
             resolved = os.path.abspath(f)
@@ -1886,7 +1988,7 @@ def scan(
         if not quiet:
             print(f"Scanning {len(staged_files)} staged file(s)...", file=sys.stderr)
 
-        eng = _select_engine(engine, quiet)
+        eng = _select_engine(engine, quiet, auto_update_enabled)
         all_results = []
         for f in staged_files:
             resolved = os.path.abspath(f)
@@ -1904,10 +2006,10 @@ def scan(
 
     # --watch
     if watch:
-        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions)
+        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
-    eng = _select_engine(engine, quiet)
+    eng = _select_engine(engine, quiet, auto_update_enabled)
 
     if os.path.isdir(resolved_path):
         if not quiet:
@@ -3359,7 +3461,7 @@ def baseline_create(
 
     print(f"Scanning {resolved} to build baseline...", file=sys.stderr)
 
-    eng = _select_engine(engine, quiet=False)
+    eng = _select_engine(engine, quiet=False, auto_update=scan_cfg.auto_update_betterleaks)
     if os.path.isdir(resolved):
         results = _scan_directory(resolved, eng, scan_cfg)
     else:

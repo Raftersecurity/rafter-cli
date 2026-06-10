@@ -70,6 +70,10 @@ class ScanConfig:
     exclude_paths: list[str] = field(default_factory=list)
     custom_patterns: list[ScanCustomPattern] = field(default_factory=list)
     ignore: list[ScanIgnoreRule] = field(default_factory=list)
+    # sable-o4k — auto-update a stale rafter-managed betterleaks binary at scan
+    # time. Default True. Set False (YAML: ``scan.auto_update_betterleaks``) to
+    # opt out, e.g. in CI that provisions its own binary.
+    auto_update_betterleaks: bool = True
 
 
 @dataclass
