@@ -34,14 +34,17 @@ function rafter(
 }
 
 beforeAll(() => {
-  try {
+  // dist is built once by tests/global-setup.ts before the (parallel) suite.
+  // Only build here as a fallback if it's somehow missing — rebuilding
+  // unconditionally rewrites dist while other parallel workers are spawning
+  // `node dist/index.js`, which intermittently loads a half-written module
+  // (e.g. "does not provide an export named ...").
+  if (!fs.existsSync(CLI)) {
     execFileSync("pnpm", ["run", "build"], {
       cwd: path.resolve(__dirname, ".."),
       stdio: "ignore",
-      timeout: 30000,
+      timeout: 60000,
     });
-  } catch {
-    // dist may already exist
   }
 }, 60000);
 
