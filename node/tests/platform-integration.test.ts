@@ -35,10 +35,15 @@ function cleanupDir(dir: string) {
  * Run the CLI with a fake HOME directory.
  * Returns { stdout, stderr, exitCode }.
  */
+// A full `agent init` install (config + skills + MCP registration + hooks) runs
+// ~8-24s on its own — the old 15s default left no headroom, so under concurrent
+// suite load spawnSync would time out, return status:null, and a downstream
+// readFileSync would ENOENT on the file the killed child never wrote (sable-784).
+// 60s gives ample margin while still bounding a genuine hang.
 function runCli(
   args: string,
   homeDir: string,
-  timeout = 15_000
+  timeout = 60_000
 ): { stdout: string; stderr: string; exitCode: number } {
   const result = spawnSync(`node ${CLI_ENTRY} ${args}`, {
     cwd: PROJECT_ROOT,
@@ -57,6 +62,20 @@ function runCli(
     stderr: result.stderr || "",
     exitCode: result.status ?? 1,
   };
+}
+
+// Run the CLI and assert it exited 0 before the caller reads files it wrote.
+// spawnSync waits for child exit, so a 0 exit code means writeFileSync has
+// flushed to disk — guarding here turns an opaque downstream ENOENT into a
+// legible "CLI failed: <stderr>" and catches a real install regression that a
+// delayed/absent write would otherwise mask (sable-784).
+function runCliOk(args: string, homeDir: string, timeout?: number) {
+  const result = runCli(args, homeDir, timeout);
+  expect(
+    result.exitCode,
+    `CLI \`${args}\` failed (exit ${result.exitCode}): ${result.stderr}`
+  ).toBe(0);
+  return result;
 }
 
 describe("Platform Integration — MCP Installs via CLI", () => {
@@ -1377,7 +1396,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     it("should install BeforeTool/AfterTool hooks to settings.json", () => {
       fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
 
-      runCli("agent init --with-gemini", testHomeDir);
+      runCliOk("agent init --with-gemini", testHomeDir);
 
       const settings = JSON.parse(
         fs.readFileSync(path.join(testHomeDir, ".gemini", "settings.json"), "utf-8")
@@ -1408,8 +1427,8 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     it("should deduplicate hooks on repeated installs", () => {
       fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
 
-      runCli("agent init --with-gemini", testHomeDir);
-      runCli("agent init --with-gemini", testHomeDir);
+      runCliOk("agent init --with-gemini", testHomeDir);
+      runCliOk("agent init --with-gemini", testHomeDir);
 
       const settings = JSON.parse(
         fs.readFileSync(path.join(testHomeDir, ".gemini", "settings.json"), "utf-8")
