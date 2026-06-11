@@ -6,6 +6,12 @@ import path from "path";
 import { AuditLogger } from "../src/core/audit-logger.js";
 import { ConfigManager } from "../src/core/config-manager.js";
 
+// Flush pending microtasks + the check phase so the fire-and-forget webhook
+// dispatch (validateWebhookUrl → fetch) settles before a negative assertion.
+// DNS is mocked, so there are no real timers/IO — one setImmediate boundary is
+// deterministic, unlike the arbitrary setTimeout sleeps it replaces (sable-83b).
+const flushAsync = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 /**
  * Full lifecycle tests for the AuditLogger with real JSONL files.
  * Covers: creation, entry schema, convenience methods, read/filter,
@@ -334,10 +340,8 @@ describe("AuditLogger lifecycle", () => {
       const logger = new AuditLogger(logPath);
       logger.logCommandIntercepted("rm -rf /", false, "blocked", "dangerous");
 
-      // Wait for async webhook
-      await new Promise(r => setTimeout(r, 100));
-
-      expect(fetchSpy).toHaveBeenCalled();
+      // Poll until the async webhook lands
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
       const callArgs = fetchSpy.mock.calls[0];
       expect(callArgs[0]).toBe("https://example.com/webhook");
       const body = JSON.parse((callArgs[1] as any).body);
@@ -353,13 +357,12 @@ describe("AuditLogger lifecycle", () => {
       const logger = new AuditLogger(logPath);
       // Low risk — should not fire
       logger.logCommandIntercepted("ls", true, "allowed");
-      await new Promise(r => setTimeout(r, 50));
+      await flushAsync();
       expect(fetchSpy).not.toHaveBeenCalled();
 
       // High risk — should fire
       logger.logCommandIntercepted("rm -rf /", false, "blocked", "dangerous");
-      await new Promise(r => setTimeout(r, 100));
-      expect(fetchSpy).toHaveBeenCalled();
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     });
 
     it("payload format includes all required fields", async () => {
@@ -370,7 +373,7 @@ describe("AuditLogger lifecycle", () => {
 
       const logger = new AuditLogger(logPath);
       logger.logCommandIntercepted("rm -rf /", false, "blocked", "danger", "claude-code");
-      await new Promise(r => setTimeout(r, 100));
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
 
       const body = JSON.parse((fetchSpy.mock.calls[0][1] as any).body);
       expect(body).toHaveProperty("event");
@@ -392,7 +395,7 @@ describe("AuditLogger lifecycle", () => {
 
       const logger = new AuditLogger(logPath);
       logger.logCommandIntercepted("rm -rf /", false, "blocked", "dangerous");
-      await new Promise(r => setTimeout(r, 100));
+      await flushAsync();
 
       // Log should still be written
       const entries = logger.read();
@@ -405,7 +408,7 @@ describe("AuditLogger lifecycle", () => {
       // Default config has no webhook
       const logger = new AuditLogger(logPath);
       logger.logCommandIntercepted("rm -rf /", false, "blocked", "dangerous");
-      await new Promise(r => setTimeout(r, 50));
+      await flushAsync();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
