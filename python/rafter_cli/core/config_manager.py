@@ -300,6 +300,7 @@ class ConfigManager:
             CommandPolicyConfig,
             EnvironmentConfig,
             EnvironmentsConfig,
+            HooksConfig,
             NotificationsConfig,
             OutputFilteringConfig,
             ScanConfig,
@@ -333,6 +334,15 @@ class ConfigManager:
                         "auto_update_betterleaks",
                         (agent_raw.get("scan") or {}).get("autoUpdateBetterleaks", True),
                     )
+                ),
+            ),
+            hooks=HooksConfig(
+                enabled=(agent_raw.get("hooks") or {}).get("enabled"),
+                secret_scan=(agent_raw.get("hooks") or {}).get(
+                    "secret_scan", (agent_raw.get("hooks") or {}).get("secretScan")
+                ),
+                command_policy=(agent_raw.get("hooks") or {}).get(
+                    "command_policy", (agent_raw.get("hooks") or {}).get("commandPolicy")
                 ),
             ),
             components=agent_raw.get("components") or {},
