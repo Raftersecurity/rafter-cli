@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Config-driven hook off-switch** (sable-bnl). The PreToolUse hook can now be disabled at runtime without uninstalling it — `RAFTER_DISABLE_HOOKS` (whole hook), `RAFTER_DISABLE_SECRET_SCAN`, and `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on), or the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default enabled; a corrupt config or unrecognized value fails safe to enabled. **Honored only from these trusted, machine-owner-owned sources — never from project-local `.rafter.yml`** (a `rafter-secure-design` trust-boundary decision): otherwise cloning a hostile repo that ships `hooks: { enabled: false }` would silently disable a victim's secret scanning and command interception. `rafter agent status` (and `--json` `hook_control`) now report the effective state and which source set it. Node + Python, with cross-runtime parity tests including the security negative (a project-local disable attempt is ignored).
+- **`shared-docs/CONFIG.md`** — consolidated, code-verified reference for the global (`~/.rafter/config.json`) and project (`.rafter.yml`) config layers: full key sets, the trust boundary, and a toggle matrix mapping every on/off switch to the code that enforces it.
+
+### Fixed
+- **CWE-367 TOCTOU in the betterleaks scanner** (sable-t0q). `betterleaks.ts` built its temp report path from a predictable `Date.now()` name in the shared tmpdir; replaced with `fs.mkdtempSync` (a private `0700` dir, created atomically) plus best-effort cleanup in `finally` (which also fixes prior temp-file leaks on error paths). Brings Node to parity with Python's existing `tempfile.TemporaryDirectory`.
+
+### Notes
+- Audit (sable-59s) surfaced that `agent.outputFiltering.redactSecrets` / `blockPatterns` are validated but **not enforced** at runtime (the PostToolUse hook always redacts) — tracked as sable-y2z; documented as a known gap in `CONFIG.md`.
+
 ## [0.8.5] - 2026-06-10
 
 ### Fixed

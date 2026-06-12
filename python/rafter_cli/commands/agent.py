@@ -3174,6 +3174,26 @@ def status(
     else:
         print(f"\nConfig:       not found — run: rafter agent init")
 
+    # --- Hook off-switch (trusted-source only: env / global config) ---
+    from ..core.hook_control import resolve_hook_control
+
+    c = resolve_hook_control()
+
+    def _describe(on: bool, src: str) -> str:
+        if on:
+            return "active"
+        via = "RAFTER_DISABLE_* env" if src == "env" else "global config"
+        return f"DISABLED (via {via})"
+
+    if not c.hook_enabled:
+        print(f"Hooks:        {_describe(False, c.source_hook)}")
+    elif not c.secret_scan_enabled or not c.command_policy_enabled:
+        print("Hooks:        active (partial)")
+        print(f"  secret scan:    {_describe(c.secret_scan_enabled, c.source_secret_scan)}")
+        print(f"  command policy: {_describe(c.command_policy_enabled, c.source_command_policy)}")
+    else:
+        print("Hooks:        active")
+
     # --- Betterleaks ---
     bm = BinaryManager()
     bl_local = bm.get_betterleaks_path()
@@ -3309,6 +3329,9 @@ def status(
 
 
 def _agent_status_json(config_path: Path, audit_path: Path) -> dict[str, Any]:
+    from ..core.hook_control import resolve_hook_control
+
+    c = resolve_hook_control()
     return {
         "installed": config_path.exists(),
         "version": __version__,
@@ -3317,6 +3340,16 @@ def _agent_status_json(config_path: Path, audit_path: Path) -> dict[str, Any]:
         "betterleaks_available": _betterleaks_available(),
         "config_path": _format_home_path(config_path),
         "audit_log_path": _format_home_path(audit_path),
+        "hook_control": {
+            "hook_enabled": c.hook_enabled,
+            "secret_scan_enabled": c.secret_scan_enabled,
+            "command_policy_enabled": c.command_policy_enabled,
+            "source": {
+                "hook": c.source_hook,
+                "secret_scan": c.source_secret_scan,
+                "command_policy": c.source_command_policy,
+            },
+        },
     }
 
 

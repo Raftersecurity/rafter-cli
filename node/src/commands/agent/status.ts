@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import { getRafterDir, getAuditLogPath, getBinDir } from "../../core/config-defaults.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { resolveHookControl } from "../../core/hook-control.js";
 import { BinaryManager } from "../../utils/binary-manager.js";
 import { SkillManager } from "../../utils/skill-manager.js";
 
@@ -18,6 +19,13 @@ interface AgentStatusJson {
   betterleaks_available: boolean;
   config_path: string;
   audit_log_path: string;
+  /** Runtime hook enablement (the trusted-source off-switch). source ∈ default|global-config|env. */
+  hook_control: {
+    hook_enabled: boolean;
+    secret_scan_enabled: boolean;
+    command_policy_enabled: boolean;
+    source: { hook: string; secret_scan: string; command_policy: string };
+  };
 }
 
 export function createStatusCommand(): Command {
@@ -49,6 +57,22 @@ export function createStatusCommand(): Command {
         }
       } else {
         console.log(`\nConfig:       not found — run: rafter agent init`);
+      }
+
+      // --- Hook off-switch (trusted-source only: env / global config) ---
+      {
+        const c = resolveHookControl();
+        const describe = (on: boolean, src: string) =>
+          on ? "active" : `DISABLED (via ${src === "env" ? "RAFTER_DISABLE_* env" : "global config"})`;
+        if (!c.hookEnabled) {
+          console.log(`Hooks:        ${describe(false, c.source.hook)}`);
+        } else if (!c.secretScanEnabled || !c.commandPolicyEnabled) {
+          console.log(`Hooks:        active (partial)`);
+          console.log(`  secret scan:    ${describe(c.secretScanEnabled, c.source.secretScan)}`);
+          console.log(`  command policy: ${describe(c.commandPolicyEnabled, c.source.commandPolicy)}`);
+        } else {
+          console.log(`Hooks:        active`);
+        }
       }
 
       // --- Betterleaks ---
@@ -216,6 +240,19 @@ function buildStatusJson(home: string, configPath: string, auditPath: string): A
     betterleaks_available: isBetterleaksAvailable(),
     config_path: formatHomePath(configPath, home),
     audit_log_path: formatHomePath(auditPath, home),
+    hook_control: (() => {
+      const c = resolveHookControl();
+      return {
+        hook_enabled: c.hookEnabled,
+        secret_scan_enabled: c.secretScanEnabled,
+        command_policy_enabled: c.commandPolicyEnabled,
+        source: {
+          hook: c.source.hook,
+          secret_scan: c.source.secretScan,
+          command_policy: c.source.commandPolicy,
+        },
+      };
+    })(),
   };
 }
 

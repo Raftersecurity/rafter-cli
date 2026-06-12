@@ -87,6 +87,26 @@ export interface RafterConfig {
       webhook?: string;
       minRiskLevel?: 'high' | 'critical';
     };
+    /**
+     * Runtime enable/disable for the PreToolUse / pre-commit hook. Distinct from
+     * `components["<platform>.hooks"]` (which tracks whether a hook is *installed*
+     * in a platform's settings) — this gates whether an installed hook actually
+     * acts. Default (undefined) = enabled.
+     *
+     * SECURITY: by design this is honored ONLY from the global
+     * `~/.rafter/config.json` (machine-owner-owned) and the `RAFTER_DISABLE_*`
+     * env vars — NEVER from project-local `.rafter.yml`, so a hostile repo can't
+     * ship a config that silently disables a victim's hook (see hook-control.ts).
+     * That is why this field lives on RafterConfig but NOT on PolicyFile.
+     */
+    hooks?: {
+      /** Master switch. false = the hook allows everything (no scan, no command policy). */
+      enabled?: boolean;
+      /** Disable only the secret scan on Write/Edit/staged content; keep command policy. */
+      secretScan?: boolean;
+      /** Disable only command-risk interception on Bash; keep secret scanning. */
+      commandPolicy?: boolean;
+    };
     scan?: {
       excludePaths?: string[];
       customPatterns?: ScanCustomPattern[];
