@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-06-13
+
 ### Added
 - **Config-driven hook off-switch** (sable-bnl). The PreToolUse hook can now be disabled at runtime without uninstalling it — `RAFTER_DISABLE_HOOKS` (whole hook), `RAFTER_DISABLE_SECRET_SCAN`, and `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on), or the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default enabled; a corrupt config or unrecognized value fails safe to enabled. **Honored only from these trusted, machine-owner-owned sources — never from project-local `.rafter.yml`** (a `rafter-secure-design` trust-boundary decision): otherwise cloning a hostile repo that ships `hooks: { enabled: false }` would silently disable a victim's secret scanning and command interception. `rafter agent status` (and `--json` `hook_control`) now report the effective state and which source set it. Node + Python, with cross-runtime parity tests including the security negative (a project-local disable attempt is ignored).
 - **`shared-docs/CONFIG.md`** — consolidated, code-verified reference for the global (`~/.rafter/config.json`) and project (`.rafter.yml`) config layers: full key sets, the trust boundary, and a toggle matrix mapping every on/off switch to the code that enforces it.
