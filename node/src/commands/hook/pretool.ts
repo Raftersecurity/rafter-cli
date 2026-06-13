@@ -4,6 +4,7 @@ import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
+import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
 import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
@@ -175,43 +176,57 @@ function normalizeInput(raw: Record<string, any>, format: HookFormat): HookInput
 function evaluateToolCall(payload: HookInput): HookDecision {
   const { tool_name, tool_input } = payload;
 
+  // Honor the (trusted-source-only) hook off-switch before doing any work.
+  // Master switch off → allow everything; otherwise the two concerns are gated
+  // independently inside evaluateBash (command policy + git-commit secret scan).
+  const control = resolveHookControl();
+  if (!control.hookEnabled) return { decision: "allow" };
+
   if (tool_name === "Bash") {
-    return evaluateBash(tool_input?.command || "");
+    return evaluateBash(tool_input?.command || "", control);
   }
 
   if (tool_name === "Write" || tool_name === "Edit") {
+    if (!control.secretScanEnabled) return { decision: "allow" };
     return evaluateWrite(tool_input || {});
   }
 
   return { decision: "allow" };
 }
 
-function evaluateBash(command: string): HookDecision {
-  const interceptor = new CommandInterceptor();
+function evaluateBash(command: string, control: HookControl): HookDecision {
   const audit = new AuditLogger();
-  const evaluation = interceptor.evaluate(command);
 
-  // Blocked — hard deny
-  if (!evaluation.allowed && !evaluation.requiresApproval) {
-    audit.logCommandIntercepted(command, false, "blocked", evaluation.reason);
-    return {
-      decision: "deny",
-      reason: formatBlockedMessage(command, evaluation),
-    };
+  // Command-risk interception — gated by commandPolicy. When disabled, skip the
+  // block/approval logic but still fall through to the staged-secret scan below
+  // (a user may keep secret scanning while silencing command prompts).
+  if (control.commandPolicyEnabled) {
+    const interceptor = new CommandInterceptor();
+    const evaluation = interceptor.evaluate(command);
+
+    // Blocked — hard deny
+    if (!evaluation.allowed && !evaluation.requiresApproval) {
+      audit.logCommandIntercepted(command, false, "blocked", evaluation.reason);
+      return {
+        decision: "deny",
+        reason: formatBlockedMessage(command, evaluation),
+      };
+    }
+
+    // Requires approval — deny (agent can't provide interactive approval)
+    if (evaluation.requiresApproval) {
+      audit.logCommandIntercepted(command, false, "blocked", evaluation.reason);
+      return {
+        decision: "deny",
+        reason: formatApprovalMessage(command, evaluation),
+      };
+    }
   }
 
-  // Requires approval — deny (agent can't provide interactive approval)
-  if (evaluation.requiresApproval) {
-    audit.logCommandIntercepted(command, false, "blocked", evaluation.reason);
-    return {
-      decision: "deny",
-      reason: formatApprovalMessage(command, evaluation),
-    };
-  }
-
-  // Git commit/push — scan staged files for secrets
+  // Git commit/push — scan staged files for secrets. Gated by secretScan so the
+  // git-commit secret check survives `commandPolicy` being disabled on its own.
   const trimmed = command.trim();
-  if (trimmed.startsWith("git commit") || trimmed.startsWith("git push")) {
+  if (control.secretScanEnabled && (trimmed.startsWith("git commit") || trimmed.startsWith("git push"))) {
     const scanResult = scanStagedFiles();
     if (scanResult.secretsFound) {
       // Audit per file so the log records WHICH file + pattern, not a bare count.

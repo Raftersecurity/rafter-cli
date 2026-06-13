@@ -294,24 +294,44 @@ def _scan_staged_files() -> dict:
         return empty
 
 
-def _evaluate_bash(command: str) -> dict:
-    interceptor = CommandInterceptor()
+def _evaluate_bash(command: str, control=None) -> dict:
+    # The production caller (the pretool dispatch) always passes a resolved
+    # control. `control=None` defaults to fully-enabled — fail-safe, and keeps
+    # the function callable from focused tests that exercise interception/scan
+    # without constructing a control object.
+    if control is None:
+        from ..core.hook_control import HookControl
+
+        control = HookControl(
+            hook_enabled=True,
+            secret_scan_enabled=True,
+            command_policy_enabled=True,
+            source_hook="default",
+            source_secret_scan="default",
+            source_command_policy="default",
+        )
     audit = AuditLogger()
-    evaluation = interceptor.evaluate(command)
 
-    # Blocked — hard deny
-    if not evaluation.allowed and not evaluation.requires_approval:
-        audit.log_command_intercepted(command, False, "blocked", evaluation.reason)
-        return {"decision": "deny", "reason": _format_blocked_message(command, evaluation)}
+    # Command-risk interception — gated by command_policy. When disabled, skip the
+    # block/approval logic but still fall through to the staged-secret scan below.
+    if control.command_policy_enabled:
+        interceptor = CommandInterceptor()
+        evaluation = interceptor.evaluate(command)
 
-    # Requires approval — deny (hook can't prompt interactively)
-    if evaluation.requires_approval:
-        audit.log_command_intercepted(command, False, "blocked", evaluation.reason)
-        return {"decision": "deny", "reason": _format_approval_message(command, evaluation)}
+        # Blocked — hard deny
+        if not evaluation.allowed and not evaluation.requires_approval:
+            audit.log_command_intercepted(command, False, "blocked", evaluation.reason)
+            return {"decision": "deny", "reason": _format_blocked_message(command, evaluation)}
 
-    # Git commit/push — scan staged files
+        # Requires approval — deny (hook can't prompt interactively)
+        if evaluation.requires_approval:
+            audit.log_command_intercepted(command, False, "blocked", evaluation.reason)
+            return {"decision": "deny", "reason": _format_approval_message(command, evaluation)}
+
+    # Git commit/push — scan staged files. Gated by secret_scan so the git-commit
+    # secret check survives command_policy being disabled on its own.
     trimmed = command.strip()
-    if trimmed.startswith(("git commit", "git push")):
+    if control.secret_scan_enabled and trimmed.startswith(("git commit", "git push")):
         result = _scan_staged_files()
         if result["secrets_found"]:
             # Audit per file so the log records WHICH file + pattern, not a bare count.
@@ -389,10 +409,21 @@ def pretool(
         if not isinstance(tool_input, dict):
             tool_input = {}
 
+        # Honor the (trusted-source-only) hook off-switch before doing any work.
+        from ..core.hook_control import resolve_hook_control
+
+        control = resolve_hook_control()
+        if not control.hook_enabled:
+            _write_pretool_decision({"decision": "allow"}, format)
+            return
+
         if tool_name == "Bash":
-            decision = _evaluate_bash(tool_input.get("command", ""))
+            decision = _evaluate_bash(tool_input.get("command", ""), control)
         elif tool_name in ("Write", "Edit"):
-            decision = _evaluate_write(tool_input)
+            if not control.secret_scan_enabled:
+                decision = {"decision": "allow"}
+            else:
+                decision = _evaluate_write(tool_input)
         else:
             decision = {"decision": "allow"}
 

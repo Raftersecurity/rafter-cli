@@ -26,6 +26,7 @@ from rafter_cli.commands.hook import (
     _scan_staged_files,
 )
 from rafter_cli.core.config_schema import get_default_config
+from rafter_cli.core.hook_control import resolve_hook_control
 
 FAKE_AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
 
@@ -68,7 +69,8 @@ class TestStagedScanConfigAware:
         assert result["files"] == 0
 
         # End-to-end: the commit is allowed, matching `rafter secrets`.
-        assert _evaluate_bash('git commit -m "add"')["decision"] == "allow"
+        control = resolve_hook_control(config=get_default_config(), env={})
+        assert _evaluate_bash('git commit -m "add"', control)["decision"] == "allow"
 
     def test_ignore_rule_suppresses_pattern(self, git_repo):
         (git_repo / "fixtures.env").write_text(f"AWS_ACCESS_KEY_ID={FAKE_AWS_KEY}\n")

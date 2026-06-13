@@ -292,5 +292,10 @@ def test_scan_with_position():
     assert found[0].line == 2
 
 
-def test_all_21_patterns_present():
-    assert len(DEFAULT_SECRET_PATTERNS) == 21
+def test_all_patterns_present():
+    # Floor assertion, not an exact count: the pattern list only grows, so a
+    # hardcoded `== N` goes stale every time a pattern is added (sable-6d6 —
+    # was 21, broke when the HashiCorp Vault token brought it to 22).
+    assert len(DEFAULT_SECRET_PATTERNS) >= 22
+    names = [p.name for p in DEFAULT_SECRET_PATTERNS]
+    assert len(names) == len(set(names)), "pattern names must be unique"

@@ -6,6 +6,13 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
+// Flush all pending microtasks + the check phase so the fire-and-forget webhook
+// dispatch (validateWebhookUrl → fetch) has fully settled before a negative
+// assertion. The dispatch has no real timers/IO (DNS is mocked or the host is an
+// IP literal), so one setImmediate boundary is deterministic — unlike the
+// arbitrary 50ms sleeps that flaked under CI load (sable-83b).
+const flushAsync = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 describe("Webhook Notifications", () => {
   const testDir = path.join(os.tmpdir(), `rafter-notif-test-${Date.now()}`);
   const testLogPath = path.join(testDir, "audit.jsonl");
@@ -84,10 +91,8 @@ describe("Webhook Notifications", () => {
 
       logger.logCommandIntercepted("git push --force", false, "blocked", "High-risk", "claude-code");
 
-      // fetch is fire-and-forget, give it a tick
-      await new Promise(r => setTimeout(r, 50));
-
-      expect(fetchSpy).toHaveBeenCalledOnce();
+      // fetch is fire-and-forget — poll until the webhook dispatch lands
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
       const [url, opts] = fetchSpy.mock.calls[0];
       expect(url).toBe("https://hooks.example.com/test");
       expect(opts.method).toBe("POST");
@@ -118,7 +123,7 @@ describe("Webhook Notifications", () => {
 
       logger.logSecretDetected("config.js", "AWS Key", "blocked", "claude-code");
 
-      await new Promise(r => setTimeout(r, 50));
+      await flushAsync();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -138,7 +143,7 @@ describe("Webhook Notifications", () => {
 
       logger.logCommandIntercepted("ls -la", true, "allowed", undefined, "claude-code");
 
-      await new Promise(r => setTimeout(r, 50));
+      await flushAsync();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -151,7 +156,7 @@ describe("Webhook Notifications", () => {
 
       logger.logSecretDetected("config.js", "AWS Key", "blocked", "claude-code");
 
-      await new Promise(r => setTimeout(r, 50));
+      await flushAsync();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -172,13 +177,12 @@ describe("Webhook Notifications", () => {
 
       // High-risk should NOT trigger
       logger.logPolicyOverride("bypass", "sudo rm", "claude-code");
-      await new Promise(r => setTimeout(r, 50));
+      await flushAsync();
       expect(fetchSpy).not.toHaveBeenCalled();
 
       // Critical should trigger
       logger.logSecretDetected("config.js", "AWS Key", "blocked");
-      await new Promise(r => setTimeout(r, 50));
-      expect(fetchSpy).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
     });
 
     it("should silently ignore fetch failures", async () => {
@@ -201,7 +205,8 @@ describe("Webhook Notifications", () => {
         logger.logSecretDetected("config.js", "AWS Key", "blocked");
       }).not.toThrow();
 
-      await new Promise(r => setTimeout(r, 50));
+      // Drain the rejected fetch's .catch so the failure is handled
+      await flushAsync();
 
       // Verify the audit log was still written despite webhook failure
       const logContent = fs.readFileSync(testLogPath, "utf-8");

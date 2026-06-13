@@ -126,6 +126,22 @@ class EnvironmentsConfig:
 
 
 @dataclass
+class HooksConfig:
+    """Runtime enable/disable for the PreToolUse hook. Distinct from
+    ``components["<platform>.hooks"]`` (install state) — this gates whether an
+    installed hook actually acts. ``None`` = unset (defaults to enabled).
+
+    SECURITY: honored ONLY from the global ``~/.rafter/config.json`` + the
+    ``RAFTER_DISABLE_*`` env vars, NEVER from project-local ``.rafter.yml`` — so a
+    hostile repo can't ship a config that disables a victim's hook. That is why
+    this lives on RafterConfig/AgentConfig but is absent from the policy schema.
+    """
+    enabled: bool | None = None
+    secret_scan: bool | None = None
+    command_policy: bool | None = None
+
+
+@dataclass
 class AgentConfig:
     risk_level: RiskLevel = "moderate"
     environments: EnvironmentsConfig = field(default_factory=EnvironmentsConfig)
@@ -135,6 +151,7 @@ class AgentConfig:
     audit: AuditConfig = field(default_factory=AuditConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
+    hooks: HooksConfig = field(default_factory=HooksConfig)
     # Fine-grained per-component install state (set by `rafter agent enable/disable`).
     # Keys are component IDs like "claude-code.hooks"; values are `{enabled, updatedAt}`.
     components: dict = field(default_factory=dict)

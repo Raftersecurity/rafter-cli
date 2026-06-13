@@ -1,6 +1,5 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { randomBytes } from "crypto";
 import { BinaryManager } from "../utils/binary-manager.js";
 import { PatternMatch } from "../core/pattern-engine.js";
 import fs from "fs";
@@ -87,7 +86,11 @@ export class BetterleaksScanner {
       throw new Error("Betterleaks not available");
     }
 
-    const tmpReport = path.join(os.tmpdir(), `betterleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
+    // mkdtempSync atomically creates a private 0700 dir, so the report path
+    // can't be pre-created/symlinked by another user on the shared tmpdir —
+    // avoids the TOCTOU race a predictable Date.now() filename allowed (CWE-367).
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "betterleaks-"));
+    const tmpReport = path.join(tmpDir, "report.json");
 
     try {
       // `--` ensures a target path beginning with `-` isn't parsed as a flag by betterleaks.
@@ -102,8 +105,6 @@ export class BetterleaksScanner {
 
       const results = this.parseResults(tmpReport);
 
-      fs.unlinkSync(tmpReport);
-
       return {
         file: filePath,
         matches: results.map(r => this.convertToPatternMatch(r))
@@ -112,7 +113,6 @@ export class BetterleaksScanner {
       // Betterleaks exits with --exit-code (default 1) when leaks found — read report before cleanup
       if (e.code === 1 && fs.existsSync(tmpReport)) {
         const results = this.parseResults(tmpReport);
-        fs.unlinkSync(tmpReport);
 
         return {
           file: filePath,
@@ -120,11 +120,15 @@ export class BetterleaksScanner {
         };
       }
 
-      if (fs.existsSync(tmpReport)) {
-        fs.unlinkSync(tmpReport);
-      }
-
       throw new Error(`Betterleaks scan failed: ${e.message}`);
+    } finally {
+      // Best-effort cleanup — a cleanup failure must never mask the scan's
+      // real result or its original error.
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -155,7 +159,9 @@ export class BetterleaksScanner {
       throw new Error("Betterleaks not available");
     }
 
-    const tmpReport = path.join(os.tmpdir(), `betterleaks-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
+    // Private 0700 dir, atomically created — see scanFile for the TOCTOU rationale (CWE-367).
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "betterleaks-"));
+    const tmpReport = path.join(tmpDir, "report.json");
     const subcommand = opts?.useGit ? "git" : "dir";
 
     try {
@@ -170,13 +176,11 @@ export class BetterleaksScanner {
       }
 
       const results = this.parseResults(tmpReport);
-      fs.unlinkSync(tmpReport);
 
       return this.groupByFile(results);
     } catch (e: any) {
       if (fs.existsSync(tmpReport)) {
         const results = this.parseResults(tmpReport);
-        fs.unlinkSync(tmpReport);
 
         if (e.code === 1) {
           return this.groupByFile(results);
@@ -184,6 +188,14 @@ export class BetterleaksScanner {
       }
 
       throw new Error(`Betterleaks scan failed: ${e.message}`);
+    } finally {
+      // Best-effort cleanup — a cleanup failure must never mask the scan's
+      // real result or its original error.
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
     }
   }
 

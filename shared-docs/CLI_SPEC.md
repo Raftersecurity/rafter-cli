@@ -824,9 +824,18 @@ Show agent security status dashboard. Displays config summary, installed integra
   "hooks_installed": ["pre-commit"],
   "betterleaks_available": true,
   "config_path": "~/.rafter/config.json",
-  "audit_log_path": "~/.rafter/audit.jsonl"
+  "audit_log_path": "~/.rafter/audit.jsonl",
+  "hook_control": {
+    "hook_enabled": true,
+    "secret_scan_enabled": true,
+    "command_policy_enabled": true,
+    "source": { "hook": "default", "secret_scan": "default", "command_policy": "default" }
+  }
 }
 ```
+
+`hook_control` reports the runtime hook off-switch (see the *hook off-switch* note
+under `rafter hook pretool`). Each `source` is `default`, `global-config`, or `env`.
 
 ### rafter agent update-betterleaks [OPTIONS]
 
@@ -874,6 +883,8 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 - `--format <format>` — output format: `claude` (default, also works for Codex/Continue), `cursor`, `gemini`, `windsurf`
 
 On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
+
+**Hook off-switch.** The hook can be disabled at runtime from **trusted sources only** — the `RAFTER_DISABLE_HOOKS` / `RAFTER_DISABLE_SECRET_SCAN` / `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on) and the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default is enabled; a corrupt config or unrecognized value fails safe to enabled. By design this is **never** read from project-local `.rafter.yml`, so a hostile repo cannot ship a config that silently disables a victim's hook. `rafter agent status` reports the effective state and its source. See `shared-docs/CONFIG.md` for the full configuration reference.
 
 ### rafter hook posttool [OPTIONS]
 
