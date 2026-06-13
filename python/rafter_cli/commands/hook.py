@@ -294,7 +294,22 @@ def _scan_staged_files() -> dict:
         return empty
 
 
-def _evaluate_bash(command: str, control) -> dict:
+def _evaluate_bash(command: str, control=None) -> dict:
+    # The production caller (the pretool dispatch) always passes a resolved
+    # control. `control=None` defaults to fully-enabled — fail-safe, and keeps
+    # the function callable from focused tests that exercise interception/scan
+    # without constructing a control object.
+    if control is None:
+        from ..core.hook_control import HookControl
+
+        control = HookControl(
+            hook_enabled=True,
+            secret_scan_enabled=True,
+            command_policy_enabled=True,
+            source_hook="default",
+            source_secret_scan="default",
+            source_command_policy="default",
+        )
     audit = AuditLogger()
 
     # Command-risk interception — gated by command_policy. When disabled, skip the
