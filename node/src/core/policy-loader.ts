@@ -77,8 +77,8 @@ const POLICY_FILE_CANDIDATES: string[] = [
  * For each directory, check candidates in precedence order; the first hit
  * wins. The walk only ascends — siblings are not considered.
  */
-export function findPolicyFile(): string | null {
-  let dir = process.cwd();
+export function findPolicyFile(startDir: string = process.cwd()): string | null {
+  let dir = startDir;
   const root = getGitRoot() || path.parse(dir).root;
 
   while (true) {

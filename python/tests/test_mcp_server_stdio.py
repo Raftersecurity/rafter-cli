@@ -127,9 +127,9 @@ class TestToolListing:
         await cleanup(self.session, self.cm)
 
     @pytest.mark.asyncio
-    async def test_registers_exactly_6_tools(self):
+    async def test_registers_exactly_7_tools(self):
         result = await self.session.list_tools()
-        assert len(result.tools) == 6
+        assert len(result.tools) == 7
 
     @pytest.mark.asyncio
     async def test_tool_names_match_expected_set(self):
@@ -142,6 +142,7 @@ class TestToolListing:
             "list_docs",
             "read_audit_log",
             "scan_secrets",
+            "suppress_finding",
         ]
 
     @pytest.mark.asyncio
@@ -413,7 +414,7 @@ class TestLifecycle:
     async def test_connect_disconnect_cleanly(self):
         session, cm = await create_connected_session()
         result = await session.list_tools()
-        assert len(result.tools) == 6
+        assert len(result.tools) == 7
         await cleanup(session, cm)
 
     @pytest.mark.asyncio
@@ -421,5 +422,5 @@ class TestLifecycle:
         for _ in range(3):
             session, cm = await create_connected_session()
             result = await session.list_tools()
-            assert len(result.tools) == 6
+            assert len(result.tools) == 7
             await cleanup(session, cm)
