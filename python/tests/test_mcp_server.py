@@ -235,7 +235,7 @@ class TestServerFactory:
         if tool_names:
             expected = {
                 "scan_secrets", "evaluate_command", "read_audit_log", "get_config",
-                "list_docs", "get_doc",
+                "list_docs", "get_doc", "suppress_finding",
             }
             assert expected == tool_names
 

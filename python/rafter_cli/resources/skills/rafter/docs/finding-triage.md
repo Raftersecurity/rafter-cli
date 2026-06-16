@@ -53,7 +53,7 @@ If the finding is a leaked secret that was committed:
 
 ## Suppression — When It's OK
 
-Suppress only when the finding is a real false positive *for this context*, with a written reason. Two mechanisms:
+Suppress only when the finding is a real false positive *for this context*, with a written reason. Three mechanisms:
 
 - **`.rafter.yml`**: add an `ignore:` rule naming the path(s), the rule(s), and a `reason` (your evidence). Repo-tied; persists across scans:
   ```yaml
@@ -63,6 +63,7 @@ Suppress only when the finding is a real false positive *for this context*, with
       reason: "fake test keys — no live path"
   ```
   Match `rules` on the finding's **rule name** (case-insensitive), not a hashed `R-…` id. On a local `rafter scan`, suppressed findings move into a `_suppressed[]` array and don't affect the exit code — you only fail on a *non-suppressed* finding. Docs: https://docs.rafter.so/suppression
+- **MCP `suppress_finding` tool**: agents can triage a false positive directly through the MCP — it writes the same `.rafter.yml` `ignore` rule above (path, optional rule names, reason). No hand-editing required.
 - **Baseline**: `rafter agent baseline create` snapshots current findings; scan with `rafter scan --baseline` so only *new* findings surface. Good for adopting Rafter on a legacy codebase without a big bang.
 
 Never suppress by:

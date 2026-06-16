@@ -30,13 +30,13 @@ POLICY_FILENAMES = [".rafter.yml", ".rafter.yaml"]
 _KNOWN_DOC_KEYS = {"id", "path", "url", "description", "tags", "cache"}
 
 
-def find_policy_file() -> Path | None:
-    """Walk from cwd up to git root looking for a policy file.
+def find_policy_file(start_dir: str | Path | None = None) -> Path | None:
+    """Walk from ``start_dir`` (default cwd) up to git root looking for a policy file.
 
     Returns the first candidate that exists, in the precedence order
     declared by ``POLICY_FILE_CANDIDATES``.
     """
-    cwd = Path.cwd()
+    cwd = Path(start_dir) if start_dir else Path.cwd()
     root = get_git_root()
     stop = Path(root) if root else cwd.anchor and Path(cwd.anchor)
 
