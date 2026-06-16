@@ -399,6 +399,8 @@ When `.rafter.yml` `ignore:` rules (or `.rafterignore`) hide one or more finding
 
 Exit code is unaffected by suppression — exit `1` is returned only when at least one *non-suppressed* finding remains.
 
+Remote `rafter run` emits the same suppression data as a separate `suppressed.json` artifact (alongside `findings.json`, which is unaffected), using this identical per-entry shape; its `source` is `".rafter/config.yml"` (the backend's config filename). So a finding hidden by an `ignore` rule is recoverable whether the scan ran locally or remotely.
+
 ### rafter agent exec COMMAND [OPTIONS]
 
 Execute shell command with risk assessment and approval workflow.
