@@ -46,9 +46,9 @@ describe("MCP Server — real stdio transport: tool listing", () => {
     await client.close();
   });
 
-  it("should register exactly 6 tools over stdio", async () => {
+  it("should register exactly 7 tools over stdio", async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(7);
   });
 
   it("tool names match expected set", async () => {
@@ -61,6 +61,7 @@ describe("MCP Server — real stdio transport: tool listing", () => {
       "list_docs",
       "read_audit_log",
       "scan_secrets",
+      "suppress_finding",
     ]);
   });
 
@@ -377,7 +378,7 @@ describe("MCP Server — real stdio transport: lifecycle", () => {
     const { client } = await createConnectedClient();
     // Verify we can list tools (connection works)
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(7);
     await client.close();
   });
 
@@ -395,7 +396,7 @@ describe("MCP Server — real stdio transport: lifecycle", () => {
     for (let i = 0; i < 3; i++) {
       const { client } = await createConnectedClient();
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(6);
+      expect(tools).toHaveLength(7);
       await client.close();
       // Let the subprocess's exit propagate before the next spawn.
       if (i < 2) await new Promise((resolve) => setTimeout(resolve, 200));

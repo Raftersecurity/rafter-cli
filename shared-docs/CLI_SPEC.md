@@ -894,7 +894,7 @@ PostToolUse hook handler. Reads tool output from stdin, redacts any secrets foun
 
 ### rafter mcp serve [OPTIONS]
 
-Start MCP server over stdio transport. Exposes 6 tools and 3 resources.
+Start MCP server over stdio transport. Exposes 7 tools and 3 resources.
 
 - `--transport <type>` — transport type (currently only `stdio`, default: `stdio`)
 
@@ -908,6 +908,7 @@ Start MCP server over stdio transport. Exposes 6 tools and 3 resources.
 | `get_config` | Read active Rafter configuration and policy | none (optional: `key` dot-path) |
 | `list_docs` | List repo-specific security docs declared in `.rafter.yml` (metadata only, no content) | none (optional: `tag`) |
 | `get_doc` | Return the content of a repo-specific security doc by id or tag | `id_or_tag` (string); optional: `refresh` (bool) |
+| `suppress_finding` | Triage a false positive by writing an `ignore` rule into the project `.rafter.yml` | `path` (string); optional: `rules` (string[]), `reason` (string) |
 
 **`scan_secrets` inputs:**
 - `path` (required) — file or directory path to scan
@@ -934,6 +935,13 @@ Start MCP server over stdio transport. Exposes 6 tools and 3 resources.
 **`list_docs` output schema:** array of `{ id, source, source_kind, description, tags, cache_status }` where `source_kind` is `"path"` or `"url"` and `cache_status` is one of `local` (path-backed), `cached`, `not-cached`, `stale`.
 
 **`get_doc` output schema:** array of `{ id, source, source_kind, stale, content }`. Returns multiple entries when `id_or_tag` matches a tag shared by several docs; returns a single entry when it matches an `id` exactly.
+
+**`suppress_finding` inputs:**
+- `path` (required, string) — file path or glob to suppress findings in (e.g. `test/fixtures/**`)
+- `rules` (optional, string[]) — specific rule/pattern names to suppress (e.g. `["AWS Access Key"]`); omit to suppress all rules for the path
+- `reason` (optional, string) — why this is a false positive; persisted with the rule and surfaced in `_suppressed` output
+
+**`suppress_finding` output schema:** `{ ok, file, action, entry, suppression_count }` where `action` is `"created"` (new `.rafter.yml` written), `"appended"` (rule added to an existing file), or `"updated"` (an existing rule with the same path+rules scope had its reason refreshed). `entry` is the persisted ignore rule `{ paths, rules?, reason? }`. The tool resolves the existing policy file via the loader's precedence; if none exists it creates a canonical `.rafter.yml` at the git root. It never appends a duplicate rule for the same path+rules scope.
 
 #### MCP Resources
 
