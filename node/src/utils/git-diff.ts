@@ -50,7 +50,11 @@ export function parseUnifiedDiffAddedLines(patch: string): AddedDiffLine[] {
       continue;
     }
 
-    if (rawLine.startsWith("+++ ")) {
+    // `+++ `/`--- ` are file headers ONLY in the file-header region (before the
+    // first `@@`, where newLine is still 0). Inside a hunk body (newLine > 0) a
+    // line like `++ x` serializes as `+++ x` and is ADDED CONTENT, not a header
+    // — guarding on newLine keeps it from corrupting currentFile.
+    if (newLine <= 0 && rawLine.startsWith("+++ ")) {
       const pathPart = rawLine.slice(4).trim();
       if (pathPart === "/dev/null") {
         currentFile = null;
@@ -61,7 +65,7 @@ export function parseUnifiedDiffAddedLines(patch: string): AddedDiffLine[] {
       continue;
     }
 
-    if (rawLine.startsWith("--- ")) {
+    if (newLine <= 0 && rawLine.startsWith("--- ")) {
       continue;
     }
 
@@ -73,7 +77,10 @@ export function parseUnifiedDiffAddedLines(patch: string): AddedDiffLine[] {
 
     if (!currentFile || newLine <= 0) continue;
 
-    if (rawLine.startsWith("+") && !rawLine.startsWith("+++")) {
+    // Any '+' line here is added content (real headers were consumed above
+    // while newLine <= 0). Do NOT exclude '+++...': an added line whose content
+    // starts with '++' would otherwise be dropped, missing a secret.
+    if (rawLine.startsWith("+")) {
       results.push({
         file: currentFile,
         line: newLine,
