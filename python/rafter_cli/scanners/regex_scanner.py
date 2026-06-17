@@ -85,6 +85,20 @@ class RegexScanner:
     def scan_text(self, text: str) -> list[PatternMatch]:
         return self._engine.scan(text)
 
+    def scan_line(self, text: str, line_number: int) -> list[PatternMatch]:
+        """Scan a single line at a known file line number (git diff + side)."""
+        return [
+            PatternMatch(
+                pattern=m.pattern,
+                match=m.match,
+                line=line_number,
+                column=m.column,
+                redacted=m.redacted,
+                engines=m.engines,
+            )
+            for m in self._engine.scan_with_position(text)
+        ]
+
     def redact(self, text: str) -> str:
         return self._engine.redact_text(text)
 

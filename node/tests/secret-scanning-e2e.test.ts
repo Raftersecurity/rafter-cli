@@ -526,6 +526,27 @@ describe("E2E: git --diff scanning", () => {
     );
     expect(r.exitCode).toBe(0);
   });
+
+  it("does not re-flag pre-existing secrets unless they appear as + lines", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "config.ts"),
+      "const old = 'AKIAIOSFODNN7EXAMPLE';\n",
+    );
+    git("add config.ts");
+    git('commit -m "config with secret"');
+
+    const ref = git("rev-parse HEAD");
+
+    fs.appendFileSync(path.join(tmpDir, "config.ts"), "export const clean = true;\n");
+    git("add config.ts");
+    git('commit -m "append clean line"');
+
+    const r = rafter(
+      ["scan", "local", tmpDir, "--diff", ref, "--engine", "patterns", "--quiet"],
+      { cwd: tmpDir },
+    );
+    expect(r.exitCode).toBe(0);
+  });
 });
 
 // ── CLI JSON output structure ───────────────────────────────────────

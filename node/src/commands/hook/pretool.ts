@@ -6,6 +6,8 @@ import { ConfigManager } from "../../core/config-manager.js";
 import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
 import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
+import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
+import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
 import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
 import fs from "fs";
@@ -318,25 +320,21 @@ export function scanStagedFiles(cwd: string = process.cwd()): StagedScanResult {
   try {
     const repoRoot = execSync("git rev-parse --show-toplevel", gitOpts).trim() || cwd;
 
-    const stagedOutput = execSync(
-      "git diff --cached --name-only --diff-filter=ACM",
+    const patch = execSync(
+      "git diff -U0 --no-color --cached --diff-filter=ACM",
       gitOpts,
     ).trim();
-    if (!stagedOutput) {
+    if (!patch) {
       return { ...empty, repoRoot };
     }
 
-    const stagedFiles = stagedOutput.split("\n").filter((f) => f.trim());
-    const { scanCfg, suppressions } = loadScanConfig(cwd);
-    const scanner = new RegexScanner(scanCfg?.customPatterns);
-
-    const raw: ScanResult[] = [];
-    for (const file of stagedFiles) {
-      const filePath = path.resolve(repoRoot, file);
-      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) continue;
-      const r = scanner.scanFile(filePath);
-      if (r.matches.length > 0) raw.push(r);
+    const addedLines = parseUnifiedDiffAddedLines(patch);
+    if (addedLines.length === 0) {
+      return { ...empty, repoRoot };
     }
+
+    const { scanCfg, suppressions } = loadScanConfig(cwd);
+    const raw = scanAddedDiffLines(addedLines, repoRoot, scanCfg?.customPatterns);
 
     const afterExclude = applyExcludePaths(raw, scanCfg?.excludePaths, repoRoot);
     const { results: kept } = applySuppressions(afterExclude, suppressions);
