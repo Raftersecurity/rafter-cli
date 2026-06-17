@@ -399,6 +399,8 @@ When `.rafter.yml` `ignore:` rules (or `.rafterignore`) hide one or more finding
 
 Exit code is unaffected by suppression — exit `1` is returned only when at least one *non-suppressed* finding remains.
 
+Remote `rafter run` emits the same suppression data as a separate `suppressed.json` artifact (alongside `findings.json`, which is unaffected), using this identical per-entry shape; its `source` is `".rafter/config.yml"` (the backend's config filename). So a finding hidden by an `ignore` rule is recoverable whether the scan ran locally or remotely.
+
 ### rafter agent exec COMMAND [OPTIONS]
 
 Execute shell command with risk assessment and approval workflow.
@@ -1130,7 +1132,19 @@ Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not a
 
 **URL caching:** URL-backed docs are cached at `~/.rafter/docs-cache/` keyed by `sha256(url)[:32]`. Default TTL is 86400 seconds. On network failure, a stale cached copy is served and a warning is printed. `docs list` never fetches; `docs show` fetches on miss/expired or when `--refresh` is set.
 
-**Ignore rules (`ignore:`):** suppress findings without removing them from the audit trail. Each entry needs `paths:` (a non-empty list of globs); `rules:` is optional (omitting it suppresses every rule on the matched paths) and `reason:` is surfaced verbatim in the JSON `_suppressed` output. Path globs are matched anywhere along absolute scan paths — `tests/fixtures/**` matches `/abs/project/tests/fixtures/foo`. Rule-name matching is case-insensitive; non-existent rule names are harmless (they just never match). First entry that matches wins, so put more specific entries earlier.
+**Ignore rules (`ignore:`):** suppress findings without removing them from the audit trail. Each entry needs `paths:` (a non-empty list of globs); `rules:` is optional (omitting it suppresses every rule on the matched paths) and `reason:` is surfaced verbatim in the JSON `_suppressed` output. First entry that matches wins, so put more specific entries earlier.
+
+These rules are honored identically by the **local** CLI engines (Node and Python) and by the **remote `rafter run`** backend — they read the same `.rafter.yml` (and `.rafter/config.yml`) `ignore:` block. The matching contract is fixed and the same on every engine:
+
+*Path globs (`paths:`)* — gitignore/minimatch semantics:
+- A bare pattern with no `/` (e.g. `*.env`) matches against the file **basename** anywhere in the tree (so it matches `config/.env`).
+- `*` matches any run of characters **within a single path segment** — it does **not** cross `/`. So `src/*.json` matches `src/a.json` but **not** `src/sub/a.json`.
+- `**` matches across segments (it **does** cross `/`). Use it for recursive matches: `tests/fixtures/**`.
+- `?` matches exactly one non-`/` character.
+- A relative glob (no leading `/`, not starting with `**`) is auto-anchored to match **anywhere** along the absolute scan path, so `tests/fixtures/**` matches `/abs/project/tests/fixtures/foo`.
+- Path matching is case-sensitive.
+
+*Rule selectors (`rules:`)* — each entry matches a finding when it equals (case-insensitively) **either** the finding's rule **name/title** (e.g. `AWS Access Key`) **or** its **rule id** (e.g. `R-6D5E2` / `rules.autogrep.json.vuln-…`). Use the name for local pattern findings and the id for remote SAST/SCA findings. Non-existent selectors are harmless (they just never match).
 
 ---
 

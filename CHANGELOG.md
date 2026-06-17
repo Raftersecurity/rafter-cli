@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.8.7] - 2026-06-16
+### Changed
+- **Pinned the `.rafter.yml` `ignore` matching contract in `CLI_SPEC.md`** (sable-eltr). The glob semantics are now specified exactly — `*` stays within a path segment, `**` crosses segments, bare patterns match the basename, relative globs auto-anchor anywhere — replacing the vague (and slightly inaccurate) "minimatch (Node) / fnmatch (Python)" wording. `rules` selectors now documented as matching a finding's **rule name or rule id** (case-insensitively). These semantics are honored identically by the local CLI engines and the remote `rafter run` backend, which adopted the CLI's matcher (rafter-backend ra-a8j, in response to rafter-cli#166) — so a suppression that works locally now works remotely. `suppress_finding` tool descriptions updated to match.
+
+
 
 ### Added
 - **MCP `suppress_finding` tool** (sable-bjl). Agents and MCP clients can now triage a false positive directly through the MCP instead of hand-editing config. The tool persists an `ignore` rule (path glob, optional rule names, reason) into the project `.rafter.yml`, mirroring the loader's resolution precedence and creating a canonical dotfile at the git root when none exists. The merge is idempotent — re-suppressing the same path+rules scope updates the reason in place (order-insensitive) rather than appending a duplicate. Suppressed findings still surface under `_suppressed` in scan output, so the decision stays reviewable and version-controlled. This is the 7th MCP tool; Node + Python parity, with unit tests for the writer (create/append/update-in-place/dedup/empty-guard) and tool-registration assertions in both suites. Security-reviewed (CWE Top 25): the write target derives only from policy-file resolution, never from user input (no path traversal); YAML is read via safe loaders and written from structured objects (no injection); existing config is preserved.
