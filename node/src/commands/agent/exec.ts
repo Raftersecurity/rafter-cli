@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { CommandInterceptor } from "../../core/command-interceptor.js";
-import { RegexScanner } from "../../scanners/regex-scanner.js";
+import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
+import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
 import { execSync } from "child_process";
 import readline from "readline";
 import { fmt } from "../../utils/formatter.js";
@@ -91,29 +92,32 @@ function isGitCommand(command: string): boolean {
 
 async function scanStagedFiles(): Promise<{ secretsFound: boolean; count: number; files: number }> {
   try {
-    // Get staged files
-    const stagedFiles = execSync("git diff --cached --name-only", {
+    const patch = execSync("git diff -U0 --no-color --cached --diff-filter=ACM", {
       encoding: "utf-8",
-      stdio: ["pipe", "pipe", "ignore"]
-    })
-      .trim()
-      .split("\n")
-      .filter(f => f);
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
 
-    if (stagedFiles.length === 0) {
+    if (!patch) {
       return { secretsFound: false, count: 0, files: 0 };
     }
 
-    // Scan staged files
-    const scanner = new RegexScanner();
-    const results = scanner.scanFiles(stagedFiles);
+    const repoRoot = execSync("git rev-parse --show-toplevel", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
 
+    const addedLines = parseUnifiedDiffAddedLines(patch);
+    if (addedLines.length === 0) {
+      return { secretsFound: false, count: 0, files: 0 };
+    }
+
+    const results = scanAddedDiffLines(addedLines, repoRoot);
     const totalMatches = results.reduce((sum, r) => sum + r.matches.length, 0);
 
     return {
       secretsFound: results.length > 0,
       count: totalMatches,
-      files: results.length
+      files: results.length,
     };
   } catch {
     // If git command fails (not in repo, etc.), skip scanning
