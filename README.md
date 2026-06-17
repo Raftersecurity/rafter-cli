@@ -306,6 +306,8 @@ rafter skill review --installed --summary     # terse table across all agents
 
 **Deep analysis** (via OpenClaw, if installed): 12-dimension security review covering trust/attribution, network security, command execution, file system access, credential handling, input validation, data exfiltration, obfuscation, scope alignment, error handling, dependencies, and environment manipulation. Without OpenClaw, generates an LLM-ready review prompt you can paste into any model.
 
+**Optional `--deep` engine** (`audit-skill --deep`): couples Cisco AI Defense's `skill-scanner` as an opt-in deeper pass for prompt injection, taint/dataflow, YARA and `.pyc` integrity — the blind spots the regex quick scan misses. It runs **offline analyzers only** (no LLM/cloud/network) and is **not bundled**: install the engine in an isolated environment with `rafter agent update-skill-scanner` (or `rafter agent init --with-skill-scanner`). The zero-dependency quick scan stays the default — this couples, it does not replace.
+
 ### Audit Log
 
 Every security-relevant event is logged to `~/.rafter/audit.jsonl` in JSON-lines format. Each entry carries a `prevHash` forming a SHA-256 chain, plus the `cwd` and enclosing `gitRepo` where the event was recorded — so tampering, truncation, and out-of-context replays are all detectable.

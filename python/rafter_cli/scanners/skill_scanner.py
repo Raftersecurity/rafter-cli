@@ -21,9 +21,17 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# PyPI package providing the external `skill-scanner` CLI, and the version we
+# pin for reproducibility. skill-scanner's JSON shape is stable but not a
+# documented contract, so the managed installer pins this exact version (mirrors
+# BETTERLEAKS_VERSION). Bump deliberately after re-validating the JSON mapping.
+SKILL_SCANNER_PACKAGE = "cisco-ai-skill-scanner"
+SKILL_SCANNER_VERSION = "2.0.11"
 
 # skill-scanner severity (UPPERCASE) -> our tier (lowercase).
 # Our tiers: critical / high / medium / low. skill-scanner also emits INFO,
@@ -43,9 +51,9 @@ _FINDING_SEVERITIES = frozenset({"critical", "high", "medium"})
 
 INSTALL_HINT = (
     "skill-scanner not found. The --deep engine requires Cisco AI Defense's "
-    "skill-scanner. Install it with:\n"
-    "    uv pip install cisco-ai-skill-scanner\n"
-    "  (or: pip install --user cisco-ai-skill-scanner)\n"
+    "skill-scanner. Install it with the managed installer:\n"
+    "    rafter agent update-skill-scanner\n"
+    "  (or manually: uv tool install cisco-ai-skill-scanner)\n"
     "Then re-run with --deep."
 )
 
@@ -227,3 +235,97 @@ class SkillScanner:
             analyzers_used=list(parsed.get("analyzers_used") or []),
             raw=parsed,
         )
+
+
+@dataclass
+class InstallResult:
+    ok: bool
+    message: str
+    via: str = ""  # "uv" | "pip" | ""
+
+
+class SkillScannerInstaller:
+    """Managed installer for the optional `skill-scanner` deep engine.
+
+    skill-scanner is a HEAVY PyPI package (it pulls litellm, fastapi, yara-x,
+    tokenizers, …), so — unlike a hard dependency — we install it in an
+    **isolated** environment that cannot perturb Rafter's own dependency tree:
+
+    1. ``uv tool install cisco-ai-skill-scanner==<version>`` (preferred): uv
+       builds a dedicated venv and exposes a ``skill-scanner`` launcher on PATH.
+    2. Fallback ``python -m pip install --user cisco-ai-skill-scanner==<version>``
+       when uv is absent.
+
+    Security posture (mirrors the betterleaks installer's intent):
+    - **Pinned version** for reproducibility (``SKILL_SCANNER_VERSION``).
+    - **List-form subprocess**, never ``shell=True`` — no command injection.
+    - No elevated privileges; user-scoped install only.
+    - Integrity relies on TLS-to-PyPI + the version pin. (Unlike the betterleaks
+      single-binary download we cannot pin a SHA256 over the whole transitive
+      tree without a lockfile; this is a documented limitation, not a regression.)
+
+    This only *installs* the engine. It does not change the offline-only
+    invocation contract enforced by ``SkillScanner.build_argv``.
+    """
+
+    @staticmethod
+    def uv_path() -> str | None:
+        return shutil.which("uv")
+
+    @staticmethod
+    def build_install_argv(version: str, *, uv: str | None) -> list[str]:
+        """Construct the (list-form) install argv. Version is pinned with ``==``.
+
+        ``version`` must be a plain version string; we never interpolate it into
+        a shell, and the ``==`` pin prevents it from being read as extra args.
+        """
+        spec = f"{SKILL_SCANNER_PACKAGE}=={version}"
+        if uv:
+            # --force so an existing managed install is replaced (update semantics).
+            return [uv, "tool", "install", "--force", spec]
+        # Fallback: user-site pip install via the running interpreter.
+        py = sys.executable or "python3"
+        return [py, "-m", "pip", "install", "--user", "--upgrade", spec]
+
+    def install(
+        self,
+        version: str = SKILL_SCANNER_VERSION,
+        on_progress=None,
+    ) -> InstallResult:
+        uv = self.uv_path()
+        argv = self.build_install_argv(version, uv=uv)
+        via = "uv" if uv else "pip"
+        if on_progress:
+            on_progress(f"Installing {SKILL_SCANNER_PACKAGE}=={version} via {via}…")
+        try:
+            result = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=900,  # heavy transitive tree; allow generous build time
+            )
+        except subprocess.TimeoutExpired:
+            return InstallResult(False, "skill-scanner install timed out", via)
+        except (OSError, FileNotFoundError) as exc:
+            return InstallResult(False, f"install invocation failed: {exc}", via)
+
+        if result.returncode != 0:
+            tail = (result.stderr or result.stdout or "").strip()[-800:]
+            return InstallResult(
+                False,
+                f"installer exited {result.returncode}: {tail or '(no output)'}",
+                via,
+            )
+
+        # Verify the launcher is now reachable and runnable.
+        path = shutil.which("skill-scanner")
+        if not path:
+            return InstallResult(
+                False,
+                "install reported success but `skill-scanner` is not on PATH. "
+                "If you used the pip fallback, ensure your user-site bin "
+                "directory is on PATH.",
+                via,
+            )
+        return InstallResult(True, path, via)
+

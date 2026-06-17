@@ -596,11 +596,28 @@ Note the looser gate vs. the `PATH_OR_URL` mode: `--installed` tolerates `medium
 
 **Deprecated** — use `rafter skill review <path-or-url>` instead. Still functional; emits a deprecation warning to stderr.
 
-- `SKILL_PATH` — path to skill file (.md)
+- `SKILL_PATH` — path to a skill file (`.md`) **or** a skill directory. When a directory is given, the quick scan reads its `SKILL.md`; the deep engine (`--deep`) scans the whole directory (where it can also see bundled scripts / `.pyc`, its most thorough mode).
 - `--skip-openclaw` — skip OpenClaw integration, show manual review prompt
 - `--json` — output as JSON
+- `--deep` — run the optional **DEEP engine** (Cisco AI Defense `skill-scanner`) in addition to the quick scan. **Offline analyzers only** — no LLM/cloud/network calls. Requires `skill-scanner` on `PATH` (see `update-skill-scanner`); if missing, prints an install hint and exits **2** (no crash).
+- `--engine <name>` — deep-engine selector. `skill-scanner` is equivalent to `--deep`. Any other value exits **2**.
 
 Quick scan: secrets, URLs, high-risk commands. Deep analysis (OpenClaw): 12-dimension review.
+
+**Deep engine (`--deep`) — couple, not swap.** The zero-dependency quick scan stays the default; `--deep` adds an opt-in deeper pass for prompt injection, taint/dataflow, YARA and `.pyc` integrity — the blind spots the regex quick scan cannot see. Both runtimes shell out to the **same external `skill-scanner` CLI** (mirrors the betterleaks pattern) and parse its JSON. **Offline guarantee:** the invocation is `skill-scanner scan <dir> --format json --fail-on-severity medium [--skill-file <name> --lenient]` and **never** passes `--use-llm`, `--use-virustotal`, `--use-aidefense`, or `--use-behavioral` — enforced by a test in both suites, so a regression that enables a network analyzer fails CI. (skill-scanner exits 0 even on CRITICAL findings by default; rafter relies on the parsed JSON for truth and uses `--fail-on-severity` only as corroboration — do not trust the bare exit code.)
+
+**`deepScan` object** — present in `--json` output only when `--deep`/`--engine` is used:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `engine` | string | always `"skill-scanner"` |
+| `maxSeverity` | string\|null | highest finding severity in our tiers (`critical`/`high`/`medium`/`low`) or `null` |
+| `analyzersUsed` | string[] | offline analyzers that ran (e.g. `["static_analyzer","bytecode","pipeline"]`) |
+| `findings` | array | normalized findings (below) |
+
+Each finding: `ruleId` (string), `severity` (our tier), `category` (string, e.g. `prompt_injection`/`data_exfiltration`), `title`, `description`, `file` (string\|null), `line` (int\|null), `snippet` (string\|null), `analyzer` (string).
+
+**Severity mapping:** skill-scanner `CRITICAL/HIGH/MEDIUM/LOW` → same tier; `INFO` → `low`. Only `critical`/`high`/`medium` are **actionable** and flip the exit code to **1**; `low`/INFO (e.g. missing-license policy hints) are reported but do not fail the audit. Exit codes: `0` no actionable findings, `1` actionable findings (quick or deep), `2` path-not-found / unknown engine / deep requested but tool missing.
 
 ### rafter agent audit [OPTIONS]
 
@@ -842,6 +859,14 @@ under `rafter hook pretool`). Each `source` is `default`, `global-config`, or `e
 Update (or reinstall) the managed betterleaks binary.
 
 - `--version <version>` — specific betterleaks version to install (default: current bundled version)
+
+### rafter agent update-skill-scanner [OPTIONS]
+
+Install or update the optional **`skill-scanner` deep engine** used by `audit-skill --deep`. skill-scanner is a heavy third-party PyPI package (`cisco-ai-skill-scanner`); it is **not bundled** with Rafter and is only invoked when you pass `--deep`. The installer is isolated: it runs `uv tool install cisco-ai-skill-scanner==<version>` (preferred) or falls back to `python3 -m pip install --user cisco-ai-skill-scanner==<version>`, with a **pinned version** and a **list-form subprocess** (never a shell). It does not change the offline-only invocation contract above. Also available as `rafter agent init --with-skill-scanner` (opt-in only — deliberately **not** part of `--all`).
+
+- `--version <version>` — specific skill-scanner version to install (default: pinned version)
+
+Exit codes: `0` installed + `skill-scanner` reachable on `PATH`; `1` install failed or launcher not on `PATH` afterward.
 
 ### rafter agent baseline SUBCOMMAND
 

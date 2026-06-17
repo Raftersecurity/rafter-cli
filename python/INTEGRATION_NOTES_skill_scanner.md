@@ -1,10 +1,19 @@
-# Integration Notes — skill-scanner DEEP engine (PoC, bead sable-7g7)
+# Integration Notes — skill-scanner DEEP engine (bead sable-7g7)
 
-**Status:** Phase-1 proof-of-concept. Python side only. On a worktree branch,
-**not merged**. Decision is **COUPLE, not swap**: our zero-dependency
-deterministic quick scan stays the default for `rafter audit-skill`; `--deep`
-(alias `--engine skill-scanner`) adds an opt-in deeper pass that runs
-**offline analyzers only**.
+**Status:** Shipping. **Node + Python parity** both implemented (both runtimes
+shell out to the same external `skill-scanner` CLI). Decision is **COUPLE, not
+swap**: the zero-dependency deterministic quick scan stays the default for
+`rafter agent audit-skill`; `--deep` (alias `--engine skill-scanner`) adds an
+opt-in deeper pass that runs **offline analyzers only**. The engine is **not
+bundled** — installed on demand by the managed installer
+(`rafter agent update-skill-scanner` / `agent init --with-skill-scanner`),
+which does an isolated, version-pinned `uv tool install` (pip `--user`
+fallback). `audit-skill` accepts a skill **file or directory** (the deep engine
+is most thorough on a directory).
+
+Resolved design decisions (Rome): (1) **Node parity then merge both** — done;
+(2) **directory target + documented** — done; (3) **installer hook now** —
+done (`update-skill-scanner` + `--with-skill-scanner`, pinned `SKILL_SCANNER_VERSION`).
 
 Observed tool: **`skill-scanner` 2.0.11**, pip package
 `cisco-ai-skill-scanner`, Apache-2.0, Python 3.10+.

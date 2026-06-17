@@ -251,6 +251,7 @@ def _print_dry_run_plan(
     want_aider: bool,
     want_hermes: bool,
     want_betterleaks: bool,
+    want_skill_scanner: bool,
     risk_level: str,
 ) -> None:
     """Print every file path the install would touch — without writing anything (rf-hrtd).
@@ -294,6 +295,11 @@ def _print_dry_run_plan(
         print()
         print("Betterleaks (--with-betterleaks / --all):")
         D(home / ".rafter" / "bin" / "betterleaks", "binary, ~12MB from GitHub releases")
+
+    if want_skill_scanner:
+        print()
+        print("skill-scanner deep engine (--with-skill-scanner):")
+        D(Path("skill-scanner"), "heavy PyPI package, isolated install via uv tool / pip --user")
 
     if want_claude_code:
         print()
@@ -1036,6 +1042,7 @@ def _install_hermes_mcp(root: Path) -> bool:
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
     with_betterleaks: bool = typer.Option(False, "--with-betterleaks", help="Download and install Betterleaks binary"),
+    with_skill_scanner: bool = typer.Option(False, "--with-skill-scanner", help="Install the optional skill-scanner deep engine (heavy; audit-skill --deep)"),
     with_openclaw: bool = typer.Option(False, "--with-openclaw", help="Install OpenClaw integration"),
     with_claude_code: bool = typer.Option(False, "--with-claude-code", help="Install Claude Code integration"),
     with_codex: bool = typer.Option(False, "--with-codex", help="Install Codex CLI integration"),
@@ -1109,6 +1116,8 @@ def init(
     # established. Excluded from --all in --local for the same reason (sable-gyw).
     want_hermes = with_hermes or (all_integrations and not local)
     want_betterleaks = with_betterleaks or (all_integrations and not local)
+    # skill-scanner is heavy and opt-in only — deliberately NOT folded into --all.
+    want_skill_scanner = with_skill_scanner
 
     # Show detected environments
     detected = []
@@ -1175,6 +1184,7 @@ def init(
             want_aider=want_aider and (has_aider or local),
             want_hermes=want_hermes and has_hermes,
             want_betterleaks=want_betterleaks,
+            want_skill_scanner=want_skill_scanner,
             risk_level=risk_level,
         )
         return
@@ -1227,6 +1237,29 @@ def init(
                 rprint(fmt.info(
                     "To fix: install betterleaks (https://github.com/betterleaks/betterleaks/releases) "
                     "and ensure it is on PATH, then re-run 'rafter agent init'."
+                ))
+
+    if want_skill_scanner:
+        _ss_on_path = None if update else shutil.which("skill-scanner")
+        if _ss_on_path:
+            rprint(fmt.success(f"skill-scanner available on PATH ({_ss_on_path})"))
+        else:
+            from ..scanners.skill_scanner import SkillScannerInstaller
+
+            rprint(fmt.info(
+                "Installing optional skill-scanner deep engine (heavy "
+                "third-party package; isolated install)..."
+            ))
+            _result = SkillScannerInstaller().install(on_progress=typer.echo)
+            if _result.ok:
+                rprint(fmt.success(
+                    f"skill-scanner installed (via {_result.via}): {_result.message}"
+                ))
+            else:
+                rprint(fmt.warning(f"skill-scanner install failed: {_result.message}"))
+                rprint(fmt.info(
+                    "To fix: run 'rafter agent update-skill-scanner' or install "
+                    "manually with 'uv tool install cisco-ai-skill-scanner'."
                 ))
 
     # Install OpenClaw skill if opted in
@@ -3048,14 +3081,27 @@ def audit_skill(
             "[deprecated] `rafter agent audit-skill` is deprecated; use `rafter skill review <path-or-url>` instead.",
             file=sys.stderr,
         )
-    # Validate skill file exists
+    # Validate target exists. Accept either a skill *file* (.md) or a skill
+    # *directory*. The deep engine (--deep) is most thorough on a directory,
+    # where it can also see bundled scripts / .pyc; the quick scan reads the
+    # directory's SKILL.md (or the file itself).
     resolved = Path(skill_path).resolve()
     if not resolved.exists():
-        print(f"Error: Skill file not found: {skill_path}", file=sys.stderr)
+        print(f"Error: Skill path not found: {skill_path}", file=sys.stderr)
         raise typer.Exit(code=2)
 
-    skill_content = resolved.read_text(encoding="utf-8")
-    skill_name = resolved.name
+    if resolved.is_dir():
+        skill_md = resolved / "SKILL.md"
+        if skill_md.is_file():
+            skill_content = skill_md.read_text(encoding="utf-8")
+        else:
+            # No SKILL.md to quick-scan; the deep engine can still scan the
+            # directory's contents. Quick scan simply finds nothing.
+            skill_content = ""
+        skill_name = resolved.name
+    else:
+        skill_content = resolved.read_text(encoding="utf-8")
+        skill_name = resolved.name
 
     # Run deterministic analysis
     if not json_output:
@@ -3220,6 +3266,55 @@ def update_betterleaks(
         raise typer.Exit(code=1)
 
 
+@agent_app.command("update-skill-scanner")
+def update_skill_scanner(
+    version: str = typer.Option(
+        None,
+        "--version",
+        help="skill-scanner version to install (default: pinned version)",
+    ),
+):
+    """Install or update the optional `skill-scanner` deep engine (audit-skill --deep).
+
+    Installs Cisco AI Defense's skill-scanner in an isolated environment (uv tool,
+    or pip --user fallback). This is a heavy third-party package and its
+    transitive dependencies; it is NOT bundled with Rafter and is only used when
+    you pass --deep. The deep engine still runs OFFLINE analyzers only.
+    """
+    from ..scanners.skill_scanner import (
+        SkillScannerInstaller,
+        SKILL_SCANNER_VERSION,
+    )
+
+    target_version = version or SKILL_SCANNER_VERSION
+    installer = SkillScannerInstaller()
+
+    existing = shutil.which("skill-scanner")
+    if existing:
+        rprint(fmt.info(f"Current skill-scanner: {existing}"))
+    else:
+        rprint(fmt.info("skill-scanner not currently on PATH"))
+
+    rprint(fmt.warning(
+        "skill-scanner is a heavy third-party package (pulls litellm, fastapi, "
+        "yara-x, …). Installing it in an isolated environment."
+    ))
+    rprint(fmt.info(f"Installing skill-scanner v{target_version}..."))
+    rprint()
+
+    result = installer.install(version=target_version, on_progress=typer.echo)
+    rprint()
+    if not result.ok:
+        rprint(fmt.error(f"Install failed: {result.message}"))
+        rprint(fmt.info(
+            "To fix: install manually with `uv tool install "
+            "cisco-ai-skill-scanner` (or `pip install --user "
+            "cisco-ai-skill-scanner`) and ensure `skill-scanner` is on PATH."
+        ))
+        raise typer.Exit(code=1)
+
+    rprint(fmt.success(f"skill-scanner installed (via {result.via}): {result.message}"))
+    rprint(fmt.info("Run `rafter agent audit-skill <path> --deep` to use it."))
 
 
 # ── agent status ─────────────────────────────────────────────────────────

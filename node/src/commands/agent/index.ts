@@ -10,6 +10,7 @@ import { createInstallHookCommand } from "./install-hook.js";
 import { createVerifyCommand } from "./verify.js";
 import { createStatusCommand } from "./status.js";
 import { createUpdateBetterleaksCommand } from "./update-betterleaks.js";
+import { createUpdateSkillScannerCommand } from "./update-skill-scanner.js";
 import { createBaselineCommand } from "./baseline.js";
 import { createListCommand } from "./list.js";
 import { createEnableCommand } from "./enable.js";
@@ -31,6 +32,7 @@ export function createAgentCommand(): Command {
   agent.addCommand(createVerifyCommand());
   agent.addCommand(createStatusCommand());
   agent.addCommand(createUpdateBetterleaksCommand());
+  agent.addCommand(createUpdateSkillScannerCommand());
   agent.addCommand(createBaselineCommand());
   agent.addCommand(createListCommand());
   agent.addCommand(createEnableCommand());
