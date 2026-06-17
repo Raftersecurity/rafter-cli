@@ -888,6 +888,8 @@ On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secre
 
 **Hook off-switch.** The hook can be disabled at runtime from **trusted sources only** — the `RAFTER_DISABLE_HOOKS` / `RAFTER_DISABLE_SECRET_SCAN` / `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on) and the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default is enabled; a corrupt config or unrecognized value fails safe to enabled. By design this is **never** read from project-local `.rafter.yml`, so a hostile repo cannot ship a config that silently disables a victim's hook. `rafter agent status` reports the effective state and its source. See `shared-docs/CONFIG.md` for the full configuration reference.
 
+**Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (`allow` / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
+
 ### rafter hook posttool [OPTIONS]
 
 PostToolUse hook handler. Reads tool output from stdin, redacts any secrets found, and writes JSON to stdout.

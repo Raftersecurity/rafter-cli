@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -52,6 +53,23 @@ def _format_approval_message(command: str, evaluation) -> str:
 
 _STDIN_TIMEOUT_S = 5
 
+def _stdin_timeout_s() -> float:
+    # Bound the stdin read so a hung/never-closing stdin can't wedge the hook.
+    # Overridable via env (milliseconds, parity with the Node hook) as an
+    # operator safety valve / for tests.
+    raw = os.environ.get("RAFTER_HOOK_STDIN_TIMEOUT_MS")
+    if raw:
+        try:
+            ms = float(raw)
+            # Require finite and positive (parity with the Node `Number.isFinite`
+            # check). `inf`/`nan` must NOT pass — `join(timeout=inf)` would
+            # reintroduce the exact unbounded hang this bound exists to prevent.
+            if math.isfinite(ms) and ms > 0:
+                return ms / 1000.0
+        except ValueError:
+            pass
+    return _STDIN_TIMEOUT_S
+
 def _read_stdin() -> str:
     import threading
     result: list[str] = [""]
@@ -60,9 +78,11 @@ def _read_stdin() -> str:
             result[0] = sys.stdin.read()
         except Exception:
             pass
+    # daemon=True: if stdin never closes, the abandoned reader thread does not
+    # block interpreter exit, so the process exits after the join timeout.
     t = threading.Thread(target=_reader, daemon=True)
     t.start()
-    t.join(timeout=_STDIN_TIMEOUT_S)
+    t.join(timeout=_stdin_timeout_s())
     return result[0]
 
 
