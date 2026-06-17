@@ -385,16 +385,34 @@ export function formatStagedSecretReason(scan: StagedScanResult): string {
   ].join("\n");
 }
 
-const STDIN_TIMEOUT_MS = 5000;
+// Bound the stdin read so a hung/never-closing stdin can't wedge the hook.
+// Overridable via env (milliseconds) as an operator safety valve / for tests.
+function stdinTimeoutMs(): number {
+  const n = Number(process.env.RAFTER_HOOK_STDIN_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 5000;
+}
 
 function readStdin(): Promise<string> {
   return new Promise((resolve) => {
     let data = "";
-    const timeout = setTimeout(() => { resolve(data); }, STDIN_TIMEOUT_MS);
+    const onData = (chunk: string) => { data += chunk; };
+    const finish = () => {
+      clearTimeout(timeout);
+      process.stdin.removeListener("data", onData);
+      process.stdin.removeListener("end", finish);
+      process.stdin.removeListener("error", finish);
+      // A piped stdin with no EOF stays in flowing mode and keeps the Node
+      // event loop alive indefinitely — even after we resolve. Pause it so the
+      // process can exit once the decision is written (was a hard hang on the
+      // timeout path: output emitted at 5s but the process never exited).
+      process.stdin.pause();
+      resolve(data);
+    };
+    const timeout = setTimeout(finish, stdinTimeoutMs());
     process.stdin.setEncoding("utf-8");
-    process.stdin.on("data", (chunk) => { data += chunk; });
-    process.stdin.on("end", () => { clearTimeout(timeout); resolve(data); });
-    process.stdin.on("error", () => { clearTimeout(timeout); resolve(data); });
+    process.stdin.on("data", onData);
+    process.stdin.on("end", finish);
+    process.stdin.on("error", finish);
     process.stdin.resume();
   });
 }
