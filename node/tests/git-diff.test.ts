@@ -155,6 +155,62 @@ describe("parseUnifiedDiffAddedLines", () => {
     const patch = ["+++ b/only-header.ts"].join("\n");
     expect(parseUnifiedDiffAddedLines(patch)).toEqual([]);
   });
+
+  it("captures added content whose text starts with '++' (not a header)", () => {
+    // Regression: an added line like `++counter` serializes as `+++counter` and
+    // `++ spaced` as `+++ spaced` — both must be captured, not dropped/misread
+    // as a header, since a secret could live on such a line.
+    const patch = [
+      "diff --git a/c.ts b/c.ts",
+      "--- a/c.ts",
+      "+++ b/c.ts",
+      "@@ -0,0 +1,2 @@",
+      "+++counter AKIAIOSFODNN7EXAMPLE",
+      "++ spaced AKIAIOSFODNN7EXAMPLE",
+    ].join("\n");
+    expect(parseUnifiedDiffAddedLines(patch)).toEqual([
+      { file: "c.ts", line: 1, text: "++counter AKIAIOSFODNN7EXAMPLE" },
+      { file: "c.ts", line: 2, text: "+ spaced AKIAIOSFODNN7EXAMPLE" },
+    ]);
+  });
+
+  it("handles CRLF line endings", () => {
+    const patch = [
+      "diff --git a/w.ts b/w.ts",
+      "--- a/w.ts",
+      "+++ b/w.ts",
+      "@@ -0,0 +1 @@",
+      "+const k = 'AKIAIOSFODNN7EXAMPLE';",
+    ].join("\r\n");
+    expect(parseUnifiedDiffAddedLines(patch)).toEqual([
+      { file: "w.ts", line: 1, text: "const k = 'AKIAIOSFODNN7EXAMPLE';" },
+    ]);
+  });
+
+  it("ignores a rename with no content change", () => {
+    const patch = [
+      "diff --git a/old.ts b/new.ts",
+      "similarity index 100%",
+      "rename from old.ts",
+      "rename to new.ts",
+    ].join("\n");
+    expect(parseUnifiedDiffAddedLines(patch)).toEqual([]);
+  });
+
+  it("splits only on \\n / \\r\\n, not on bare CR or form-feed (parity)", () => {
+    // A form-feed inside added content must stay on the same line — splitting on
+    // it (like Python's str.splitlines) would drop the secret tail.
+    const patch = [
+      "diff --git a/f.ts b/f.ts",
+      "--- a/f.ts",
+      "+++ b/f.ts",
+      "@@ -0,0 +1 @@",
+      "+SECRET=\fAKIAIOSFODNN7EXAMPLE",
+    ].join("\n");
+    expect(parseUnifiedDiffAddedLines(patch)).toEqual([
+      { file: "f.ts", line: 1, text: "SECRET=\fAKIAIOSFODNN7EXAMPLE" },
+    ]);
+  });
 });
 
 describe("scanAddedDiffLines", () => {

@@ -141,6 +141,66 @@ class TestParseUnifiedDiffAddedLines:
     def test_does_not_treat_file_header_as_content(self):
         assert parse_unified_diff_added_lines("+++ b/only_header.py") == []
 
+    def test_captures_added_content_starting_with_plus(self):
+        # Regression: `++counter` serializes as `+++counter` and `++ spaced` as
+        # `+++ spaced` — both must be captured, not dropped/misread as a header.
+        patch = "\n".join(
+            [
+                "diff --git a/c.py b/c.py",
+                "--- a/c.py",
+                "+++ b/c.py",
+                "@@ -0,0 +1,2 @@",
+                "+++counter AKIAIOSFODNN7EXAMPLE",
+                "++ spaced AKIAIOSFODNN7EXAMPLE",
+            ]
+        )
+        assert parse_unified_diff_added_lines(patch) == [
+            AddedDiffLine(file="c.py", line=1, text="++counter AKIAIOSFODNN7EXAMPLE"),
+            AddedDiffLine(file="c.py", line=2, text="+ spaced AKIAIOSFODNN7EXAMPLE"),
+        ]
+
+    def test_handles_crlf_line_endings(self):
+        patch = "\r\n".join(
+            [
+                "diff --git a/w.py b/w.py",
+                "--- a/w.py",
+                "+++ b/w.py",
+                "@@ -0,0 +1 @@",
+                "+key = 'AKIAIOSFODNN7EXAMPLE'",
+            ]
+        )
+        assert parse_unified_diff_added_lines(patch) == [
+            AddedDiffLine(file="w.py", line=1, text="key = 'AKIAIOSFODNN7EXAMPLE'"),
+        ]
+
+    def test_splits_only_on_newline_not_bare_cr_or_formfeed(self):
+        # Parity with Node: str.splitlines() would over-split on \f/\r/NEL and
+        # drop the secret tail onto a non-'+' token. Must split on \r?\n only.
+        patch = "\n".join(
+            [
+                "diff --git a/f.py b/f.py",
+                "--- a/f.py",
+                "+++ b/f.py",
+                "@@ -0,0 +1 @@",
+                "+SECRET=\x0cAKIAIOSFODNN7EXAMPLE",
+            ]
+        )
+        lines = parse_unified_diff_added_lines(patch)
+        assert lines == [
+            AddedDiffLine(file="f.py", line=1, text="SECRET=\x0cAKIAIOSFODNN7EXAMPLE"),
+        ]
+
+    def test_ignores_rename_with_no_content_change(self):
+        patch = "\n".join(
+            [
+                "diff --git a/old.py b/new.py",
+                "similarity index 100%",
+                "rename from old.py",
+                "rename to new.py",
+            ]
+        )
+        assert parse_unified_diff_added_lines(patch) == []
+
 
 class TestScanAddedDiffLines:
     def test_finds_secret_at_line(self):
