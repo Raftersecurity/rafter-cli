@@ -256,27 +256,23 @@ def _scan_staged_files() -> dict:
         ).stdout.strip() or os.getcwd()
 
         output = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+            ["git", "diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
             capture_output=True, text=True,
-        ).stdout.strip()
-        if not output:
+        ).stdout
+        if not output.strip():
             return {**empty, "repo_root": repo_root}
-        staged = [f for f in output.split("\n") if f.strip()]
 
+        from ..utils.git_diff import parse_unified_diff_added_lines
+        from ..scanners.git_diff_scan import scan_added_diff_lines
         from ..core.custom_patterns import apply_suppressions
         from .agent import _apply_exclude_paths
 
-        scan_cfg, suppressions, custom_patterns = _load_scan_config()
-        scanner = RegexScanner(custom_patterns)
+        added = parse_unified_diff_added_lines(output)
+        if not added:
+            return {**empty, "repo_root": repo_root}
 
-        raw = []
-        for f in staged:
-            resolved = os.path.join(repo_root, f)
-            if not os.path.isfile(resolved):
-                continue
-            r = scanner.scan_file(resolved)
-            if r.matches:
-                raw.append(r)
+        scan_cfg, suppressions, custom_patterns = _load_scan_config()
+        raw = scan_added_diff_lines(added, repo_root, custom_patterns)
 
         exclude = scan_cfg.exclude_paths if scan_cfg else None
         after_exclude = _apply_exclude_paths(raw, exclude, repo_root)

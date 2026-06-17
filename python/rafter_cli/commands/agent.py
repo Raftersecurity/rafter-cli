@@ -1575,6 +1575,76 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
     return run_patterns()
 
 
+def _run_git_added_line_scan(
+    git_args: list[str],
+    git_cwd: str | None,
+    custom_patterns,
+    scan_cfg,
+    baseline_entries: list,
+    suppressions,
+    context_label: str,
+    empty_message: str,
+    *,
+    json_output: bool,
+    quiet: bool,
+    format: str,
+    not_repo_message: str = "Error: Not in a git repository or invalid ref",
+) -> None:
+    """Parse a unified diff for + lines and scan with the patterns engine."""
+    from ..utils.git_diff import parse_unified_diff_added_lines
+    from ..scanners.git_diff_scan import scan_added_diff_lines
+
+    try:
+        patch = subprocess.run(
+            ["git", *git_args],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=git_cwd,
+        ).stdout
+    except subprocess.CalledProcessError:
+        print(not_repo_message, file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    if not patch.strip():
+        if not quiet:
+            rprint(fmt.success(empty_message))
+        raise typer.Exit(code=0)
+
+    added = parse_unified_diff_added_lines(patch)
+    if not added:
+        if not quiet:
+            rprint(fmt.success(empty_message))
+        raise typer.Exit(code=0)
+
+    try:
+        repo_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=git_cwd,
+        ).stdout.strip()
+    except subprocess.CalledProcessError:
+        print(not_repo_message, file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    file_count = len({line.file for line in added})
+    if not quiet:
+        print(
+            f"Scanning {len(added)} added line(s) in {file_count} file(s) ({context_label})...",
+            file=sys.stderr,
+        )
+
+    all_results = scan_added_diff_lines(added, repo_root, custom_patterns)
+    exclude = scan_cfg.exclude_paths if scan_cfg else None
+    all_results = _apply_exclude_paths(all_results, exclude, repo_root)
+    filtered = _apply_baseline(all_results, baseline_entries)
+    _output_scan_results(
+        filtered, json_output, quiet, context_label, format=format, suppressions=suppressions
+    )
+
+
 def _path_matches_exclude_pattern(rel_path: str, pattern: str) -> bool:
     """Mirror of Node ``pathMatchesExcludePattern`` (sable-yz0).
 
@@ -1938,64 +2008,42 @@ def scan(
 
     baseline_entries = _load_baseline_entries() if baseline else []
 
+    resolved_scan_path = os.path.abspath(path)
+    git_cwd = resolved_scan_path if os.path.isdir(resolved_scan_path) else None
+
     # --diff
     if diff:
-        try:
-            diff_output = subprocess.run(
-                ["git", "diff", "--name-only", "--diff-filter=ACM", diff],
-                capture_output=True, text=True, check=True,
-            ).stdout.strip()
-        except subprocess.CalledProcessError:
-            print("Error: Not in a git repository or invalid ref", file=sys.stderr)
-            raise typer.Exit(code=2)
-
-        if not diff_output:
-            if not quiet:
-                rprint(fmt.success(f"No files changed since {diff}"))
-            raise typer.Exit(code=0)
-
-        changed = [f.strip() for f in diff_output.split("\n") if f.strip()]
-        if not quiet:
-            print(f"Scanning {len(changed)} file(s) changed since {diff}...", file=sys.stderr)
-
-        eng = _select_engine(engine, quiet, auto_update_enabled)
-        all_results: list[ScanResult] = []
-        for f in changed:
-            resolved = os.path.abspath(f)
-            if os.path.isfile(resolved):
-                all_results.extend(_scan_file(resolved, eng, custom_patterns))
-        filtered = _apply_baseline(all_results, baseline_entries)
-        _output_scan_results(filtered, json_output, quiet, f"files changed since {diff}", format=format, suppressions=suppressions)
+        _run_git_added_line_scan(
+            ["diff", "-U0", "--no-color", "--diff-filter=ACM", diff],
+            git_cwd,
+            custom_patterns,
+            scan_cfg,
+            baseline_entries,
+            suppressions,
+            f"files changed since {diff}",
+            f"No files changed since {diff}",
+            json_output=json_output,
+            quiet=quiet,
+            format=format,
+        )
         return
 
     # --staged
     if staged:
-        try:
-            staged_output = subprocess.run(
-                ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
-                capture_output=True, text=True, check=True,
-            ).stdout.strip()
-        except subprocess.CalledProcessError:
-            print("Error: Not in a git repository", file=sys.stderr)
-            raise typer.Exit(code=2)
-
-        if not staged_output:
-            if not quiet:
-                rprint(fmt.success("No files staged for commit"))
-            raise typer.Exit(code=0)
-
-        staged_files = [f.strip() for f in staged_output.split("\n") if f.strip()]
-        if not quiet:
-            print(f"Scanning {len(staged_files)} staged file(s)...", file=sys.stderr)
-
-        eng = _select_engine(engine, quiet, auto_update_enabled)
-        all_results = []
-        for f in staged_files:
-            resolved = os.path.abspath(f)
-            if os.path.isfile(resolved):
-                all_results.extend(_scan_file(resolved, eng, custom_patterns))
-        filtered = _apply_baseline(all_results, baseline_entries)
-        _output_scan_results(filtered, json_output, quiet, "staged files", format=format, suppressions=suppressions)
+        _run_git_added_line_scan(
+            ["diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
+            git_cwd,
+            custom_patterns,
+            scan_cfg,
+            baseline_entries,
+            suppressions,
+            "staged files",
+            "No files staged for commit",
+            json_output=json_output,
+            quiet=quiet,
+            format=format,
+            not_repo_message="Error: Not in a git repository",
+        )
         return
 
     # Default: scan path
@@ -2232,17 +2280,26 @@ def exec_cmd(
         interceptor.log_evaluation(evaluation, "blocked")
         raise typer.Exit(code=1)
 
-    # Pre-exec scan for git commands
+    # Pre-exec scan for git commands (+ lines in staged diff only)
     if not skip_scan and command.strip().startswith(("git commit", "git push")):
         try:
-            staged = subprocess.run(
-                ["git", "diff", "--cached", "--name-only"],
-                capture_output=True, text=True,
-            ).stdout.strip().split("\n")
-            staged = [f for f in staged if f]
-            if staged:
-                scanner = RegexScanner()
-                results = scanner.scan_files(staged)
+            from ..utils.git_diff import parse_unified_diff_added_lines
+            from ..scanners.git_diff_scan import scan_added_diff_lines
+
+            patch = subprocess.run(
+                ["git", "diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
+                capture_output=True,
+                text=True,
+            ).stdout
+            if patch.strip():
+                repo_root = subprocess.run(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.strip()
+                added = parse_unified_diff_added_lines(patch)
+                results = scan_added_diff_lines(added, repo_root)
                 total = sum(len(r.matches) for r in results)
                 if results:
                     rprint(f"\n{fmt.warning('Secrets detected in staged files!')}\n")
