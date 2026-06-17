@@ -14,6 +14,7 @@ import { CommandInterceptor } from "../../core/command-interceptor.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { listDocs, resolveDocSelector, fetchDoc } from "../../core/docs-loader.js";
+import { writeSuppression } from "../../core/suppression-writer.js";
 import { createRequire } from "module";
 
 const _require = createRequire(import.meta.url);
@@ -139,6 +140,23 @@ export function createServer(): Server {
           required: ["id_or_tag"],
         },
       },
+      {
+        name: "suppress_finding",
+        description: "Triage a false positive by persisting a suppression rule into the project's .rafter.yml. Use when a scan_secrets finding (or a remote scan finding) is a confirmed false positive — e.g. a test fixture or sample credential. Suppressed findings still surface under '_suppressed' in scan output, so the decision is reviewable and version-controlled. Always include a reason.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            path: { type: "string", description: "File path or glob to suppress findings in (e.g. 'test/fixtures/**')" },
+            rules: {
+              type: "array",
+              items: { type: "string" },
+              description: "Specific rules to suppress, matched case-insensitively against a finding's rule name OR rule id — e.g. 'AWS Access Key' (local pattern name) or 'R-6D5E2' (remote SAST/SCA rule id). Omit to suppress all rules for the path. Honored by both local scans and remote `rafter run`.",
+            },
+            reason: { type: "string", description: "Why this is a false positive — persisted with the rule. Strongly recommended." },
+          },
+          required: ["path"],
+        },
+      },
     ],
   }));
 
@@ -256,6 +274,27 @@ export function createServer(): Server {
           }
         }
         return textResult(results);
+      }
+
+      case "suppress_finding": {
+        const suppressPath = args?.path as string | undefined;
+        if (!suppressPath) return errorResult("path is required");
+        const rules = Array.isArray(args?.rules)
+          ? (args!.rules as unknown[]).map((r) => String(r))
+          : undefined;
+        const reason = args?.reason as string | undefined;
+        try {
+          const result = writeSuppression({ paths: [suppressPath], rules, reason });
+          return textResult({
+            ok: true,
+            file: result.file,
+            action: result.action,
+            entry: result.entry,
+            suppression_count: result.suppressionCount,
+          });
+        } catch (err: any) {
+          return errorResult(`Failed to write suppression: ${err.message || err}`);
+        }
       }
 
       default:

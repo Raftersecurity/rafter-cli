@@ -175,6 +175,18 @@ def handle_get_docs_resource() -> str:
     return json.dumps(handle_list_docs(), indent=2)
 
 
+def handle_suppress_finding(
+    path: str,
+    rules: list[str] | None = None,
+    reason: str | None = None,
+) -> dict:
+    """Persist a false-positive suppression into the project's .rafter.yml."""
+    from ..core.suppression_writer import write_suppression
+
+    result = write_suppression([path], rules=rules, reason=reason)
+    return {"ok": True, **result}
+
+
 # ── MCP server factory ────────────────────────────────────────────────
 
 
@@ -248,6 +260,29 @@ def create_mcp_server():
             refresh: Force re-fetch for URL-backed docs (bypass cache).
         """
         return json.dumps(handle_get_doc(id_or_tag, refresh))
+
+    @mcp.tool()
+    def suppress_finding(
+        path: str,
+        rules: list[str] | None = None,
+        reason: str | None = None,
+    ) -> str:
+        """Triage a false positive by persisting a suppression rule into .rafter.yml.
+
+        Use when a scan_secrets finding (or a remote scan finding) is a confirmed
+        false positive — e.g. a test fixture or sample credential. Suppressed
+        findings still surface under '_suppressed' in scan output, so the decision
+        is reviewable and version-controlled. Always include a reason.
+
+        Args:
+            path: File path or glob to suppress findings in (e.g. 'test/fixtures/**').
+            rules: Specific rules to suppress, matched case-insensitively against a
+                finding's rule name OR rule id — e.g. 'AWS Access Key' (local pattern
+                name) or 'R-6D5E2' (remote SAST/SCA rule id). Omit to suppress all
+                rules for the path. Honored by both local scans and remote `rafter run`.
+            reason: Why this is a false positive — persisted with the rule. Strongly recommended.
+        """
+        return json.dumps(handle_suppress_finding(path, rules, reason))
 
     @mcp.resource("rafter://config")
     def config_resource() -> str:
