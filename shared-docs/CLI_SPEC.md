@@ -429,6 +429,26 @@ Security review of a third-party skill, plugin, or agent extension before instal
 - `--installed` — audit every installed skill across detected agent skill directories instead of a path
 - `--agent <name>` — restrict `--installed` to a single agent (`claude-code`, `codex`, `openclaw`, or `cursor`)
 - `--summary` — print a terse human-readable table instead of JSON (only with `--installed`)
+- `--deep` — also run the optional **DEEP engine** (Cisco AI Defense `skill-scanner`): prompt injection, taint/dataflow, YARA, `.pyc` integrity — the blind spots the deterministic scan can't see. **Offline analyzers only** (no LLM/cloud/network). Applies across all input modes (path / directory / shorthand / `--installed`), scanning each resolved skill on disk. If the engine isn't installed and you're on an interactive TTY, rafter **offers to install it** (isolated, version-pinned); otherwise it prints the install hint and exits **2**. See `rafter agent update-skill-scanner`.
+- `--engine <name>` — deep-engine selector; `skill-scanner` is equivalent to `--deep`. Any other value exits **2**.
+
+#### Deep engine output (`--deep`)
+
+When `--deep` is used, each skill report gains a `deepScan` block (single-skill: top-level; multi-skill / `--installed`: on each per-skill report):
+
+```json
+"deepScan": {
+  "engine": "skill-scanner",
+  "maxSeverity": "critical" | "high" | "medium" | "low" | null,
+  "analyzersUsed": ["static_analyzer", "bytecode", "pipeline"],
+  "findings": [
+    { "ruleId": "...", "severity": "critical|high|medium|low", "category": "prompt_injection",
+      "title": "...", "description": "...", "file": "SKILL.md", "line": 3, "snippet": "...", "analyzer": "static" }
+  ]
+}
+```
+
+Only `critical`/`high`/`medium` deep findings are **actionable** — they escalate the report's `severity`/`worst` and flip the exit code to **1**; `low`/INFO are reported but don't fail the review. The offline guarantee (never `--use-llm`/`--use-virustotal`/`--use-aidefense`/`--use-behavioral`) is identical to `audit-skill --deep` and test-enforced in both runtimes. `rafter agent audit-skill --deep` remains as a deprecated back-compat alias.
 
 #### Persistent shorthand cache
 

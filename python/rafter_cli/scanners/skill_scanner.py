@@ -329,3 +329,59 @@ class SkillScannerInstaller:
             )
         return InstallResult(True, path, via)
 
+
+# Severity tiers, low→high — used to escalate a report's severity by deep findings.
+_TIER_ORDER: tuple[str, ...] = ("clean", "low", "medium", "high", "critical")
+
+
+def deep_severity_tier(result: DeepScanResult) -> str:
+    """Highest **actionable** tier (medium/high/critical) among findings, or
+    'clean'. low/INFO findings never escalate the overall severity / exit code,
+    matching the quick-scan contract."""
+    tier = "clean"
+    for f in result.findings:
+        if f.severity in _FINDING_SEVERITIES and _TIER_ORDER.index(f.severity) > _TIER_ORDER.index(tier):
+            tier = f.severity
+    return tier
+
+
+def deep_actionable_count(result: DeepScanResult) -> int:
+    """Count of actionable (medium+) deep findings."""
+    return sum(1 for f in result.findings if f.severity in _FINDING_SEVERITIES)
+
+
+def ensure_skill_scanner(*, json_out: bool = False) -> "SkillScanner | None":
+    """Resolve a usable SkillScanner for an opt-in --deep run, making it **easy**:
+    if the engine isn't installed and we're on an interactive TTY (and not in
+    --json mode), offer to install it in place. Returns a ready scanner, or None
+    when unavailable and the caller should print the install hint + exit 2."""
+    scanner = SkillScanner()
+    if scanner.is_available():
+        return scanner
+
+    interactive = sys.stdin.isatty() and not json_out
+    if interactive:
+        print("\nThe --deep engine (skill-scanner) is not installed.", file=sys.stderr)
+        # Prompt on stderr to keep stdout clean.
+        print(
+            "  Install it now? (heavy third-party package, isolated via uv/pip) [y/N] ",
+            end="",
+            file=sys.stderr,
+            flush=True,
+        )
+        try:
+            ans = input().strip().lower()
+        except EOFError:
+            ans = ""
+        if ans in ("y", "yes"):
+            result = SkillScannerInstaller().install(
+                on_progress=lambda m: print(f"  {m}", file=sys.stderr)
+            )
+            if result.ok:
+                s2 = SkillScanner()
+                if s2.is_available():
+                    print(f"skill-scanner installed ({result.via}).", file=sys.stderr)
+                    return s2
+            else:
+                print(f"Install failed: {result.message}", file=sys.stderr)
+    return None

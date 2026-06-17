@@ -22,6 +22,7 @@ import { execFile, execSync } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import fs from "fs";
+import { askYesNo } from "../utils/prompt.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -346,4 +347,64 @@ export class SkillScannerInstaller {
       via,
     };
   }
+}
+
+/** Severity tiers, low→high, used to escalate a report's severity by deep
+ * findings. Mirrors the order used by skill review. */
+const _TIER_ORDER = ["clean", "low", "medium", "high", "critical"];
+
+/**
+ * The highest **actionable** tier (medium/high/critical) among a deep result's
+ * findings, or "clean". low/INFO findings are reported but never escalate the
+ * overall severity / exit code — matching the quick-scan contract.
+ */
+export function deepSeverityTier(result: DeepScanResult): string {
+  let tier = "clean";
+  for (const f of result.findings) {
+    if (FINDING_SEVERITIES.has(f.severity) && _TIER_ORDER.indexOf(f.severity) > _TIER_ORDER.indexOf(tier)) {
+      tier = f.severity;
+    }
+  }
+  return tier;
+}
+
+/** Count of actionable (medium+) deep findings. */
+export function deepActionableCount(result: DeepScanResult): number {
+  return result.findings.filter((f) => FINDING_SEVERITIES.has(f.severity)).length;
+}
+
+/**
+ * Resolve a usable SkillScanner for an opt-in --deep run, making it **easy**:
+ * if the engine isn't installed and we're on an interactive TTY (and not in
+ * --json mode), offer to install it in place. Returns a ready scanner, or null
+ * when it's unavailable and the caller should print the install hint + exit 2.
+ */
+export async function ensureSkillScanner(opts: { json?: boolean } = {}): Promise<SkillScanner | null> {
+  let scanner = new SkillScanner();
+  if (scanner.isAvailable()) return scanner;
+
+  const interactive = !!process.stdin.isTTY && !opts.json;
+  if (interactive) {
+    process.stderr.write("\nThe --deep engine (skill-scanner) is not installed.\n");
+    const yes = await askYesNo(
+      "Install it now? (heavy third-party package, isolated via uv/pip)",
+      false,
+    );
+    if (yes) {
+      const result = await new SkillScannerInstaller().install(
+        SKILL_SCANNER_VERSION,
+        (m) => process.stderr.write(`  ${m}\n`),
+      );
+      if (result.ok) {
+        scanner = new SkillScanner();
+        if (scanner.isAvailable()) {
+          process.stderr.write(`skill-scanner installed (${result.via}).\n`);
+          return scanner;
+        }
+      } else {
+        process.stderr.write(`Install failed: ${result.message}\n`);
+      }
+    }
+  }
+  return null;
 }
