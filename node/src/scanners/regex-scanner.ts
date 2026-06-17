@@ -122,6 +122,16 @@ export class RegexScanner {
   }
 
   /**
+   * Scan a single line at a known file line number (git diff + side).
+   */
+  scanLine(text: string, lineNumber: number): PatternMatch[] {
+    return this.engine.scanWithPosition(text).map((m) => ({
+      ...m,
+      line: lineNumber,
+    }));
+  }
+
+  /**
    * Redact secrets from text
    */
   redact(text: string): string {

@@ -297,8 +297,8 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `-q, --quiet` — only output if secrets found
 - `--json` — output as JSON
 - `--format <format>` — output format: `text`, `json`, or `sarif` (default: `text`)
-- `--staged` — scan git staged files only
-- `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
+- `--staged` — scan **added/modified lines only** in the git staged diff (`git diff -U0 --cached`); patterns engine only; reports `file:line` from the post-change side
+- `--diff <ref>` — scan **added/modified lines only** in the unified diff since `<ref>` (`git diff -U0 <ref>`); patterns engine only; pre-existing secrets in touched files are not re-flagged unless their line appears as `+` in the diff
 - `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default). In `auto` mode rafter runs **both** engines when betterleaks is available and unions the findings (deduplicated conservatively by file + line + column + matched text — when the two engines extract a secret slightly differently it is reported once per engine rather than risk collapsing two distinct findings), so a secret one engine misses (e.g. betterleaks 1.1.x does not flag AWS access keys) is still caught by the other. Each finding then carries an `engines` array attributing which engine(s) surfaced it. `auto` degrades to patterns-only when betterleaks is absent or a stale binary can't be refreshed. `--engine betterleaks` / `--engine patterns` stay single-engine and omit the `engines` field.
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits

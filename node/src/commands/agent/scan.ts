@@ -1,5 +1,7 @@
 import { Command } from "commander";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
+import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
+import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
 import { BetterleaksScanner } from "../../scanners/betterleaks.js";
 import { unionScanResults } from "../../scanners/union.js";
 import { BinaryManager, BETTERLEAKS_VERSION } from "../../utils/binary-manager.js";
@@ -420,7 +422,7 @@ function outputScanResults(
 }
 
 /**
- * Scan files changed since a git ref
+ * Scan files changed since a git ref (+ lines only in the unified diff).
  */
 async function scanDiffFiles(
   ref: string,
@@ -430,60 +432,20 @@ async function scanDiffFiles(
   scanPath?: string,
   suppressions: Suppression[] = [],
 ): Promise<void> {
-  const cwd = scanPath && fs.existsSync(scanPath) && fs.statSync(scanPath).isDirectory() ? scanPath : undefined;
-  try {
-    const diffOutput = execFileSync("git", ["diff", "--name-only", "--diff-filter=ACM", ref], {
-      encoding: "utf-8",
-      cwd,
-      stdio: ["pipe", "pipe", "ignore"],
-    }).trim();
-
-    if (!diffOutput) {
-      outputScanResults([], opts, `files changed since ${ref}`, true, suppressions);
-      return;
-    }
-
-    const changedFiles = diffOutput.split("\n").map(f => f.trim()).filter(f => f);
-
-    if (!opts.quiet) {
-      console.error(`Scanning ${changedFiles.length} file(s) changed since ${ref}...`);
-    }
-
-    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      encoding: "utf-8",
-      cwd,
-      stdio: ["pipe", "pipe", "ignore"],
-    }).trim();
-
-    const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
-
-    const allResults: ScanResult[] = [];
-    for (const file of changedFiles) {
-      const filePath = path.resolve(repoRoot, file);
-      if (!fs.existsSync(filePath)) continue;
-      const stats = fs.statSync(filePath);
-      if (!stats.isFile()) continue;
-
-      const results = await scanFile(filePath, engine, scanCfg);
-      allResults.push(...results);
-    }
-
-    // sable-yz0 — honor scan.exclude_paths in --diff mode too (was previously
-    // dropped). Use the repo root as scanRoot so user-relative paths in
-    // .rafter.yml resolve consistently with the directory-scan behavior.
-    const filteredDiff = applyExcludePaths(allResults, scanCfg?.excludePaths, repoRoot);
-    outputScanResults(applyBaseline(filteredDiff, baselineEntries), opts, `files changed since ${ref}`, true, suppressions);
-  } catch (error: any) {
-    if (error.status === 128) {
-      console.error("Error: Not in a git repository or invalid ref");
-      process.exit(2);
-    }
-    throw error;
-  }
+  await runGitAddedLineScan(
+    ["diff", "-U0", "--no-color", "--diff-filter=ACM", ref],
+    opts,
+    scanCfg,
+    baselineEntries,
+    scanPath,
+    suppressions,
+    `files changed since ${ref}`,
+    `No files changed since ${ref}`,
+  );
 }
 
 /**
- * Scan git staged files for secrets
+ * Scan git staged files for secrets (+ lines only in the staged diff).
  */
 async function scanStagedFiles(
   opts: ScanOpts,
@@ -492,23 +454,57 @@ async function scanStagedFiles(
   scanPath?: string,
   suppressions: Suppression[] = [],
 ): Promise<void> {
+  await runGitAddedLineScan(
+    ["diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
+    opts,
+    scanCfg,
+    baselineEntries,
+    scanPath,
+    suppressions,
+    "staged files",
+    "No files staged for commit",
+    { notRepoMessage: "Error: Not in a git repository" },
+  );
+}
+
+/**
+ * Shared handler for --diff / --staged: parse unified diff for + lines, scan
+ * with the patterns engine, then apply exclude_paths / baseline / suppressions.
+ */
+async function runGitAddedLineScan(
+  gitArgs: string[],
+  opts: ScanOpts,
+  scanCfg: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[]; autoUpdateBetterleaks?: boolean } | undefined,
+  baselineEntries: BaselineEntry[],
+  scanPath: string | undefined,
+  suppressions: Suppression[],
+  contextLabel: string,
+  emptyMessage: string,
+  errorOpts?: { notRepoMessage?: string },
+): Promise<void> {
   const cwd = scanPath && fs.existsSync(scanPath) && fs.statSync(scanPath).isDirectory() ? scanPath : undefined;
   try {
-    const stagedFilesOutput = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACM"], {
+    const patch = execFileSync("git", gitArgs, {
       encoding: "utf-8",
       cwd,
-      stdio: ["pipe", "pipe", "ignore"]
-    }).trim();
+      stdio: ["pipe", "pipe", "ignore"],
+    });
 
-    if (!stagedFilesOutput) {
-      outputScanResults([], opts, "staged files", true, suppressions);
+    if (!patch.trim()) {
+      if (!opts.quiet) {
+        console.log(`\n${fmt.success(emptyMessage)}\n`);
+      }
+      outputScanResults([], opts, contextLabel, true, suppressions);
       return;
     }
 
-    const stagedFiles = stagedFilesOutput.split("\n").map(f => f.trim()).filter(f => f);
-
-    if (!opts.quiet) {
-      console.error(`Scanning ${stagedFiles.length} staged file(s)...`);
+    const addedLines = parseUnifiedDiffAddedLines(patch);
+    if (addedLines.length === 0) {
+      if (!opts.quiet) {
+        console.log(`\n${fmt.success(emptyMessage)}\n`);
+      }
+      outputScanResults([], opts, contextLabel, true, suppressions);
+      return;
     }
 
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
@@ -517,25 +513,19 @@ async function scanStagedFiles(
       stdio: ["pipe", "pipe", "ignore"],
     }).trim();
 
-    const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
-
-    const allResults: ScanResult[] = [];
-    for (const file of stagedFiles) {
-      const filePath = path.resolve(repoRoot, file);
-      if (!fs.existsSync(filePath)) continue;
-      const stats = fs.statSync(filePath);
-      if (!stats.isFile()) continue;
-
-      const results = await scanFile(filePath, engine, scanCfg);
-      allResults.push(...results);
+    const fileCount = new Set(addedLines.map((l) => l.file)).size;
+    if (!opts.quiet) {
+      console.error(
+        `Scanning ${addedLines.length} added line(s) in ${fileCount} file(s) (${contextLabel})...`,
+      );
     }
 
-    // sable-yz0 — honor scan.exclude_paths in --staged mode too.
-    const filteredStaged = applyExcludePaths(allResults, scanCfg?.excludePaths, repoRoot);
-    outputScanResults(applyBaseline(filteredStaged, baselineEntries), opts, "staged files", true, suppressions);
+    const allResults = scanAddedDiffLines(addedLines, repoRoot, scanCfg?.customPatterns);
+    const filtered = applyExcludePaths(allResults, scanCfg?.excludePaths, repoRoot);
+    outputScanResults(applyBaseline(filtered, baselineEntries), opts, contextLabel, true, suppressions);
   } catch (error: any) {
     if (error.status === 128) {
-      console.error("Error: Not in a git repository");
+      console.error(errorOpts?.notRepoMessage ?? "Error: Not in a git repository or invalid ref");
       process.exit(2);
     }
     throw error;
