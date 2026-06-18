@@ -329,6 +329,48 @@ class SkillScannerInstaller:
             )
         return InstallResult(True, path, via)
 
+    @staticmethod
+    def build_uninstall_argv(*, uv: str | None) -> list[str]:
+        """The (list-form) uninstall argv. Mirrors install: uv tool, pip fallback."""
+        if uv:
+            return [uv, "tool", "uninstall", SKILL_SCANNER_PACKAGE]
+        py = sys.executable or "python3"
+        return [py, "-m", "pip", "uninstall", "-y", SKILL_SCANNER_PACKAGE]
+
+    def uninstall(self, on_progress=None) -> InstallResult:
+        """Remove the managed skill-scanner. Idempotent: a no-op (success) when
+        it isn't installed. Tries `uv tool uninstall` first (how `install`
+        prefers to set it up), then a `pip uninstall` fallback — because we don't
+        durably record which path installed it."""
+        if not shutil.which("skill-scanner"):
+            return InstallResult(True, "skill-scanner is not installed (nothing to do)", "")
+
+        attempts: list[str] = []
+        uv = self.uv_path()
+        methods: list[tuple[str, list[str]]] = []
+        if uv:
+            methods.append(("uv", self.build_uninstall_argv(uv=uv)))
+        methods.append(("pip", self.build_uninstall_argv(uv=None)))
+        for via, argv in methods:
+            if on_progress:
+                on_progress(f"Removing skill-scanner via {via}…")
+            try:
+                result = subprocess.run(
+                    argv, capture_output=True, text=True, timeout=120
+                )
+                attempts.append(f"{via}:{result.returncode}")
+            except (subprocess.TimeoutExpired, OSError, FileNotFoundError) as exc:
+                attempts.append(f"{via}:err({exc})")
+            if not shutil.which("skill-scanner"):
+                return InstallResult(True, f"removed via {via}", via)
+
+        return InstallResult(
+            False,
+            f"skill-scanner is still on PATH after uninstall attempts ({', '.join(attempts)}). "
+            "It may have been installed by another tool; remove it manually.",
+            "",
+        )
+
 
 # Severity tiers, low→high — used to escalate a report's severity by deep findings.
 _TIER_ORDER: tuple[str, ...] = ("clean", "low", "medium", "high", "critical")

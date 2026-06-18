@@ -20,6 +20,9 @@ from rafter_cli.scanners.skill_scanner import (
     INSTALL_HINT,
     DeepScanResult,
     SkillScanner,
+    SkillScannerInstaller,
+    SKILL_SCANNER_PACKAGE,
+    SKILL_SCANNER_VERSION,
     _SEVERITY_MAP,
 )
 
@@ -73,6 +76,40 @@ class TestOfflineSafeArgv:
         # Still offline.
         for flag in FORBIDDEN_FLAGS:
             assert flag not in argv
+
+
+# ── Installer / uninstaller argv ────────────────────────────────────────
+
+
+class TestInstallerArgv:
+    def test_install_uv_form_is_pinned(self):
+        argv = SkillScannerInstaller.build_install_argv("2.0.11", uv="/usr/bin/uv")
+        assert argv == [
+            "/usr/bin/uv", "tool", "install", "--force",
+            f"{SKILL_SCANNER_PACKAGE}==2.0.11",
+        ]
+
+    def test_install_pip_fallback(self):
+        argv = SkillScannerInstaller.build_install_argv(SKILL_SCANNER_VERSION, uv=None)
+        assert "pip" in argv and "--user" in argv
+        assert argv[-1] == f"{SKILL_SCANNER_PACKAGE}=={SKILL_SCANNER_VERSION}"
+
+    def test_uninstall_uv_form(self):
+        argv = SkillScannerInstaller.build_uninstall_argv(uv="/usr/bin/uv")
+        assert argv == ["/usr/bin/uv", "tool", "uninstall", SKILL_SCANNER_PACKAGE]
+
+    def test_uninstall_pip_fallback(self):
+        argv = SkillScannerInstaller.build_uninstall_argv(uv=None)
+        assert argv[1:] == ["-m", "pip", "uninstall", "-y", SKILL_SCANNER_PACKAGE]
+
+    def test_uninstall_is_idempotent_when_absent(self, monkeypatch):
+        # Force "not installed" → uninstall is a success no-op.
+        import rafter_cli.scanners.skill_scanner as ssmod
+
+        monkeypatch.setattr(ssmod.shutil, "which", lambda _: None)
+        result = SkillScannerInstaller().uninstall()
+        assert result.ok is True
+        assert "not installed" in result.message
 
 
 # ── Severity mapping ────────────────────────────────────────────────────

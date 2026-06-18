@@ -888,6 +888,12 @@ Install or update the optional **`skill-scanner` deep engine** used by `audit-sk
 
 Exit codes: `0` installed + `skill-scanner` reachable on `PATH`; `1` install failed or launcher not on `PATH` afterward.
 
+### rafter agent remove-skill-scanner
+
+Uninstall the optional `skill-scanner` deep engine — the inverse of `update-skill-scanner`. Removes the managed install (`uv tool uninstall`, with a `pip uninstall` fallback, since the install path isn't durably recorded). **Idempotent:** a success no-op when it isn't installed. Your skills and Rafter's own dependencies are untouched.
+
+Exit codes: `0` removed (or already absent); `1` still on `PATH` after uninstall attempts (e.g. installed by another tool — remove manually).
+
 ### rafter agent baseline SUBCOMMAND
 
 Manage the findings baseline (allowlist for known findings). Baseline entries suppress matched findings in `rafter secrets --baseline`.

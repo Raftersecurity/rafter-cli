@@ -210,6 +210,20 @@ describe("SkillScannerInstaller.buildInstall", () => {
   });
 });
 
+describe("SkillScannerInstaller.buildUninstall", () => {
+  it("uses uv tool uninstall when uv is present", () => {
+    const { cmd, argv } = SkillScannerInstaller.buildUninstall("/usr/bin/uv");
+    expect(cmd).toBe("/usr/bin/uv");
+    expect(argv).toEqual(["tool", "uninstall", SKILL_SCANNER_PACKAGE]);
+  });
+
+  it("falls back to pip uninstall -y when uv is absent", () => {
+    const { cmd, argv } = SkillScannerInstaller.buildUninstall(null);
+    expect(cmd).toMatch(/python/);
+    expect(argv).toEqual(["-m", "pip", "uninstall", "-y", SKILL_SCANNER_PACKAGE]);
+  });
+});
+
 // ── CLI integration with the real binary ────────────────────────────────
 
 function writeBenign(d: string) {

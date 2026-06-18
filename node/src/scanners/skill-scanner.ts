@@ -347,6 +347,68 @@ export class SkillScannerInstaller {
       via,
     };
   }
+
+  private static onPath(): string | null {
+    const cmd = process.platform === "win32" ? "where skill-scanner" : "which skill-scanner";
+    try {
+      return execSync(cmd, { timeout: 5000, encoding: "utf-8" }).trim().split("\n")[0].trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The (list-form) uninstall command. Mirrors install: uv tool, pip fallback. */
+  static buildUninstall(uv: string | null): { cmd: string; argv: string[] } {
+    if (uv) {
+      return { cmd: uv, argv: ["tool", "uninstall", SKILL_SCANNER_PACKAGE] };
+    }
+    return {
+      cmd: process.platform === "win32" ? "python" : "python3",
+      argv: ["-m", "pip", "uninstall", "-y", SKILL_SCANNER_PACKAGE],
+    };
+  }
+
+  /**
+   * Remove the managed skill-scanner. Idempotent (a no-op success when not
+   * installed). Tries `uv tool uninstall` first (how install prefers to set it
+   * up), then a `pip uninstall` fallback — we don't durably record which path
+   * installed it.
+   */
+  async uninstall(onProgress?: (msg: string) => void): Promise<InstallResult> {
+    if (!SkillScannerInstaller.onPath()) {
+      return { ok: true, message: "skill-scanner is not installed (nothing to do)", via: "" };
+    }
+    const uv = SkillScannerInstaller.uvPath();
+    const methods: Array<{ via: string; cmd: string; argv: string[] }> = [];
+    if (uv) {
+      const u = SkillScannerInstaller.buildUninstall(uv);
+      methods.push({ via: "uv", cmd: u.cmd, argv: u.argv });
+    }
+    const p = SkillScannerInstaller.buildUninstall(null);
+    methods.push({ via: "pip", cmd: p.cmd, argv: p.argv });
+
+    const attempts: string[] = [];
+    for (const m of methods) {
+      if (onProgress) onProgress(`Removing skill-scanner via ${m.via}…`);
+      try {
+        await execFileAsync(m.cmd, m.argv, { timeout: 120_000, maxBuffer: 32 * 1024 * 1024 });
+        attempts.push(`${m.via}:0`);
+      } catch (e: unknown) {
+        const err = e as { code?: number; message?: string };
+        attempts.push(`${m.via}:${err.code ?? "err"}`);
+      }
+      if (!SkillScannerInstaller.onPath()) {
+        return { ok: true, message: `removed via ${m.via}`, via: m.via };
+      }
+    }
+    return {
+      ok: false,
+      message:
+        `skill-scanner is still on PATH after uninstall attempts (${attempts.join(", ")}). ` +
+        "It may have been installed by another tool; remove it manually.",
+      via: "",
+    };
+  }
 }
 
 /** Severity tiers, low→high, used to escalate a report's severity by deep

@@ -3314,7 +3314,24 @@ def update_skill_scanner(
         raise typer.Exit(code=1)
 
     rprint(fmt.success(f"skill-scanner installed (via {result.via}): {result.message}"))
-    rprint(fmt.info("Run `rafter agent audit-skill <path> --deep` to use it."))
+    rprint(fmt.info("Run `rafter skill review <path> --deep` to use it."))
+
+
+@agent_app.command("remove-skill-scanner")
+def remove_skill_scanner():
+    """Uninstall the optional `skill-scanner` deep engine (inverse of update-skill-scanner).
+
+    Removes the managed install (uv tool, or pip fallback). Safe to run when it
+    isn't installed. Your skills and Rafter's own dependencies are untouched.
+    """
+    from ..scanners.skill_scanner import SkillScannerInstaller
+
+    result = SkillScannerInstaller().uninstall(on_progress=typer.echo)
+    rprint()
+    if not result.ok:
+        rprint(fmt.error(f"Uninstall failed: {result.message}"))
+        raise typer.Exit(code=1)
+    rprint(fmt.success(f"skill-scanner removed: {result.message}"))
 
 
 # ── agent status ─────────────────────────────────────────────────────────
