@@ -25,7 +25,12 @@ from rich import print as rprint
 from .. import __version__
 from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
-from ..core.config_manager import ConfigManager
+from ..core.config_manager import (
+    ConfigManager,
+    is_secret_config_key,
+    mask_secret_value,
+    redact_config_secrets,
+)
 from ..core.pattern_engine import PatternEngine
 from ..scanners.betterleaks import BetterleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
@@ -47,7 +52,7 @@ def config_show():
     from dataclasses import asdict
 
     manager = ConfigManager()
-    print(json.dumps(asdict(manager.load()), indent=2))
+    print(json.dumps(redact_config_secrets(asdict(manager.load())), indent=2))
 
 
 @config_app.command("get")
@@ -58,8 +63,11 @@ def config_get(key: str = typer.Argument(..., help="Config key (e.g. agent.risk_
     if value is None:
         print(f"Key not found: {key}", file=sys.stderr)
         raise typer.Exit(code=1)
+    leaf = key.split(".")[-1]
     if isinstance(value, dict):
-        print(json.dumps(value, indent=2))
+        print(json.dumps(redact_config_secrets(value), indent=2))
+    elif is_secret_config_key(leaf) and isinstance(value, str):
+        print(mask_secret_value(value))
     else:
         print(value)
 
@@ -76,7 +84,13 @@ def config_set(
     except (json.JSONDecodeError, ValueError):
         parsed = value
     manager.set(key, parsed)
-    rprint(fmt.success(f"Set {key} = {json.dumps(parsed)}"))
+    leaf = key.split(".")[-1]
+    echo = (
+        json.dumps(mask_secret_value(parsed))
+        if is_secret_config_key(leaf) and isinstance(parsed, str)
+        else json.dumps(parsed)
+    )
+    rprint(fmt.success(f"Set {key} = {echo}"))
 
 
 agent_app.add_typer(config_app)

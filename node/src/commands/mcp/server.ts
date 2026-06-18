@@ -12,7 +12,7 @@ import { BetterleaksScanner } from "../../scanners/betterleaks.js";
 import { unionScanResults } from "../../scanners/union.js";
 import { CommandInterceptor } from "../../core/command-interceptor.js";
 import { AuditLogger } from "../../core/audit-logger.js";
-import { ConfigManager } from "../../core/config-manager.js";
+import { ConfigManager, redactConfigSecrets, isSecretConfigKey, maskSecretValue } from "../../core/config-manager.js";
 import { listDocs, resolveDocSelector, fetchDoc } from "../../core/docs-loader.js";
 import { writeSuppression } from "../../core/suppression-writer.js";
 import { createRequire } from "module";
@@ -233,7 +233,12 @@ export function createServer(): Server {
       case "get_config": {
         const manager = new ConfigManager();
         const key = args?.key as string | undefined;
-        const value = key ? manager.get(key) : manager.load();
+        const raw = key ? manager.get(key) : manager.load();
+        // Never hand a stored credential (e.g. backend.apiKey) to the MCP client.
+        const leaf = key ? (key.split(".").pop() ?? key) : undefined;
+        const value = leaf && isSecretConfigKey(leaf) && typeof raw === "string"
+          ? maskSecretValue(raw)
+          : redactConfigSecrets(raw);
         return textResult(value);
       }
 
@@ -337,7 +342,7 @@ export function createServer(): Server {
           contents: [{
             uri: "rafter://config",
             mimeType: "application/json",
-            text: JSON.stringify(manager.load(), null, 2),
+            text: JSON.stringify(redactConfigSecrets(manager.load()), null, 2),
           }],
         };
 
@@ -346,7 +351,7 @@ export function createServer(): Server {
           contents: [{
             uri: "rafter://policy",
             mimeType: "application/json",
-            text: JSON.stringify(manager.loadWithPolicy(), null, 2),
+            text: JSON.stringify(redactConfigSecrets(manager.loadWithPolicy()), null, 2),
           }],
         };
 
