@@ -5,6 +5,14 @@ import os from "os";
 import { spawnSync } from "child_process";
 import { PatternEngine } from "../../core/pattern-engine.js";
 import { DEFAULT_SECRET_PATTERNS } from "../../scanners/secret-patterns.js";
+import {
+  SkillScanner,
+  ensureSkillScanner,
+  deepSeverityTier,
+  deepActionableCount,
+  INSTALL_HINT,
+  type DeepFinding,
+} from "../../scanners/skill-scanner.js";
 import { fmt } from "../../utils/formatter.js";
 import {
   discoverInstalledSkills,
@@ -122,6 +130,13 @@ export interface SkillReviewReport {
     severity: "clean" | "low" | "medium" | "high" | "critical";
     findings: number;
     reasons: string[];
+  };
+  /** Present only when --deep / --engine skill-scanner is used. */
+  deepScan?: {
+    engine: "skill-scanner";
+    maxSeverity: string | null;
+    analyzersUsed: string[];
+    findings: DeepFinding[];
   };
 }
 
@@ -928,17 +943,106 @@ function resolveNpm(
   };
 }
 
-export function runSkillReview(
+/** Render the deep-engine section for a single-skill text report. */
+function renderDeepText(report: SkillReviewReport): void {
+  const deep = report.deepScan;
+  if (!deep) return;
+  console.log(fmt.header("Deep engine (skill-scanner)"));
+  console.log(fmt.divider());
+  const actionable = deep.findings.filter((f) =>
+    ["critical", "high", "medium"].includes(f.severity),
+  );
+  if (actionable.length === 0) {
+    console.log(fmt.success("No critical/high/medium findings"));
+  } else {
+    console.log(
+      fmt.warning(`${actionable.length} finding(s) (max severity: ${deep.maxSeverity})`),
+    );
+    for (const f of actionable.slice(0, 10)) {
+      const loc = f.line ? ` (line ${f.line})` : "";
+      console.log(`   • [${f.severity.toUpperCase()}] ${f.category}: ${f.title}${loc}`);
+    }
+    if (actionable.length > 10) {
+      console.log(`   ... and ${actionable.length - 10} more`);
+    }
+  }
+  if (deep.analyzersUsed.length > 0) {
+    console.log(`   analyzers: ${deep.analyzersUsed.join(", ")} (offline only)`);
+  }
+  console.log();
+}
+
+/**
+ * Run the opt-in deep engine on a single resolved skill path and fold its
+ * results into `report` (adds `deepScan`, escalates severity by actionable
+ * findings). Returns an error string when the engine failed (caller exits 2).
+ */
+async function attachDeepScan(
+  report: SkillReviewReport,
+  scanPath: string,
+  scanner: SkillScanner,
+): Promise<{ error?: string }> {
+  const dr = await scanner.scanPath(scanPath);
+  if (dr.error) return { error: dr.error };
+  report.deepScan = {
+    engine: "skill-scanner",
+    maxSeverity: dr.maxSeverity,
+    analyzersUsed: dr.analyzersUsed,
+    findings: dr.findings,
+  };
+  const tier = deepSeverityTier(dr) as SeverityTier;
+  if (
+    _SEVERITY_ORDER_LOCAL.indexOf(tier) >
+    _SEVERITY_ORDER_LOCAL.indexOf(report.summary.severity)
+  ) {
+    report.summary.severity = tier;
+  }
+  const actionable = deepActionableCount(dr);
+  if (actionable > 0) {
+    report.summary.findings += actionable;
+    report.summary.reasons.push(`deep engine: ${actionable} actionable finding(s)`);
+  }
+  return {};
+}
+
+/** After deep scans escalate per-skill severities, recompute the multi summary. */
+function recomputeMultiSummary(report: MultiSkillReport): void {
+  const counts: Record<SeverityTier, number> = {
+    clean: 0,
+    low: 0,
+    medium: 0,
+    high: 0,
+    critical: 0,
+  };
+  let worst: SeverityTier = "clean";
+  let findings = 0;
+  for (const entry of report.skills) {
+    counts[entry.report.summary.severity] += 1;
+    findings += entry.report.summary.findings;
+    if (
+      _SEVERITY_ORDER_LOCAL.indexOf(entry.report.summary.severity) >
+      _SEVERITY_ORDER_LOCAL.indexOf(worst)
+    ) {
+      worst = entry.report.summary.severity;
+    }
+  }
+  report.summary.severityCounts = counts;
+  report.summary.findings = findings;
+  report.summary.worst = worst;
+}
+
+export async function runSkillReview(
   input: string,
   opts: {
     format?: "json" | "text";
     json?: boolean;
+    deep?: boolean;
     noCache?: boolean;
     cacheTtlMs?: number;
     cacheRoot?: string;
     ops?: RemoteOps;
   },
-): { report: SkillReviewReport | MultiSkillReport; exitCode: number } {
+): Promise<{ report: SkillReviewReport | MultiSkillReport; exitCode: number }> {
   let resolved = input;
   let kind: SkillReviewTargetKind;
   let cleanup: (() => void) | null = null;
@@ -1002,6 +1106,37 @@ export function runSkillReview(
       report = buildReport(input, resolved, kind, source);
     }
 
+    // Optional DEEP engine (skill-scanner) — opt-in via --deep / --engine.
+    // Offline analyzers only; scans each resolved skill on disk. Availability
+    // is ensured by the caller (interactive install-offer); this is a safety net.
+    if (opts.deep) {
+      const scanner = new SkillScanner();
+      if (!scanner.isAvailable()) {
+        console.error(INSTALL_HINT);
+        return { report, exitCode: 2 };
+      }
+      if ("skills" in report) {
+        for (const entry of report.skills) {
+          const { error } = await attachDeepScan(
+            entry.report,
+            entry.report.target.resolvedPath,
+            scanner,
+          );
+          if (error) {
+            console.error(fmt.error(`deep scan failed: ${error}`));
+            return { report, exitCode: 2 };
+          }
+        }
+        recomputeMultiSummary(report);
+      } else {
+        const { error } = await attachDeepScan(report, resolved, scanner);
+        if (error) {
+          console.error(fmt.error(`deep scan failed: ${error}`));
+          return { report, exitCode: 2 };
+        }
+      }
+    }
+
     const format = opts.json ? "json" : opts.format ?? "text";
     if (format === "json") {
       console.log(JSON.stringify(report, null, 2));
@@ -1010,6 +1145,7 @@ export function runSkillReview(
         renderMultiText(report);
       } else {
         renderText(report);
+        renderDeepText(report);
       }
     }
     const sev =
@@ -1046,9 +1182,10 @@ const SEVERITY_ORDER: ReadonlyArray<
   "clean" | "low" | "medium" | "high" | "critical"
 > = ["clean", "low", "medium", "high", "critical"];
 
-export function runSkillReviewInstalled(opts: {
+export async function runSkillReviewInstalled(opts: {
   agent?: string;
-}): { report: InstalledReviewReport; exitCode: number } {
+  deep?: boolean;
+}): Promise<{ report: InstalledReviewReport; exitCode: number }> {
   let filter: SkillPlatform | undefined;
   if (opts.agent) {
     const a = opts.agent as SkillPlatform;
@@ -1072,8 +1209,18 @@ export function runSkillReviewInstalled(opts: {
   let findings = 0;
   let worst: (typeof SEVERITY_ORDER)[number] = "clean";
 
+  // Deep engine availability is ensured once by the caller; this is a safety net.
+  const deepScanner = opts.deep ? new SkillScanner() : null;
+  if (opts.deep && !deepScanner!.isAvailable()) {
+    throw new Error(INSTALL_HINT);
+  }
+
   for (const d of discovered) {
     const report = buildReport(d.path, d.path, "file");
+    if (deepScanner) {
+      const { error } = await attachDeepScan(report, d.path, deepScanner);
+      if (error) throw new Error(`deep scan failed for ${d.path}: ${error}`);
+    }
     installations.push({
       platform: d.platform,
       skill: d.name,
@@ -1215,8 +1362,13 @@ export function createReviewCommand(): Command {
       "24h",
     )
     .option("--no-cache", "Bypass the persistent skill-cache; fetch fresh and skip writes.")
+    .option(
+      "--deep",
+      "Also run the optional DEEP engine (Cisco AI Defense skill-scanner): prompt injection, taint/dataflow, YARA, .pyc integrity. Offline analyzers only. Offers to install the engine if missing.",
+    )
+    .option("--engine <engine>", "Deep engine selector. 'skill-scanner' is equivalent to --deep.")
     .action(
-      (
+      async (
         input: string | undefined,
         opts: {
           json?: boolean;
@@ -1226,8 +1378,26 @@ export function createReviewCommand(): Command {
           summary?: boolean;
           cacheTtl?: string;
           cache?: boolean; // commander sets this to false when --no-cache is passed
+          deep?: boolean;
+          engine?: string;
         },
       ) => {
+        // Resolve / validate the deep engine selector up front.
+        const wantDeep = !!opts.deep || opts.engine === "skill-scanner";
+        if (opts.engine != null && opts.engine !== "skill-scanner") {
+          console.error(fmt.error(`unknown --engine '${opts.engine}' (supported: skill-scanner)`));
+          process.exit(2);
+        }
+        // If --deep is requested, make it easy: ensure the engine is present,
+        // offering to install it interactively. Done once for all skills.
+        if (wantDeep) {
+          const scanner = await ensureSkillScanner({ json: !!opts.json || opts.format === "json" });
+          if (!scanner) {
+            console.error(INSTALL_HINT);
+            process.exit(2);
+          }
+        }
+
         if (opts.installed) {
           if (input) {
             console.error(
@@ -1237,9 +1407,9 @@ export function createReviewCommand(): Command {
             );
             process.exit(1);
           }
-          let result: ReturnType<typeof runSkillReviewInstalled>;
+          let result: Awaited<ReturnType<typeof runSkillReviewInstalled>>;
           try {
-            result = runSkillReviewInstalled({ agent: opts.agent });
+            result = await runSkillReviewInstalled({ agent: opts.agent, deep: wantDeep });
           } catch (e) {
             console.error(fmt.error(`${e instanceof Error ? e.message : String(e)}`));
             process.exit(1);
@@ -1267,8 +1437,9 @@ export function createReviewCommand(): Command {
           console.error(fmt.error(e instanceof Error ? e.message : String(e)));
           process.exit(2);
         }
-        const { exitCode } = runSkillReview(input, {
+        const { exitCode } = await runSkillReview(input, {
           ...opts,
+          deep: wantDeep,
           noCache: opts.cache === false,
           cacheTtlMs: ttlMs,
         });
