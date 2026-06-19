@@ -962,11 +962,83 @@ def _render_multi_text(report: dict[str, Any]) -> None:
     )
 
 
+_DEEP_TIER_ORDER: tuple[str, ...] = ("clean", "low", "medium", "high", "critical")
+
+
+def _attach_deep_scan(report_dict: dict[str, Any], scan_path: str, scanner) -> str | None:
+    """Run the deep engine on one resolved skill path and fold results into
+    report_dict (adds deepScan, escalates severity). Returns an error string on
+    failure, else None."""
+    from ..scanners.skill_scanner import deep_severity_tier, deep_actionable_count
+
+    dr = scanner.scan_path(scan_path)
+    if dr.error:
+        return dr.error
+    report_dict["deepScan"] = {
+        "engine": "skill-scanner",
+        "maxSeverity": dr.max_severity,
+        "analyzersUsed": dr.analyzers_used,
+        "findings": [f.to_dict() for f in dr.findings],
+    }
+    tier = deep_severity_tier(dr)
+    sev = report_dict["summary"]["severity"]
+    if _DEEP_TIER_ORDER.index(tier) > _DEEP_TIER_ORDER.index(sev):
+        report_dict["summary"]["severity"] = tier
+    actionable = deep_actionable_count(dr)
+    if actionable > 0:
+        report_dict["summary"]["findings"] += actionable
+        report_dict["summary"]["reasons"].append(
+            f"deep engine: {actionable} actionable finding(s)"
+        )
+    return None
+
+
+def _recompute_multi_summary(report_obj: dict[str, Any]) -> None:
+    """After deep scans escalate per-skill severities, recompute the multi summary."""
+    counts = {t: 0 for t in _DEEP_TIER_ORDER}
+    worst = "clean"
+    findings = 0
+    for entry in report_obj["skills"]:
+        s = entry["report"]["summary"]["severity"]
+        counts[s] += 1
+        findings += entry["report"]["summary"]["findings"]
+        if _DEEP_TIER_ORDER.index(s) > _DEEP_TIER_ORDER.index(worst):
+            worst = s
+    report_obj["summary"]["severityCounts"] = counts
+    report_obj["summary"]["findings"] = findings
+    report_obj["summary"]["worst"] = worst
+
+
+def _render_deep_text(report_dict: dict[str, Any]) -> None:
+    """Render the deep-engine section for a single-skill text report."""
+    deep = report_dict.get("deepScan")
+    if not deep:
+        return
+    rprint(fmt.header("Deep engine (skill-scanner)"))
+    rprint(fmt.divider())
+    actionable = [
+        f for f in deep["findings"] if f["severity"] in ("critical", "high", "medium")
+    ]
+    if not actionable:
+        rprint(fmt.success("No critical/high/medium findings"))
+    else:
+        rprint(fmt.warning(f"{len(actionable)} finding(s) (max severity: {deep['maxSeverity']})"))
+        for f in actionable[:10]:
+            loc = f" (line {f['line']})" if f.get("line") else ""
+            rprint(f"   • [{f['severity'].upper()}] {f['category']}: {f['title']}{loc}")
+        if len(actionable) > 10:
+            rprint(f"   ... and {len(actionable) - 10} more")
+    if deep["analyzersUsed"]:
+        rprint(f"   analyzers: {', '.join(deep['analyzersUsed'])} (offline only)")
+    rprint()
+
+
 def run_skill_review(
     input_: str,
     *,
     json_out: bool = False,
     format_: str = "text",
+    deep: bool = False,
     no_cache: bool = False,
     cache_ttl_ms: int = DEFAULT_CACHE_TTL_MS,
     cache_root: Path | None = None,
@@ -1044,11 +1116,37 @@ def run_skill_review(
             rep = _build_report(input_, resolved, kind, source)
             report_obj = rep.to_json()
 
+        # Optional DEEP engine (skill-scanner) — opt-in via --deep / --engine.
+        # Offline analyzers only; scans each resolved skill on disk. Availability
+        # is ensured by the caller (interactive install-offer); safety net here.
+        is_multi = "skills" in report_obj and isinstance(report_obj.get("skills"), list)
+        if deep:
+            from ..scanners.skill_scanner import SkillScanner, INSTALL_HINT
+
+            scanner = SkillScanner()
+            if not scanner.is_available():
+                rprint(fmt.error(INSTALL_HINT), file=sys.stderr)
+                return report_obj, 2
+            if is_multi:
+                for entry in report_obj["skills"]:
+                    err = _attach_deep_scan(
+                        entry["report"], entry["report"]["target"]["resolvedPath"], scanner
+                    )
+                    if err:
+                        rprint(fmt.error(f"deep scan failed: {err}"), file=sys.stderr)
+                        return report_obj, 2
+                _recompute_multi_summary(report_obj)
+            else:
+                err = _attach_deep_scan(report_obj, str(resolved), scanner)
+                if err:
+                    rprint(fmt.error(f"deep scan failed: {err}"), file=sys.stderr)
+                    return report_obj, 2
+
         fmt_ = "json" if json_out else format_
         if fmt_ == "json":
             print(json.dumps(report_obj, indent=2))
         else:
-            if "skills" in report_obj and isinstance(report_obj.get("skills"), list):
+            if is_multi:
                 _render_multi_text(report_obj)
             else:
                 # Hydrate _Report for existing _render_text
@@ -1062,6 +1160,7 @@ def run_skill_review(
                 r.inventory = report_obj["inventory"]
                 r.summary = report_obj["summary"]
                 _render_text(r)
+                _render_deep_text(report_obj)
 
         if "skills" in report_obj:
             sev = report_obj["summary"]["worst"]
@@ -1080,7 +1179,9 @@ def run_skill_review(
 _SEVERITY_ORDER: tuple[str, ...] = ("clean", "low", "medium", "high", "critical")
 
 
-def run_skill_review_installed(agent: str | None = None) -> tuple[dict[str, Any], int]:
+def run_skill_review_installed(
+    agent: str | None = None, *, deep: bool = False
+) -> tuple[dict[str, Any], int]:
     """Audit every installed skill across detected agent skill directories.
 
     Exit 1 iff any HIGH or CRITICAL finding. Lower severities do not fail the
@@ -1097,18 +1198,32 @@ def run_skill_review_installed(agent: str | None = None) -> tuple[dict[str, Any]
     findings = 0
     worst = "clean"
 
+    # Deep engine availability is ensured once by the caller; safety net here.
+    deep_scanner = None
+    if deep:
+        from ..scanners.skill_scanner import SkillScanner, INSTALL_HINT
+
+        deep_scanner = SkillScanner()
+        if not deep_scanner.is_available():
+            raise RuntimeError(INSTALL_HINT)
+
     for d in discovered:
         report = _build_report(str(d.path), d.path, "file")
+        report_json = report.to_json()
+        if deep_scanner is not None:
+            err = _attach_deep_scan(report_json, str(d.path), deep_scanner)
+            if err:
+                raise RuntimeError(f"deep scan failed for {d.path}: {err}")
         installations.append({
             "platform": d.platform,
             "skill": d.name,
             "path": str(d.path),
-            "report": report.to_json(),
+            "report": report_json,
         })
-        sev = report.summary["severity"]
+        sev = report_json["summary"]["severity"]
         severity_counts[sev] += 1
         platform_counts[d.platform] = platform_counts.get(d.platform, 0) + 1
-        findings += report.summary["findings"]
+        findings += report_json["summary"]["findings"]
         if _SEVERITY_ORDER.index(sev) > _SEVERITY_ORDER.index(worst):
             worst = sev
 
@@ -1233,8 +1348,39 @@ def review_cmd(
         "--no-cache",
         help="Bypass the persistent skill-cache; fetch fresh and skip writes.",
     ),
+    deep: bool = typer.Option(
+        False,
+        "--deep",
+        help=(
+            "Also run the optional DEEP engine (Cisco AI Defense skill-scanner): "
+            "prompt injection, taint/dataflow, YARA, .pyc integrity. Offline "
+            "analyzers only. Offers to install the engine if missing."
+        ),
+    ),
+    engine: str | None = typer.Option(
+        None,
+        "--engine",
+        help="Deep engine selector. 'skill-scanner' is equivalent to --deep.",
+    ),
 ):
     """Security review of a skill/plugin/extension before installing it (path, git URL, or shorthand), or --installed to audit every skill on this machine."""
+    # Resolve / validate the deep engine selector up front.
+    want_deep = deep or (engine == "skill-scanner")
+    if engine is not None and engine != "skill-scanner":
+        rprint(
+            fmt.error(f"unknown --engine '{engine}' (supported: skill-scanner)"),
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=2)
+    # If --deep is requested, make it easy: ensure the engine is present,
+    # offering to install it interactively. Done once for all skills.
+    if want_deep:
+        from ..scanners.skill_scanner import ensure_skill_scanner, INSTALL_HINT
+
+        if ensure_skill_scanner(json_out=json_output or format_ == "json") is None:
+            rprint(fmt.error(INSTALL_HINT), file=sys.stderr)
+            raise typer.Exit(code=2)
+
     if installed:
         if path_or_url:
             rprint(
@@ -1243,8 +1389,8 @@ def review_cmd(
             )
             raise typer.Exit(code=1)
         try:
-            aggregate, exit_code = run_skill_review_installed(agent)
-        except ValueError as err:
+            aggregate, exit_code = run_skill_review_installed(agent, deep=want_deep)
+        except (ValueError, RuntimeError) as err:
             rprint(fmt.error(str(err)), file=sys.stderr)
             raise typer.Exit(code=1)
         if summary:
@@ -1274,6 +1420,7 @@ def review_cmd(
         path_or_url,
         json_out=json_output,
         format_=format_,
+        deep=want_deep,
         no_cache=no_cache,
         cache_ttl_ms=ttl_ms,
     )

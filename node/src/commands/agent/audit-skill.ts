@@ -3,6 +3,12 @@ import fs from "fs";
 import path from "path";
 import { PatternEngine } from "../../core/pattern-engine.js";
 import { DEFAULT_SECRET_PATTERNS } from "../../scanners/secret-patterns.js";
+import {
+  SkillScanner,
+  hasFindings as deepHasFindings,
+  INSTALL_HINT,
+  type DeepScanResult,
+} from "../../scanners/skill-scanner.js";
 import { SkillManager } from "../../utils/skill-manager.js";
 import { fmt, isAgentMode } from "../../utils/formatter.js";
 
@@ -12,13 +18,25 @@ interface QuickScanResults {
   highRiskCommands: Array<{ command: string; line: number }>;
 }
 
+interface AuditSkillOpts {
+  skipOpenclaw?: boolean;
+  json?: boolean;
+  deep?: boolean;
+  engine?: string;
+}
+
 export function createAuditSkillCommand(): Command {
   return new Command("audit-skill")
     .description("[deprecated] Security audit of a Claude Code skill file — use `rafter skill review` instead")
-    .argument("<skill-path>", "Path to skill file to audit")
+    .argument("<skill-path>", "Path to skill file or directory to audit")
     .option("--skip-openclaw", "Skip OpenClaw integration, show manual review prompt")
     .option("--json", "Output results as JSON")
-    .action(async (skillPath: string, opts: { skipOpenclaw?: boolean; json?: boolean }) => {
+    .option(
+      "--deep",
+      "Run the optional DEEP engine (Cisco AI Defense skill-scanner) in addition to the quick scan. Offline analyzers only — no LLM/cloud/network. Requires cisco-ai-skill-scanner.",
+    )
+    .option("--engine <engine>", "Deep engine selector. 'skill-scanner' is equivalent to --deep.")
+    .action(async (skillPath: string, opts: AuditSkillOpts) => {
       process.stderr.write(
         "[deprecated] `rafter agent audit-skill` is deprecated; use `rafter skill review <path-or-url>` instead.\n",
       );
@@ -28,17 +46,34 @@ export function createAuditSkillCommand(): Command {
 
 async function auditSkill(
   skillPath: string,
-  opts: { skipOpenclaw?: boolean; json?: boolean }
+  opts: AuditSkillOpts
 ): Promise<void> {
-  // Validate skill file exists
+  // Validate target exists. Accept either a skill *file* (.md) or a skill
+  // *directory*. The deep engine (--deep) is most thorough on a directory,
+  // where it can also see bundled scripts / .pyc; the quick scan reads the
+  // directory's SKILL.md (or the file itself).
   if (!fs.existsSync(skillPath)) {
-    console.error(fmt.error(`Skill file not found: ${skillPath}`));
+    console.error(fmt.error(`Skill path not found: ${skillPath}`));
     process.exit(2);
   }
 
   const absolutePath = path.resolve(skillPath);
-  const skillContent = fs.readFileSync(absolutePath, "utf-8");
+  const isDir = fs.statSync(absolutePath).isDirectory();
+  let skillContent: string;
+  if (isDir) {
+    const skillMd = path.join(absolutePath, "SKILL.md");
+    skillContent = fs.existsSync(skillMd) ? fs.readFileSync(skillMd, "utf-8") : "";
+  } else {
+    skillContent = fs.readFileSync(absolutePath, "utf-8");
+  }
   const skillName = path.basename(absolutePath);
+
+  // Validate --engine early (mirrors the Python contract).
+  const wantDeep = !!opts.deep || opts.engine === "skill-scanner";
+  if (opts.engine != null && opts.engine !== "skill-scanner") {
+    console.error(fmt.error(`unknown --engine '${opts.engine}' (supported: skill-scanner)`));
+    process.exit(2);
+  }
 
   // Run deterministic analysis
   if (!opts.json) {
@@ -54,6 +89,30 @@ async function auditSkill(
     displayQuickScan(quickScan, skillName);
   }
 
+  // Optional DEEP engine (skill-scanner) — opt-in via --deep or
+  // --engine skill-scanner. Offline analyzers only; preserves our
+  // no-telemetry default (sable-7g7).
+  let deepResult: DeepScanResult | null = null;
+  if (wantDeep) {
+    const scanner = new SkillScanner();
+    if (!scanner.isAvailable()) {
+      // --deep requested but tool missing: clear hint, non-zero exit, no crash.
+      console.error(INSTALL_HINT);
+      process.exit(2);
+    }
+    deepResult = await scanner.scanPath(absolutePath);
+    if (deepResult.error) {
+      console.error(fmt.error(`deep scan failed: ${deepResult.error}`));
+      process.exit(2);
+    }
+    if (!opts.json) {
+      displayDeepScan(deepResult);
+    }
+  }
+
+  const quickHasFindings = quickScan.secrets > 0 || quickScan.highRiskCommands.length > 0;
+  const deepFound = deepResult ? deepHasFindings(deepResult) : false;
+
   // Check OpenClaw availability
   const skillManager = new SkillManager();
   const openClawAvailable = skillManager.isOpenClawInstalled();
@@ -61,15 +120,23 @@ async function auditSkill(
 
   if (opts.json) {
     // JSON output
-    const result = {
+    const result: Record<string, unknown> = {
       skill: skillName,
       path: absolutePath,
       quickScan,
       openClawAvailable,
       rafterSkillInstalled
     };
+    if (deepResult) {
+      result.deepScan = {
+        engine: "skill-scanner",
+        maxSeverity: deepResult.maxSeverity,
+        analyzersUsed: deepResult.analyzersUsed,
+        findings: deepResult.findings,
+      };
+    }
     console.log(JSON.stringify(result, null, 2));
-    if (quickScan.secrets > 0 || quickScan.highRiskCommands.length > 0) {
+    if (quickHasFindings || deepFound) {
       process.exit(1);
     }
     return;
@@ -110,9 +177,39 @@ async function auditSkill(
 
   console.log();
 
-  if (quickScan.secrets > 0 || quickScan.highRiskCommands.length > 0) {
+  if (quickHasFindings || deepFound) {
     process.exit(1);
   }
+}
+
+function displayDeepScan(deep: DeepScanResult): void {
+  console.log(`\n🔎 Deep Scan Results (skill-scanner)`);
+  console.log(fmt.divider());
+  if (!deep.available) {
+    console.log(fmt.warning("skill-scanner not available"));
+    return;
+  }
+  const actionable = deep.findings.filter((f) =>
+    ["critical", "high", "medium"].includes(f.severity),
+  );
+  if (actionable.length === 0) {
+    console.log(fmt.success("No critical/high/medium findings"));
+  } else {
+    console.log(
+      fmt.warning(`${actionable.length} finding(s) (max severity: ${deep.maxSeverity})`),
+    );
+    actionable.slice(0, 10).forEach((f) => {
+      const loc = f.line ? ` (line ${f.line})` : "";
+      console.log(`   • [${f.severity.toUpperCase()}] ${f.category}: ${f.title}${loc}`);
+    });
+    if (actionable.length > 10) {
+      console.log(`   ... and ${actionable.length - 10} more`);
+    }
+  }
+  if (deep.analyzersUsed.length > 0) {
+    console.log(`   analyzers: ${deep.analyzersUsed.join(", ")} (offline only)`);
+  }
+  console.log();
 }
 
 async function runQuickScan(content: string): Promise<QuickScanResults> {

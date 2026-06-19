@@ -132,8 +132,8 @@ function makeNpmTgz(skillBody: string): Buffer {
 
 // ── Tests ───────────────────────────────────────────────────────────
 
-describe("parseShorthand", () => {
-  it("detects shorthand prefixes", () => {
+describe("parseShorthand", async () => {
+  it("detects shorthand prefixes", async () => {
     expect(isShorthand("github:foo/bar")).toBe(true);
     expect(isShorthand("gitlab:foo/bar")).toBe(true);
     expect(isShorthand("npm:pkg")).toBe(true);
@@ -141,7 +141,7 @@ describe("parseShorthand", () => {
     expect(isShorthand("./local")).toBe(false);
   });
 
-  it("parses github owner/repo", () => {
+  it("parses github owner/repo", async () => {
     const p = parseShorthand("github:anthropic/claude");
     expect(p.kind).toBe("github");
     expect(p.owner).toBe("anthropic");
@@ -150,19 +150,19 @@ describe("parseShorthand", () => {
     expect(p.gitUrl).toBe("https://github.com/anthropic/claude.git");
   });
 
-  it("parses github with subpath", () => {
+  it("parses github with subpath", async () => {
     const p = parseShorthand("github:anthropic/claude/skills/review");
     expect(p.subpath).toBe("skills/review");
     expect(p.gitUrl).toBe("https://github.com/anthropic/claude.git");
   });
 
-  it("parses gitlab", () => {
+  it("parses gitlab", async () => {
     const p = parseShorthand("gitlab:group/proj");
     expect(p.kind).toBe("gitlab");
     expect(p.gitUrl).toBe("https://gitlab.com/group/proj.git");
   });
 
-  it("parses npm pkg@version and @scope/pkg@version", () => {
+  it("parses npm pkg@version and @scope/pkg@version", async () => {
     expect(parseShorthand("npm:lodash").pkg).toBe("lodash");
     expect(parseShorthand("npm:lodash").version).toBe("latest");
     expect(parseShorthand("npm:lodash@4.17.21").version).toBe("4.17.21");
@@ -172,40 +172,40 @@ describe("parseShorthand", () => {
     expect(parseShorthand("npm:@scope/pkg").pkg).toBe("@scope/pkg");
   });
 
-  it("rejects malformed shorthands", () => {
+  it("rejects malformed shorthands", async () => {
     expect(() => parseShorthand("github:onlyone")).toThrow();
     expect(() => parseShorthand("npm:")).toThrow();
   });
 });
 
-describe("parseCacheTtl", () => {
-  it("accepts s/m/h/d units and bare seconds", () => {
+describe("parseCacheTtl", async () => {
+  it("accepts s/m/h/d units and bare seconds", async () => {
     expect(parseCacheTtl("30s")).toBe(30_000);
     expect(parseCacheTtl("30")).toBe(30_000);
     expect(parseCacheTtl("5m")).toBe(5 * 60_000);
     expect(parseCacheTtl("24h")).toBe(24 * 3_600_000);
     expect(parseCacheTtl("1d")).toBe(86_400_000);
   });
-  it("rejects nonsense", () => {
+  it("rejects nonsense", async () => {
     expect(() => parseCacheTtl("nope")).toThrow();
     expect(() => parseCacheTtl("10y")).toThrow();
   });
 });
 
-describe("content cache keys", () => {
-  it("github key shape", () => {
+describe("content cache keys", async () => {
+  it("github key shape", async () => {
     const key = contentKeyGit(
       { kind: "github", raw: "", owner: "foo", repo: "bar" } as any,
       "abcdef1234567890abcdef1234567890abcdef12",
     );
     expect(key.startsWith("git-github-foo-bar-")).toBe(true);
   });
-  it("npm key sanitises scoped names", () => {
+  it("npm key sanitises scoped names", async () => {
     expect(contentKeyNpm("@scope/pkg", "1.2.3")).toBe("npm-_scope_pkg-1.2.3");
   });
 });
 
-describe("findSkillFiles", () => {
+describe("findSkillFiles", async () => {
   let tmp: string;
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-multiskill-"));
@@ -214,11 +214,11 @@ describe("findSkillFiles", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("returns empty for non-directory", () => {
+  it("returns empty for non-directory", async () => {
     expect(findSkillFiles(path.join(tmp, "nope"))).toEqual([]);
   });
 
-  it("finds nested skills and orders by relDir", () => {
+  it("finds nested skills and orders by relDir", async () => {
     writeSkillFile(path.join(tmp, "a"), "# a\n");
     writeSkillFile(path.join(tmp, "b", "inner"), "# b\n");
     writeSkillFile(tmp, "# root\n");
@@ -226,7 +226,7 @@ describe("findSkillFiles", () => {
     expect(out.map((o) => o.relDir).sort()).toEqual([".", "a", "b/inner"].sort());
   });
 
-  it("skips .git / node_modules", () => {
+  it("skips .git / node_modules", async () => {
     writeSkillFile(path.join(tmp, ".git"), "# hidden\n");
     writeSkillFile(path.join(tmp, "node_modules", "pkg"), "# hidden\n");
     writeSkillFile(path.join(tmp, "real"), "# a\n");
@@ -235,7 +235,7 @@ describe("findSkillFiles", () => {
   });
 });
 
-describe("resolution cache freshness", () => {
+describe("resolution cache freshness", async () => {
   let cache: string;
   beforeEach(() => {
     cache = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-cache-"));
@@ -244,7 +244,7 @@ describe("resolution cache freshness", () => {
     fs.rmSync(cache, { recursive: true, force: true });
   });
 
-  it("writes and reads resolution", () => {
+  it("writes and reads resolution", async () => {
     writeResolution(cache, {
       shorthand: "github:a/b",
       sha: "deadbeef",
@@ -254,18 +254,18 @@ describe("resolution cache freshness", () => {
     expect(r?.sha).toBe("deadbeef");
   });
 
-  it("returns null for unknown shorthand", () => {
+  it("returns null for unknown shorthand", async () => {
     expect(readResolution(cache, "github:missing/one")).toBeNull();
   });
 
-  it("resolutionIsFresh honors TTL", () => {
+  it("resolutionIsFresh honors TTL", async () => {
     const stale = { shorthand: "x", resolvedAt: Date.now() - 10_000_000 };
     const fresh = { shorthand: "x", resolvedAt: Date.now() };
     expect(resolutionIsFresh(stale as any, 5_000_000)).toBe(false);
     expect(resolutionIsFresh(fresh as any, 5_000_000)).toBe(true);
   });
 
-  it("tolerates a corrupt resolution file", () => {
+  it("tolerates a corrupt resolution file", async () => {
     const fp = path.join(cache, "resolutions", "whatever.json");
     fs.mkdirSync(path.dirname(fp), { recursive: true });
     fs.writeFileSync(fp, "{ not json");
@@ -278,7 +278,7 @@ describe("resolution cache freshness", () => {
   });
 });
 
-describe("runSkillReview: github shorthand", () => {
+describe("runSkillReview: github shorthand", async () => {
   let tmp: string;
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-test-"));
@@ -289,7 +289,7 @@ describe("runSkillReview: github shorthand", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("fetches via mock ops, caches, and serves subsequent calls from cache", () => {
+  it("fetches via mock ops, caches, and serves subsequent calls from cache", async () => {
     const sha = "a".repeat(40);
     const ops = mockOps({
       shas: { "https://github.com/foo/bar.git": sha },
@@ -300,7 +300,7 @@ describe("runSkillReview: github shorthand", () => {
       },
     });
     // First call: miss
-    const r1 = runSkillReview("github:foo/bar", { json: true, ops });
+    const r1 = await runSkillReview("github:foo/bar", { json: true, ops });
     expect(r1.exitCode).toBe(0);
     expect(ops.calls.lsRemote).toBe(1);
     expect(ops.calls.clone).toBe(1);
@@ -314,7 +314,7 @@ describe("runSkillReview: github shorthand", () => {
     expect(meta?.source).toBe("git");
     expect(meta?.sha).toBe(sha);
     // Second call: hit (no new clone; ls-remote skipped when resolution fresh)
-    const r2 = runSkillReview("github:foo/bar", { json: true, ops });
+    const r2 = await runSkillReview("github:foo/bar", { json: true, ops });
     expect(r2.exitCode).toBe(0);
     expect(ops.calls.clone).toBe(1); // unchanged
     expect(ops.calls.lsRemote).toBe(1); // unchanged
@@ -322,7 +322,7 @@ describe("runSkillReview: github shorthand", () => {
     expect(report2.target.source?.cacheHit).toBe(true);
   });
 
-  it("respects --no-cache (always fetches, never writes)", () => {
+  it("respects --no-cache (always fetches, never writes)", async () => {
     const sha = "b".repeat(40);
     const ops = mockOps({
       shas: { "https://github.com/foo/bar.git": sha },
@@ -330,7 +330,7 @@ describe("runSkillReview: github shorthand", () => {
         [sha]: (dest) => writeSkillFile(dest, CLEAN_FM),
       },
     });
-    const r = runSkillReview("github:foo/bar", { json: true, ops, noCache: true });
+    const r = await runSkillReview("github:foo/bar", { json: true, ops, noCache: true });
     expect(r.exitCode).toBe(0);
     // Nothing was written to the cache dir.
     const cd = process.env.RAFTER_SKILL_CACHE_DIR!;
@@ -338,7 +338,7 @@ describe("runSkillReview: github shorthand", () => {
     expect(fs.existsSync(path.join(cd, "content"))).toBe(false);
   });
 
-  it("audits only the subpath for github:owner/repo/sub", () => {
+  it("audits only the subpath for github:owner/repo/sub", async () => {
     const sha = "c".repeat(40);
     const ops = mockOps({
       shas: { "https://github.com/foo/bar.git": sha },
@@ -349,13 +349,13 @@ describe("runSkillReview: github shorthand", () => {
         },
       },
     });
-    const r = runSkillReview("github:foo/bar/wanted", { json: true, ops });
+    const r = await runSkillReview("github:foo/bar/wanted", { json: true, ops });
     const report = r.report as SkillReviewReport;
     expect(report.frontmatter[0]?.name).toBe("bad");
     expect(r.exitCode).toBe(1);
   });
 
-  it("missing subpath is an exit-2 error and cleanup still happens when --no-cache", () => {
+  it("missing subpath is an exit-2 error and cleanup still happens when --no-cache", async () => {
     const sha = "d".repeat(40);
     const ops = mockOps({
       shas: { "https://github.com/foo/bar.git": sha },
@@ -363,7 +363,7 @@ describe("runSkillReview: github shorthand", () => {
         [sha]: (dest) => writeSkillFile(dest, CLEAN_FM),
       },
     });
-    const r = runSkillReview("github:foo/bar/nope", {
+    const r = await runSkillReview("github:foo/bar/nope", {
       json: true,
       ops,
       noCache: true,
@@ -371,13 +371,13 @@ describe("runSkillReview: github shorthand", () => {
     expect(r.exitCode).toBe(2);
   });
 
-  it("ls-remote failure → exit 2", () => {
+  it("ls-remote failure → exit 2", async () => {
     const ops = mockOps({}); // no fixtures → throws
-    const r = runSkillReview("github:foo/nope", { json: true, ops });
+    const r = await runSkillReview("github:foo/nope", { json: true, ops });
     expect(r.exitCode).toBe(2);
   });
 
-  it("TTL expiry forces re-resolution", () => {
+  it("TTL expiry forces re-resolution", async () => {
     const sha = "e".repeat(40);
     const sha2 = "f".repeat(40);
     let currentSha = sha;
@@ -400,7 +400,7 @@ describe("runSkillReview: github shorthand", () => {
       },
     };
     // First call populates cache.
-    runSkillReview("github:foo/bar", { json: true, ops });
+    await runSkillReview("github:foo/bar", { json: true, ops });
     expect(ops.calls.lsRemote).toBe(1);
     // Force resolution file to look stale by rewriting the resolvedAt.
     const rFile = path.join(
@@ -416,7 +416,7 @@ describe("runSkillReview: github shorthand", () => {
     }
     // Second call: resolution expired, ls-remote should fire again.
     // We keep the sha the same so content cache still hits.
-    runSkillReview("github:foo/bar", { json: true, ops });
+    await runSkillReview("github:foo/bar", { json: true, ops });
     expect(ops.calls.lsRemote).toBe(2);
     expect(ops.calls.clone).toBe(1); // content cache still valid — no re-clone
     // Now simulate upstream moved to a new SHA.
@@ -427,12 +427,12 @@ describe("runSkillReview: github shorthand", () => {
       doc.resolvedAt = 0;
       fs.writeFileSync(fp, JSON.stringify(doc));
     }
-    runSkillReview("github:foo/bar", { json: true, ops });
+    await runSkillReview("github:foo/bar", { json: true, ops });
     expect(ops.calls.lsRemote).toBe(3);
     expect(ops.calls.clone).toBe(2); // new SHA → new clone
   });
 
-  it("corrupt cache entry is recovered by re-fetching", () => {
+  it("corrupt cache entry is recovered by re-fetching", async () => {
     const sha = "9".repeat(40);
     const ops = mockOps({
       shas: { "https://github.com/foo/bar.git": sha },
@@ -441,7 +441,7 @@ describe("runSkillReview: github shorthand", () => {
       },
     });
     // First call populates cache.
-    runSkillReview("github:foo/bar", { json: true, ops });
+    await runSkillReview("github:foo/bar", { json: true, ops });
     expect(ops.calls.clone).toBe(1);
     // Corrupt the content dir (wipe SKILL.md).
     const key = contentKeyGit(
@@ -451,13 +451,13 @@ describe("runSkillReview: github shorthand", () => {
     const tree = contentWorkingTree(process.env.RAFTER_SKILL_CACHE_DIR!, key);
     fs.rmSync(tree, { recursive: true, force: true });
     // Second call should re-clone.
-    runSkillReview("github:foo/bar", { json: true, ops });
+    await runSkillReview("github:foo/bar", { json: true, ops });
     expect(ops.calls.clone).toBe(2);
   });
 });
 
-describe("runSkillReview: gitlab shorthand", () => {
-  it("routes to gitlab.com URL", () => {
+describe("runSkillReview: gitlab shorthand", async () => {
+  it("routes to gitlab.com URL", async () => {
     const sha = "1".repeat(40);
     const ops = mockOps({
       shas: { "https://gitlab.com/grp/proj.git": sha },
@@ -467,7 +467,7 @@ describe("runSkillReview: gitlab shorthand", () => {
       path.join(os.tmpdir(), "rafter-gitlab-"),
     );
     try {
-      const r = runSkillReview("gitlab:grp/proj", { json: true, ops });
+      const r = await runSkillReview("gitlab:grp/proj", { json: true, ops });
       expect(r.exitCode).toBe(0);
       const rep = r.report as SkillReviewReport;
       expect(rep.target.kind).toBe("gitlab");
@@ -479,7 +479,7 @@ describe("runSkillReview: gitlab shorthand", () => {
   });
 });
 
-describe("runSkillReview: npm shorthand", () => {
+describe("runSkillReview: npm shorthand", async () => {
   let tmp: string;
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-npm-"));
@@ -490,7 +490,7 @@ describe("runSkillReview: npm shorthand", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("fetches metadata + tarball, extracts, audits, and caches", () => {
+  it("fetches metadata + tarball, extracts, audits, and caches", async () => {
     const tgz = makeNpmTgz(CLEAN_FM);
     const ops = mockOps({
       npmMeta: {
@@ -505,7 +505,7 @@ describe("runSkillReview: npm shorthand", () => {
         "https://registry.npmjs.org/my-skill-pkg/-/my-skill-pkg-1.0.0.tgz": tgz,
       },
     });
-    const r1 = runSkillReview("npm:my-skill-pkg", { json: true, ops });
+    const r1 = await runSkillReview("npm:my-skill-pkg", { json: true, ops });
     expect(r1.exitCode).toBe(0);
     expect(ops.calls.npmMeta).toBe(1);
     expect(ops.calls.npmTar).toBe(1);
@@ -513,13 +513,13 @@ describe("runSkillReview: npm shorthand", () => {
     expect(rep.target.kind).toBe("npm");
     expect(rep.target.source?.version).toBe("1.0.0");
     // Second call: cache hit
-    const r2 = runSkillReview("npm:my-skill-pkg", { json: true, ops });
+    const r2 = await runSkillReview("npm:my-skill-pkg", { json: true, ops });
     expect(r2.exitCode).toBe(0);
     expect(ops.calls.npmTar).toBe(1); // unchanged
     expect((r2.report as SkillReviewReport).target.source?.cacheHit).toBe(true);
   });
 
-  it("supports pinned version", () => {
+  it("supports pinned version", async () => {
     const tgz = makeNpmTgz(CLEAN_FM);
     const ops = mockOps({
       npmMeta: {
@@ -536,12 +536,12 @@ describe("runSkillReview: npm shorthand", () => {
         "https://example/foo-9.9.9.tgz": tgz,
       },
     });
-    const r = runSkillReview("npm:foo@1.0.0", { json: true, ops });
+    const r = await runSkillReview("npm:foo@1.0.0", { json: true, ops });
     expect(r.exitCode).toBe(0);
     expect((r.report as SkillReviewReport).target.source?.version).toBe("1.0.0");
   });
 
-  it("unknown version → exit 2", () => {
+  it("unknown version → exit 2", async () => {
     const ops = mockOps({
       npmMeta: {
         foo: {
@@ -550,18 +550,18 @@ describe("runSkillReview: npm shorthand", () => {
         },
       },
     });
-    const r = runSkillReview("npm:foo@2.0.0", { json: true, ops });
+    const r = await runSkillReview("npm:foo@2.0.0", { json: true, ops });
     expect(r.exitCode).toBe(2);
   });
 
-  it("404-style metadata failure → exit 2", () => {
+  it("404-style metadata failure → exit 2", async () => {
     const ops = mockOps({}); // npmFetchMetadata throws
-    const r = runSkillReview("npm:nope", { json: true, ops });
+    const r = await runSkillReview("npm:nope", { json: true, ops });
     expect(r.exitCode).toBe(2);
   });
 });
 
-describe("multi-SKILL.md combined report", () => {
+describe("multi-SKILL.md combined report", async () => {
   let tmp: string;
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-multi-"));
@@ -570,10 +570,10 @@ describe("multi-SKILL.md combined report", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("emits a multi-skill shape with per-skill reports", () => {
+  it("emits a multi-skill shape with per-skill reports", async () => {
     writeSkillFile(path.join(tmp, "skillA"), CLEAN_FM);
     writeSkillFile(path.join(tmp, "skillB"), BAD_FM);
-    const r = runSkillReview(tmp, { json: true });
+    const r = await runSkillReview(tmp, { json: true });
     const rep = r.report as MultiSkillReport;
     expect(rep.target.mode).toBe("multi-skill");
     expect(rep.skills.length).toBe(2);
@@ -584,15 +584,15 @@ describe("multi-SKILL.md combined report", () => {
     expect(r.exitCode).toBe(1);
   });
 
-  it("a lone SKILL.md keeps the single-skill shape", () => {
+  it("a lone SKILL.md keeps the single-skill shape", async () => {
     writeSkillFile(tmp, CLEAN_FM);
-    const r = runSkillReview(tmp, { json: true });
+    const r = await runSkillReview(tmp, { json: true });
     expect("skills" in (r.report as any)).toBe(false);
   });
 });
 
-describe("DEFAULT_CACHE_TTL_MS constant", () => {
-  it("is 24h", () => {
+describe("DEFAULT_CACHE_TTL_MS constant", async () => {
+  it("is 24h", async () => {
     expect(DEFAULT_CACHE_TTL_MS).toBe(24 * 60 * 60 * 1000);
   });
 });
