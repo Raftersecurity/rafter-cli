@@ -1,6 +1,6 @@
 import { ConfigManager } from "./config-manager.js";
 import { AuditLogger } from "./audit-logger.js";
-import { assessCommandRisk, CommandRiskLevel } from "./risk-rules.js";
+import { assessCommandRisk, matchedCriticalPattern, CommandRiskLevel } from "./risk-rules.js";
 
 export type { CommandRiskLevel } from "./risk-rules.js";
 
@@ -26,14 +26,42 @@ export class CommandInterceptor {
    * Evaluate if a command should be allowed
    */
   evaluate(command: string): CommandEvaluation {
+    const riskLevel = this.assessRisk(command);
+
+    // Unconditional hard-block: catastrophic destructive commands (rm -rf /,
+    // fork bombs, disk wipes, mkfs, …) are NEVER allowed, regardless of the
+    // configured policy — or its absence. Security must not depend on a policy
+    // being present (the default config may be missing one) or on the chosen
+    // mode (even allow-all / a custom deny-list cannot opt out of these).
+    if (riskLevel === "critical") {
+      return {
+        command,
+        riskLevel,
+        allowed: false,
+        requiresApproval: false,
+        reason: "Matches built-in blocked pattern (critical destructive command)",
+        matchedPattern: matchedCriticalPattern(command) ?? "builtin:critical-destructive"
+      };
+    }
+
     const cfg = this.config.loadWithPolicy();
     const policy = cfg.agent?.commandPolicy;
 
     if (!policy) {
-      // No policy configured, allow by default but still assess risk
+      // No policy configured — fall back to safe built-in defaults rather than
+      // allow-all: high-risk commands still require approval.
+      if (riskLevel === "high") {
+        return {
+          command,
+          riskLevel,
+          allowed: false,
+          requiresApproval: true,
+          reason: "High risk command requires approval"
+        };
+      }
       return {
         command,
-        riskLevel: this.assessRisk(command),
+        riskLevel,
         allowed: true,
         requiresApproval: false
       };
