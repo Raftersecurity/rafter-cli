@@ -64,7 +64,11 @@ vi.mock("../src/core/audit-logger.js", () => ({
   }),
 }));
 
-vi.mock("../src/core/config-manager.js", () => ({
+vi.mock("../src/core/config-manager.js", async (importOriginal) => ({
+  // Keep the real pure helpers (redactConfigSecrets / isSecretConfigKey /
+  // maskSecretValue) so the server's redaction is exercised; mock only the
+  // stateful ConfigManager.
+  ...(await importOriginal<typeof import("../src/core/config-manager.js")>()),
   ConfigManager: vi.fn().mockImplementation(function () {
     return {
       load: vi.fn().mockReturnValue({
