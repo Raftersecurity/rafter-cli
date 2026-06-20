@@ -85,3 +85,16 @@ def assess_command_risk(command: str) -> str:
         if re.search(p, command, re.IGNORECASE):
             return "medium"
     return "low"
+
+
+def match_critical_pattern(command: str) -> str | None:
+    """Return the first CRITICAL pattern matching the command, or None.
+
+    Mirrors assess_command_risk's matching. Intended to be called only once a
+    command is already classified "critical" (safe-prefix exclusion is handled
+    by assess_command_risk), to surface *which* built-in rule matched.
+    """
+    for p in CRITICAL_PATTERNS:
+        if re.search(p, command, re.IGNORECASE):
+            return p
+    return None
