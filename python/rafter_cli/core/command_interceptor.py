@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from .audit_logger import AuditLogger
 from .config_manager import ConfigManager
-from .risk_rules import assess_command_risk
+from .risk_rules import assess_command_risk, match_critical_pattern
 
 
 @dataclass
@@ -25,6 +25,21 @@ class CommandInterceptor:
         self._audit = AuditLogger()
 
     def evaluate(self, command: str) -> CommandEvaluation:
+        # Unconditional hard-block: catastrophic destructive commands (rm -rf /,
+        # fork bombs, disk wipes, mkfs, …) are NEVER allowed, regardless of the
+        # configured policy — or its absence. Security must not depend on a
+        # policy being present or on the chosen mode (even allow-all / a custom
+        # deny-list cannot opt out of these).
+        if assess_command_risk(command) == "critical":
+            return CommandEvaluation(
+                command=command,
+                risk_level="critical",
+                allowed=False,
+                requires_approval=False,
+                reason="Matches built-in blocked pattern (critical destructive command)",
+                matched_pattern=match_critical_pattern(command) or "builtin:critical-destructive",
+            )
+
         cfg = self._config.load_with_policy()
         policy = cfg.agent.command_policy
 
