@@ -60,14 +60,32 @@ API_TIMEOUT_SHORT = (10, 30)
 
 
 def resolve_key(cli_opt: str | None) -> str:
-    """Resolve API key from CLI option, env var, or error."""
+    """Resolve API key: --api-key flag > RAFTER_API_KEY env > global config."""
     if cli_opt:
         return cli_opt
     load_dotenv()
     env_key = os.getenv("RAFTER_API_KEY")
     if env_key:
         return env_key
-    print("No API key provided. Use --api-key or set RAFTER_API_KEY", file=sys.stderr)
+    # Lowest precedence: a key persisted in the GLOBAL ~/.rafter/config.json via
+    # `rafter agent config set backend.apiKey`. Read through load() (global only)
+    # — load_with_policy() never merges backend.*, so a project-local .rafter.yml
+    # can NOT inject a key that would redirect scans to another account.
+    try:
+        from ..core.config_manager import ConfigManager
+
+        # Python config serializes the dataclass field as snake_case
+        # (backend.api_key); Node uses backend.apiKey. Same value, per-language key.
+        stored = ConfigManager().get("backend.api_key")
+        if isinstance(stored, str) and stored.strip():
+            return stored.strip()
+    except Exception:
+        pass  # config unreadable — fall through to the error below
+    print(
+        "No API key provided. Use --api-key, set RAFTER_API_KEY, or run "
+        "'rafter agent config set backend.apiKey <key>'",
+        file=sys.stderr,
+    )
     raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
 

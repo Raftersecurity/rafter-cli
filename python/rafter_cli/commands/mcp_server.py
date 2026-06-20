@@ -11,7 +11,12 @@ import typer
 
 from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
-from ..core.config_manager import ConfigManager
+from ..core.config_manager import (
+    ConfigManager,
+    is_secret_config_key,
+    mask_secret_value,
+    redact_config_secrets,
+)
 from ..core.docs_loader import fetch_doc, list_docs, resolve_doc_selector
 from ..scanners.betterleaks import BetterleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
@@ -115,23 +120,30 @@ def handle_read_audit_log(
 
 
 def handle_get_config(key: str | None = None) -> dict:
-    """Read Rafter configuration."""
+    """Read Rafter configuration (credentials masked — never hand a key to MCP)."""
     manager = ConfigManager()
     if key:
-        return {"key": key, "value": manager.get(key)}
-    return asdict(manager.load())
+        leaf = key.split(".")[-1]
+        raw = manager.get(key)
+        value = (
+            mask_secret_value(raw)
+            if is_secret_config_key(leaf) and isinstance(raw, str)
+            else redact_config_secrets(raw)
+        )
+        return {"key": key, "value": value}
+    return redact_config_secrets(asdict(manager.load()))
 
 
 def handle_get_config_resource() -> str:
-    """Return full config as JSON string."""
+    """Return full config as JSON string (credentials masked)."""
     manager = ConfigManager()
-    return json.dumps(asdict(manager.load()), indent=2)
+    return json.dumps(redact_config_secrets(asdict(manager.load())), indent=2)
 
 
 def handle_get_policy_resource() -> str:
-    """Return merged policy as JSON string."""
+    """Return merged policy as JSON string (credentials masked)."""
     manager = ConfigManager()
-    return json.dumps(asdict(manager.load_with_policy()), indent=2)
+    return json.dumps(redact_config_secrets(asdict(manager.load_with_policy())), indent=2)
 
 
 def handle_list_docs(tag: str | None = None) -> list[dict]:

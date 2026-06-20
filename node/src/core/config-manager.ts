@@ -8,6 +8,41 @@ const VALID_RISK_LEVELS = new Set(["minimal", "moderate", "aggressive"]);
 const VALID_COMMAND_MODES = new Set(["allow-all", "approve-dangerous", "deny-list"]);
 const VALID_LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
 
+// Config keys whose *leaf name* names a bearer credential. Values under these
+// keys must be masked before the config is shown to a human or handed to an MCP
+// client — never logged or echoed in cleartext.
+const SECRET_CONFIG_KEY_RE = /(api_?key|token|secret|password|passwd|credential)/i;
+
+export function isSecretConfigKey(leafKey: string): boolean {
+  return SECRET_CONFIG_KEY_RE.test(leafKey);
+}
+
+/** Mask a credential value, keeping a 4-char prefix for recognizability. */
+export function maskSecretValue(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) return "****";
+  return value.length <= 4 ? "****" : `${value.slice(0, 4)}****`;
+}
+
+/**
+ * Deep-clone a config value, masking any string whose KEY name looks like a
+ * credential. Pure — never mutates the input (so the stored config is unchanged).
+ */
+export function redactConfigSecrets<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((v) => redactConfigSecrets(v)) as unknown as T;
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = isSecretConfigKey(k) && typeof v === "string"
+        ? maskSecretValue(v)
+        : redactConfigSecrets(v);
+    }
+    return out as unknown as T;
+  }
+  return value;
+}
+
 /**
  * Validate a parsed config JSON object, warning and falling back to defaults for invalid fields.
  */
@@ -144,14 +179,20 @@ export class ConfigManager {
    * Save config to disk
    */
   save(config: RafterConfig): void {
-    // Ensure directory exists
+    // Ensure directory exists (0700 — the dir can hold credentials/audit log).
     const dir = path.dirname(this.configPath);
     if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
 
-    // Write config
-    fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2), "utf-8");
+    // Write config 0600 — it may hold a backend API key. writeFileSync's `mode`
+    // only applies when the file is *created*, so chmod existing files too.
+    fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2), { encoding: "utf-8", mode: 0o600 });
+    try {
+      fs.chmodSync(this.configPath, 0o600);
+    } catch {
+      // Best effort — chmod is a no-op/throws on some platforms (e.g. Windows).
+    }
   }
 
   /**

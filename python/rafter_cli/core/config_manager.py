@@ -19,6 +19,37 @@ _VALID_RISK_LEVELS = {"minimal", "moderate", "aggressive"}
 _VALID_COMMAND_MODES = {"allow-all", "approve-dangerous", "deny-list"}
 _VALID_LOG_LEVELS = {"debug", "info", "warn", "error"}
 
+# Config keys whose leaf name names a bearer credential — their values must be
+# masked before the config is shown to a human or handed to an MCP client.
+_SECRET_CONFIG_KEY_RE = _re.compile(
+    r"(api_?key|token|secret|password|passwd|credential)", _re.IGNORECASE
+)
+
+
+def is_secret_config_key(leaf_key: str) -> bool:
+    return bool(_SECRET_CONFIG_KEY_RE.search(leaf_key))
+
+
+def mask_secret_value(value) -> str:
+    """Mask a credential value, keeping a 4-char prefix for recognizability."""
+    if not isinstance(value, str) or not value:
+        return "****"
+    return "****" if len(value) <= 4 else value[:4] + "****"
+
+
+def redact_config_secrets(value):
+    """Deep-copy a config value, masking any string under a credential-named key.
+    Pure — never mutates the input (so the stored config is unchanged)."""
+    if isinstance(value, list):
+        return [redact_config_secrets(v) for v in value]
+    if isinstance(value, dict):
+        return {
+            k: (mask_secret_value(v) if is_secret_config_key(k) and isinstance(v, str)
+                else redact_config_secrets(v))
+            for k, v in value.items()
+        }
+    return value
+
 
 class ConfigManager:
     def __init__(self, config_path: Path | None = None):
@@ -48,7 +79,17 @@ class ConfigManager:
 
     def save(self, config: RafterConfig) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._path.parent.chmod(0o700)  # dir may hold credentials/audit log
+        except OSError:
+            pass
         self._path.write_text(json.dumps(self._to_dict(config), indent=2))
+        # Config may hold a backend API key — keep it owner-only. write_text does
+        # not set mode, and an existing file keeps its old perms, so chmod here.
+        try:
+            self._path.chmod(0o600)
+        except OSError:
+            pass  # best effort (e.g. Windows)
 
     # ------------------------------------------------------------------
     # CRUD helpers

@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { ConfigManager } from "../../core/config-manager.js";
+import { ConfigManager, redactConfigSecrets, isSecretConfigKey, maskSecretValue } from "../../core/config-manager.js";
 import { fmt } from "../../utils/formatter.js";
 
 export function createConfigCommand(): Command {
@@ -13,7 +13,7 @@ export function createConfigCommand(): Command {
     .action(() => {
       const manager = new ConfigManager();
       const cfg = manager.load();
-      console.log(JSON.stringify(cfg, null, 2));
+      console.log(JSON.stringify(redactConfigSecrets(cfg), null, 2));
     });
 
   // Get specific value
@@ -30,8 +30,11 @@ export function createConfigCommand(): Command {
         process.exit(1);
       }
 
+      const leaf = key.split(".").pop() ?? key;
       if (typeof value === "object") {
-        console.log(JSON.stringify(value, null, 2));
+        console.log(JSON.stringify(redactConfigSecrets(value), null, 2));
+      } else if (isSecretConfigKey(leaf) && typeof value === "string") {
+        console.log(maskSecretValue(value));
       } else {
         console.log(value);
       }
@@ -55,7 +58,11 @@ export function createConfigCommand(): Command {
       }
 
       manager.set(key, parsedValue);
-      console.log(fmt.success(`Set ${key} = ${JSON.stringify(parsedValue)}`));
+      const leaf = key.split(".").pop() ?? key;
+      const echo = isSecretConfigKey(leaf) && typeof parsedValue === "string"
+        ? JSON.stringify(maskSecretValue(parsedValue))
+        : JSON.stringify(parsedValue);
+      console.log(fmt.success(`Set ${key} = ${echo}`));
     });
 
   return config;
