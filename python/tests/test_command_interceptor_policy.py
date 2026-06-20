@@ -155,13 +155,14 @@ class TestApproveDangerousMode:
         assert result.risk_level == "high"
         assert "high risk" in (result.reason or "").lower()
 
-    def test_critical_risk_requires_approval(self):
+    def test_critical_risk_hard_blocked(self):
+        # Critical destructive commands are hard-blocked, never merely approval.
         result = _eval_with_policy(
             "mkfs.ext4 /dev/sda1",
             mode="approve-dangerous",
         )
         assert not result.allowed
-        assert result.requires_approval
+        assert not result.requires_approval
         assert result.risk_level == "critical"
 
     def test_medium_risk_allowed(self):
@@ -203,12 +204,13 @@ class TestApproveDangerousMode:
 
 
 class TestAllowAllMode:
-    def test_critical_command_allowed(self):
+    def test_critical_command_still_hard_blocked(self):
+        # allow-all cannot opt out of the built-in critical hard-block.
         result = _eval_with_policy(
             "rm -rf /",
             mode="allow-all",
         )
-        assert result.allowed
+        assert not result.allowed
         assert not result.requires_approval
         assert result.risk_level == "critical"
 
@@ -340,15 +342,18 @@ class TestEmptyPatterns:
 
 
 class TestPolicyOverrides:
-    def test_custom_blocked_replaces_defaults(self):
+    def test_builtin_critical_block_survives_custom_blocked(self):
+        # Custom blocked patterns replace the policy defaults, but the built-in
+        # critical-destructive hard-block is unconditional and still applies.
         result = _eval_with_policy(
             "rm -rf /",
             mode="deny-list",
             blocked_patterns=["only-this-is-blocked"],
             require_approval=[],
         )
-        # "rm -rf /" is NOT in the custom blocked list
-        assert result.allowed
+        assert not result.allowed
+        assert not result.requires_approval
+        assert result.risk_level == "critical"
 
     def test_custom_approval_replaces_defaults(self):
         result = _eval_with_policy(

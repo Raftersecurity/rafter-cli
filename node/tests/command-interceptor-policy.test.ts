@@ -41,12 +41,21 @@ describe("CommandInterceptor — Policy modes", () => {
   // ── No policy (agent.commandPolicy undefined) ───────────────────────
 
   describe("No policy configured", () => {
-    it("should allow any command and still assess risk", () => {
+    it("should hard-block critical destructive commands even with no policy", () => {
       stubPolicy(interceptor, null);
       const result = interceptor.evaluate("rm -rf /");
-      expect(result.allowed).toBe(true);
+      expect(result.allowed).toBe(false);
       expect(result.requiresApproval).toBe(false);
       expect(result.riskLevel).toBe("critical");
+      expect(result.matchedPattern).toBeDefined();
+    });
+
+    it("should require approval for high-risk commands even with no policy", () => {
+      stubPolicy(interceptor, null);
+      const result = interceptor.evaluate("rm -rf node_modules");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
+      expect(result.riskLevel).toBe("high");
     });
 
     it("should return low risk for safe command", () => {
@@ -126,7 +135,7 @@ describe("CommandInterceptor — Policy modes", () => {
       expect(result.reason).toContain("High risk");
     });
 
-    it("should require approval for critical-risk commands", () => {
+    it("should hard-block critical-risk commands (never merely require approval)", () => {
       stubPolicy(interceptor, {
         mode: "approve-dangerous",
         blockedPatterns: [],
@@ -134,7 +143,7 @@ describe("CommandInterceptor — Policy modes", () => {
       });
       const result = interceptor.evaluate("mkfs.ext4 /dev/sda1");
       expect(result.allowed).toBe(false);
-      expect(result.requiresApproval).toBe(true);
+      expect(result.requiresApproval).toBe(false);
       expect(result.riskLevel).toBe("critical");
     });
 
@@ -190,14 +199,14 @@ describe("CommandInterceptor — Policy modes", () => {
   // ── allow-all mode ──────────────────────────────────────────────────
 
   describe("allow-all mode", () => {
-    it("should allow even critical commands", () => {
+    it("should still hard-block critical destructive commands (allow-all cannot opt out)", () => {
       stubPolicy(interceptor, {
         mode: "allow-all",
         blockedPatterns: [],
         requireApproval: [],
       });
       const result = interceptor.evaluate("rm -rf /");
-      expect(result.allowed).toBe(true);
+      expect(result.allowed).toBe(false);
       expect(result.requiresApproval).toBe(false);
       expect(result.riskLevel).toBe("critical");
     });
@@ -341,18 +350,20 @@ describe("CommandInterceptor — Policy modes", () => {
   // ── Policy override replaces defaults ───────────────────────────────
 
   describe("Policy overrides defaults", () => {
-    it("custom blockedPatterns replace default blocked patterns", () => {
-      // With custom blocked patterns that don't include "rm -rf /",
-      // the default blocked patterns should NOT apply
+    it("built-in critical hard-block applies even when custom blockedPatterns omit it", () => {
+      // Custom blocked patterns replace the policy defaults, but the built-in
+      // critical-destructive hard-block is unconditional and still applies —
+      // "rm -rf /" can never be allowed through, whatever the policy says.
       stubPolicy(interceptor, {
         mode: "deny-list",
         blockedPatterns: ["only-this-is-blocked"],
         requireApproval: [],
       });
 
-      // "rm -rf /" would be blocked by defaults, but custom replaces them
       const result = interceptor.evaluate("rm -rf /");
-      expect(result.allowed).toBe(true); // not in custom blockedPatterns
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(false);
+      expect(result.riskLevel).toBe("critical");
     });
 
     it("custom requireApproval replaces default approval patterns", () => {

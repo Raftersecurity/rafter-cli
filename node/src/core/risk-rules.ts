@@ -96,3 +96,17 @@ export function assessCommandRisk(command: string): CommandRiskLevel {
   }
   return "low";
 }
+
+/**
+ * Return the source of the first CRITICAL pattern matching the command, or null.
+ * Mirrors assessCommandRisk's lowercasing. Intended to be called only once a
+ * command is already classified "critical" (safe-prefix exclusion is handled by
+ * assessCommandRisk), to surface *which* built-in rule matched.
+ */
+export function matchedCriticalPattern(command: string): string | null {
+  const cmd = command.toLowerCase().trim();
+  for (const pattern of CRITICAL_PATTERNS) {
+    if (pattern.test(cmd)) return pattern.source;
+  }
+  return null;
+}
