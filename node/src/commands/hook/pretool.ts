@@ -47,6 +47,7 @@ function formatApprovalMessage(command: string, evaluation: CommandEvaluation): 
 export function createHookPretoolCommand(): Command {
   return new Command("pretool")
     .description("PreToolUse hook handler (reads stdin, writes JSON decision to stdout)")
+    .allowUnknownOption()
     .option("--format <format>", "Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf", "claude")
     .action(async (opts) => {
       const format = (opts.format || "claude") as HookFormat;

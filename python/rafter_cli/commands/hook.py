@@ -11,7 +11,12 @@ from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
 from ..scanners.regex_scanner import RegexScanner
 
-hook_app = typer.Typer(name="hook", help="Hook handlers for agent platform integration", no_args_is_help=True)
+hook_app = typer.Typer(
+    name="hook",
+    help="Hook handlers for agent platform integration",
+    no_args_is_help=True,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
 
 _RISK_LABELS = {
     "critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW",
