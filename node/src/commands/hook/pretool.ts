@@ -6,6 +6,8 @@ import { ConfigManager } from "../../core/config-manager.js";
 import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
 import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
+import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
+import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
 import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
 import fs from "fs";
@@ -318,25 +320,21 @@ export function scanStagedFiles(cwd: string = process.cwd()): StagedScanResult {
   try {
     const repoRoot = execSync("git rev-parse --show-toplevel", gitOpts).trim() || cwd;
 
-    const stagedOutput = execSync(
-      "git diff --cached --name-only --diff-filter=ACM",
+    const patch = execSync(
+      "git diff -U0 --no-color --cached --diff-filter=ACM",
       gitOpts,
     ).trim();
-    if (!stagedOutput) {
+    if (!patch) {
       return { ...empty, repoRoot };
     }
 
-    const stagedFiles = stagedOutput.split("\n").filter((f) => f.trim());
-    const { scanCfg, suppressions } = loadScanConfig(cwd);
-    const scanner = new RegexScanner(scanCfg?.customPatterns);
-
-    const raw: ScanResult[] = [];
-    for (const file of stagedFiles) {
-      const filePath = path.resolve(repoRoot, file);
-      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) continue;
-      const r = scanner.scanFile(filePath);
-      if (r.matches.length > 0) raw.push(r);
+    const addedLines = parseUnifiedDiffAddedLines(patch);
+    if (addedLines.length === 0) {
+      return { ...empty, repoRoot };
     }
+
+    const { scanCfg, suppressions } = loadScanConfig(cwd);
+    const raw = scanAddedDiffLines(addedLines, repoRoot, scanCfg?.customPatterns);
 
     const afterExclude = applyExcludePaths(raw, scanCfg?.excludePaths, repoRoot);
     const { results: kept } = applySuppressions(afterExclude, suppressions);
@@ -385,16 +383,34 @@ export function formatStagedSecretReason(scan: StagedScanResult): string {
   ].join("\n");
 }
 
-const STDIN_TIMEOUT_MS = 5000;
+// Bound the stdin read so a hung/never-closing stdin can't wedge the hook.
+// Overridable via env (milliseconds) as an operator safety valve / for tests.
+function stdinTimeoutMs(): number {
+  const n = Number(process.env.RAFTER_HOOK_STDIN_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 5000;
+}
 
 function readStdin(): Promise<string> {
   return new Promise((resolve) => {
     let data = "";
-    const timeout = setTimeout(() => { resolve(data); }, STDIN_TIMEOUT_MS);
+    const onData = (chunk: string) => { data += chunk; };
+    const finish = () => {
+      clearTimeout(timeout);
+      process.stdin.removeListener("data", onData);
+      process.stdin.removeListener("end", finish);
+      process.stdin.removeListener("error", finish);
+      // A piped stdin with no EOF stays in flowing mode and keeps the Node
+      // event loop alive indefinitely — even after we resolve. Pause it so the
+      // process can exit once the decision is written (was a hard hang on the
+      // timeout path: output emitted at 5s but the process never exited).
+      process.stdin.pause();
+      resolve(data);
+    };
+    const timeout = setTimeout(finish, stdinTimeoutMs());
     process.stdin.setEncoding("utf-8");
-    process.stdin.on("data", (chunk) => { data += chunk; });
-    process.stdin.on("end", () => { clearTimeout(timeout); resolve(data); });
-    process.stdin.on("error", () => { clearTimeout(timeout); resolve(data); });
+    process.stdin.on("data", onData);
+    process.stdin.on("end", finish);
+    process.stdin.on("error", finish);
     process.stdin.resume();
   });
 }

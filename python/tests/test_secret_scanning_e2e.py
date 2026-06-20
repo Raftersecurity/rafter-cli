@@ -279,6 +279,29 @@ def _git(args: str, cwd: str) -> str:
     ).stdout.strip()
 
 
+def _scan_git_added_lines(repo: str, git_args: list[str]):
+    """Mirror ``rafter secrets --diff`` / ``--staged``: parse + lines from -U0 patch."""
+    from rafter_cli.scanners.git_diff_scan import scan_added_diff_lines
+    from rafter_cli.utils.git_diff import parse_unified_diff_added_lines
+
+    patch = subprocess.run(
+        ["git", *git_args],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo,
+    ).stdout
+    repo_root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo,
+    ).stdout.strip()
+    added = parse_unified_diff_added_lines(patch)
+    return scan_added_diff_lines(added, repo_root), added, repo_root
+
+
 class TestGitStagedScanning:
     """Test that scanning git staged files works with real git repos."""
 
@@ -293,29 +316,18 @@ class TestGitStagedScanning:
         _git("add README.md", self.repo)
         _git('commit -m "initial"', self.repo)
 
-    def _get_staged_files(self) -> list[str]:
-        """Get list of staged file paths (mimics what --staged does internally)."""
-        output = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
-            capture_output=True, text=True, check=True,
-            cwd=self.repo,
-        ).stdout.strip()
-        if not output:
-            return []
-        repo_root = _git("rev-parse --show-toplevel", self.repo)
-        return [os.path.join(repo_root, f.strip()) for f in output.split("\n") if f.strip()]
-
     def test_detects_secrets_in_staged_files(self, tmp_path):
         (tmp_path / "config.py").write_text(
             "API_KEY = 'AKIAIOSFODNN7EXAMPLE'\n"
         )
         _git("add config.py", self.repo)
 
-        staged = self._get_staged_files()
-        assert len(staged) == 1
-
-        scanner = RegexScanner()
-        results = scanner.scan_files(staged)
+        results, added, _repo_root = _scan_git_added_lines(
+            self.repo,
+            ["diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
+        )
+        assert len(added) == 1
+        assert added[0].file == "config.py"
         assert len(results) == 1
         assert results[0].matches[0].pattern.name == "AWS Access Key ID"
 
@@ -323,9 +335,10 @@ class TestGitStagedScanning:
         (tmp_path / "clean.py").write_text("x = 42\n")
         _git("add clean.py", self.repo)
 
-        staged = self._get_staged_files()
-        scanner = RegexScanner()
-        results = scanner.scan_files(staged)
+        results, _added, _repo_root = _scan_git_added_lines(
+            self.repo,
+            ["diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
+        )
         assert len(results) == 0
 
     def test_only_staged_files_scanned(self, tmp_path):
@@ -336,12 +349,12 @@ class TestGitStagedScanning:
         # Create but don't stage a file with a secret
         (tmp_path / "secret.py").write_text("key = 'AKIAIOSFODNN7EXAMPLE'\n")
 
-        staged = self._get_staged_files()
-        assert len(staged) == 1
-        assert "clean.py" in staged[0]
-
-        scanner = RegexScanner()
-        results = scanner.scan_files(staged)
+        results, added, _repo_root = _scan_git_added_lines(
+            self.repo,
+            ["diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
+        )
+        assert len(added) == 1
+        assert added[0].file == "clean.py"
         assert len(results) == 0
 
 
@@ -362,18 +375,6 @@ class TestGitDiffScanning:
         _git("add README.md", self.repo)
         _git('commit -m "initial"', self.repo)
 
-    def _get_diff_files(self, ref: str) -> list[str]:
-        """Get files changed since ref (mimics what --diff does internally)."""
-        output = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=ACM", ref],
-            capture_output=True, text=True, check=True,
-            cwd=self.repo,
-        ).stdout.strip()
-        if not output:
-            return []
-        repo_root = _git("rev-parse --show-toplevel", self.repo)
-        return [os.path.join(repo_root, f.strip()) for f in output.split("\n") if f.strip()]
-
     def test_detects_secrets_in_changed_files(self, tmp_path):
         initial = _git("rev-parse HEAD", self.repo)
 
@@ -381,11 +382,12 @@ class TestGitDiffScanning:
         _git("add secrets.py", self.repo)
         _git('commit -m "add secrets"', self.repo)
 
-        changed = self._get_diff_files(initial)
-        assert len(changed) == 1
-
-        scanner = RegexScanner()
-        results = scanner.scan_files(changed)
+        results, added, _repo_root = _scan_git_added_lines(
+            self.repo,
+            ["diff", "-U0", "--no-color", "--diff-filter=ACM", initial],
+        )
+        assert len(added) >= 1
+        assert any(line.file == "secrets.py" for line in added)
         assert len(results) == 1
         assert results[0].matches[0].pattern.name == "AWS Access Key ID"
 
@@ -396,9 +398,10 @@ class TestGitDiffScanning:
         _git("add feature.py", self.repo)
         _git('commit -m "add feature"', self.repo)
 
-        changed = self._get_diff_files(initial)
-        scanner = RegexScanner()
-        results = scanner.scan_files(changed)
+        results, _added, _repo_root = _scan_git_added_lines(
+            self.repo,
+            ["diff", "-U0", "--no-color", "--diff-filter=ACM", initial],
+        )
         assert len(results) == 0
 
     def test_only_changed_files_scanned(self, tmp_path):
@@ -413,12 +416,32 @@ class TestGitDiffScanning:
         _git("add clean.py", self.repo)
         _git('commit -m "add clean"', self.repo)
 
-        changed = self._get_diff_files(ref)
-        assert len(changed) == 1
-        assert "clean.py" in changed[0]
+        results, added, _repo_root = _scan_git_added_lines(
+            self.repo,
+            ["diff", "-U0", "--no-color", "--diff-filter=ACM", ref],
+        )
+        assert len(added) >= 1
+        assert all(line.file == "clean.py" for line in added)
+        assert len(results) == 0
 
-        scanner = RegexScanner()
-        results = scanner.scan_files(changed)
+    def test_does_not_reflag_preexisting_secret_without_plus_line(self, tmp_path):
+        (tmp_path / "config.py").write_text("key = 'AKIAIOSFODNN7EXAMPLE'\n")
+        _git("add config.py", self.repo)
+        _git('commit -m "config with secret"', self.repo)
+
+        ref = _git("rev-parse HEAD", self.repo)
+
+        with open(tmp_path / "config.py", "a") as f:
+            f.write("clean = True\n")
+        _git("add config.py", self.repo)
+        _git('commit -m "append clean line"', self.repo)
+
+        results, added, _repo_root = _scan_git_added_lines(
+            self.repo,
+            ["diff", "-U0", "--no-color", "--diff-filter=ACM", ref],
+        )
+        assert len(added) >= 1
+        assert all("AKIA" not in line.text for line in added)
         assert len(results) == 0
 
 

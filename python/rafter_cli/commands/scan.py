@@ -110,6 +110,7 @@ def scan_local(
         _apply_baseline,
         _apply_exclude_paths,
         _load_baseline_entries,
+        _run_git_added_line_scan,
     )
     from ..core.config_manager import ConfigManager
     from ..core.custom_patterns import load_suppressions, policy_ignore_to_suppressions
@@ -139,82 +140,37 @@ def scan_local(
 
     # --diff
     if diff:
-        try:
-            diff_output = subprocess.run(
-                ["git", "diff", "--name-only", "--diff-filter=ACM", diff],
-                capture_output=True, text=True, check=True,
-                cwd=git_cwd,
-            ).stdout.strip()
-        except subprocess.CalledProcessError:
-            print("Error: Not in a git repository or invalid ref", file=sys.stderr)
-            raise typer.Exit(code=2)
-
-        if not diff_output:
-            if not quiet:
-                rprint(fmt.success(f"No files changed since {diff}"))
-            raise typer.Exit(code=0)
-
-        changed = [f.strip() for f in diff_output.split("\n") if f.strip()]
-        if not quiet:
-            print(f"Scanning {len(changed)} file(s) changed since {diff}...", file=sys.stderr)
-
-        repo_root = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=True,
-            cwd=git_cwd,
-        ).stdout.strip()
-
-        eng = _select_engine(engine, quiet, auto_update_enabled)
-        all_results = []
-        for f in changed:
-            resolved = os.path.join(repo_root, f)
-            if os.path.isfile(resolved):
-                all_results.extend(_scan_file(resolved, eng, custom_patterns))
-        # sable-yz0 — honor scan.exclude_paths in --diff mode too.
-        exclude = scan_cfg.exclude_paths if scan_cfg else None
-        all_results = _apply_exclude_paths(all_results, exclude, repo_root)
-        filtered = _apply_baseline(all_results, baseline_entries)
-        _output_scan_results(filtered, json_output, quiet, f"files changed since {diff}", format=format, suppressions=suppressions)
+        _run_git_added_line_scan(
+            ["diff", "-U0", "--no-color", "--diff-filter=ACM", diff],
+            git_cwd,
+            custom_patterns,
+            scan_cfg,
+            baseline_entries,
+            suppressions,
+            f"files changed since {diff}",
+            f"No files changed since {diff}",
+            json_output=json_output,
+            quiet=quiet,
+            format=format,
+        )
         return
 
     # --staged
     if staged:
-        try:
-            staged_output = subprocess.run(
-                ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
-                capture_output=True, text=True, check=True,
-                cwd=git_cwd,
-            ).stdout.strip()
-        except subprocess.CalledProcessError:
-            print("Error: Not in a git repository", file=sys.stderr)
-            raise typer.Exit(code=2)
-
-        if not staged_output:
-            if not quiet:
-                rprint(fmt.success("No files staged for commit"))
-            raise typer.Exit(code=0)
-
-        staged_files = [f.strip() for f in staged_output.split("\n") if f.strip()]
-        if not quiet:
-            print(f"Scanning {len(staged_files)} staged file(s)...", file=sys.stderr)
-
-        repo_root = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=True,
-            cwd=git_cwd,
-        ).stdout.strip()
-
-        eng = _select_engine(engine, quiet, auto_update_enabled)
-        all_results = []
-        for f in staged_files:
-            resolved = os.path.join(repo_root, f)
-            if os.path.isfile(resolved):
-                all_results.extend(_scan_file(resolved, eng, custom_patterns))
-        # sable-yz0 — honor scan.exclude_paths in --staged mode too.
-        exclude = scan_cfg.exclude_paths if scan_cfg else None
-        all_results = _apply_exclude_paths(all_results, exclude, repo_root)
-        filtered = _apply_baseline(all_results, baseline_entries)
-        _output_scan_results(filtered, json_output, quiet, "staged files", format=format, suppressions=suppressions)
+        _run_git_added_line_scan(
+            ["diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
+            git_cwd,
+            custom_patterns,
+            scan_cfg,
+            baseline_entries,
+            suppressions,
+            "staged files",
+            "No files staged for commit",
+            json_output=json_output,
+            quiet=quiet,
+            format=format,
+            not_repo_message="Error: Not in a git repository",
+        )
         return
 
     # Default: scan path

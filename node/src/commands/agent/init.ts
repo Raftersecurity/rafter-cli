@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { ConfigManager } from "../../core/config-manager.js";
 import { getRafterDir } from "../../core/config-defaults.js";
 import { BinaryManager } from "../../utils/binary-manager.js";
+import { SkillScannerInstaller, SKILL_SCANNER_VERSION } from "../../scanners/skill-scanner.js";
 import { SkillManager } from "../../utils/skill-manager.js";
 import fs from "fs";
 import path from "path";
@@ -50,6 +51,7 @@ function printDryRunPlan(plan: {
   wantAider: boolean;
   wantHermes: boolean;
   wantBetterleaks: boolean;
+  wantSkillScanner: boolean;
   riskLevel: string;
 }): void {
   const home = os.homedir();
@@ -82,6 +84,12 @@ function printDryRunPlan(plan: {
     console.log();
     console.log("Betterleaks (--with-betterleaks / --all):");
     D(path.join(home, ".rafter", "bin", "betterleaks"), "binary, ~12MB from GitHub releases");
+  }
+
+  if (plan.wantSkillScanner) {
+    console.log();
+    console.log("skill-scanner deep engine (--with-skill-scanner):");
+    D("skill-scanner", "heavy PyPI package, isolated install via uv tool / pip --user");
   }
 
   if (plan.wantClaudeCode) {
@@ -1077,6 +1085,7 @@ export function createInitCommand(): Command {
     .option("--with-continue", "Install Continue.dev integration")
     .option("--with-hermes", "Install Hermes integration")
     .option("--with-betterleaks", "Download and install Betterleaks binary")
+    .option("--with-skill-scanner", "Install the optional skill-scanner deep engine (heavy; audit-skill --deep)")
     .option("--all", "Install all detected integrations and download Betterleaks")
     .option("-i, --interactive", "Guided setup — prompts for each detected integration")
     .option("--update", "Re-download betterleaks and reinstall integrations without resetting config")
@@ -1144,6 +1153,8 @@ export function createInitCommand(): Command {
       // established. Excluded from --all in --local for the same reason.
       let wantHermes = opts.withHermes || (opts.all && !opts.local);
       let wantBetterleaks = opts.withBetterleaks || (opts.all && !opts.local);
+      // skill-scanner is heavy and opt-in only — deliberately NOT folded into --all.
+      const wantSkillScanner = !!opts.withSkillScanner;
 
       // Interactive mode: prompt for each detected integration
       if (opts.interactive && !opts.all) {
@@ -1213,6 +1224,7 @@ export function createInitCommand(): Command {
           wantAider: wantAider && (hasAider || opts.local),
           wantHermes: wantHermes && hasHermes,
           wantBetterleaks,
+          wantSkillScanner,
           riskLevel: opts.riskLevel,
         });
         return;
@@ -1300,6 +1312,39 @@ export function createInitCommand(): Command {
               console.log(fmt.info("To fix: install betterleaks manually (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
               console.log();
             }
+          }
+        }
+      }
+
+      // Install the optional skill-scanner deep engine (opt-in via
+      // --with-skill-scanner only — never via --all, as it's heavy).
+      if (wantSkillScanner) {
+        const onPath = opts.update ? null : (() => {
+          try {
+            const cmd = process.platform === "win32" ? "where skill-scanner" : "which skill-scanner";
+            return execSync(cmd, { timeout: 5000, encoding: "utf-8" }).trim().split("\n")[0].trim() || null;
+          } catch {
+            return null;
+          }
+        })();
+        if (onPath) {
+          console.log(fmt.success(`skill-scanner available on PATH (${onPath})`));
+        } else {
+          console.log();
+          console.log(fmt.info(
+            "Installing optional skill-scanner deep engine (heavy third-party package; isolated install)...",
+          ));
+          const result = await new SkillScannerInstaller().install(
+            SKILL_SCANNER_VERSION,
+            (msg) => console.log(`   ${msg}`),
+          );
+          if (result.ok) {
+            console.log(fmt.success(`skill-scanner installed (via ${result.via}): ${result.message}`));
+          } else {
+            console.log(fmt.warning(`skill-scanner install failed: ${result.message}`));
+            console.log(fmt.info(
+              "To fix: run 'rafter agent update-skill-scanner' or install manually with 'uv tool install cisco-ai-skill-scanner'.",
+            ));
           }
         }
       }

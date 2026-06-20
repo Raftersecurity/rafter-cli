@@ -1,3 +1,5 @@
+import { ConfigManager } from "../core/config-manager.js";
+
 export const API = "https://rafter.so/api/";
 
 // Exit codes
@@ -42,7 +44,17 @@ export function handleScopeError(e: any): boolean {
 export function resolveKey(cliKey?: string): string {
   if (cliKey) return cliKey;
   if (process.env.RAFTER_API_KEY) return process.env.RAFTER_API_KEY;
-  console.error("No API key provided. Use --api-key or set RAFTER_API_KEY");
+  // Lowest precedence: a key persisted in the GLOBAL ~/.rafter/config.json via
+  // `rafter agent config set backend.apiKey`. Read through load() (global only)
+  // — loadWithPolicy() never merges backend.*, so a project-local .rafter.yml
+  // can NOT inject a key that would redirect scans to another account.
+  try {
+    const stored = new ConfigManager().get("backend.apiKey");
+    if (typeof stored === "string" && stored.trim()) return stored.trim();
+  } catch {
+    // Config unreadable — fall through to the error below.
+  }
+  console.error("No API key provided. Use --api-key, set RAFTER_API_KEY, or run 'rafter agent config set backend.apiKey <key>'");
   process.exit(EXIT_GENERAL_ERROR);
 }
 

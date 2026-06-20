@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -52,6 +53,23 @@ def _format_approval_message(command: str, evaluation) -> str:
 
 _STDIN_TIMEOUT_S = 5
 
+def _stdin_timeout_s() -> float:
+    # Bound the stdin read so a hung/never-closing stdin can't wedge the hook.
+    # Overridable via env (milliseconds, parity with the Node hook) as an
+    # operator safety valve / for tests.
+    raw = os.environ.get("RAFTER_HOOK_STDIN_TIMEOUT_MS")
+    if raw:
+        try:
+            ms = float(raw)
+            # Require finite and positive (parity with the Node `Number.isFinite`
+            # check). `inf`/`nan` must NOT pass — `join(timeout=inf)` would
+            # reintroduce the exact unbounded hang this bound exists to prevent.
+            if math.isfinite(ms) and ms > 0:
+                return ms / 1000.0
+        except ValueError:
+            pass
+    return _STDIN_TIMEOUT_S
+
 def _read_stdin() -> str:
     import threading
     result: list[str] = [""]
@@ -60,9 +78,11 @@ def _read_stdin() -> str:
             result[0] = sys.stdin.read()
         except Exception:
             pass
+    # daemon=True: if stdin never closes, the abandoned reader thread does not
+    # block interpreter exit, so the process exits after the join timeout.
     t = threading.Thread(target=_reader, daemon=True)
     t.start()
-    t.join(timeout=_STDIN_TIMEOUT_S)
+    t.join(timeout=_stdin_timeout_s())
     return result[0]
 
 
@@ -256,27 +276,23 @@ def _scan_staged_files() -> dict:
         ).stdout.strip() or os.getcwd()
 
         output = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+            ["git", "diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
             capture_output=True, text=True,
-        ).stdout.strip()
-        if not output:
+        ).stdout
+        if not output.strip():
             return {**empty, "repo_root": repo_root}
-        staged = [f for f in output.split("\n") if f.strip()]
 
+        from ..utils.git_diff import parse_unified_diff_added_lines
+        from ..scanners.git_diff_scan import scan_added_diff_lines
         from ..core.custom_patterns import apply_suppressions
         from .agent import _apply_exclude_paths
 
-        scan_cfg, suppressions, custom_patterns = _load_scan_config()
-        scanner = RegexScanner(custom_patterns)
+        added = parse_unified_diff_added_lines(output)
+        if not added:
+            return {**empty, "repo_root": repo_root}
 
-        raw = []
-        for f in staged:
-            resolved = os.path.join(repo_root, f)
-            if not os.path.isfile(resolved):
-                continue
-            r = scanner.scan_file(resolved)
-            if r.matches:
-                raw.append(r)
+        scan_cfg, suppressions, custom_patterns = _load_scan_config()
+        raw = scan_added_diff_lines(added, repo_root, custom_patterns)
 
         exclude = scan_cfg.exclude_paths if scan_cfg else None
         after_exclude = _apply_exclude_paths(raw, exclude, repo_root)

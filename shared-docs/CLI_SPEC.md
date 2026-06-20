@@ -64,7 +64,7 @@ Aliases: `rafter scan`, `rafter scan remote`
 
 Trigger a new security scan for a repository.
 
-- `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
+- `-k, --api-key TEXT` — API key. Resolution order: this flag → `RAFTER_API_KEY` env → `backend.apiKey` in global config (see `rafter agent config`)
 - `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
 - `-b, --branch TEXT` — branch (default: current branch or 'main')
 - `-f, --format [json|md]` — output format (default: md)
@@ -78,7 +78,7 @@ Trigger a new security scan for a repository.
 
 Retrieve results from a scan.
 
-- `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
+- `-k, --api-key TEXT` — API key. Resolution order: this flag → `RAFTER_API_KEY` env → `backend.apiKey` in global config (see `rafter agent config`)
 - `-f, --format [json|md]` — output format (default: md)
 - `--interactive` — poll until scan completes (10-second intervals)
 - `--quiet` — suppress status messages on stderr
@@ -90,7 +90,7 @@ Retrieve results from a scan.
 
 Check API quota and usage statistics.
 
-- `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
+- `-k, --api-key TEXT` — API key. Resolution order: this flag → `RAFTER_API_KEY` env → `backend.apiKey` in global config (see `rafter agent config`)
 - `-h, --help`
 
 ---
@@ -297,8 +297,8 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `-q, --quiet` — only output if secrets found
 - `--json` — output as JSON
 - `--format <format>` — output format: `text`, `json`, or `sarif` (default: `text`)
-- `--staged` — scan git staged files only
-- `--diff <ref>` — scan files changed since a git ref (e.g., `HEAD~1`, `main`)
+- `--staged` — scan **added/modified lines only** in the git staged diff (`git diff -U0 --cached`); patterns engine only; reports `file:line` from the post-change side
+- `--diff <ref>` — scan **added/modified lines only** in the unified diff since `<ref>` (`git diff -U0 <ref>`); patterns engine only; pre-existing secrets in touched files are not re-flagged unless their line appears as `+` in the diff
 - `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default). In `auto` mode rafter runs **both** engines when betterleaks is available and unions the findings (deduplicated conservatively by file + line + column + matched text — when the two engines extract a secret slightly differently it is reported once per engine rather than risk collapsing two distinct findings), so a secret one engine misses (e.g. betterleaks 1.1.x does not flag AWS access keys) is still caught by the other. Each finding then carries an `engines` array attributing which engine(s) surfaced it. `auto` degrades to patterns-only when betterleaks is absent or a stale binary can't be refreshed. `--engine betterleaks` / `--engine patterns` stay single-engine and omit the `engines` field.
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
@@ -431,6 +431,26 @@ Security review of a third-party skill, plugin, or agent extension before instal
 - `--installed` — audit every installed skill across detected agent skill directories instead of a path
 - `--agent <name>` — restrict `--installed` to a single agent (`claude-code`, `codex`, `openclaw`, or `cursor`)
 - `--summary` — print a terse human-readable table instead of JSON (only with `--installed`)
+- `--deep` — also run the optional **DEEP engine** (Cisco AI Defense `skill-scanner`): prompt injection, taint/dataflow, YARA, `.pyc` integrity — the blind spots the deterministic scan can't see. **Offline analyzers only** (no LLM/cloud/network). Applies across all input modes (path / directory / shorthand / `--installed`), scanning each resolved skill on disk. If the engine isn't installed and you're on an interactive TTY, rafter **offers to install it** (isolated, version-pinned); otherwise it prints the install hint and exits **2**. See `rafter agent update-skill-scanner`.
+- `--engine <name>` — deep-engine selector; `skill-scanner` is equivalent to `--deep`. Any other value exits **2**.
+
+#### Deep engine output (`--deep`)
+
+When `--deep` is used, each skill report gains a `deepScan` block (single-skill: top-level; multi-skill / `--installed`: on each per-skill report):
+
+```json
+"deepScan": {
+  "engine": "skill-scanner",
+  "maxSeverity": "critical" | "high" | "medium" | "low" | null,
+  "analyzersUsed": ["static_analyzer", "bytecode", "pipeline"],
+  "findings": [
+    { "ruleId": "...", "severity": "critical|high|medium|low", "category": "prompt_injection",
+      "title": "...", "description": "...", "file": "SKILL.md", "line": 3, "snippet": "...", "analyzer": "static" }
+  ]
+}
+```
+
+Only `critical`/`high`/`medium` deep findings are **actionable** — they escalate the report's `severity`/`worst` and flip the exit code to **1**; `low`/INFO are reported but don't fail the review. The offline guarantee (never `--use-llm`/`--use-virustotal`/`--use-aidefense`/`--use-behavioral`) is identical to `audit-skill --deep` and test-enforced in both runtimes. `rafter agent audit-skill --deep` remains as a deprecated back-compat alias.
 
 #### Persistent shorthand cache
 
@@ -598,11 +618,28 @@ Note the looser gate vs. the `PATH_OR_URL` mode: `--installed` tolerates `medium
 
 **Deprecated** — use `rafter skill review <path-or-url>` instead. Still functional; emits a deprecation warning to stderr.
 
-- `SKILL_PATH` — path to skill file (.md)
+- `SKILL_PATH` — path to a skill file (`.md`) **or** a skill directory. When a directory is given, the quick scan reads its `SKILL.md`; the deep engine (`--deep`) scans the whole directory (where it can also see bundled scripts / `.pyc`, its most thorough mode).
 - `--skip-openclaw` — skip OpenClaw integration, show manual review prompt
 - `--json` — output as JSON
+- `--deep` — run the optional **DEEP engine** (Cisco AI Defense `skill-scanner`) in addition to the quick scan. **Offline analyzers only** — no LLM/cloud/network calls. Requires `skill-scanner` on `PATH` (see `update-skill-scanner`); if missing, prints an install hint and exits **2** (no crash).
+- `--engine <name>` — deep-engine selector. `skill-scanner` is equivalent to `--deep`. Any other value exits **2**.
 
 Quick scan: secrets, URLs, high-risk commands. Deep analysis (OpenClaw): 12-dimension review.
+
+**Deep engine (`--deep`) — couple, not swap.** The zero-dependency quick scan stays the default; `--deep` adds an opt-in deeper pass for prompt injection, taint/dataflow, YARA and `.pyc` integrity — the blind spots the regex quick scan cannot see. Both runtimes shell out to the **same external `skill-scanner` CLI** (mirrors the betterleaks pattern) and parse its JSON. **Offline guarantee:** the invocation is `skill-scanner scan <dir> --format json --fail-on-severity medium [--skill-file <name> --lenient]` and **never** passes `--use-llm`, `--use-virustotal`, `--use-aidefense`, or `--use-behavioral` — enforced by a test in both suites, so a regression that enables a network analyzer fails CI. (skill-scanner exits 0 even on CRITICAL findings by default; rafter relies on the parsed JSON for truth and uses `--fail-on-severity` only as corroboration — do not trust the bare exit code.)
+
+**`deepScan` object** — present in `--json` output only when `--deep`/`--engine` is used:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `engine` | string | always `"skill-scanner"` |
+| `maxSeverity` | string\|null | highest finding severity in our tiers (`critical`/`high`/`medium`/`low`) or `null` |
+| `analyzersUsed` | string[] | offline analyzers that ran (e.g. `["static_analyzer","bytecode","pipeline"]`) |
+| `findings` | array | normalized findings (below) |
+
+Each finding: `ruleId` (string), `severity` (our tier), `category` (string, e.g. `prompt_injection`/`data_exfiltration`), `title`, `description`, `file` (string\|null), `line` (int\|null), `snippet` (string\|null), `analyzer` (string).
+
+**Severity mapping:** skill-scanner `CRITICAL/HIGH/MEDIUM/LOW` → same tier; `INFO` → `low`. Only `critical`/`high`/`medium` are **actionable** and flip the exit code to **1**; `low`/INFO (e.g. missing-license policy hints) are reported but do not fail the audit. Exit codes: `0` no actionable findings, `1` actionable findings (quick or deep), `2` path-not-found / unknown engine / deep requested but tool missing.
 
 ### rafter agent audit [OPTIONS]
 
@@ -749,7 +786,11 @@ Manage agent configuration (dot-notation paths).
 - `rafter agent config get <key>` — read value
 - `rafter agent config set <key> <value>` — write value
 
-Config keys: `agent.riskLevel`, `agent.skills.autoUpdate`, `agent.skills.installOnInit`, `agent.skills.backupBeforeUpdate`, `agent.commandPolicy.mode`, `agent.commandPolicy.blockedPatterns`, `agent.commandPolicy.requireApproval`, `agent.outputFiltering.redactSecrets`, `agent.audit.logAllActions`, `agent.audit.retentionDays`, `agent.audit.logLevel`, `agent.notifications.webhook`, `agent.notifications.minRiskLevel`.
+Config keys: `agent.riskLevel`, `agent.skills.autoUpdate`, `agent.skills.installOnInit`, `agent.skills.backupBeforeUpdate`, `agent.commandPolicy.mode`, `agent.commandPolicy.blockedPatterns`, `agent.commandPolicy.requireApproval`, `agent.outputFiltering.redactSecrets`, `agent.audit.logAllActions`, `agent.audit.retentionDays`, `agent.audit.logLevel`, `agent.notifications.webhook`, `agent.notifications.minRiskLevel`, `backend.apiKey` (Python: `backend.api_key`).
+
+**Credential handling.** The global config (`~/.rafter/config.json`) is written with `0600` perms (owner-only; the directory is `0700`), and an existing looser-perm file is tightened on the next write. Values under credential-named keys (matching `api_?key`/`token`/`secret`/`password`/`credential`) are **masked** (`abcd****`) anywhere the config is rendered — `config show`, `config get`, the `config set` confirmation echo, and the MCP `get_config` tool + `rafter://config` / `rafter://policy` resources — so a stored key is never printed in cleartext or handed to an MCP client. The value is still stored verbatim on disk (it is a bearer token); the protection is file perms + display redaction.
+
+**API-key resolution order** (for `run`/`get`/`usage` and other backend calls): `--api-key` flag → `RAFTER_API_KEY` env → `backend.apiKey` in the **global** config. The config fallback is read only from `~/.rafter/config.json` (never a project-local `.rafter.yml`), so a hostile repository cannot inject an API key that redirects scans to another account.
 
 ### rafter agent init-project [OPTIONS]
 
@@ -845,6 +886,20 @@ Update (or reinstall) the managed betterleaks binary.
 
 - `--version <version>` — specific betterleaks version to install (default: current bundled version)
 
+### rafter agent update-skill-scanner [OPTIONS]
+
+Install or update the optional **`skill-scanner` deep engine** used by `audit-skill --deep`. skill-scanner is a heavy third-party PyPI package (`cisco-ai-skill-scanner`); it is **not bundled** with Rafter and is only invoked when you pass `--deep`. The installer is isolated: it runs `uv tool install cisco-ai-skill-scanner==<version>` (preferred) or falls back to `python3 -m pip install --user cisco-ai-skill-scanner==<version>`, with a **pinned version** and a **list-form subprocess** (never a shell). It does not change the offline-only invocation contract above. Also available as `rafter agent init --with-skill-scanner` (opt-in only — deliberately **not** part of `--all`).
+
+- `--version <version>` — specific skill-scanner version to install (default: pinned version)
+
+Exit codes: `0` installed + `skill-scanner` reachable on `PATH`; `1` install failed or launcher not on `PATH` afterward.
+
+### rafter agent remove-skill-scanner
+
+Uninstall the optional `skill-scanner` deep engine — the inverse of `update-skill-scanner`. Removes the managed install (`uv tool uninstall`, with a `pip uninstall` fallback, since the install path isn't durably recorded). **Idempotent:** a success no-op when it isn't installed. Your skills and Rafter's own dependencies are untouched.
+
+Exit codes: `0` removed (or already absent); `1` still on `PATH` after uninstall attempts (e.g. installed by another tool — remove manually).
+
 ### rafter agent baseline SUBCOMMAND
 
 Manage the findings baseline (allowlist for known findings). Baseline entries suppress matched findings in `rafter secrets --baseline`.
@@ -887,6 +942,8 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
 
 **Hook off-switch.** The hook can be disabled at runtime from **trusted sources only** — the `RAFTER_DISABLE_HOOKS` / `RAFTER_DISABLE_SECRET_SCAN` / `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on) and the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default is enabled; a corrupt config or unrecognized value fails safe to enabled. By design this is **never** read from project-local `.rafter.yml`, so a hostile repo cannot ship a config that silently disables a victim's hook. `rafter agent status` reports the effective state and its source. See `shared-docs/CONFIG.md` for the full configuration reference.
+
+**Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (`allow` / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
 
 ### rafter hook posttool [OPTIONS]
 
