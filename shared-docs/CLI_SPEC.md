@@ -64,7 +64,7 @@ Aliases: `rafter scan`, `rafter scan remote`
 
 Trigger a new security scan for a repository.
 
-- `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
+- `-k, --api-key TEXT` — API key. Resolution order: this flag → `RAFTER_API_KEY` env → `backend.apiKey` in global config (see `rafter agent config`)
 - `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
 - `-b, --branch TEXT` — branch (default: current branch or 'main')
 - `-f, --format [json|md]` — output format (default: md)
@@ -78,7 +78,7 @@ Trigger a new security scan for a repository.
 
 Retrieve results from a scan.
 
-- `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
+- `-k, --api-key TEXT` — API key. Resolution order: this flag → `RAFTER_API_KEY` env → `backend.apiKey` in global config (see `rafter agent config`)
 - `-f, --format [json|md]` — output format (default: md)
 - `--interactive` — poll until scan completes (10-second intervals)
 - `--quiet` — suppress status messages on stderr
@@ -90,7 +90,7 @@ Retrieve results from a scan.
 
 Check API quota and usage statistics.
 
-- `-k, --api-key TEXT` — API key or `RAFTER_API_KEY` env var
+- `-k, --api-key TEXT` — API key. Resolution order: this flag → `RAFTER_API_KEY` env → `backend.apiKey` in global config (see `rafter agent config`)
 - `-h, --help`
 
 ---
@@ -786,7 +786,11 @@ Manage agent configuration (dot-notation paths).
 - `rafter agent config get <key>` — read value
 - `rafter agent config set <key> <value>` — write value
 
-Config keys: `agent.riskLevel`, `agent.skills.autoUpdate`, `agent.skills.installOnInit`, `agent.skills.backupBeforeUpdate`, `agent.commandPolicy.mode`, `agent.commandPolicy.blockedPatterns`, `agent.commandPolicy.requireApproval`, `agent.outputFiltering.redactSecrets`, `agent.audit.logAllActions`, `agent.audit.retentionDays`, `agent.audit.logLevel`, `agent.notifications.webhook`, `agent.notifications.minRiskLevel`.
+Config keys: `agent.riskLevel`, `agent.skills.autoUpdate`, `agent.skills.installOnInit`, `agent.skills.backupBeforeUpdate`, `agent.commandPolicy.mode`, `agent.commandPolicy.blockedPatterns`, `agent.commandPolicy.requireApproval`, `agent.outputFiltering.redactSecrets`, `agent.audit.logAllActions`, `agent.audit.retentionDays`, `agent.audit.logLevel`, `agent.notifications.webhook`, `agent.notifications.minRiskLevel`, `backend.apiKey` (Python: `backend.api_key`).
+
+**Credential handling.** The global config (`~/.rafter/config.json`) is written with `0600` perms (owner-only; the directory is `0700`), and an existing looser-perm file is tightened on the next write. Values under credential-named keys (matching `api_?key`/`token`/`secret`/`password`/`credential`) are **masked** (`abcd****`) anywhere the config is rendered — `config show`, `config get`, the `config set` confirmation echo, and the MCP `get_config` tool + `rafter://config` / `rafter://policy` resources — so a stored key is never printed in cleartext or handed to an MCP client. The value is still stored verbatim on disk (it is a bearer token); the protection is file perms + display redaction.
+
+**API-key resolution order** (for `run`/`get`/`usage` and other backend calls): `--api-key` flag → `RAFTER_API_KEY` env → `backend.apiKey` in the **global** config. The config fallback is read only from `~/.rafter/config.json` (never a project-local `.rafter.yml`), so a hostile repository cannot inject an API key that redirects scans to another account.
 
 ### rafter agent init-project [OPTIONS]
 
