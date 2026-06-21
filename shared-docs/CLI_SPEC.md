@@ -945,6 +945,8 @@ On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secre
 
 **Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (`allow` / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
 
+**Tolerates harness-appended flags.** Hook input arrives on **stdin**, so both subcommands ignore unknown options and extra positional args that an agent platform appends to the hook command — e.g. Claude Code adds `--hook-json <data>`. Such extras are discarded (the hook never errors on them); declared options like `--format` are still parsed normally.
+
 ### rafter hook posttool [OPTIONS]
 
 PostToolUse hook handler. Reads tool output from stdin, redacts any secrets found, and writes JSON to stdout.
