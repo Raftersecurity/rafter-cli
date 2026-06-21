@@ -23,6 +23,11 @@ interface PostToolOutput {
 export function createHookPosttoolCommand(): Command {
   return new Command("posttool")
     .description("PostToolUse hook handler (reads stdin, redacts secrets in output, writes JSON to stdout)")
+    // Tolerate extra flags/args the host harness appends to the hook command
+    // (e.g. Claude Code adds `--hook-json <data>`). Hook input comes from stdin,
+    // so anything else is unused — discard it instead of erroring out.
+    .allowUnknownOption()
+    .allowExcessArguments()
     .option("--format <format>", "Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf", "claude")
     .action(async (opts) => {
       const format = (opts.format || "claude") as HookFormat;

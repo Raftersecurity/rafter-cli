@@ -13,7 +13,15 @@ from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
 from ..scanners.regex_scanner import RegexScanner
 
-hook_app = typer.Typer(name="hook", help="Hook handlers for agent platform integration", no_args_is_help=True)
+# allow_extra_args / ignore_unknown_options: tolerate extra flags/args the host
+# harness appends to the hook command (e.g. Claude Code adds `--hook-json <data>`).
+# Hook input comes from stdin, so anything else is unused — discard, don't error.
+hook_app = typer.Typer(
+    name="hook",
+    help="Hook handlers for agent platform integration",
+    no_args_is_help=True,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
 
 _RISK_LABELS = {
     "critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW",
@@ -401,7 +409,10 @@ def _evaluate_write(tool_input: dict) -> dict:
     return {"decision": "deny", "reason": f"Secret detected in {file_path}: {', '.join(names)}"}
 
 
-@hook_app.command("pretool")
+@hook_app.command(
+    "pretool",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
 def pretool(
     format: str = typer.Option("claude", "--format", help="Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf"),
 ):
@@ -449,7 +460,10 @@ def pretool(
         _write_pretool_decision({"decision": "allow"}, format)
 
 
-@hook_app.command("posttool")
+@hook_app.command(
+    "posttool",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
 def posttool(
     format: str = typer.Option("claude", "--format", help="Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf"),
 ):
