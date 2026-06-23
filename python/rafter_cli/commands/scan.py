@@ -38,6 +38,16 @@ remote_app = typer.Typer(
 )
 scan_app.add_typer(remote_app)
 
+# EXPERIMENTAL — bead rf-bmo. Hidden until parallel APPROVE bead rf-i17 closes.
+injection_app = typer.Typer(
+    name="injection",
+    help="(experimental) Scan a file or stdin for prompt-injection patterns",
+    hidden=True,
+    invoke_without_command=True,
+    no_args_is_help=False,
+)
+scan_app.add_typer(injection_app)
+
 
 # ── default: remote scan ─────────────────────────────────────
 
@@ -197,6 +207,60 @@ def scan_local(
 
     filtered = _apply_baseline(results, baseline_entries)
     _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions)
+
+
+# ── rafter scan injection (experimental) ──────────────────────────────
+
+
+@injection_app.callback(invoke_without_command=True)
+def scan_injection(
+    path: str = typer.Argument(..., help="File path, or - for stdin"),
+    min_severity: str = typer.Option("low", "--min-severity", help="low | medium | high | critical"),
+    fail_on: str = typer.Option("medium", "--fail-on", help="Exit 1 when finding >= this severity"),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress non-essential output"),
+):
+    """(experimental) Scan a file or stdin for prompt-injection patterns."""
+    import json as _json
+    from ..scanners.prompt_injection import PromptInjectionDetector
+
+    severity_rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    if min_severity not in severity_rank or fail_on not in severity_rank:
+        print(f"error: invalid severity (must be low|medium|high|critical)", file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    try:
+        if path == "-":
+            text = sys.stdin.read()
+        else:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+    except OSError as err:
+        if not quiet:
+            print(f"error reading {path}: {err}", file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    det = PromptInjectionDetector()
+    result = det.scan(text, min_severity=min_severity)  # type: ignore[arg-type]
+
+    if json_output:
+        payload = {
+            "findings": [f.__dict__ for f in result.findings],
+            "score": result.score,
+            "verdict": result.verdict,
+        }
+        print(_json.dumps(payload, indent=2))
+    else:
+        if not result.findings:
+            print(f"✓ {path}: clean (score 0)")
+        else:
+            print(f"! {path}: {result.verdict} (score {result.score})")
+            for f in result.findings:
+                print(f"  [{f.severity:<8}] {f.pattern} @{f.offset}: {f.evidence}")
+
+    fail_rank = severity_rank[fail_on]
+    triggered = any(severity_rank[f.severity] >= fail_rank for f in result.findings)
+    raise typer.Exit(code=1 if triggered else 0)
 
 
 # ── rafter secrets — top-level alias for local secret scanning ────────

@@ -1,6 +1,8 @@
 import { Command } from "commander";
 import { RegexScanner } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
+import { PromptInjectionDetector } from "../../scanners/prompt-injection.js";
+import type { InjectionSeverity } from "../../scanners/prompt-injection-patterns.js";
 
 type HookFormat = "claude" | "cursor" | "gemini" | "windsurf";
 
@@ -29,6 +31,8 @@ export function createHookPosttoolCommand(): Command {
     .allowUnknownOption()
     .allowExcessArguments()
     .option("--format <format>", "Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf", "claude")
+    .option("--experimental-prompt-injection", "(experimental) flag tool responses with prompt-injection markers (does NOT modify response)")
+    .option("--prompt-injection-min-severity <level>", "minimum severity to flag", "high")
     .action(async (opts) => {
       const format = (opts.format || "claude") as HookFormat;
       try {
@@ -50,12 +54,40 @@ export function createHookPosttoolCommand(): Command {
 
         const payload = normalizePostInput(raw, format);
         const output = evaluateToolResponse(payload);
+
+        // Experimental: scan response for prompt-injection markers. We do
+        // NOT modify the response — just emit a stderr warning. See bead
+        // rf-bmo / docs/research/prompt-injection-detector.md.
+        if (opts.experimentalPromptInjection) {
+          const minSeverity = (opts.promptInjectionMinSeverity || "high") as InjectionSeverity;
+          checkPromptInjection(payload, minSeverity);
+        }
+
         writeOutput(output, format);
       } catch {
         // Any unexpected error → fail open
         writeOutput({ action: "continue" }, format);
       }
     });
+}
+
+function checkPromptInjection(payload: PostToolInput, minSeverity: InjectionSeverity): void {
+  const tr = payload.tool_response;
+  if (!tr) return;
+  const detector = new PromptInjectionDetector();
+  const candidates: Array<[string, string]> = [];
+  if (typeof tr.output === "string" && tr.output) candidates.push(["output", tr.output]);
+  if (typeof tr.content === "string" && tr.content) candidates.push(["content", tr.content]);
+
+  for (const [field, text] of candidates) {
+    const result = detector.scan(text, { minSeverity });
+    if (result.findings.length === 0) continue;
+    const top = result.findings.slice(0, 3).map(f => `${f.severity}:${f.pattern}`).join(", ");
+    process.stderr.write(
+      `Rafter (experimental): possible prompt injection in ${payload.tool_name}.${field} ` +
+      `[verdict=${result.verdict}, score=${result.score}] — ${top}\n`
+    );
+  }
 }
 
 /**
