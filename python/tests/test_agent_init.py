@@ -166,6 +166,12 @@ class TestInstallClaudeCodeHooks:
         assert "Bash" in matchers
         assert "Write|Edit" in matchers
 
+        # PostToolUse is scoped to tools that produce scannable output (shell
+        # output + file writes), not every tool call — avoids firing posttool
+        # on Read/MCP calls that never produce secrets to redact.
+        post_matchers = [e["matcher"] for e in settings["hooks"]["PostToolUse"]]
+        assert post_matchers == ["Bash|Write|Edit|MultiEdit"]
+
     def test_preserves_existing_hooks(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         claude_dir = tmp_path / ".claude"

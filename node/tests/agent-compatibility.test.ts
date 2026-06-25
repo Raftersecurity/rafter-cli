@@ -727,7 +727,7 @@ describe("Agent Init: Environment Detection & Hook/Skill Installation", () => {
             { matcher: "Write|Edit", hooks: [{ type: "command", command: "rafter hook pretool" }] },
           ],
           PostToolUse: [
-            { matcher: ".*", hooks: [{ type: "command", command: "rafter hook posttool" }] },
+            { matcher: "Bash|Write|Edit|MultiEdit", hooks: [{ type: "command", command: "rafter hook posttool" }] },
           ],
         },
       };
@@ -739,7 +739,7 @@ describe("Agent Init: Environment Detection & Hook/Skill Installation", () => {
       expect(loaded.hooks.PostToolUse).toHaveLength(1);
       expect(loaded.hooks.PreToolUse[0].matcher).toBe("Bash");
       expect(loaded.hooks.PreToolUse[1].matcher).toBe("Write|Edit");
-      expect(loaded.hooks.PostToolUse[0].matcher).toBe(".*");
+      expect(loaded.hooks.PostToolUse[0].matcher).toBe("Bash|Write|Edit|MultiEdit");
     });
 
     it("preserves existing non-rafter hooks when installing", () => {
@@ -776,7 +776,7 @@ describe("Agent Init: Environment Detection & Hook/Skill Installation", () => {
         { matcher: "Write|Edit", hooks: [{ type: "command", command: "rafter hook pretool" }] },
       );
       settings.hooks.PostToolUse.push(
-        { matcher: ".*", hooks: [{ type: "command", command: "rafter hook posttool" }] },
+        { matcher: "Bash|Write|Edit|MultiEdit", hooks: [{ type: "command", command: "rafter hook posttool" }] },
       );
 
       fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
@@ -800,7 +800,7 @@ describe("Agent Init: Environment Detection & Hook/Skill Installation", () => {
             { matcher: "Bash", hooks: [{ type: "command", command: "rafter hook pretool" }] },
           ],
           PostToolUse: [
-            { matcher: ".*", hooks: [{ type: "command", command: "rafter hook posttool" }] },
+            { matcher: "Bash|Write|Edit|MultiEdit", hooks: [{ type: "command", command: "rafter hook posttool" }] },
           ],
         },
       };
@@ -827,7 +827,7 @@ describe("Agent Init: Environment Detection & Hook/Skill Installation", () => {
         { matcher: "Write|Edit", hooks: [{ type: "command", command: "rafter hook pretool" }] },
       );
       settings.hooks.PostToolUse.push(
-        { matcher: ".*", hooks: [{ type: "command", command: "rafter hook posttool" }] },
+        { matcher: "Bash|Write|Edit|MultiEdit", hooks: [{ type: "command", command: "rafter hook posttool" }] },
       );
 
       fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
@@ -886,7 +886,7 @@ describe("Agent Init: Environment Detection & Hook/Skill Installation", () => {
               { matcher: "Bash", hooks: [{ type: "command", command: "rafter hook pretool" }] },
             ],
             PostToolUse: [
-              { matcher: ".*", hooks: [{ type: "command", command: "rafter hook posttool" }] },
+              { matcher: "Bash|Write|Edit|MultiEdit", hooks: [{ type: "command", command: "rafter hook posttool" }] },
             ],
           },
         }, null, 2)
