@@ -46,7 +46,7 @@ Python mirrors live at the same callsites in `python/rafter_cli/commands/agent.p
 
 ### Claude Code — gold standard
 
-What we ship: skills (`.claude/skills/<name>/SKILL.md`), sub-agent (`.claude/agents/rafter.md`, rf-q7j), hooks (PreToolUse Bash + Write|Edit, PostToolUse `.*`), MCP server, CLAUDE.md instruction block.
+What we ship: skills (`.claude/skills/<name>/SKILL.md`), sub-agent (`.claude/agents/rafter.md`, rf-q7j), hooks (PreToolUse Bash + Write|Edit, PostToolUse `Bash|Write|Edit|MultiEdit`), MCP server, CLAUDE.md instruction block.
 
 Verify check: presence of `rafter hook pretool` in `~/.claude/settings.json` PreToolUse array. Real test of whether hooks fire is implicit — they do, because Claude Code is what we built against.
 

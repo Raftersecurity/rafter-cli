@@ -174,7 +174,9 @@ function claudeCodeHooks(): ComponentSpec {
         { matcher: "Bash", hooks: [pre] },
         { matcher: "Write|Edit", hooks: [pre] },
       );
-      settings.hooks.PostToolUse.push({ matcher: ".*", hooks: [post] });
+      // Narrow to tools that produce scannable output (shell output + file
+      // writes); avoids firing posttool on every Read/MCP call (latency).
+      settings.hooks.PostToolUse.push({ matcher: "Bash|Write|Edit|MultiEdit", hooks: [post] });
 
       writeJson(settingsPath, settings);
     },

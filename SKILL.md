@@ -128,7 +128,7 @@ rafter agent exec "rm -rf /"              # critical -- blocked
 When installed via `rafter agent init --with-claude-code`, Rafter registers hooks in `~/.claude/settings.json`:
 
 - **PreToolUse** hooks on `Bash` and `Write|Edit` tool calls. Every shell command is evaluated against the risk policy before execution. Dangerous commands are blocked or require approval transparently -- no manual invocation needed.
-- **PostToolUse** hooks on all tool calls (`.*` matcher). Scans output for accidentally leaked secrets and redacts them.
+- **PostToolUse** hooks on `Bash`, `Write`, `Edit`, and `MultiEdit` tool calls (`Bash|Write|Edit|MultiEdit` matcher). Scans command output and file writes for accidentally leaked secrets and redacts them. (Scoped to these tools so the hook doesn't fire on every `Read`/MCP call, which never produces secrets to redact and only added latency.)
 
 The hooks read JSON from stdin and write a `{"decision": "allow"}` or `{"decision": "deny", "reason": "..."}` response to stdout. This is the Claude Code hook protocol.
 
@@ -142,7 +142,7 @@ Manual hook config (if not using `rafter agent init`):
       { "matcher": "Write|Edit", "hooks": [{ "type": "command", "command": "rafter hook pretool" }] }
     ],
     "PostToolUse": [
-      { "matcher": ".*", "hooks": [{ "type": "command", "command": "rafter hook posttool" }] }
+      { "matcher": "Bash|Write|Edit|MultiEdit", "hooks": [{ "type": "command", "command": "rafter hook posttool" }] }
     ]
   }
 }
