@@ -1,0 +1,96 @@
+# Rafter policy for the rafter-cli repo itself.
+#
+# Every `ignore:` entry below is a TRIAGED false positive — each was traced
+# input -> sink in this codebase before being suppressed (bead sable-qsig).
+# These rules are honored identically by the local engines and the remote
+# `rafter run` backend, and suppressed findings remain recoverable in the
+# `_suppressed` / `suppressed.json` output. Nothing here removes a finding from
+# the audit trail; it only declassifies analyzed non-issues.
+#
+# NOT suppressed (fixed instead): dependency CVEs (bumped in package.json /
+# pnpm-workspace overrides / pyproject) and the remote-tarball extraction path
+# (zip-slip guarded in skill_remote.extract_npm_tarball).
+version: "1"
+
+scan:
+  exclude_paths:
+    - "node_modules/"
+    - ".git/"
+    - "**/dist/"
+    - "**/__pycache__/**" # build artifacts (.pyc), not source
+
+ignore:
+  # ── Intentional demonstration / test inputs ───────────────────────────────
+  # The demo app and the vulnerable-repo fixture EXIST to demonstrate detection;
+  # their "secrets" are deliberately fake (canonical AWS-docs example keys such
+  # as AKIAIOSFODNN7EXAMPLE) and their "vulnerabilities" are on purpose.
+  - paths: ["demo/**"]
+    reason: "Demo app: intentional FAKE secrets (canonical AWS-docs example keys, sk_test Stripe, an example JWT) used to showcase rafter detection. Not real credentials."
+  - paths: ["README.md", "outreach-drafts.md", ".github/workflows/test-comprehensive.yml", ".rafter.yml"]
+    reason: "Documentation / CI examples and this policy file reference the canonical AWS-docs example access key (a well-known public non-secret) to illustrate detection."
+  - paths: ["**/fixtures/**", "fixtures/**"]
+    reason: "Test fixtures: intentionally-vulnerable / fake-secret inputs that exercise the scanner (e.g. requests-without-timeout in fixtures/vulnerable-repo)."
+  - paths: ["**/tests/**", "**/test_*.py", "**/*.test.ts", "**/fixtures/**", ".github/fixtures/**"]
+    reason: "Test suites and fixtures embed fake secrets / deliberately-unsafe snippets as detection fixtures (this repo IS a secret scanner). Covers both the secret-pattern engine and the remote SAST rule ids (R-D577E etc.)."
+
+  # ── Hardcoded-secret rule firing on non-credential string literals ─────────
+  - paths: ["python/rafter_cli/commands/agent.py", "python/rafter_cli/commands/hook.py"]
+    rules: ["R-D577E"]
+    reason: "Event-indicator labels and placeholders ('[SECRET]', '🔑', 'default'), not credentials. Verified: these are display strings in _EVENT_INDICATORS_AGENT."
+
+  # ── XXE rule misfire (no XML parsing exists) ──────────────────────────────
+  - paths: ["python/**"]
+    rules: ["R-6675E"]
+    reason: "False positive: the Python codebase imports no XML parser (grep for xml/lxml/ElementTree is empty). Flagged lines are mkdir/read_text/for-loops. No XXE surface."
+
+  # ── git/diff/path parsing mislabeled as URL or format validation ──────────
+  - paths:
+      - "python/rafter_cli/utils/git_diff.py"
+      - "python/rafter_cli/utils/git.py"
+      - "python/rafter_cli/commands/skill.py"
+      - "python/rafter_cli/commands/skill_remote.py"
+      - "python/rafter_cli/commands/brief.py"
+      - "python/rafter_cli/commands/agent.py"
+      - "python/rafter_cli/commands/agent_components.py"
+      - "python/rafter_cli/core/pattern_engine.py"
+    rules: ["R-3F913", "R-88B14"]
+    reason: "startswith('b/')/('diff --git')/('+') is git-diff parsing; endswith('.git') is git-URL handling. Neither is URL/path-traversal validation."
+
+  # ── Timing-attack rule on a non-credential comparison ─────────────────────
+  - paths: ["python/rafter_cli/commands/notify.py"]
+    rules: ["R-51C60"]
+    reason: "Flagged `==` compares scan status strings ('completed'/'unknown'), not secrets. No credential comparison; timing channel is irrelevant."
+
+  # ── Local-CLI filesystem operations (no external attacker in threat model) ─
+  # This is a developer CLI that reads/writes config, skills, hooks and binaries
+  # at paths derived from the user's OWN $HOME, cwd and CLI arguments. There is
+  # no untrusted remote actor supplying these paths. The single genuine
+  # external-input path — extracting a downloaded remote skill tarball — is
+  # independently zip-slip-validated in skill_remote.extract_npm_tarball.
+  - paths: ["node/src/**", "vscode/src/**"]
+    rules: ["R-61603", "R-374DB"]
+    reason: "fs.*Sync / path.join on non-literal paths derived from the user's own $HOME/cwd/CLI args; not externally-tainted. Remote-tarball extraction is separately zip-slip-guarded."
+
+  # ── Local audit-log / process internals (note-level rule misfires) ────────
+  - paths: ["python/rafter_cli/core/audit_logger.py", "node/src/core/audit-logger.ts"]
+    rules: ["R-C66D8", "R-5DF7B"]
+    reason: "random.randbytes builds a log SESSION ID (not a security token); O_WRONLY|O_APPEND is correct for an append-only audit log."
+  - paths: ["python/rafter_cli/commands/agent.py"]
+    rules: ["R-93905"]
+    reason: "Style: re.sub on a precompiled pattern. No untrusted-substitution security impact."
+
+  # ── Scanner regexes / RegExp constructor (self-inflicted ReDoS at most) ────
+  # The CLI compiles its own maintained detection patterns plus user-supplied
+  # custom patterns; any catastrophic-backtracking risk is borne by the user
+  # scanning their own repo with their own pattern, not an external attacker.
+  - paths: ["node/src/core/**", "node/src/scanners/**", "vscode/src/secret-scanner.ts", "node/src/commands/issues/from-text.ts", "node/src/utils/git-diff.ts"]
+    rules: ["R-EFEEF", "R-8CBA2"]
+    reason: "RegExp built from maintained detection patterns / user-supplied custom patterns. ReDoS risk is self-inflicted (user scans own repo), not externally reachable."
+
+  # ── Style/lint notes with no exploit path ─────────────────────────────────
+  - paths: ["python/**"]
+    rules: ["R-F8672", "R-0AB4A", "R-A01A0", "R-CA639", "R-5FEE9", "R-E617E"]
+    reason: "Style/robustness notes: urllib responses are read via .read(); broad except-pass on best-effort config loads; PATH-resolved trusted binaries (git/betterleaks) via binary-manager. No exploit path."
+  - paths: ["node/src/commands/skill/remote.ts"]
+    rules: ["R-BFD19"]
+    reason: "ESLint config note (@typescript-eslint/no-explicit-any plugin not resolved during the scan), not a security finding."

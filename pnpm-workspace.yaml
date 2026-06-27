@@ -7,6 +7,14 @@ onlyBuiltDependencies:
 
 overrides:
   express-rate-limit: '>=8.2.2'
-  hono: '>=4.12.7'
-  '@hono/node-server': '>=1.19.10'
+  hono: '>=4.12.25'
+  '@hono/node-server': '>=1.19.13'
   ajv: '>=8.18.0'
+  # CVE remediation (bead sable-qsig) — force fixed floors on transitive deps.
+  fast-uri: '>=3.1.2'
+  path-to-regexp: '>=8.4.0'
+  form-data: '>=4.0.6'
+  follow-redirects: '>=1.16.0'
+  ip-address: '>=10.1.1'
+  qs: '>=6.15.2'
+  brace-expansion: '>=5.0.6'
