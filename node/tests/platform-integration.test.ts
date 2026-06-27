@@ -1171,9 +1171,10 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       );
       expect(postCommands).toContain("rafter hook posttool");
 
-      // PostToolUse should have catch-all matcher
+      // PostToolUse matcher is scoped to tools that produce scannable output
+      // (shell output + file writes) rather than firing on every tool call.
       const postMatchers = settings.hooks.PostToolUse.map((e: any) => e.matcher);
-      expect(postMatchers).toContain(".*");
+      expect(postMatchers).toContain("Bash|Write|Edit|MultiEdit");
     });
 
     it("should install skills to ~/.claude/skills/", () => {
