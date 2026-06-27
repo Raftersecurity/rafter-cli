@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Claude Code `PostToolUse` hook matcher narrowed from `.*` to `Bash|Write|Edit|MultiEdit`** (Node + Python, sable-h0ah). `rafter agent init --with-claude-code` (and `rafter agent enable claude-code.hooks`) previously registered the `rafter hook posttool` redaction hook with a catch-all `.*` matcher, so it fired after **every** Claude Code tool call — including `Read` and MCP tools, which never produce secrets to redact — adding latency to every operation. The matcher now targets only the tools whose output is worth scanning: shell output (`Bash`) and file writes (`Write`/`Edit`/`MultiEdit`). PreToolUse matchers are unchanged. Codex (`.*` PostToolUse) and Gemini (`.*` AfterTool) have the same broad-matcher latency issue and are tracked separately for platform-correct narrow matchers.
+
 ## [0.8.9] - 2026-06-20
 
 ### Added
