@@ -346,6 +346,11 @@ def extract_npm_tarball(tgz_file: Path, dest_dir: Path) -> None:
             # Reject path traversal.
             if member.name.startswith("/") or ".." in member.name.split("/"):
                 continue
+            # Defense-in-depth: only extract regular files and directories.
+            # Skip symlinks/hardlinks/devices, which a malicious archive could
+            # use to redirect a later member's write outside dest_dir.
+            if not (member.isfile() or member.isdir()):
+                continue
             members.append(member)
         tf.extractall(dest_dir, members=members)  # noqa: S202
 
