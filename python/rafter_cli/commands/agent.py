@@ -205,8 +205,11 @@ def _install_claude_code_hooks(root: Path) -> None:
         {"matcher": "Bash", "hooks": [pre_hook]},
         {"matcher": "Write|Edit", "hooks": [pre_hook]},
     ])
+    # Narrow to tools that produce scannable output (shell output + file
+    # writes). Firing posttool on every tool — including Read and MCP calls —
+    # added latency to operations that never produce secrets to redact.
     settings["hooks"]["PostToolUse"].extend([
-        {"matcher": ".*", "hooks": [post_hook]},
+        {"matcher": "Bash|Write|Edit|MultiEdit", "hooks": [post_hook]},
     ])
 
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")

@@ -186,7 +186,9 @@ def _claude_code_hooks() -> ComponentSpec:
             {"matcher": "Bash", "hooks": [pre]},
             {"matcher": "Write|Edit", "hooks": [pre]},
         ])
-        hooks["PostToolUse"].append({"matcher": ".*", "hooks": [post]})
+        # Narrow to tools that produce scannable output (shell output + file
+        # writes); avoids firing posttool on every Read/MCP call (latency).
+        hooks["PostToolUse"].append({"matcher": "Bash|Write|Edit|MultiEdit", "hooks": [post]})
         _write_json(settings_path, s)
 
     def uninstall() -> None:

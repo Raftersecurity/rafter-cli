@@ -322,8 +322,11 @@ function installClaudeCodeHooks(root: string): void {
     { matcher: "Bash", hooks: [preHook] },
     { matcher: "Write|Edit", hooks: [preHook] },
   );
+  // Narrow to tools that produce scannable output (shell output + file
+  // writes). Firing posttool on every tool — including Read and MCP calls —
+  // added latency to operations that never produce secrets to redact.
   settings.hooks.PostToolUse.push(
-    { matcher: ".*", hooks: [postHook] },
+    { matcher: "Bash|Write|Edit|MultiEdit", hooks: [postHook] },
   );
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");

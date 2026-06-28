@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-06-28
+
+### Changed
+
+- **Claude Code `PostToolUse` hook matcher narrowed from `.*` to `Bash|Write|Edit|MultiEdit`** (Node + Python, sable-h0ah). `rafter agent init --with-claude-code` (and `rafter agent enable claude-code.hooks`) previously registered the `rafter hook posttool` redaction hook with a catch-all `.*` matcher, so it fired after **every** Claude Code tool call — including `Read` and MCP tools, which never produce secrets to redact — adding latency to every operation. The matcher now targets only the tools whose output is worth scanning: shell output (`Bash`) and file writes (`Write`/`Edit`/`MultiEdit`). PreToolUse matchers are unchanged. Codex (`.*` PostToolUse) and Gemini (`.*` AfterTool) have the same broad-matcher latency issue and are tracked separately for platform-correct narrow matchers.
+
+### Fixed
+
+- **Hooks tolerate harness-appended flags** (#180). `rafter hook pretool` / `posttool` read their input from **stdin**, so they now ignore unknown options and extra positional arguments that an agent platform appends to the hook command — e.g. Claude Code adds `--hook-json <data>`. Such extras are discarded rather than erroring; declared options like `--format` are still parsed normally.
+
+### Security
+
+- **Dependency CVE updates** (sable-qsig). Bumped vulnerable (mostly transitive) dependencies past their fixed versions via pnpm workspace overrides + a re-lock: axios 1.13.6→1.18.1, hono 4.12.8→4.12.27, tar→7.5.17, js-yaml→4.3.0, plus fast-uri, path-to-regexp, form-data, follow-redirects, ip-address, qs, and brace-expansion. Python direct-dep floors raised (`requests`, `urllib3`, `python-dotenv`); transitive Python bumps tracked separately. No CLI behavior change.
+- **Hardened remote-skill tarball extraction** (sable-qsig). `rafter skill review` / install now extracts only regular files and directories from a fetched npm tarball, skipping symlink/hardlink/device members that a malicious archive could use to redirect a later write outside the destination — defense-in-depth atop the existing zip-slip path check.
+
 ## [0.8.9] - 2026-06-20
 
 ### Added
