@@ -563,14 +563,31 @@ describe("fixture files for action testing", () => {
   });
 
   it("CLI detects secrets in fixture file", () => {
-    const r = rafter(
-      ["scan", "local", FIXTURES_DIR, "--engine", "patterns", "--format", "json"],
-    );
-    expect(r.exitCode).toBe(1);
-    // stdout or stderr should contain JSON scan results with findings
-    const combined = r.stdout + r.stderr;
-    expect(combined).toContain("AWS");
-    expect(combined).toContain("matches");
+    // Scan an isolated copy OUTSIDE the repo. This repo's own .rafter.yml
+    // declassifies **/fixtures/** (its fixtures are triaged FPs for the
+    // dogfooding security gate), and policy discovery walks cwd -> git root,
+    // so scanning the in-repo fixture would hit that policy and suppress the
+    // finding (exit 0). This test verifies the detection ENGINE, which must be
+    // decoupled from the repo's self-scan policy — so we copy the fixture to a
+    // tmpdir (no .rafter.yml above it) and scan there.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-fixture-"));
+    try {
+      fs.copyFileSync(
+        path.join(FIXTURES_DIR, "fake-secret.txt"),
+        path.join(tmp, "fake-secret.txt"),
+      );
+      const r = rafter(
+        ["scan", "local", tmp, "--engine", "patterns", "--format", "json"],
+        { cwd: tmp },
+      );
+      expect(r.exitCode).toBe(1);
+      // stdout or stderr should contain JSON scan results with findings
+      const combined = r.stdout + r.stderr;
+      expect(combined).toContain("AWS");
+      expect(combined).toContain("matches");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   }, 15000);
 });
 
