@@ -347,8 +347,17 @@ jobs:
 
       - name: Verify rafter agent scan detects secrets
         run: |
+          # Copy the fixture to a tmpdir OUTSIDE the repo before scanning. The
+          # repo's own .rafter.yml declassifies **/fixtures/** (triaged FPs for
+          # the dogfooding security gate); policy discovery walks cwd -> git
+          # root, so scanning the in-repo path would hit that policy and
+          # suppress the finding (exit 0). This step verifies the PUBLISHED
+          # engine detects secrets, independent of this repo's self-scan policy.
+          SMOKE_DIR=$(mktemp -d)
+          cp .github/fixtures/fake-secret.txt "$SMOKE_DIR/fake-secret.txt"
+          cd "$SMOKE_DIR"
           # Scan fixture file with fake secret — must exit 1 (secrets found)
-          if rafter agent scan .github/fixtures/fake-secret.txt --engine patterns; then
+          if rafter agent scan fake-secret.txt --engine patterns; then
             echo "FAIL: scan should have exited non-zero (secrets found)"
             exit 1
           fi
@@ -398,8 +407,17 @@ jobs:
 
       - name: Verify rafter agent scan detects secrets
         run: |
+          # Copy the fixture to a tmpdir OUTSIDE the repo before scanning. The
+          # repo's own .rafter.yml declassifies **/fixtures/** (triaged FPs for
+          # the dogfooding security gate); policy discovery walks cwd -> git
+          # root, so scanning the in-repo path would hit that policy and
+          # suppress the finding (exit 0). This step verifies the PUBLISHED
+          # engine detects secrets, independent of this repo's self-scan policy.
+          SMOKE_DIR=$(mktemp -d)
+          cp .github/fixtures/fake-secret.txt "$SMOKE_DIR/fake-secret.txt"
+          cd "$SMOKE_DIR"
           # Scan fixture file with fake secret — must exit 1 (secrets found)
-          if /tmp/rafter-smoke/bin/rafter agent scan .github/fixtures/fake-secret.txt --engine patterns; then
+          if /tmp/rafter-smoke/bin/rafter agent scan fake-secret.txt --engine patterns; then
             echo "FAIL: scan should have exited non-zero (secrets found)"
             exit 1
           fi

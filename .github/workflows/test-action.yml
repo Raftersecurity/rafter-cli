@@ -20,11 +20,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Stage the fixture in a neutral temp dir OUTSIDE the fixtures/tests
+      # tree. The action runs `rafter secrets` from the workspace root, where
+      # this repo's own .rafter.yml declassifies **/fixtures/** (triaged FPs
+      # for the dogfooding gate) — scanning the in-repo path would suppress the
+      # finding. This job verifies the ENGINE detects the secret, so we scan a
+      # copy at a path the policy's globs don't match.
+      - name: Stage fixture in a clean temp dir
+        run: |
+          mkdir -p /tmp/rafter-detect
+          cp .github/fixtures/fake-secret.txt /tmp/rafter-detect/fake-secret.txt
+
       - name: Run Rafter action on fixture with known secret
         id: scan
         uses: ./              # test the local action.yml
         with:
-          scan-path: '.github/fixtures'
+          scan-path: '/tmp/rafter-detect'
           format: json
         continue-on-error: true
 
@@ -88,11 +99,18 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Scan a copy outside the fixtures tree so the repo's .rafter.yml does
+      # not suppress the finding (see "detect secrets" job for rationale).
+      - name: Stage fixture in a clean temp dir
+        run: |
+          mkdir -p /tmp/rafter-detect
+          cp .github/fixtures/fake-secret.txt /tmp/rafter-detect/fake-secret.txt
+
       - name: Run Rafter action via pip
         id: scan
         uses: ./
         with:
-          scan-path: '.github/fixtures'
+          scan-path: '/tmp/rafter-detect'
           install-method: pip
           format: json
         continue-on-error: true
@@ -112,11 +130,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Scan a copy outside the fixtures tree so the repo's .rafter.yml does
+      # not suppress the finding (see "detect secrets" job for rationale).
+      - name: Stage fixture in a clean temp dir
+        run: |
+          mkdir -p /tmp/rafter-detect
+          cp .github/fixtures/fake-secret.txt /tmp/rafter-detect/fake-secret.txt
+
       - name: Run published Rafter action @v1
         id: scan
         uses: raftersecurity/rafter-cli@v1
         with:
-          scan-path: '.github/fixtures'
+          scan-path: '/tmp/rafter-detect'
           format: json
         continue-on-error: true
 
