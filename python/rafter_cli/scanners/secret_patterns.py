@@ -148,6 +148,13 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
         severity="critical",
         description="PyPI API token detected",
     ),
+    # DigitalOcean
+    Pattern(
+        name="DigitalOcean Personal Access Token",
+        regex=r"dop_v1_[a-f0-9]{64}",
+        severity="critical",
+        description="DigitalOcean Personal Access Token detected",
+    ),
 ]
 
 

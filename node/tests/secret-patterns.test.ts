@@ -310,6 +310,14 @@ describe("Secret patterns — coverage matrix", () => {
     });
   });
 
+  describe("DigitalOcean Personal Access Token", () => {
+    it("detects dop_v1_ token", () => {
+      const token = "dop_v1_" + "a".repeat(64);
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("DigitalOcean"))).toBe(true);
+    });
+  });
+
   // ── Helper function coverage ──────────────────────────────────────
 
   describe("getPatternsBySeverity", () => {

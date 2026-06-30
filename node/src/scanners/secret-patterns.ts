@@ -159,6 +159,14 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
     regex: "pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\\-_]{50,1024}",
     severity: "critical",
     description: "PyPI API token detected"
+  },
+
+  // DigitalOcean
+  {
+    name: "DigitalOcean Personal Access Token",
+    regex: "dop_v1_[a-f0-9]{64}",
+    severity: "critical",
+    description: "DigitalOcean Personal Access Token detected"
   }
 ];
 
