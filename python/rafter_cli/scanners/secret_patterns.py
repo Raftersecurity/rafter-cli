@@ -154,8 +154,9 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
         regex=r"dop_v1_[a-f0-9]{64}",
         severity="critical",
         description="DigitalOcean Personal Access Token detected",
-    )
+    ),
 ]
+
 
 def get_patterns_by_severity(severity: str) -> list[Pattern]:
     return [p for p in DEFAULT_SECRET_PATTERNS if p.severity == severity]
