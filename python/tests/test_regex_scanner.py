@@ -75,6 +75,10 @@ def test_scan_text_ignores_short_hashicorp_vault_like_string(scanner):
     matches = scanner.scan_text(token)
     assert not any(m.pattern.name == "HashiCorp Vault Token" for m in matches)
 
+def test_scan_text_detects_digitalocean_token(scanner):
+    token = "dop_v1_" + ("a" * 64)
+    matches = scanner.scan_text(token)
+    assert any(m.pattern.name == "DigitalOcean Personal Access Token" for m in matches)
 
 def test_has_secrets(scanner):
     assert scanner.has_secrets("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij")
