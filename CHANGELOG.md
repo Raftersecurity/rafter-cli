@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **DigitalOcean Personal Access Token secret pattern** (#26, #189). New `dop_v1_[a-f0-9]{64}` detection pattern (severity `critical`) added to the built-in regex scanner in both Node and Python, with tests in each suite. Thanks to @Minh-Nguyen-2k7 for the contribution.
+
 ## [0.8.10] - 2026-06-28
 
 ### Changed
