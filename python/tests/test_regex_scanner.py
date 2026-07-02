@@ -80,6 +80,11 @@ def test_scan_text_detects_digitalocean_token(scanner):
     matches = scanner.scan_text(token)
     assert any(m.pattern.name == "DigitalOcean Personal Access Token" for m in matches)
 
+def test_scan_text_detects_mailchimp_key(scanner):
+    token = ("a" * 32) + "-us12"
+    matches = scanner.scan_text(token)
+    assert any(m.pattern.name == "Mailchimp API Key" for m in matches)
+    
 def test_has_secrets(scanner):
     assert scanner.has_secrets("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij")
     assert not scanner.has_secrets("just a normal string")
