@@ -167,6 +167,14 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
     regex: "dop_v1_[a-f0-9]{64}",
     severity: "critical",
     description: "DigitalOcean Personal Access Token detected"
+  },
+
+  // Mailchimp
+  {
+    name: "Mailchimp API Key",
+    regex: "[a-f0-9]{32}-us\\d{1,2}",
+    severity: "critical",
+    description: "Mailchimp API Key detected"
   }
 ];
 
