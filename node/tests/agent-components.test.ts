@@ -71,6 +71,8 @@ describe("rafter agent list", () => {
       "continue.rules",
       "continue.mcp",
       "aider.read",
+      "hermes.mcp",
+      "opencode.mcp",
       "codex.hooks",
       "codex.skills",
       "openclaw.skills",
