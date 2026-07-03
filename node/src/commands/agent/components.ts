@@ -969,7 +969,9 @@ function openCodeMcp(): ComponentSpec {
     install: () => {
       const dir = path.join(home, ".config", "opencode");
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const cfg: Record<string, any> = fs.existsSync(configPath) ? readJson(configPath) : {};
+      let cfg: Record<string, any> = fs.existsSync(configPath) ? readJson(configPath) : {};
+      // Guard against valid-but-non-object top-level JSON (array/string/number).
+      if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) cfg = {};
       if (!cfg.$schema) cfg.$schema = "https://opencode.ai/config.json";
       if (!cfg.mcp || typeof cfg.mcp !== "object" || Array.isArray(cfg.mcp)) cfg.mcp = {};
       cfg.mcp.rafter = { ...entry };

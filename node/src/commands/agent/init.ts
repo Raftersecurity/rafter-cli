@@ -933,7 +933,15 @@ function installOpenCodeMcp(root: string): boolean {
   let config: Record<string, any> = {};
   if (fs.existsSync(configPath)) {
     try {
-      config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      // Guard against valid-but-non-object top-level JSON (array/string/number).
+      // Mirrors the Python `isinstance(loaded, dict)` check so a wrong-shaped
+      // file is replaced rather than silently mangled by property assignment.
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        config = parsed;
+      } else {
+        console.log(fmt.warning("Existing OpenCode opencode.json was not a JSON object, creating new one"));
+      }
     } catch {
       console.log(fmt.warning("Existing OpenCode opencode.json was unreadable, creating new one"));
     }
