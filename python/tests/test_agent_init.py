@@ -218,6 +218,20 @@ class TestInstallOpenCodeMcp:
         assert isinstance(config["mcp"], dict)
         assert config["mcp"]["rafter"]["command"] == ["rafter", "mcp", "serve"]
 
+    def test_recovers_from_non_object_toplevel(self, tmp_path, monkeypatch):
+        """Valid JSON whose top level is a list/primitive must be replaced with a
+        fresh object, not crash on .get() (rafter review parity fix)."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        opencode_dir = tmp_path / ".config" / "opencode"
+        opencode_dir.mkdir(parents=True)
+        (opencode_dir / "opencode.json").write_text(json.dumps([1, 2, 3]))
+
+        assert _install_opencode_mcp(tmp_path)
+        config = json.loads((opencode_dir / "opencode.json").read_text())
+        assert isinstance(config, dict)
+        assert config["mcp"]["rafter"]["type"] == "local"
+        assert config["$schema"] == "https://opencode.ai/config.json"
+
 
 class TestOpenCodeDetection:
     """sable-l8e5 — OpenCode must surface in verify / status / list."""
@@ -278,6 +292,27 @@ class TestOpenCodeDetection:
             assert config["mcp"]["rafter"]["command"] == ["rafter", "mcp", "serve"]
             spec.uninstall()
             assert not spec.is_installed()
+        finally:
+            agent_components.reset_registry_cache()
+
+    def test_opencode_mcp_component_handles_non_object_config(self, tmp_path, monkeypatch):
+        """is_installed()/install() must not crash on a valid-but-non-object
+        top-level config (rafter review parity fix)."""
+        from rafter_cli.commands import agent_components
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        opencode_dir = tmp_path / ".config" / "opencode"
+        opencode_dir.mkdir(parents=True)
+        (opencode_dir / "opencode.json").write_text(json.dumps([1, 2, 3]))
+        agent_components.reset_registry_cache()
+        try:
+            spec = agent_components.resolve_component("opencode.mcp")
+            assert spec is not None
+            assert not spec.is_installed()  # must not raise on a list top-level
+            spec.install()
+            assert spec.is_installed()
+            config = json.loads((opencode_dir / "opencode.json").read_text())
+            assert isinstance(config, dict)
+            assert config["mcp"]["rafter"]["type"] == "local"
         finally:
             agent_components.reset_registry_cache()
 

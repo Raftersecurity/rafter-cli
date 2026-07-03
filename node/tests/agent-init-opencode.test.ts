@@ -143,6 +143,32 @@ describe("agent init --with-opencode", () => {
     expect(cfg.mcp.rafter?.type).toBe("local");
   });
 
+  it("recovers from a valid-but-non-object top-level config (array)", () => {
+    // Valid JSON, but the top level is an array — must be replaced with a
+    // fresh object, not silently mangled by property assignment (rafter review).
+    fs.writeFileSync(
+      openCodeConfigPath(home),
+      JSON.stringify([1, 2, 3], null, 2),
+      "utf-8",
+    );
+
+    const r = runCli(["agent", "init", "--with-opencode"], home);
+    expect(r.exitCode).toBe(0);
+    const cfg = readOpenCodeConfig(home);
+    expect(Array.isArray(cfg)).toBe(false);
+    expect(cfg.mcp?.rafter?.type).toBe("local");
+    expect(cfg.$schema).toBe("https://opencode.ai/config.json");
+  });
+
+  it("recovers from a valid-but-non-object top-level config (string)", () => {
+    fs.writeFileSync(openCodeConfigPath(home), JSON.stringify("hello"), "utf-8");
+
+    const r = runCli(["agent", "init", "--with-opencode"], home);
+    expect(r.exitCode).toBe(0);
+    const cfg = readOpenCodeConfig(home);
+    expect(cfg.mcp?.rafter?.command).toEqual(["rafter", "mcp", "serve"]);
+  });
+
   it("warns when --with-opencode is requested but ~/.config/opencode does not exist", () => {
     // Tear down the dir we created in beforeEach
     fs.rmSync(path.join(home, ".config", "opencode"), { recursive: true, force: true });

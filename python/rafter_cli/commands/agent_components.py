@@ -920,12 +920,16 @@ def _opencode_mcp() -> ComponentSpec:
     config_path = detect_dir / "opencode.json"
 
     def is_installed() -> bool:
-        mcp = _read_json(config_path).get("mcp")
+        cfg = _read_json(config_path)
+        mcp = cfg.get("mcp") if isinstance(cfg, dict) else None
         return isinstance(mcp, dict) and bool(mcp.get("rafter"))
 
     def install() -> None:
         detect_dir.mkdir(parents=True, exist_ok=True)
         cfg = _read_json(config_path)
+        # Guard against valid-but-non-object top-level JSON (list/str/number).
+        if not isinstance(cfg, dict):
+            cfg = {}
         if "$schema" not in cfg:
             cfg["$schema"] = "https://opencode.ai/config.json"
         mcp = cfg.get("mcp")
@@ -939,7 +943,7 @@ def _opencode_mcp() -> ComponentSpec:
         if not config_path.exists():
             return
         cfg = _read_json(config_path)
-        mcp = cfg.get("mcp")
+        mcp = cfg.get("mcp") if isinstance(cfg, dict) else None
         if isinstance(mcp, dict) and "rafter" in mcp:
             del mcp["rafter"]
             _write_json(config_path, cfg)
