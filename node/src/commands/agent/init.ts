@@ -50,6 +50,7 @@ function printDryRunPlan(plan: {
   wantContinue: boolean;
   wantAider: boolean;
   wantHermes: boolean;
+  wantOpenCode: boolean;
   wantBetterleaks: boolean;
   wantSkillScanner: boolean;
   riskLevel: string;
@@ -174,6 +175,12 @@ function printDryRunPlan(plan: {
     console.log();
     console.log("Hermes (--with-hermes):");
     W(path.join(plan.root, ".hermes", "config.yaml"), "mcp_servers.rafter entry merged into existing YAML");
+  }
+
+  if (plan.wantOpenCode) {
+    console.log();
+    console.log("OpenCode (--with-opencode):");
+    W(path.join(plan.root, ".config", "opencode", "opencode.json"), "mcp.rafter local/stdio entry merged into existing JSON");
   }
 
   if (plan.wantOpenClaw) {
@@ -894,6 +901,55 @@ function installHermesMcp(root: string): boolean {
   return true;
 }
 
+/**
+ * OpenCode MCP server entry. OpenCode's schema differs from Cursor/Windsurf:
+ * the block is `mcp` (not `mcpServers`), each local server has `type: "local"`,
+ * and the command + args are a single `command` array (not split). Verified
+ * against https://opencode.ai/docs/mcp-servers/ (rf-opencode).
+ */
+const RAFTER_OPENCODE_MCP_ENTRY = {
+  type: "local" as const,
+  command: [RAFTER_MCP_ENTRY.command, ...RAFTER_MCP_ENTRY.args],
+  enabled: true,
+};
+
+/**
+ * Install MCP server config for OpenCode (~/.config/opencode/opencode.json).
+ *
+ * OpenCode reads a global config at ~/.config/opencode/opencode.json and a
+ * project-level opencode.json (project takes precedence). We register the
+ * local stdio server `rafter mcp serve` under the `mcp` block. The `$schema`
+ * pointer is seeded on first write so editors get completion. Any existing
+ * keys / other MCP servers are preserved.
+ */
+function installOpenCodeMcp(root: string): boolean {
+  const openCodeDir = path.join(root, ".config", "opencode");
+  const configPath = path.join(openCodeDir, "opencode.json");
+
+  if (!fs.existsSync(openCodeDir)) {
+    fs.mkdirSync(openCodeDir, { recursive: true });
+  }
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    } catch {
+      console.log(fmt.warning("Existing OpenCode opencode.json was unreadable, creating new one"));
+    }
+  }
+
+  if (!config.$schema) config.$schema = "https://opencode.ai/config.json";
+  if (!config.mcp || typeof config.mcp !== "object" || Array.isArray(config.mcp)) {
+    config.mcp = {};
+  }
+  config.mcp.rafter = { ...RAFTER_OPENCODE_MCP_ENTRY };
+
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log(fmt.success(`Installed Rafter MCP server to ${configPath}`));
+  return true;
+}
+
 function installAiderRead(root: string): boolean {
   const rafterMdPath = path.join(root, "RAFTER.md");
   const configPath = path.join(root, ".aider.conf.yml");
@@ -1087,6 +1143,7 @@ export function createInitCommand(): Command {
     .option("--with-windsurf", "Install Windsurf integration")
     .option("--with-continue", "Install Continue.dev integration")
     .option("--with-hermes", "Install Hermes integration")
+    .option("--with-opencode", "Install OpenCode integration")
     .option("--with-betterleaks", "Download and install Betterleaks binary")
     .option("--with-skill-scanner", "Install the optional skill-scanner deep engine (heavy; audit-skill --deep)")
     .option("--all", "Install all detected integrations and download Betterleaks")
@@ -1128,6 +1185,7 @@ export function createInitCommand(): Command {
       const hasContinueDev = scope === "user" && fs.existsSync(path.join(os.homedir(), ".continue"));
       const hasAider = scope === "user" && fs.existsSync(path.join(os.homedir(), ".aider.conf.yml"));
       const hasHermes = scope === "user" && fs.existsSync(path.join(os.homedir(), ".hermes"));
+      const hasOpenCode = scope === "user" && fs.existsSync(path.join(os.homedir(), ".config", "opencode"));
 
       // Resolve opt-in flags (--all enables all detected, --interactive prompts).
       // In --local scope, --all is restricted to platforms that have a project-local
@@ -1155,6 +1213,12 @@ export function createInitCommand(): Command {
       // reads ~/.hermes/config.yaml; the project-local install story isn't
       // established. Excluded from --all in --local for the same reason.
       let wantHermes = opts.withHermes || (opts.all && !opts.local);
+      // OpenCode: MCP-based, user scope only. OpenCode reads a global config at
+      // ~/.config/opencode/opencode.json; a project-local install story via
+      // --local isn't wired here, so (like Hermes) it's excluded from --all in
+      // --local scope. It supports MCP local/stdio servers and AGENTS.md
+      // natively (https://opencode.ai/docs/mcp-servers/, sable-l8e5).
+      let wantOpenCode = opts.withOpencode || (opts.all && !opts.local);
       let wantBetterleaks = opts.withBetterleaks || (opts.all && !opts.local);
       // skill-scanner is heavy and opt-in only — deliberately NOT folded into --all.
       const wantSkillScanner = !!opts.withSkillScanner;
@@ -1173,6 +1237,7 @@ export function createInitCommand(): Command {
         if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP server?");
         if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
         if (hasHermes && !wantHermes) wantHermes = await askYesNo("Install Hermes MCP server?");
+        if (hasOpenCode && !wantOpenCode) wantOpenCode = await askYesNo("Install OpenCode MCP server?");
         if (!wantBetterleaks) wantBetterleaks = await askYesNo("Download Betterleaks binary (enhanced scanning)?");
         console.log();
       }
@@ -1188,6 +1253,7 @@ export function createInitCommand(): Command {
       if (hasContinueDev) detected.push("Continue.dev");
       if (hasAider) detected.push("Aider");
       if (hasHermes) detected.push("Hermes");
+      if (hasOpenCode) detected.push("OpenCode");
 
       if (detected.length > 0) {
         console.log(fmt.info(`Detected environments: ${detected.join(", ")}`));
@@ -1207,6 +1273,7 @@ export function createInitCommand(): Command {
         if (wantContinue && !hasContinueDev) console.log(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
         if (wantAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
         if (wantHermes && !hasHermes) console.log(fmt.warning("Hermes requested but not detected (~/.hermes not found)"));
+        if (wantOpenCode && !hasOpenCode) console.log(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"));
       }
 
       // --dry-run: print every file path the command would touch, then
@@ -1226,6 +1293,7 @@ export function createInitCommand(): Command {
           wantContinue: wantContinue && (hasContinueDev || opts.local),
           wantAider: wantAider && (hasAider || opts.local),
           wantHermes: wantHermes && hasHermes,
+          wantOpenCode: wantOpenCode && hasOpenCode,
           wantBetterleaks,
           wantSkillScanner,
           riskLevel: opts.riskLevel,
@@ -1517,6 +1585,20 @@ export function createInitCommand(): Command {
         }
       }
 
+      // Install OpenCode integration if opted in (sable-l8e5).
+      // User scope only — OpenCode reads a global config at
+      // ~/.config/opencode/opencode.json. MCP-based: we register the local
+      // stdio server `rafter mcp serve` under the `mcp` block.
+      let openCodeOk = false;
+      if (wantOpenCode && hasOpenCode) {
+        try {
+          openCodeOk = installOpenCodeMcp(root);
+          if (openCodeOk) manager.set("agent.environments.opencode.enabled", true);
+        } catch (e) {
+          console.error(fmt.error(`Failed to install OpenCode integration: ${e}`));
+        }
+      }
+
       // Install global instruction files for platforms that support them.
       // Cursor is intentionally absent — Cursor uses per-skill rules + the
       // rafter sub-agent installed in the Cursor branch above (rf-svn3).
@@ -1531,7 +1613,7 @@ export function createInitCommand(): Command {
       console.log(fmt.success("Agent security initialized!"));
       console.log();
 
-      const anyIntegration = openclawOk || claudeCodeOk || codexOk || geminiOk || cursorOk || windsurfOk || continueOk || aiderOk;
+      const anyIntegration = openclawOk || claudeCodeOk || codexOk || geminiOk || cursorOk || windsurfOk || continueOk || aiderOk || hermesOk || openCodeOk;
 
       if (anyIntegration) {
         console.log("Next steps:");
@@ -1543,6 +1625,8 @@ export function createInitCommand(): Command {
         if (windsurfOk) console.log("  - Restart Windsurf to load MCP server");
         if (continueOk) console.log("  - Restart Continue.dev to load MCP server");
         if (aiderOk) console.log("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:");
+        if (hermesOk) console.log("  - Restart Hermes to load MCP server");
+        if (openCodeOk) console.log("  - Restart OpenCode to load MCP server");
       } else if (scope === "project") {
         console.log("No integrations were installed. In --local mode, pass one or more opt-in flags:");
         console.log("  rafter agent init --local --with-claude-code");
@@ -1561,6 +1645,7 @@ export function createInitCommand(): Command {
         if (hasContinueDev) console.log("  rafter agent init --with-continue        # Continue.dev only");
         if (hasAider) console.log("  rafter agent init --with-aider           # Aider only");
         if (hasHermes) console.log("  rafter agent init --with-hermes          # Hermes only");
+        if (hasOpenCode) console.log("  rafter agent init --with-opencode        # OpenCode only");
       } else {
         console.log("No agent environments detected. Install an agent tool and re-run with --with-<tool>.");
       }

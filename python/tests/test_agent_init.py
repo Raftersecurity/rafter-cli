@@ -17,6 +17,7 @@ from rafter_cli.commands.agent import (
     _install_continue_dev_rules,
     _install_aider_read,
     _install_hermes_mcp,
+    _install_opencode_mcp,
 )
 
 
@@ -143,6 +144,138 @@ class TestHermesDetection:
             assert spec.is_installed()
             config = yaml.safe_load((tmp_path / ".hermes" / "config.yaml").read_text())
             assert config["mcp_servers"]["rafter"]["command"] == "rafter"
+            spec.uninstall()
+            assert not spec.is_installed()
+        finally:
+            agent_components.reset_registry_cache()
+
+
+class TestInstallOpenCodeMcp:
+    def test_creates_config_from_scratch(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        assert _install_opencode_mcp(tmp_path)
+
+        config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+        assert config_path.exists()
+        config = json.loads(config_path.read_text())
+        assert config["mcp"]["rafter"]["type"] == "local"
+        assert config["mcp"]["rafter"]["command"] == ["rafter", "mcp", "serve"]
+        assert config["mcp"]["rafter"]["enabled"] is True
+        assert config["$schema"] == "https://opencode.ai/config.json"
+
+    def test_preserves_existing_servers(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        opencode_dir = tmp_path / ".config" / "opencode"
+        opencode_dir.mkdir(parents=True)
+        (opencode_dir / "opencode.json").write_text(json.dumps({
+            "$schema": "https://opencode.ai/config.json",
+            "mcp": {
+                "other": {"type": "local", "command": ["other", "go"], "enabled": True},
+            },
+            "theme": "system",
+        }, indent=2))
+
+        _install_opencode_mcp(tmp_path)
+
+        config = json.loads((opencode_dir / "opencode.json").read_text())
+        assert "other" in config["mcp"]
+        assert "rafter" in config["mcp"]
+        # Non-mcp top-level keys must survive the merge.
+        assert config["theme"] == "system"
+
+    def test_idempotent_on_reinstall(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        _install_opencode_mcp(tmp_path)
+        first = (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
+
+        _install_opencode_mcp(tmp_path)
+        second = (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
+
+        assert first == second, "second install should be a no-op"
+
+    def test_recovers_from_unreadable_json(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        opencode_dir = tmp_path / ".config" / "opencode"
+        opencode_dir.mkdir(parents=True)
+        # Deliberately broken JSON — installer must not raise; should warn and
+        # write a fresh config containing the rafter entry.
+        (opencode_dir / "opencode.json").write_text("{ this is not valid json")
+
+        assert _install_opencode_mcp(tmp_path)
+        config = json.loads((opencode_dir / "opencode.json").read_text())
+        assert config["mcp"]["rafter"]["type"] == "local"
+
+    def test_replaces_array_shape_mcp(self, tmp_path, monkeypatch):
+        """If a user wrote `mcp:` as a list (wrong shape), the installer must
+        coerce it to a dict rather than blow up."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        opencode_dir = tmp_path / ".config" / "opencode"
+        opencode_dir.mkdir(parents=True)
+        (opencode_dir / "opencode.json").write_text(json.dumps({"mcp": ["junk"]}))
+
+        assert _install_opencode_mcp(tmp_path)
+        config = json.loads((opencode_dir / "opencode.json").read_text())
+        assert isinstance(config["mcp"], dict)
+        assert config["mcp"]["rafter"]["command"] == ["rafter", "mcp", "serve"]
+
+
+class TestOpenCodeDetection:
+    """sable-l8e5 — OpenCode must surface in verify / status / list."""
+
+    def test_check_opencode_not_detected(self, tmp_path, monkeypatch):
+        from rafter_cli.commands.agent import _check_opencode
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        result = _check_opencode()
+        assert not result.passed
+        assert result.optional
+        assert "not detected" in result.detail.lower()
+
+    def test_check_opencode_pass_after_install(self, tmp_path, monkeypatch):
+        from rafter_cli.commands.agent import _check_opencode, _install_opencode_mcp
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        _install_opencode_mcp(tmp_path)
+        result = _check_opencode()
+        assert result.passed
+        assert "configured" in result.detail.lower()
+
+    def test_check_opencode_warns_when_config_lacks_rafter(self, tmp_path, monkeypatch):
+        from rafter_cli.commands.agent import _check_opencode
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        opencode_dir = tmp_path / ".config" / "opencode"
+        opencode_dir.mkdir(parents=True)
+        (opencode_dir / "opencode.json").write_text(json.dumps({"mcp": {"other": {"type": "local", "command": ["other"]}}}))
+        result = _check_opencode()
+        assert not result.passed
+        assert result.optional  # warn, not hard fail
+
+    def test_detect_agent_platforms_includes_opencode(self, tmp_path, monkeypatch):
+        from rafter_cli.commands.agent import _detect_agent_platforms
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".config" / "opencode").mkdir(parents=True)
+        assert "opencode" in _detect_agent_platforms()
+
+    def test_opencode_mcp_component_registered(self, tmp_path, monkeypatch):
+        from rafter_cli.commands import agent_components
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        agent_components.reset_registry_cache()
+        try:
+            ids = [c.id for c in agent_components.get_registry()]
+            assert "opencode.mcp" in ids
+        finally:
+            agent_components.reset_registry_cache()
+
+    def test_opencode_mcp_component_install_uninstall(self, tmp_path, monkeypatch):
+        from rafter_cli.commands import agent_components
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        agent_components.reset_registry_cache()
+        try:
+            spec = agent_components.resolve_component("opencode.mcp")
+            assert spec is not None
+            assert not spec.is_installed()
+            spec.install()
+            assert spec.is_installed()
+            config = json.loads((tmp_path / ".config" / "opencode" / "opencode.json").read_text())
+            assert config["mcp"]["rafter"]["command"] == ["rafter", "mcp", "serve"]
             spec.uninstall()
             assert not spec.is_installed()
         finally:
