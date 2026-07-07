@@ -55,6 +55,37 @@ def test_log_command_intercepted_redacts_github_token(audit_path, enabled_config
     assert entry["eventType"] == "command_intercepted"
 
 
+def test_log_command_intercepted_redacts_rafter_api_key_env_prefix(audit_path, enabled_config):
+    """ob-y5ep: a RAFTER_API_KEY=<val> env prefix leaked verbatim because the
+    key's value matches no built-in pattern. It must be redacted anyway."""
+    logger = AuditLogger(log_path=audit_path)
+    key = "sk-deadbeefdeadbeef"
+    logger.log_command_intercepted(
+        f"RAFTER_API_KEY={key} rafter scan .",
+        passed=True,
+        action_taken="allowed",
+    )
+    on_disk = audit_path.read_text()
+    assert key not in on_disk, "raw RAFTER_API_KEY leaked into audit.jsonl"
+    entry = json.loads(on_disk.strip())
+    assert "RAFTER_API_KEY=" in entry["action"]["command"]
+    assert "*" in entry["action"]["command"]
+
+
+def test_log_command_intercepted_preserves_benign_env_assignments(audit_path, enabled_config):
+    """ob-y5ep: non-secret env assignments must survive redaction intact."""
+    logger = AuditLogger(log_path=audit_path)
+    logger.log_command_intercepted(
+        "FOO=bar NODE_ENV=production rafter scan .",
+        passed=True,
+        action_taken="allowed",
+    )
+    entry = json.loads(audit_path.read_text().strip())
+    command = entry["action"]["command"]
+    assert "FOO=bar" in command
+    assert "NODE_ENV=production" in command
+
+
 def test_log_command_intercepted_preserves_risk_assessment(audit_path, enabled_config):
     logger = AuditLogger(log_path=audit_path)
     logger.log_command_intercepted("rm -rf /", passed=False, action_taken="blocked")
