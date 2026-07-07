@@ -416,6 +416,226 @@ describe("runRemoteScan", () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
+
+  // ── provider / repo_url (multi-provider, additive + backward-compatible) ──
+
+  async function postedBody(): Promise<Record<string, unknown>> {
+    // The 2nd positional arg of the last axios.post call is the request body.
+    const call = mockedAxios.post.mock.calls[mockedAxios.post.mock.calls.length - 1];
+    return call[1] as Record<string, unknown>;
+  }
+
+  it("a github remote produces a body with NO provider/repo_url (byte-identical to today)", async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
+
+    const { runRemoteScan } = await import("../src/commands/backend/run.js");
+    await runRemoteScan({
+      apiKey: "test-key",
+      repo: "owner/repo",
+      branch: "main",
+      mode: "fast",
+      skipInteractive: true,
+      quiet: true,
+    });
+
+    const body = await postedBody();
+    // Byte-identical shape: exactly these keys, nothing more.
+    expect(body).toEqual({
+      repository_name: "owner/repo",
+      branch_name: "main",
+      scan_mode: "fast",
+    });
+    expect(body).not.toHaveProperty("provider");
+    expect(body).not.toHaveProperty("repo_url");
+  });
+
+  it("an explicit --provider github still omits provider/repo_url", async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
+
+    const { runRemoteScan } = await import("../src/commands/backend/run.js");
+    await runRemoteScan({
+      apiKey: "test-key",
+      repo: "owner/repo",
+      branch: "main",
+      mode: "fast",
+      skipInteractive: true,
+      quiet: true,
+      provider: "github",
+      repoUrl: "https://github.com/owner/repo",
+    });
+
+    const body = await postedBody();
+    expect(body).not.toHaveProperty("provider");
+    expect(body).not.toHaveProperty("repo_url");
+  });
+
+  it("--provider gitlab + --repo-url are sent for a non-github remote", async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
+
+    const { runRemoteScan } = await import("../src/commands/backend/run.js");
+    await runRemoteScan({
+      apiKey: "test-key",
+      repo: "group/project",
+      branch: "main",
+      mode: "fast",
+      skipInteractive: true,
+      quiet: true,
+      provider: "gitlab",
+      repoUrl: "https://gitlab.com/group/project",
+    });
+
+    const body = await postedBody();
+    expect(body).toMatchObject({
+      repository_name: "group/project",
+      branch_name: "main",
+      scan_mode: "fast",
+      provider: "gitlab",
+      repo_url: "https://gitlab.com/group/project",
+    });
+  });
+
+  it("sends bitbucket provider + repo_url when flags are supplied", async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
+
+    const { runRemoteScan } = await import("../src/commands/backend/run.js");
+    await runRemoteScan({
+      apiKey: "test-key",
+      repo: "team/repo",
+      branch: "main",
+      skipInteractive: true,
+      quiet: true,
+      provider: "bitbucket",
+      repoUrl: "https://bitbucket.org/team/repo",
+    });
+
+    const body = await postedBody();
+    expect(body.provider).toBe("bitbucket");
+    expect(body.repo_url).toBe("https://bitbucket.org/team/repo");
+  });
+
+  it("omits provider/repo_url when a provider is given without a repo_url", async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
+
+    const { runRemoteScan } = await import("../src/commands/backend/run.js");
+    await runRemoteScan({
+      apiKey: "test-key",
+      repo: "group/project",
+      branch: "main",
+      skipInteractive: true,
+      quiet: true,
+      provider: "gitlab",
+      // no repoUrl → cannot send the pair; stay backward-compatible
+    });
+
+    const body = await postedBody();
+    expect(body).not.toHaveProperty("provider");
+    expect(body).not.toHaveProperty("repo_url");
+  });
+});
+
+// ── detectRepo-inferred provider flows into the body ────────────────────
+
+describe("runRemoteScan — inferred provider from detectRepo", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as any);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.doUnmock("../src/utils/git.js");
+    vi.resetModules();
+  });
+
+  it("includes an inferred gitlab provider + repo_url with no explicit flags", async () => {
+    vi.resetModules();
+    vi.doMock("../src/utils/git.js", () => ({
+      detectRepo: () => ({
+        repo: "group/project",
+        branch: "main",
+        provider: "gitlab",
+        repo_url: "https://gitlab.com/group/project",
+      }),
+    }));
+
+    mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
+
+    const { runRemoteScan } = await import("../src/commands/backend/run.js");
+    await runRemoteScan({
+      apiKey: "test-key",
+      mode: "fast",
+      skipInteractive: true,
+      quiet: true,
+    });
+
+    const call = mockedAxios.post.mock.calls[mockedAxios.post.mock.calls.length - 1];
+    const body = call[1] as Record<string, unknown>;
+    expect(body).toMatchObject({
+      repository_name: "group/project",
+      branch_name: "main",
+      provider: "gitlab",
+      repo_url: "https://gitlab.com/group/project",
+    });
+  });
+
+  it("omits provider/repo_url when detectRepo infers github", async () => {
+    vi.resetModules();
+    vi.doMock("../src/utils/git.js", () => ({
+      detectRepo: () => ({
+        repo: "owner/repo",
+        branch: "main",
+        provider: "github",
+        repo_url: "https://github.com/owner/repo",
+      }),
+    }));
+
+    mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
+
+    const { runRemoteScan } = await import("../src/commands/backend/run.js");
+    await runRemoteScan({
+      apiKey: "test-key",
+      mode: "fast",
+      skipInteractive: true,
+      quiet: true,
+    });
+
+    const call = mockedAxios.post.mock.calls[mockedAxios.post.mock.calls.length - 1];
+    const body = call[1] as Record<string, unknown>;
+    expect(body).not.toHaveProperty("provider");
+    expect(body).not.toHaveProperty("repo_url");
+  });
+
+  it("an explicit --provider flag overrides the inferred provider", async () => {
+    vi.resetModules();
+    vi.doMock("../src/utils/git.js", () => ({
+      detectRepo: () => ({
+        repo: "group/project",
+        branch: "main",
+        provider: "gitlab",
+        repo_url: "https://gitlab.com/group/project",
+      }),
+    }));
+
+    mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
+
+    const { runRemoteScan } = await import("../src/commands/backend/run.js");
+    await runRemoteScan({
+      apiKey: "test-key",
+      skipInteractive: true,
+      quiet: true,
+      provider: "bitbucket",
+      repoUrl: "https://bitbucket.org/group/project",
+    });
+
+    const call = mockedAxios.post.mock.calls[mockedAxios.post.mock.calls.length - 1];
+    const body = call[1] as Record<string, unknown>;
+    expect(body.provider).toBe("bitbucket");
+    expect(body.repo_url).toBe("https://bitbucket.org/group/project");
+  });
 });
 
 // ── Live API integration tests ──────────────────────────────────────────

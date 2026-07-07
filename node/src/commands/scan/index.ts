@@ -25,6 +25,8 @@ export function createScanGroupCommand(): Command {
     .option("-f, --format <format>", "json | md", "md")
     .option("-m, --mode <mode>", "scan mode: fast | plus", "fast")
     .option("--github-token <token>", "GitHub PAT for private repos (or RAFTER_GITHUB_TOKEN env var)")
+    .option("--provider <provider>", "git provider: gitlab | gitea | bitbucket (default: auto-detected; github requires nothing)")
+    .option("--repo-url <url>", "full https clone URL for non-github remotes (default: auto-detected)")
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages")
     .action(async (opts) => {
@@ -41,6 +43,8 @@ export function createScanGroupCommand(): Command {
     .option("-f, --format <format>", "json | md", "md")
     .option("-m, --mode <mode>", "scan mode: fast | plus", "fast")
     .option("--github-token <token>", "GitHub PAT for private repos (or RAFTER_GITHUB_TOKEN env var)")
+    .option("--provider <provider>", "git provider: gitlab | gitea | bitbucket (default: auto-detected; github requires nothing)")
+    .option("--repo-url <url>", "full https clone URL for non-github remotes (default: auto-detected)")
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages");
 

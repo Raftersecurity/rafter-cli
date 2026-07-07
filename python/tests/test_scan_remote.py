@@ -45,7 +45,7 @@ class TestDoRemoteScan:
     """Unit tests for the core remote scan trigger function."""
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_success_skip_interactive(self, _mock_repo, mock_post):
         """200 with skip_interactive returns without polling."""
         mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
@@ -61,7 +61,7 @@ class TestDoRemoteScan:
         )
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_posts_correct_body(self, _mock_repo, mock_post):
         """Verify POST body contains repository_name, branch_name, scan_mode."""
         mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
@@ -84,7 +84,173 @@ class TestDoRemoteScan:
         assert "github_token" not in body
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
+    def test_github_body_omits_provider_and_repo_url(self, _mock_repo, mock_post):
+        """A github remote produces a body with NO provider/repo_url (byte-identical to today)."""
+        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
+
+        _do_remote_scan(
+            repo="owner/repo",
+            branch="main",
+            api_key="test-key",
+            fmt="json",
+            skip_interactive=True,
+            quiet=True,
+            mode="fast",
+        )
+
+        _, kwargs = mock_post.call_args
+        body = kwargs["json"]
+        # Byte-identical shape: exactly these keys, nothing more.
+        assert body == {
+            "repository_name": "owner/repo",
+            "branch_name": "main",
+            "scan_mode": "fast",
+        }
+        assert "provider" not in body
+        assert "repo_url" not in body
+
+    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
+    def test_explicit_provider_github_still_omits(self, _mock_repo, mock_post):
+        """An explicit --provider github still omits provider/repo_url."""
+        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
+
+        _do_remote_scan(
+            repo="owner/repo",
+            branch="main",
+            api_key="test-key",
+            fmt="json",
+            skip_interactive=True,
+            quiet=True,
+            provider="github",
+            repo_url="https://github.com/owner/repo",
+        )
+
+        _, kwargs = mock_post.call_args
+        body = kwargs["json"]
+        assert "provider" not in body
+        assert "repo_url" not in body
+
+    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
+    def test_flag_provider_gitlab_sends_provider_and_repo_url(self, _mock_repo, mock_post):
+        """--provider gitlab + --repo-url are sent for a non-github remote."""
+        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
+
+        _do_remote_scan(
+            repo="group/project",
+            branch="main",
+            api_key="test-key",
+            fmt="json",
+            skip_interactive=True,
+            quiet=True,
+            provider="gitlab",
+            repo_url="https://gitlab.com/group/project",
+        )
+
+        _, kwargs = mock_post.call_args
+        body = kwargs["json"]
+        assert body["provider"] == "gitlab"
+        assert body["repo_url"] == "https://gitlab.com/group/project"
+
+    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
+    def test_flag_provider_bitbucket_sends_pair(self, _mock_repo, mock_post):
+        """--provider bitbucket + --repo-url are sent together."""
+        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
+
+        _do_remote_scan(
+            repo="team/repo",
+            branch="main",
+            api_key="test-key",
+            fmt="json",
+            skip_interactive=True,
+            quiet=True,
+            provider="bitbucket",
+            repo_url="https://bitbucket.org/team/repo",
+        )
+
+        _, kwargs = mock_post.call_args
+        body = kwargs["json"]
+        assert body["provider"] == "bitbucket"
+        assert body["repo_url"] == "https://bitbucket.org/team/repo"
+
+    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("group/project", "main", None, None))
+    def test_provider_without_any_repo_url_is_omitted(self, _mock_repo, mock_post):
+        """A resolved provider with no repo_url anywhere can't send the pair; stays backward-compatible."""
+        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
+
+        # Explicit repo/branch → detect_repo infers nothing; provider given but
+        # no repo_url from flag or inference → the pair must be omitted.
+        _do_remote_scan(
+            repo="group/project",
+            branch="main",
+            api_key="test-key",
+            fmt="json",
+            skip_interactive=True,
+            quiet=True,
+            provider="gitlab",
+            repo_url=None,
+        )
+
+        _, kwargs = mock_post.call_args
+        body = kwargs["json"]
+        assert "provider" not in body
+        assert "repo_url" not in body
+
+    @patch("rafter_cli.commands.backend.requests.post")
+    @patch(
+        "rafter_cli.commands.backend.detect_repo",
+        return_value=("group/project", "main", "gitlab", "https://gitlab.com/group/project"),
+    )
+    def test_inferred_gitlab_provider_flows_into_body(self, _mock_repo, mock_post):
+        """An auto-detected gitlab remote sends provider + repo_url with no explicit flags."""
+        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
+
+        _do_remote_scan(
+            repo=None,
+            branch=None,
+            api_key="test-key",
+            fmt="json",
+            skip_interactive=True,
+            quiet=True,
+        )
+
+        _, kwargs = mock_post.call_args
+        body = kwargs["json"]
+        assert body["repository_name"] == "group/project"
+        assert body["provider"] == "gitlab"
+        assert body["repo_url"] == "https://gitlab.com/group/project"
+
+    @patch("rafter_cli.commands.backend.requests.post")
+    @patch(
+        "rafter_cli.commands.backend.detect_repo",
+        return_value=("group/project", "main", "gitlab", "https://gitlab.com/group/project"),
+    )
+    def test_explicit_flag_overrides_inferred_provider(self, _mock_repo, mock_post):
+        """An explicit --provider/--repo-url wins over the inferred values."""
+        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
+
+        _do_remote_scan(
+            repo=None,
+            branch=None,
+            api_key="test-key",
+            fmt="json",
+            skip_interactive=True,
+            quiet=True,
+            provider="bitbucket",
+            repo_url="https://bitbucket.org/group/project",
+        )
+
+        _, kwargs = mock_post.call_args
+        body = kwargs["json"]
+        assert body["provider"] == "bitbucket"
+        assert body["repo_url"] == "https://bitbucket.org/group/project"
+
+    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_includes_github_token(self, _mock_repo, mock_post):
         """GitHub token is included in POST body when provided."""
         mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
@@ -103,7 +269,7 @@ class TestDoRemoteScan:
         assert kwargs["json"]["github_token"] == "ghp_test123"
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_plus_mode(self, _mock_repo, mock_post):
         """scan_mode=plus is sent when mode='plus'."""
         mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
@@ -122,7 +288,7 @@ class TestDoRemoteScan:
         assert kwargs["json"]["scan_mode"] == "plus"
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_prints_scan_id_when_not_quiet(self, _mock_repo, mock_post, capsys):
         """Scan ID is printed to stderr when not quiet."""
         mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-xyz"})
@@ -140,7 +306,7 @@ class TestDoRemoteScan:
         assert "s-xyz" in err
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_auto_detect_message_when_not_explicit(self, _mock_repo, mock_post, capsys):
         """Auto-detection message prints when repo/branch not explicitly provided."""
         mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
@@ -158,7 +324,7 @@ class TestDoRemoteScan:
         assert "auto-detected" in err.lower()
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_429_raises_quota_exhausted(self, _mock_repo, mock_post):
         """HTTP 429 → exit code 3 (quota exhausted)."""
         mock_post.return_value = _mock_response(429, "quota exhausted")
@@ -175,7 +341,7 @@ class TestDoRemoteScan:
         assert exc_info.value.exit_code == EXIT_QUOTA_EXHAUSTED
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_403_scope_raises_insufficient_scope(self, _mock_repo, mock_post, capsys):
         """HTTP 403 with scope keyword → exit code 4."""
         mock_post.return_value = _mock_response(
@@ -196,7 +362,7 @@ class TestDoRemoteScan:
         assert exc_info.value.exit_code == EXIT_INSUFFICIENT_SCOPE
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_403_quota_raises_quota_exhausted(self, _mock_repo, mock_post, capsys):
         """HTTP 403 with scan_mode body → exit code 3 (quota)."""
         mock_post.return_value = _mock_response(
@@ -215,7 +381,7 @@ class TestDoRemoteScan:
         assert exc_info.value.exit_code == EXIT_QUOTA_EXHAUSTED
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_401_raises_general_error(self, _mock_repo, mock_post):
         """HTTP 401 → exit code 1 (general error)."""
         mock_post.return_value = _mock_response(401, "invalid api key")
@@ -232,7 +398,7 @@ class TestDoRemoteScan:
         assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_500_raises_general_error(self, _mock_repo, mock_post):
         """HTTP 500 → exit code 1 (general error)."""
         mock_post.return_value = _mock_response(500, "internal server error")
@@ -266,7 +432,7 @@ class TestDoRemoteScan:
 
     @patch("rafter_cli.commands.backend._handle_scan_status_interactive")
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_calls_status_handler_when_not_skip_interactive(
         self, _mock_repo, mock_post, mock_status
     ):
@@ -292,7 +458,7 @@ class TestDoRemoteScan:
 
     @patch("rafter_cli.commands.backend._handle_scan_status_interactive")
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_skip_interactive_does_not_call_status_handler(
         self, _mock_repo, mock_post, mock_status
     ):
@@ -311,7 +477,7 @@ class TestDoRemoteScan:
         mock_status.assert_not_called()
 
     @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main"))
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_sends_api_key_header(self, _mock_repo, mock_post):
         """x-api-key header is set correctly."""
         mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
