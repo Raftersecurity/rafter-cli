@@ -20,6 +20,8 @@ export interface RunOpts {
   skipInteractive?: boolean;
   quiet?: boolean;
   githubToken?: string;
+  provider?: string;
+  repoUrl?: string;
 }
 
 /**
@@ -29,8 +31,13 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
   const key = resolveKey(opts.apiKey);
   const ghToken = opts.githubToken || process.env.RAFTER_GITHUB_TOKEN;
   let repo: string | undefined, branch: string | undefined;
+  let detectedProvider: string | undefined, detectedRepoUrl: string | undefined;
   try {
-    ({ repo, branch } = detectRepo({ repo: opts.repo, branch: opts.branch, quiet: opts.quiet }));
+    ({ repo, branch, provider: detectedProvider, repo_url: detectedRepoUrl } = detectRepo({
+      repo: opts.repo,
+      branch: opts.branch,
+      quiet: opts.quiet,
+    }));
   } catch (e) {
     if (e instanceof Error) {
       console.error(e.message);
@@ -40,12 +47,24 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
     process.exit(EXIT_GENERAL_ERROR);
   }
 
+  // Explicit flags override inferred values.
+  const provider = opts.provider ?? detectedProvider;
+  const repoUrl = opts.repoUrl ?? detectedRepoUrl;
+
   const body: Record<string, string> = {
     repository_name: repo!,
     branch_name: branch!,
     scan_mode: opts.mode ?? "fast",
   };
   if (ghToken) body.github_token = ghToken;
+
+  // Additive, backward-compatible: only send provider + repo_url for non-github
+  // remotes. For github (or an unknown host that defaulted to github), omit both
+  // so the request body is byte-identical to the legacy github-only behavior.
+  if (provider && provider !== "github" && repoUrl) {
+    body.provider = provider;
+    body.repo_url = repoUrl;
+  }
 
   if (!opts.quiet) {
     const spinner = ora("Submitting scan").start();
@@ -112,6 +131,8 @@ function addRunOptions(cmd: Command): Command {
     .option("-f, --format <format>", "json | md", "md")
     .option("-m, --mode <mode>", "scan mode: fast | plus", "fast")
     .option("--github-token <token>", "GitHub PAT for private repos (or RAFTER_GITHUB_TOKEN env var)")
+    .option("--provider <provider>", "git provider: gitlab | gitea | bitbucket (default: auto-detected; github requires nothing)")
+    .option("--repo-url <url>", "full https clone URL for non-github remotes (default: auto-detected)")
     .option("--skip-interactive", "do not wait for scan to complete")
     .option("--quiet", "suppress status messages");
 }
