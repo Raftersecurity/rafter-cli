@@ -12,6 +12,7 @@
   <a href="#supported-platforms"><img alt="Continue.dev supported" src="https://img.shields.io/badge/Continue.dev-supported-7c3aed?style=flat&labelColor=1e1b2e"></a>
   <a href="#supported-platforms"><img alt="Aider supported" src="https://img.shields.io/badge/Aider-supported-10b981?style=flat&labelColor=111827"></a>
   <a href="#supported-platforms"><img alt="Hermes supported" src="https://img.shields.io/badge/Hermes-supported-9333ea?style=flat&labelColor=1a0a2e"></a>
+  <a href="#supported-platforms"><img alt="OpenCode supported" src="https://img.shields.io/badge/OpenCode-supported-fab283?style=flat&labelColor=0a0a0a"></a>
 </p>
 
 Multi-language CLI for [Rafter](https://rafter.so) — the security toolkit built for AI coding agents and the developers who use them.
@@ -25,7 +26,7 @@ Rafter is a **security primitive** that any developer or agent can call and trus
 
 **Two capabilities in one package:**
 
-1. **Local Security Toolkit** (free, no account) — Fast secret scanning (21+ built-in patterns, deterministic for a given version), policy enforcement with risk-tiered rules, pre-commit hooks, extension auditing, custom rule authoring, and full audit logging. Works offline. **No API key. No telemetry. No data leaves your machine.** Supports Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, Aider, and Hermes.
+1. **Local Security Toolkit** (free, no account) — Fast secret scanning (21+ built-in patterns, deterministic for a given version), policy enforcement with risk-tiered rules, pre-commit hooks, extension auditing, custom rule authoring, and full audit logging. Works offline. **No API key. No telemetry. No data leaves your machine.** Supports Claude Code, Codex CLI, OpenClaw, Gemini CLI, Cursor, Windsurf, Continue.dev, Aider, Hermes, and OpenCode.
 
 2. **Remote Code Analysis** — Deep security audits that combine agentic analysis with a full SAST/SCA toolchain. Rafter's engine examines your codebase the way a professional penetration tester would — tracing data flows, reasoning about business logic, and surfacing vulnerabilities that static rules alone miss — then cross-references findings with industry-standard SAST, SCA, and secret-detection tools. Structured reports in JSON or Markdown. Pipe to any tool, feed to any workflow.
 
@@ -183,7 +184,7 @@ rafter agent disable gemini                # opt a single platform out
 
 This command:
 - Creates `~/.rafter/` config and audit log (or `./.rafter/` with `--local` for ephemeral / containerized / benchmark setups)
-- Auto-detects Claude Code, Codex CLI, OpenClaw, Gemini, Cursor, Windsurf, Continue.dev, Aider, and Hermes
+- Auto-detects Claude Code, Codex CLI, OpenClaw, Gemini, Cursor, Windsurf, Continue.dev, Aider, Hermes, and OpenCode
 - With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
 - With `--with-betterleaks` or `--all`: downloads [Betterleaks](https://github.com/betterleaks/betterleaks) (the gitleaks successor maintained by the original gitleaks authors) for enhanced secret scanning. Falls back to built-in 21-pattern regex scanner.
 
@@ -484,6 +485,7 @@ Add to any MCP client config:
 | Continue.dev | MCP server | `~/.continue` | `~/.continue/config.json` |
 | Aider | MCP server | `~/.aider.conf.yml` | `~/.aider.conf.yml` |
 | Hermes | MCP server | `~/.hermes` | `~/.hermes/config.yaml` |
+| OpenCode | MCP server | `~/.config/opencode` | `~/.config/opencode/opencode.json` |
 
 `rafter agent init` auto-detects which platforms are installed. Use `--with-*` flags or `--all` to install integrations.
 
@@ -496,7 +498,7 @@ Add to any MCP client config:
 
 Install, remove, or audit them at any time with `rafter skill list/install/uninstall/review`.
 
-**MCP-based platforms** (Gemini, Cursor, Windsurf, Continue.dev, Aider, Hermes) connect to the Rafter MCP server (`rafter mcp serve`), which exposes `scan_secrets`, `evaluate_command`, `read_audit_log`, and `get_config` tools. See individual setup recipes in [`recipes/`](recipes/).
+**MCP-based platforms** (Gemini, Cursor, Windsurf, Continue.dev, Aider, Hermes, OpenCode) connect to the Rafter MCP server (`rafter mcp serve`), which exposes `scan_secrets`, `evaluate_command`, `read_audit_log`, and `get_config` tools. See individual setup recipes in [`recipes/`](recipes/).
 
 ---
 

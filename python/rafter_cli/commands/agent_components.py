@@ -124,6 +124,15 @@ def _filter_hooks(arr: list[Any] | None, predicate: Callable[[Any], bool]) -> li
 
 RAFTER_MCP_ENTRY: dict[str, Any] = {"command": "rafter", "args": ["mcp", "serve"]}
 
+# OpenCode's schema differs: the block is `mcp` (not `mcpServers`), each local
+# server carries type: "local", and command + args are a single `command`
+# array. Verified against https://opencode.ai/docs/mcp-servers/ (sable-l8e5).
+RAFTER_OPENCODE_MCP_ENTRY: dict[str, Any] = {
+    "type": "local",
+    "command": [RAFTER_MCP_ENTRY["command"], *RAFTER_MCP_ENTRY["args"]],
+    "enabled": True,
+}
+
 
 # ── Skill template lookup ─────────────────────────────────────────────
 
@@ -897,6 +906,61 @@ def _hermes_mcp() -> ComponentSpec:
     )
 
 
+def _opencode_mcp() -> ComponentSpec:
+    """OpenCode MCP server entry (~/.config/opencode/opencode.json).
+
+    OpenCode's schema differs from Cursor/Windsurf: the block is ``mcp`` (not
+    ``mcpServers``), each local server carries ``type: "local"``, and command +
+    args are a single ``command`` array. A ``$schema`` pointer is seeded on
+    first write. Verified against https://opencode.ai/docs/mcp-servers/
+    (sable-l8e5).
+    """
+    home = Path.home()
+    detect_dir = home / ".config" / "opencode"
+    config_path = detect_dir / "opencode.json"
+
+    def is_installed() -> bool:
+        cfg = _read_json(config_path)
+        mcp = cfg.get("mcp") if isinstance(cfg, dict) else None
+        return isinstance(mcp, dict) and bool(mcp.get("rafter"))
+
+    def install() -> None:
+        detect_dir.mkdir(parents=True, exist_ok=True)
+        cfg = _read_json(config_path)
+        # Guard against valid-but-non-object top-level JSON (list/str/number).
+        if not isinstance(cfg, dict):
+            cfg = {}
+        if "$schema" not in cfg:
+            cfg["$schema"] = "https://opencode.ai/config.json"
+        mcp = cfg.get("mcp")
+        if not isinstance(mcp, dict):
+            mcp = {}
+            cfg["mcp"] = mcp
+        mcp["rafter"] = dict(RAFTER_OPENCODE_MCP_ENTRY)
+        _write_json(config_path, cfg)
+
+    def uninstall() -> None:
+        if not config_path.exists():
+            return
+        cfg = _read_json(config_path)
+        mcp = cfg.get("mcp") if isinstance(cfg, dict) else None
+        if isinstance(mcp, dict) and "rafter" in mcp:
+            del mcp["rafter"]
+            _write_json(config_path, cfg)
+
+    return ComponentSpec(
+        id="opencode.mcp",
+        platform="opencode",
+        kind="mcp",
+        description="OpenCode MCP server entry (~/.config/opencode/opencode.json)",
+        detect_dir=detect_dir,
+        path=config_path,
+        is_installed=is_installed,
+        install=install,
+        uninstall=uninstall,
+    )
+
+
 _AIDER_LEGACY_MCP_BLOCK_RE = re.compile(
     r"\n?#\s*Rafter security MCP server\s*\nmcp-server-command:\s*rafter\s+mcp\s+serve\s*\n?",
 )
@@ -1056,6 +1120,7 @@ def get_registry() -> list[ComponentSpec]:
             _continue_mcp(),
             _aider_read(),
             _hermes_mcp(),
+            _opencode_mcp(),
             _openclaw_skill(),
         ]
     return _REGISTRY
