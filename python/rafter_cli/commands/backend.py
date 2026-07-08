@@ -91,6 +91,8 @@ def _do_remote_scan(
     quiet: bool,
     mode: str = "fast",
     github_token: "str | None" = None,
+    provider: "str | None" = None,
+    repo_url: "str | None" = None,
 ) -> None:
     """Shared implementation for remote backend scan — used by both `rafter run` and `rafter scan`."""
     import os as _os
@@ -98,7 +100,7 @@ def _do_remote_scan(
     key = resolve_key(api_key)
     gh_token = github_token or _os.environ.get("RAFTER_GITHUB_TOKEN")
     try:
-        repo_slug, branch_name = detect_repo(repo, branch)
+        repo_slug, branch_name, detected_provider, detected_repo_url = detect_repo(repo, branch)
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
@@ -106,11 +108,22 @@ def _do_remote_scan(
     if not (repo and branch) and not quiet:
         print(f"Repo auto-detected: {repo_slug} @ {branch_name} (note: scanning remote)", file=sys.stderr)
 
+    # Explicit flags override inferred values.
+    resolved_provider = provider or detected_provider
+    resolved_repo_url = repo_url or detected_repo_url
+
     headers = {"x-api-key": key, "Content-Type": "application/json"}
 
     body: dict = {"repository_name": repo_slug, "branch_name": branch_name, "scan_mode": mode}
     if gh_token:
         body["github_token"] = gh_token
+
+    # Additive, backward-compatible: only send provider + repo_url for non-github
+    # remotes. For github (or an unknown host that defaulted to github), omit both
+    # so the request body is byte-identical to the legacy github-only behavior.
+    if resolved_provider and resolved_provider != "github" and resolved_repo_url:
+        body["provider"] = resolved_provider
+        body["repo_url"] = resolved_repo_url
 
     resp = requests.post(
         f"{API_BASE}/static/scan",
@@ -150,11 +163,13 @@ def register_backend_commands(app: typer.Typer) -> None:
         fmt: str = typer.Option("md", "--format", "-f", help="json | md"),
         mode: str = typer.Option("fast", "--mode", "-m", help="scan mode: fast | plus"),
         github_token: str = typer.Option(None, "--github-token", envvar="RAFTER_GITHUB_TOKEN", help="GitHub PAT for private repos"),
+        provider: str = typer.Option(None, "--provider", help="git provider: gitlab | gitea | bitbucket (default: auto-detected; github requires nothing)"),
+        repo_url: str = typer.Option(None, "--repo-url", help="full https clone URL for non-github remotes (default: auto-detected)"),
         skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
         quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
     ):
         """Trigger a security scan."""
-        _do_remote_scan(repo, branch, api_key, fmt, skip_interactive, quiet, mode, github_token=github_token)
+        _do_remote_scan(repo, branch, api_key, fmt, skip_interactive, quiet, mode, github_token=github_token, provider=provider, repo_url=repo_url)
 
     @app.command()
     def get(

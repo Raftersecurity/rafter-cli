@@ -70,9 +70,32 @@ Trigger a new security scan for a repository.
 - `-f, --format [json|md]` — output format (default: md)
 - `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds agentic deep-dive analysis that examines your codebase the way a professional cybersecurity auditor would — tracing data flows and reasoning about business logic on top of the full SAST/SCA toolchain.
 - `--github-token TEXT` — GitHub PAT for private repos (or `RAFTER_GITHUB_TOKEN` env var)
+- `--provider [gitlab|gitea|bitbucket]` — git provider for non-GitHub remotes. Default: auto-detected from the git remote host. GitHub requires nothing — leave unset. Overrides the inferred provider when set.
+- `--repo-url TEXT` — full HTTPS clone URL for non-GitHub remotes (e.g. `https://gitlab.com/owner/repo`). Default: auto-detected and normalized from the git remote. Overrides the inferred URL when set.
 - `--skip-interactive` — fire-and-forget mode (don't poll for completion)
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
+
+#### Scan request body (provider fields)
+
+The scan request `POST` body always contains `repository_name`, `branch_name`, and `scan_mode` (plus `github_token` when a PAT is supplied). Two **optional, additive** fields extend it for non-GitHub remotes:
+
+| Field | Type | When sent |
+|-------|------|-----------|
+| `provider` | string | Only for non-GitHub remotes. One of `"gitlab"`, `"gitea"`, `"bitbucket"`. |
+| `repo_url` | string | Only for non-GitHub remotes. Canonical `https://<host>/<owner>/<repo>` clone URL. |
+
+**Provider inference** maps the git remote host to a provider (both `git@host:owner/repo(.git)` and `https://host/owner/repo(.git)` forms are normalized):
+
+| Remote host | Provider |
+|-------------|----------|
+| `github.com` | `github` |
+| `gitlab.com`, `*.gitlab.com` | `gitlab` |
+| `bitbucket.org` | `bitbucket` |
+| `codeberg.org`, `*.gitea.io` | `gitea` |
+| anything else | `github` (backward-compatible default) |
+
+**Backward compatibility (hard rule):** when the resolved provider is `github` — including any unrecognized host that defaults to `github` — **neither `provider` nor `repo_url` is sent.** A GitHub user's request body is byte-identical to the legacy behavior. `--provider` / `--repo-url` override the inferred values; the two fields are sent together only when the resolved provider is non-GitHub.
 
 ### rafter get SCAN_ID [OPTIONS]
 
@@ -153,6 +176,8 @@ Initialize local security system. Creates config and detects available developme
 - `--with-cursor` — install Cursor integration
 - `--with-windsurf` — install Windsurf integration
 - `--with-continue` — install Continue.dev integration
+- `--with-hermes` — install Hermes integration
+- `--with-opencode` — install OpenCode integration
 - `--with-betterleaks` — download and install Betterleaks binary (the gitleaks successor)
 - `--all` — install all detected integrations and download Betterleaks
 - `-i, --interactive` — guided setup — prompts for each detected integration (Node only)
@@ -809,7 +834,7 @@ Check agent security integration status. Reports whether config files, hooks, an
 - `--json` — emit results as a single JSON object (one entry per check + a summary). Stable schema; intended for CI consumption.
 - `--probe` — runtime probe: synthesize a known-dangerous tool-call payload, pipe it to `rafter hook pretool`, and assert the resulting `command_intercepted` entry landed in `~/.rafter/audit.jsonl`. Catches the failure mode where rafter wrote the right files but the hook command itself doesn't actually fire (rf-65zg). Currently covers Claude Code; Codex/Cursor/Gemini probes are planned follow-ups.
 
-**Checks (10 total, in order):**
+**Checks (12 total, in order):**
 
 | Name | Severity | Detection | Pass criterion |
 |---|---|---|---|
@@ -823,6 +848,8 @@ Check agent security integration status. Reports whether config files, hooks, an
 | `Windsurf` | optional | `~/.codeium/windsurf/` exists | `mcp_config.json` `mcpServers.rafter` set |
 | `Continue.dev` | optional | `~/.continue/` exists | `config.json` `mcpServers` contains rafter (array or object format) |
 | `Aider` | optional | `<cwd>/.aider.conf.yml` or `~/.aider.conf.yml` exists | `read:` list includes `RAFTER.md` AND `RAFTER.md` exists on disk |
+| `Hermes` | optional | `~/.hermes/` exists | `config.yaml` `mcp_servers.rafter` set |
+| `OpenCode` | optional | `~/.config/opencode/` exists | `opencode.json` `mcp.rafter` set |
 
 With `--probe`, an additional `Claude Code (probe)` check appears as the last entry.
 

@@ -267,6 +267,7 @@ def _print_dry_run_plan(
     want_continue: bool,
     want_aider: bool,
     want_hermes: bool,
+    want_opencode: bool,
     want_betterleaks: bool,
     want_skill_scanner: bool,
     risk_level: str,
@@ -384,6 +385,11 @@ def _print_dry_run_plan(
         print()
         print("Hermes (--with-hermes):")
         W(root / ".hermes" / "config.yaml", "mcp_servers.rafter entry merged into existing YAML")
+
+    if want_opencode:
+        print()
+        print("OpenCode (--with-opencode):")
+        W(root / ".config" / "opencode" / "opencode.json", "mcp.rafter local/stdio entry merged into existing JSON")
 
     if want_openclaw:
         print()
@@ -630,6 +636,15 @@ def _register_gemini_skills(skills_dir: Path) -> None:
 _RAFTER_MCP_ENTRY = {
     "command": "rafter",
     "args": ["mcp", "serve"],
+}
+
+# OpenCode's schema differs: the block is `mcp` (not `mcpServers`), each local
+# server carries type: "local", and command + args are a single `command`
+# array. Verified against https://opencode.ai/docs/mcp-servers/ (sable-l8e5).
+_RAFTER_OPENCODE_MCP_ENTRY = {
+    "type": "local",
+    "command": [_RAFTER_MCP_ENTRY["command"], *_RAFTER_MCP_ENTRY["args"]],
+    "enabled": True,
 }
 
 
@@ -1055,6 +1070,45 @@ def _install_hermes_mcp(root: Path) -> bool:
     return True
 
 
+def _install_opencode_mcp(root: Path) -> bool:
+    """Install MCP server config for OpenCode (<root>/.config/opencode/opencode.json).
+
+    OpenCode reads a global config at ~/.config/opencode/opencode.json and a
+    project-level opencode.json (project takes precedence). We register the
+    local stdio server ``rafter mcp serve`` under the ``mcp`` block. OpenCode's
+    schema differs from Cursor/Windsurf: the block is ``mcp`` (not
+    ``mcpServers``), each local server carries ``type: "local"``, and the
+    command + arguments are a single ``command`` array. A ``$schema`` pointer is
+    seeded on first write. Any existing keys / other MCP servers are preserved.
+    Verified against https://opencode.ai/docs/mcp-servers/ (sable-l8e5).
+    """
+    opencode_dir = root / ".config" / "opencode"
+    config_path = opencode_dir / "opencode.json"
+
+    opencode_dir.mkdir(parents=True, exist_ok=True)
+
+    config: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            loaded = json.loads(config_path.read_text())
+            if isinstance(loaded, dict):
+                config = loaded
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing OpenCode opencode.json was unreadable, creating new one"))
+
+    if "$schema" not in config:
+        config["$schema"] = "https://opencode.ai/config.json"
+    mcp = config.get("mcp")
+    if not isinstance(mcp, dict):
+        mcp = {}
+        config["mcp"] = mcp
+    mcp["rafter"] = {**_RAFTER_OPENCODE_MCP_ENTRY}
+
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    return True
+
+
 @agent_app.command()
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
@@ -1069,6 +1123,7 @@ def init(
     with_windsurf: bool = typer.Option(False, "--with-windsurf", help="Install Windsurf integration"),
     with_continue: bool = typer.Option(False, "--with-continue", help="Install Continue.dev integration"),
     with_hermes: bool = typer.Option(False, "--with-hermes", help="Install Hermes integration"),
+    with_opencode: bool = typer.Option(False, "--with-opencode", help="Install OpenCode integration"),
     all_integrations: bool = typer.Option(False, "--all", help="Install all detected integrations and download Betterleaks"),
     update: bool = typer.Option(False, "--update", help="Re-download betterleaks and reinstall integrations without resetting config"),
     local: bool = typer.Option(
@@ -1108,6 +1163,7 @@ def init(
     has_continue_dev = scope == "user" and (home / ".continue").exists()
     has_aider = scope == "user" and (home / ".aider.conf.yml").exists()
     has_hermes = scope == "user" and (home / ".hermes").exists()
+    has_opencode = scope == "user" and (home / ".config" / "opencode").exists()
 
     # Resolve opt-in flags. In --local scope, --all is restricted to platforms with
     # a project-local config story (claudeCode, codex, gemini, cursor).
@@ -1132,6 +1188,12 @@ def init(
     # reads ~/.hermes/config.yaml; project-local install story isn't
     # established. Excluded from --all in --local for the same reason (sable-gyw).
     want_hermes = with_hermes or (all_integrations and not local)
+    # OpenCode: MCP-based, user scope only. OpenCode reads a global config at
+    # ~/.config/opencode/opencode.json; a project-local install story via
+    # --local isn't wired here, so (like Hermes) it's excluded from --all in
+    # --local scope. It supports MCP local/stdio servers and AGENTS.md natively
+    # (https://opencode.ai/docs/mcp-servers/, sable-l8e5).
+    want_opencode = with_opencode or (all_integrations and not local)
     want_betterleaks = with_betterleaks or (all_integrations and not local)
     # skill-scanner is heavy and opt-in only — deliberately NOT folded into --all.
     want_skill_scanner = with_skill_scanner
@@ -1156,6 +1218,8 @@ def init(
         detected.append("Aider")
     if has_hermes:
         detected.append("Hermes")
+    if has_opencode:
+        detected.append("OpenCode")
 
     if detected:
         rprint(fmt.info(f"Detected environments: {', '.join(detected)}"))
@@ -1183,6 +1247,8 @@ def init(
             rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
         if want_hermes and not has_hermes:
             rprint(fmt.warning("Hermes requested but not detected (~/.hermes not found)"))
+        if want_opencode and not has_opencode:
+            rprint(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"))
 
     # --dry-run: print every file path the command would touch, then exit
     # before any filesystem write happens (rf-hrtd). Built from the same
@@ -1200,6 +1266,7 @@ def init(
             want_continue=want_continue and (has_continue_dev or local),
             want_aider=want_aider and (has_aider or local),
             want_hermes=want_hermes and has_hermes,
+            want_opencode=want_opencode and has_opencode,
             want_betterleaks=want_betterleaks,
             want_skill_scanner=want_skill_scanner,
             risk_level=risk_level,
@@ -1430,6 +1497,19 @@ def init(
         except Exception as e:
             rprint(fmt.error(f"Failed to install Hermes integration: {e}"))
 
+    # Install OpenCode integration if opted in (sable-l8e5).
+    # User scope only — OpenCode reads a global config at
+    # ~/.config/opencode/opencode.json. MCP-based: we register the local stdio
+    # server `rafter mcp serve` under the `mcp` block.
+    opencode_ok = False
+    if want_opencode and has_opencode:
+        try:
+            opencode_ok = _install_opencode_mcp(root)
+            if opencode_ok:
+                manager.set("agent.environments.opencode.enabled", True)
+        except Exception as e:
+            rprint(fmt.error(f"Failed to install OpenCode integration: {e}"))
+
     # Install global instruction files for platforms that support them
     _install_global_instructions(
         claude_code=claude_code_ok,
@@ -1445,7 +1525,7 @@ def init(
     rprint(fmt.success("Agent security initialized!"))
     rprint()
 
-    any_integration = openclaw_ok or claude_code_ok or codex_ok or gemini_ok or cursor_ok or windsurf_ok or continue_ok or aider_ok or hermes_ok
+    any_integration = openclaw_ok or claude_code_ok or codex_ok or gemini_ok or cursor_ok or windsurf_ok or continue_ok or aider_ok or hermes_ok or opencode_ok
 
     if any_integration:
         rprint("Next steps:")
@@ -1465,6 +1545,10 @@ def init(
             rprint("  - Restart Continue.dev to load MCP server")
         if aider_ok:
             rprint("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:")
+        if hermes_ok:
+            rprint("  - Restart Hermes to load MCP server")
+        if opencode_ok:
+            rprint("  - Restart OpenCode to load MCP server")
     elif scope == "project":
         rprint("No integrations were installed. In --local mode, pass one or more opt-in flags:")
         rprint("  rafter agent init --local --with-claude-code")
@@ -1492,6 +1576,8 @@ def init(
             rprint("  rafter agent init --with-aider           # Aider only")
         if has_hermes:
             rprint("  rafter agent init --with-hermes          # Hermes only")
+        if has_opencode:
+            rprint("  rafter agent init --with-opencode        # OpenCode only")
     else:
         rprint("No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
 
@@ -2819,6 +2905,34 @@ def _check_hermes() -> _CheckResult:
     return _CheckResult(name, True, "MCP server configured")
 
 
+def _check_opencode() -> _CheckResult:
+    """Check if OpenCode integration is healthy (sable-l8e5).
+
+    OpenCode uses ~/.config/opencode/opencode.json with an ``mcp`` block
+    (local/stdio servers carry type: "local").
+    """
+    name = "OpenCode"
+    home = Path.home()
+    opencode_dir = home / ".config" / "opencode"
+
+    if not opencode_dir.exists():
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-opencode' to enable", optional=True)
+
+    config_path = opencode_dir / "opencode.json"
+    if not config_path.exists():
+        return _CheckResult(name, False, f"Config not found: {config_path} — run 'rafter agent init --with-opencode'", optional=True)
+
+    try:
+        loaded = json.loads(config_path.read_text()) or {}
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        return _CheckResult(name, False, f"Cannot read config: {e}", optional=True)
+
+    servers = loaded.get("mcp") if isinstance(loaded, dict) else None
+    if not (isinstance(servers, dict) and servers.get("rafter")):
+        return _CheckResult(name, False, "Rafter MCP server not configured — run 'rafter agent init --with-opencode'", optional=True)
+    return _CheckResult(name, True, "MCP server configured")
+
+
 def _probe_claude_code() -> _CheckResult:
     """Runtime probe of the Claude Code hook integration (rf-65zg).
 
@@ -2920,6 +3034,7 @@ def verify(
         _check_continue_dev(),
         _check_aider(),
         _check_hermes(),
+        _check_opencode(),
     ]
 
     if probe:
@@ -3534,6 +3649,7 @@ def status(
         {"name": "Windsurf", "flag": "--with-windsurf", "config_dir": home / ".codeium" / "windsurf", "config_file": home / ".codeium" / "windsurf" / "mcp_config.json", "needle": "rafter"},
         {"name": "Continue.dev", "flag": "--with-continue", "config_dir": home / ".continue", "config_file": home / ".continue" / "config.json", "needle": "rafter"},
         {"name": "Hermes", "flag": "--with-hermes", "config_dir": home / ".hermes", "config_file": home / ".hermes" / "config.yaml", "needle": "rafter"},
+        {"name": "OpenCode", "flag": "--with-opencode", "config_dir": home / ".config" / "opencode", "config_file": home / ".config" / "opencode" / "opencode.json", "needle": "rafter"},
     ]
 
     for agent in mcp_agents:
@@ -3630,6 +3746,7 @@ def _detect_agent_platforms() -> list[str]:
         ("continue", home / ".continue"),
         ("aider", home / ".aider.conf.yml"),
         ("hermes", home / ".hermes"),
+        ("opencode", home / ".config" / "opencode"),
     ]
     return [name for name, path in candidates if path.exists()]
 

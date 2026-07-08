@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-08
+
+### Added
+
+- **Native OpenCode support** (sable-l8e5). `rafter agent init --with-opencode` registers the Rafter MCP server in OpenCode's config (`~/.config/opencode/opencode.json`, `mcp` block with `type: "local"`), and OpenCode is auto-detected on init. First-class platform support now spans 10 agents. Node + Python parity, with a `recipes/opencode.md` guide.
+- **Multi-provider remote scan** (sable-w79q). `rafter run` now infers the git remote's provider — GitLab, Gitea (`codeberg.org` / `*.gitea.io`), and Bitbucket, in addition to GitHub — and sends an additive `provider` + `repo_url` in the scan request. New optional `--provider` / `--repo-url` overrides. **Fully backward-compatible:** GitHub scans send a byte-identical request (no new fields). Non-GitHub scanning additionally depends on backend rollout.
+- **DigitalOcean Personal Access Token secret pattern** (#26, #189). New `dop_v1_[a-f0-9]{64}` detection pattern (severity `critical`) added to the built-in regex scanner in both Node and Python, with tests in each suite. Thanks to @Minh-Nguyen-2k7 for the contribution.
+
 ## [0.8.10] - 2026-06-28
 
 ### Changed

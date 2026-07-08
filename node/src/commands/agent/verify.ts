@@ -334,6 +334,37 @@ function checkHermes(): CheckResult {
   }
 }
 
+function checkOpenCode(): CheckResult {
+  // OpenCode uses ~/.config/opencode/opencode.json with an `mcp` block
+  // (local/stdio servers carry type: "local"; sable-l8e5).
+  const name = "OpenCode";
+  const homeDir = os.homedir();
+  const openCodeDir = path.join(homeDir, ".config", "opencode");
+
+  if (!fs.existsSync(openCodeDir)) {
+    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-opencode' to enable` };
+  }
+
+  const configPath = path.join(openCodeDir, "opencode.json");
+  if (!fs.existsSync(configPath)) {
+    return { name, passed: false, optional: true, detail: `Config not found: ${configPath} — run 'rafter agent init --with-opencode'` };
+  }
+
+  try {
+    const loaded = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const servers = (loaded && typeof loaded === "object" && !Array.isArray(loaded))
+      ? (loaded as Record<string, any>).mcp
+      : undefined;
+    const hasRafterMcp = servers && typeof servers === "object" && servers.rafter != null;
+    if (!hasRafterMcp) {
+      return { name, passed: false, optional: true, detail: "Rafter MCP server not configured — run 'rafter agent init --with-opencode'" };
+    }
+    return { name, passed: true, detail: "MCP server configured" };
+  } catch (e) {
+    return { name, passed: false, optional: true, detail: `Cannot read config: ${e}` };
+  }
+}
+
 /**
  * Probe the Claude Code hook integration end-to-end (rf-65zg).
  *
@@ -438,6 +469,7 @@ export function createVerifyCommand(): Command {
         checkContinueDev(),
         checkAider(),
         checkHermes(),
+        checkOpenCode(),
       ];
 
       if (opts.probe) {
