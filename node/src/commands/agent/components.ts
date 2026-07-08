@@ -939,6 +939,53 @@ function hermesMcp(): ComponentSpec {
 }
 
 /**
+ * OpenCode MCP server entry (~/.config/opencode/opencode.json).
+ *
+ * OpenCode's schema differs from Cursor/Windsurf: the block is `mcp` (not
+ * `mcpServers`), each local server carries `type: "local"`, and command + args
+ * are a single `command` array. Verified against
+ * https://opencode.ai/docs/mcp-servers/ (sable-l8e5).
+ */
+function openCodeMcp(): ComponentSpec {
+  const home = os.homedir();
+  const configPath = path.join(home, ".config", "opencode", "opencode.json");
+  const entry = {
+    type: "local" as const,
+    command: [RAFTER_MCP_ENTRY.command, ...RAFTER_MCP_ENTRY.args],
+    enabled: true,
+  };
+  return {
+    id: "opencode.mcp",
+    platform: "opencode",
+    kind: "mcp",
+    description: "OpenCode MCP server entry (~/.config/opencode/opencode.json)",
+    detectDir: path.join(home, ".config", "opencode"),
+    path: configPath,
+    isInstalled: () => {
+      if (!fs.existsSync(configPath)) return false;
+      const cfg = readJson(configPath);
+      return !!cfg.mcp?.rafter;
+    },
+    install: () => {
+      const dir = path.join(home, ".config", "opencode");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      let cfg: Record<string, any> = fs.existsSync(configPath) ? readJson(configPath) : {};
+      // Guard against valid-but-non-object top-level JSON (array/string/number).
+      if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) cfg = {};
+      if (!cfg.$schema) cfg.$schema = "https://opencode.ai/config.json";
+      if (!cfg.mcp || typeof cfg.mcp !== "object" || Array.isArray(cfg.mcp)) cfg.mcp = {};
+      cfg.mcp.rafter = { ...entry };
+      writeJson(configPath, cfg);
+    },
+    uninstall: () => {
+      if (!fs.existsSync(configPath)) return;
+      const cfg = readJson(configPath);
+      if (removeKey(cfg.mcp, "rafter")) writeJson(configPath, cfg);
+    },
+  };
+}
+
+/**
  * Aider read-only context: writes RAFTER.md and adds it to .aider.conf.yml `read:`.
  *
  * Replaces the prior `aider.mcp` component, pruned in rf-du2o because Aider
@@ -1079,6 +1126,7 @@ export function getComponentRegistry(): ComponentSpec[] {
       continueMcp(),
       aiderRead(),
       hermesMcp(),
+      openCodeMcp(),
       openclawSkill(),
     ];
   }
