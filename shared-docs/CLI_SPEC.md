@@ -70,9 +70,32 @@ Trigger a new security scan for a repository.
 - `-f, --format [json|md]` — output format (default: md)
 - `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds agentic deep-dive analysis that examines your codebase the way a professional cybersecurity auditor would — tracing data flows and reasoning about business logic on top of the full SAST/SCA toolchain.
 - `--github-token TEXT` — GitHub PAT for private repos (or `RAFTER_GITHUB_TOKEN` env var)
+- `--provider [gitlab|gitea|bitbucket]` — git provider for non-GitHub remotes. Default: auto-detected from the git remote host. GitHub requires nothing — leave unset. Overrides the inferred provider when set.
+- `--repo-url TEXT` — full HTTPS clone URL for non-GitHub remotes (e.g. `https://gitlab.com/owner/repo`). Default: auto-detected and normalized from the git remote. Overrides the inferred URL when set.
 - `--skip-interactive` — fire-and-forget mode (don't poll for completion)
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
+
+#### Scan request body (provider fields)
+
+The scan request `POST` body always contains `repository_name`, `branch_name`, and `scan_mode` (plus `github_token` when a PAT is supplied). Two **optional, additive** fields extend it for non-GitHub remotes:
+
+| Field | Type | When sent |
+|-------|------|-----------|
+| `provider` | string | Only for non-GitHub remotes. One of `"gitlab"`, `"gitea"`, `"bitbucket"`. |
+| `repo_url` | string | Only for non-GitHub remotes. Canonical `https://<host>/<owner>/<repo>` clone URL. |
+
+**Provider inference** maps the git remote host to a provider (both `git@host:owner/repo(.git)` and `https://host/owner/repo(.git)` forms are normalized):
+
+| Remote host | Provider |
+|-------------|----------|
+| `github.com` | `github` |
+| `gitlab.com`, `*.gitlab.com` | `gitlab` |
+| `bitbucket.org` | `bitbucket` |
+| `codeberg.org`, `*.gitea.io` | `gitea` |
+| anything else | `github` (backward-compatible default) |
+
+**Backward compatibility (hard rule):** when the resolved provider is `github` — including any unrecognized host that defaults to `github` — **neither `provider` nor `repo_url` is sent.** A GitHub user's request body is byte-identical to the legacy behavior. `--provider` / `--repo-url` override the inferred values; the two fields are sent together only when the resolved provider is non-GitHub.
 
 ### rafter get SCAN_ID [OPTIONS]
 
