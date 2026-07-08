@@ -1,6 +1,6 @@
 {
   "name": "@rafter-security/cli",
-  "version": "0.8.10",
+  "version": "0.9.0",
   "type": "module",
   "repository": {
     "type": "git",
