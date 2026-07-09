@@ -1,6 +1,6 @@
 ---
 name: rafter-secure-design
-description: "REQUIRED before writing code for any feature touching auth, payments, credentials, tokens, sessions, file upload, user data, or data deletion. Invoke it, record answers inline in the design doc or PR description, then write the code. Skipping this is how auth bypass, token leakage, and delete-the-wrong-record bugs ship. If the feature touches any of those surfaces and this hasn't run, the design is incomplete — do not proceed to implementation."
+description: "REQUIRED before writing code for any feature touching auth, payments, credentials, tokens, sessions, file upload, user data, untrusted input, deserialization, network endpoints, or data deletion. Scope by that surface, not the task label — a research/experimental/local-only feature with none of it doesn't need this. Invoke it, record answers inline in the design doc or PR description, then write the code. Skipping this is how auth bypass, token leakage, and delete-the-wrong-record bugs ship. If the feature touches any of those surfaces and this hasn't run, the design is incomplete — do not proceed to implementation."
 version: 0.1.0
 allowed-tools: [Read, Glob, Grep]
 ---
@@ -10,6 +10,12 @@ allowed-tools: [Read, Glob, Grep]
 A designer's skill, not a scanner. The goal is to catch the flaw in the whiteboard sketch, not three weeks later in a PR. Each sub-doc asks the questions a security engineer would ask at kickoff — "which primitive, which boundary, which default?"
 
 > Pair with `rafter-code-review` (structured review *during* PR) and the `rafter` skill (automated detection of what slipped through). This skill is the earliest stage — prevention before the code exists.
+
+## When this applies (and when it doesn't)
+
+Engage this design walk when the feature you're about to build touches a real security surface: auth or access control, credentials / secrets / tokens / sessions, user or untrusted input, SQL or query construction, shell / `exec`, file paths or uploads, (de)serialization, crypto, network-facing endpoints or outbound fetchers, data deletion, or new dependencies.
+
+If the thing you're designing has **none** of that — a research / experimental / local-only / throwaway piece such as a training script, analysis pipeline, plot, model-eval harness, notebook, or pure computation over trusted local data — a quick surface check is enough and you can proceed to implementation without the full walk. Judge by the surface, not by whether the work is called "research": a research feature that stores user data, handles a token, or opens a network endpoint is back on the engage list.
 
 ## How to use this skill
 
