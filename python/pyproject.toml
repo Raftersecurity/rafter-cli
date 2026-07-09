@@ -17,6 +17,9 @@ urllib3 = ">=2.6.0,<3"
 pyyaml = "^6.0.1"
 mcp = "^1.9.0"
 watchdog = "^4.0.0"
+# Security pin for a transitive dep: GHSA-537c-gmf6-5ccf (fixed in 46.0.7).
+# Held in the 46.x major line to avoid the unrelated 49.x jump.
+cryptography = ">=46.0.7,<47"
 
 [tool.poetry.scripts]
 rafter = "rafter_cli.__main__:app"

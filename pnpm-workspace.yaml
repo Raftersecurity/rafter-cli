@@ -7,6 +7,17 @@ onlyBuiltDependencies:
 
 overrides:
   express-rate-limit: '>=8.2.2'
-  hono: '>=4.12.7'
-  '@hono/node-server': '>=1.19.10'
+  hono: '>=4.12.25'
+  '@hono/node-server': '>=1.19.13 <2'
   ajv: '>=8.18.0'
+  # CVE-driven transitive pins (rafter self-scan 2026-07). Let `pnpm up` pull
+  # what it can first; these force the stragglers that stay pinned by parents.
+  # Upper bounds keep us in the current major (minimal blast radius).
+  fast-uri: '>=3.1.2 <4'
+  path-to-regexp: '>=8.4.0'
+  follow-redirects: '>=1.16.0'
+  form-data: '>=4.0.6'
+  ip-address: '>=10.1.1'
+  qs: '>=6.15.2'
+  # Scoped to the 5.x line only, so 1.x/2.x consumers elsewhere are untouched.
+  'brace-expansion@5': '>=5.0.6'

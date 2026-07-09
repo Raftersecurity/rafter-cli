@@ -25,7 +25,6 @@ import zlib from "zlib";
 import { spawnSync } from "child_process";
 // tar@7 is dual CJS/ESM. We use its sync API (`tar.x({ sync, file, cwd, strip })`)
 // so the rest of the reviewer stays synchronous.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 import * as tarModule from "tar";
 
 export type ShorthandKind = "github" | "gitlab" | "npm";
@@ -362,7 +361,6 @@ export function extractNpmTarball(tgzFile: string, destDir: string): void {
   fs.mkdirSync(destDir, { recursive: true });
   // npm tarballs have a leading "package/" directory; strip it.
   // tar@7 exposes a sync option that writes everything before returning.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (tarModule as any).x({ sync: true, file: tgzFile, cwd: destDir, strip: 1 });
 }
 

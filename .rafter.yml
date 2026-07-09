@@ -1,0 +1,34 @@
+version: "1"
+
+# Rafter self-scan tuning for rafter-cli. This repo IS a file-management
+# security CLI, so several SAST rules fire by design. Path exclusions cover
+# intentional demo/fixture files; rule suppressions cover by-design CLI
+# patterns and confirmed rule-quality bugs (each cross-referenced to a bead).
+scan:
+  exclude_paths:
+    - "demo/"        # intentional fake secrets — labeled "INTENTIONAL FAKE SECRETS for rafter demo"
+    - "fixtures/"    # vulnerable-repo fixture — "intentionally planted vulnerabilities for validating Rafter"
+    - "promo/"       # promo video sub-project (remotion/webpack/ws) — not shipped, outside pnpm workspace
+    - "drafts/"      # scratch/marketing drafts — not shipped
+
+ignore:
+  # By-design: a file-management CLI reads/writes/joins non-literal paths as its
+  # core function. fs.* non-literal (R-61603) + path.join (R-374DB) are not vulns here.
+  - paths: ["node/src/**", "vscode/src/**"]
+    rules: ["R-61603", "R-374DB"]
+    reason: "File-management CLI operates on user/computed paths by design; not path traversal."
+
+  # Rule bug: R-6675E ('XXE') fires on .read_text()/.read() calls. There is NO
+  # XML parsing anywhere in the Python tree (no lxml/etree/xml import). All FP.
+  - paths: ["python/rafter_cli/**"]
+    rules: ["R-6675E"]
+    reason: "No XML parsing in codebase; rule misfires on plain file/HTTP reads. See engine bug bead."
+
+  # Confirmed rule-quality bugs (also filed as engine beads to fix product-side):
+  #   R-51C60 fires on `status == \"completed\"` (status string, not a credential)
+  #   R-88B14 flags correct `.endswith(\".git\")` and suggests an inverting fix
+  #   R-5DF7B flags the correct O_WRONLY|O_EXCL lock idiom
+  #   R-C66D8 flags random used for a non-security audit session-correlation id
+  - paths: ["python/rafter_cli/**"]
+    rules: ["R-51C60", "R-88B14", "R-5DF7B", "R-C66D8"]
+    reason: "Confirmed false-positive heuristics; tracked for product-side fix."
