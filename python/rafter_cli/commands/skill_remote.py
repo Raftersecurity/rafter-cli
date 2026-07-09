@@ -25,6 +25,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -317,6 +318,10 @@ class DefaultRemoteOps:
         return json.loads(data)
 
     def npm_fetch_tarball(self, tarball_url: str, dest_file: Path) -> None:
+        # tarball_url comes from registry metadata; enforce https so a malicious
+        # response can't redirect the fetch to file:// (local read) or an internal host.
+        if urllib.parse.urlparse(tarball_url).scheme != "https":
+            raise ValueError(f"Refusing non-https tarball URL: {tarball_url!r}")
         dest_file.parent.mkdir(parents=True, exist_ok=True)
         with urllib.request.urlopen(tarball_url, timeout=120) as resp:
             data = resp.read()
