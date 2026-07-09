@@ -141,6 +141,30 @@ describe("AuditLogger", () => {
       expect(onDisk).not.toContain(token);
     });
 
+    // ob-y5ep: a RAFTER_API_KEY env-assignment prefix leaked verbatim because
+    // the key's value matches no built-in secret pattern. Redaction must key
+    // off the secret-named env var, not just the value's shape.
+    it("logCommandIntercepted redacts a RAFTER_API_KEY env-assignment prefix", () => {
+      const logger = new AuditLogger(logPath);
+      const key = "sk-deadbeefdeadbeef";
+      logger.logCommandIntercepted(`RAFTER_API_KEY=${key} rafter scan .`, true, "allowed");
+      const entries = logger.read();
+      const logged = entries[0].action?.command as string;
+      expect(logged).not.toContain(key);
+      expect(logged).toContain("RAFTER_API_KEY=");
+      expect(logged).toMatch(/\*/);
+      // and never on disk
+      expect(fs.readFileSync(logPath, "utf-8")).not.toContain(key);
+    });
+
+    it("logCommandIntercepted preserves benign env assignments", () => {
+      const logger = new AuditLogger(logPath);
+      logger.logCommandIntercepted("FOO=bar NODE_ENV=production rafter scan .", true, "allowed");
+      const logged = logger.read()[0].action?.command as string;
+      expect(logged).toContain("FOO=bar");
+      expect(logged).toContain("NODE_ENV=production");
+    });
+
     it("auto-populates cwd and gitRepo on every entry", () => {
       const logger = new AuditLogger(logPath);
       logger.logCommandIntercepted("ls", true, "allowed");
