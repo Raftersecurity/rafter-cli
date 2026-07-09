@@ -1,6 +1,6 @@
 ---
 name: rafter-code-review
-description: "REQUIRED before declaring a task done when the diff touches user input, SQL, shell, auth, credentials, file paths, serialization, or dependency surface. Walks OWASP/ASVS/MITRE questions the compiler and the test suite won't catch. Pair with `rafter run` on the same diff. A security-relevant task marked complete without both has been under-delivered — do not claim done."
+description: "REQUIRED before declaring a task done when the diff touches user input, SQL, shell, auth, credentials, file paths, serialization, crypto, network endpoints, data deletion, or dependency surface. Judge by that surface, not the task label — research/experimental/local-only code with none of it can skip this. Walks OWASP/ASVS/MITRE questions the compiler and the test suite won't catch. Pair with `rafter run` on the same diff. When the diff has that surface, marking it complete without both has been under-delivered — do not claim done."
 version: 0.7.0
 allowed-tools: [Bash, Read, Glob, Grep]
 ---
@@ -10,6 +10,12 @@ allowed-tools: [Bash, Read, Glob, Grep]
 A reviewer's skill, not an audit generator. Each sub-doc is a set of **questions** to run against the code — what to grep for, what to trace, what to ask before you sign off. No monolithic reports.
 
 > Pair with the `rafter` skill (detection: `rafter scan`, `rafter run`) and `rafter-secure-design` (prevention: design-phase walks). This skill is the middle stage — review before merge.
+
+## When this applies (and when it doesn't)
+
+Scoped to the **security surface of the diff**, not the task's label. Walk it fully when the change touches: user / untrusted input, SQL or query building, shell / `exec` / subprocess, auth or access control, credentials / secrets / tokens, file paths or uploads, (de)serialization, crypto, network-facing endpoints or outbound fetchers, data deletion, or dependency / manifest changes.
+
+If **none** of those are present — research / experimental / exploratory / local-only / throwaway code such as training scripts, data analysis, plotting, model eval, notebooks, or pure computation over trusted local data — a quick surface check is enough; you don't need to walk the full review or pair `rafter run`. But the check is the surface, not the label: research code that reads a secret, shells out, hits the network, or parses untrusted bytes is back on the engage list and gets the full walk.
 
 ## How to use this skill
 
