@@ -33,6 +33,23 @@ _VARIABLE_NAME_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 _LOWERCASE_IDENT_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
 _QUOTED_VALUE_RE = re.compile(r"""['\"]([^'\"]+)['\"]""")
 
+# Matches an environment-assignment prefix in a command line: an identifier
+# followed immediately by ``=`` and a run of non-whitespace (the value). Used
+# to find ``NAME=VALUE`` tokens like ``RAFTER_API_KEY=<secret> rafter ...`` so
+# their value can be redacted before the command is written to the audit log.
+_ENV_ASSIGN_RE = re.compile(r"(^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\S+)")
+
+# A ``NAME`` in a ``NAME=VALUE`` assignment is treated as secret-bearing when
+# it ends in a credential-suggesting word (RAFTER_API_KEY, GITHUB_TOKEN,
+# DB_PASSWORD, AUTH, ...). Values behind such names are redacted even when they
+# don't match any known secret pattern -- the value of a bespoke API key won't
+# match a built-in pattern, but it's still a secret. Plain names like FOO or
+# NODE_ENV do not match, so ``FOO=bar`` is left intact.
+_SECRET_ENV_NAME_RE = re.compile(
+    r"(?:^|_)(KEY|TOKEN|SECRET|SECRETS|PASSWORD|PASSWD|PWD|API[_-]?KEY|ACCESS[_-]?KEY|CREDENTIALS?|AUTH)$",
+    re.IGNORECASE,
+)
+
 
 class PatternEngine:
     def __init__(self, patterns: Sequence[Pattern]):
@@ -76,8 +93,18 @@ class PatternEngine:
         return matches
 
     def redact_text(self, text: str) -> str:
-        """Replace all pattern matches in *text* with redacted versions."""
-        result = text
+        """Replace all pattern matches in *text* with redacted versions.
+
+        Two layers, both additive:
+          1. Env-assignment redaction: any ``NAME=VALUE`` whose NAME looks
+             secret-bearing has its VALUE masked, even if the VALUE matches no
+             known pattern. This catches leaks like
+             ``RAFTER_API_KEY=<key> rafter ...`` in a logged command line,
+             where the key's shape is unknown.
+          2. Pattern-based redaction: values matching a built-in secret
+             pattern are masked wherever they appear.
+        """
+        result = self._redact_env_assignments(text)
         for pattern in self._patterns:
             compiled = self._compile(pattern.regex)
             if compiled is None:
@@ -87,6 +114,18 @@ class PatternEngine:
                 result,
             )
         return result
+
+    @staticmethod
+    def _redact_env_assignments(text: str) -> str:
+        """Mask the VALUE of every ``NAME=VALUE`` token whose NAME looks
+        secret-bearing. Non-secret names (FOO, NODE_ENV, ...) are untouched."""
+        def _sub(m: re.Match) -> str:
+            prefix, name, value = m.group(1), m.group(2), m.group(3)
+            if _SECRET_ENV_NAME_RE.search(name):
+                return f"{prefix}{name}={PatternEngine._redact(value)}"
+            return m.group(0)
+
+        return _ENV_ASSIGN_RE.sub(_sub, text)
 
     def has_matches(self, text: str) -> bool:
         return len(self.scan(text)) > 0

@@ -240,4 +240,36 @@ line 3`;
     expect(critical.length).toBe(2);
     expect(critical.every(p => p.severity === "critical")).toBe(true);
   });
+
+  // ob-y5ep: env-assignment redaction. A value whose NAME looks secret-bearing
+  // must be masked even when the value matches no known secret pattern.
+  describe("env-assignment redaction (ob-y5ep)", () => {
+    const engine = new PatternEngine(testPatterns);
+
+    it("redacts a RAFTER_API_KEY value that matches no pattern", () => {
+      const out = engine.redactText("RAFTER_API_KEY=sk-deadbeefdeadbeef rafter scan .");
+      expect(out).not.toContain("sk-deadbeefdeadbeef");
+      expect(out).toContain("RAFTER_API_KEY=");
+      expect(out).toContain("rafter scan .");
+    });
+
+    it("redacts values behind common secret-named env vars", () => {
+      for (const name of ["API_KEY", "GITHUB_TOKEN", "DB_PASSWORD", "AWS_SECRET", "AUTH", "PASSWD"]) {
+        const out = engine.redactText(`${name}=supersecretvalue123 next`);
+        expect(out, name).not.toContain("supersecretvalue123");
+      }
+    });
+
+    it("leaves benign assignments untouched", () => {
+      expect(engine.redactText("FOO=bar")).toBe("FOO=bar");
+      expect(engine.redactText("NODE_ENV=production")).toBe("NODE_ENV=production");
+      expect(engine.redactText("PATH=/usr/bin rafter scan .")).toBe("PATH=/usr/bin rafter scan .");
+    });
+
+    it("redacts only the secret assignment in a mixed command", () => {
+      const out = engine.redactText("FOO=bar SECRET_TOKEN=abcdef1234567890 rafter");
+      expect(out).toContain("FOO=bar");
+      expect(out).not.toContain("abcdef1234567890");
+    });
+  });
 });

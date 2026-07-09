@@ -299,3 +299,33 @@ def test_all_patterns_present():
     assert len(DEFAULT_SECRET_PATTERNS) >= 22
     names = [p.name for p in DEFAULT_SECRET_PATTERNS]
     assert len(names) == len(set(names)), "pattern names must be unique"
+
+
+# -- Env-assignment redaction (ob-y5ep) --------------------------------------
+# A value whose NAME looks secret-bearing must be masked even when the value
+# matches no known secret pattern (e.g. a bespoke RAFTER_API_KEY).
+
+def test_env_redaction_masks_rafter_api_key_value():
+    out = _engine().redact_text("RAFTER_API_KEY=sk-deadbeefdeadbeef rafter scan .")
+    assert "sk-deadbeefdeadbeef" not in out
+    assert "RAFTER_API_KEY=" in out
+    assert "rafter scan ." in out
+
+
+def test_env_redaction_masks_common_secret_named_vars():
+    for name in ("API_KEY", "GITHUB_TOKEN", "DB_PASSWORD", "AWS_SECRET", "AUTH", "PASSWD"):
+        out = _engine().redact_text(f"{name}=supersecretvalue123 next")
+        assert "supersecretvalue123" not in out, name
+
+
+def test_env_redaction_preserves_benign_assignments():
+    engine = _engine()
+    assert engine.redact_text("FOO=bar") == "FOO=bar"
+    assert engine.redact_text("NODE_ENV=production") == "NODE_ENV=production"
+    assert engine.redact_text("PATH=/usr/bin rafter scan .") == "PATH=/usr/bin rafter scan ."
+
+
+def test_env_redaction_only_touches_secret_assignment_in_mixed_command():
+    out = _engine().redact_text("FOO=bar SECRET_TOKEN=abcdef1234567890 rafter")
+    assert "FOO=bar" in out
+    assert "abcdef1234567890" not in out

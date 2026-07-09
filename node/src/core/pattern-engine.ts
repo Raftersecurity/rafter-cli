@@ -24,6 +24,24 @@ const VARIABLE_NAME_RE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
 const LOWERCASE_IDENT_RE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
 const QUOTED_VALUE_RE = /['"]([^'"]+)['"]/;
 
+/**
+ * Matches an environment-assignment prefix in a command line: an identifier
+ * followed immediately by `=` and a run of non-whitespace (the value). Used to
+ * find `NAME=VALUE` tokens like `RAFTER_API_KEY=<secret> rafter ...` so their
+ * value can be redacted before the command is written to the audit log.
+ */
+const ENV_ASSIGN_RE = /(^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\S+)/g;
+
+/**
+ * A `NAME` in a `NAME=VALUE` assignment is treated as secret-bearing when it
+ * ends in a credential-suggesting word (e.g. RAFTER_API_KEY, GITHUB_TOKEN,
+ * DB_PASSWORD, AUTH). Values behind such names are redacted even when they
+ * don't match any known secret pattern (that's the whole point — the value of
+ * a bespoke API key won't match a built-in pattern, but it's still a secret).
+ * Plain names like FOO or NODE_ENV do not match, so `FOO=bar` is left intact.
+ */
+const SECRET_ENV_NAME_RE = /(?:^|_)(KEY|TOKEN|SECRET|SECRETS|PASSWORD|PASSWD|PWD|API[_-]?KEY|ACCESS[_-]?KEY|CREDENTIALS?|AUTH)$/i;
+
 export class PatternEngine {
   private patterns: Pattern[];
 
@@ -85,10 +103,18 @@ export class PatternEngine {
   }
 
   /**
-   * Redact text by replacing sensitive patterns
+   * Redact text by replacing sensitive patterns.
+   *
+   * Two layers, both additive:
+   *  1. Env-assignment redaction: any `NAME=VALUE` whose NAME looks
+   *     secret-bearing has its VALUE masked, even if the VALUE matches no
+   *     known pattern. This catches leaks like `RAFTER_API_KEY=<key> rafter …`
+   *     in a logged command line, where the key's shape is unknown.
+   *  2. Pattern-based redaction: values that match a built-in secret pattern
+   *     are masked wherever they appear.
    */
   redactText(text: string): string {
-    let redacted = text;
+    let redacted = this.redactEnvAssignments(text);
 
     for (const pattern of this.patterns) {
       const regex = this.createRegex(pattern.regex);
@@ -98,6 +124,16 @@ export class PatternEngine {
     }
 
     return redacted;
+  }
+
+  /**
+   * Mask the VALUE of every `NAME=VALUE` token whose NAME looks
+   * secret-bearing. Non-secret names (FOO, NODE_ENV, …) are left untouched.
+   */
+  private redactEnvAssignments(text: string): string {
+    return text.replace(ENV_ASSIGN_RE, (full, prefix: string, name: string, value: string) =>
+      SECRET_ENV_NAME_RE.test(name) ? `${prefix}${name}=${this.redact(value)}` : full
+    );
   }
 
   /**
