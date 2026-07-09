@@ -332,7 +332,7 @@ def _print_dry_run_plan(
     if want_codex:
         print()
         print("Codex CLI (--with-codex):")
-        W(root / ".codex" / "hooks.json", "PreToolUse: Bash|apply_patch, PostToolUse: .*")
+        W(root / ".codex" / "hooks.json", "PreToolUse: Bash|apply_patch, PostToolUse: Bash|apply_patch")
         for s in _AGENT_SKILLS:
             W(root / ".agents" / "skills" / s["name"] / "SKILL.md")
         agents_md = root / ".codex" / "AGENTS.md" if scope == "user" else root / "AGENTS.md"
