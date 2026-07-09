@@ -108,7 +108,7 @@ function printDryRunPlan(plan: {
   if (plan.wantCodex) {
     console.log();
     console.log("Codex CLI (--with-codex):");
-    W(path.join(plan.root, ".codex", "hooks.json"), "PreToolUse: Bash|apply_patch, PostToolUse: .*");
+    W(path.join(plan.root, ".codex", "hooks.json"), "PreToolUse: Bash|apply_patch, PostToolUse: Bash|apply_patch");
     for (const s of AGENT_SKILLS) {
       W(path.join(plan.root, ".agents", "skills", s.name, "SKILL.md"));
     }
@@ -383,10 +383,11 @@ function installCodexHooks(root: string): void {
   config.hooks.PreToolUse.push(
     { matcher: "Bash|apply_patch", hooks: [preHook] },
   );
-  // PostToolUse fires for the same tool surface; .* keeps all events in the
-  // audit log without filtering.
+  // PostToolUse mirrors the same write/exec surface (Bash + apply_patch);
+  // narrowed from `.*` so posttool doesn't fire on every Read/MCP call
+  // (log noise + latency), matching the claude-code posttool scoping (sable-h0ah).
   config.hooks.PostToolUse.push(
-    { matcher: ".*", hooks: [postHook] },
+    { matcher: "Bash|apply_patch", hooks: [postHook] },
   );
 
   fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");

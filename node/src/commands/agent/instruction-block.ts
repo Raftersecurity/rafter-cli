@@ -6,18 +6,28 @@ export const RAFTER_MARKER_END = "<!-- rafter:end -->";
 
 /** Rafter security context block for agent instruction files (CLAUDE.md, AGENTS.md, etc.) */
 export const RAFTER_INSTRUCTION_BLOCK = `${RAFTER_MARKER_START}
-## Security: Rafter (required review gate)
+## Security: Rafter (surface-driven review gate)
 
-Rafter is this project's security review gate. A security-relevant task is
-**not complete** until a rafter skill (or \`rafter run\`) has reviewed it.
-Don't mark done, don't hand off, don't open a PR without that pass.
+Rafter is this project's security review gate — driven by the change's **security
+surface**, not by the task label. When a diff touches a real surface (below), it is
+**not complete** until a rafter skill (or \`rafter run\`) has reviewed it: don't mark
+done, don't hand off, don't open a PR without that pass. When it touches **none** of
+that surface — research / experimental / local-only / throwaway code (training
+scripts, data analysis, plotting, model eval, notebooks, pure computation over
+trusted local data) — a quick surface check is enough; proceed without the full
+gate. Judge by the diff's actual surface, not the "research" label: research code
+that reads a secret, shells out, hits the network, parses untrusted input, or bumps
+a dependency still gets the full gate.
 
-**Stop and invoke before continuing:**
+**Stop and invoke when the change touches that surface:**
 
 - Designing auth, payments, credentials, tokens, sessions, file upload,
-  user data, or data deletion → **\`rafter-secure-design\`** (before writing code).
-- Diff touches user input, SQL, shell, auth, credentials, file paths, or
-  serialization → **\`rafter-code-review\`** + \`rafter run\` (before declaring done).
+  user/untrusted data, deserialization, network endpoints, or data deletion
+  → **\`rafter-secure-design\`** (before writing code).
+- Diff touches user/untrusted input, SQL/query building, shell/exec, auth,
+  credentials, file paths, (de)serialization, crypto, network endpoints/outbound
+  fetchers (SSRF), data deletion, or dependencies → **\`rafter-code-review\`** +
+  \`rafter run\` (before declaring done).
 - About to install or forward a third-party SKILL.md, MCP manifest, Cursor
   rule, or agent config → **\`rafter-skill-review\`** (before copying anywhere).
 - Security-adjacent but the angle isn't clear → **\`rafter\`** (the router skill,

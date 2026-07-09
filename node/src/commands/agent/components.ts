@@ -346,9 +346,11 @@ function codexHooks(): ComponentSpec {
         cfg.hooks.PostToolUse,
         (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
       );
-      // Bash + apply_patch per Codex hook docs (rf-ovql verification).
+      // Bash + apply_patch per Codex hook docs (rf-ovql verification). PostToolUse
+      // mirrors that write/exec surface (narrowed from `.*` to skip Read/MCP log
+      // noise), matching claude-code posttool scoping (sable-h0ah).
       cfg.hooks.PreToolUse.push({ matcher: "Bash|apply_patch", hooks: [pre] });
-      cfg.hooks.PostToolUse.push({ matcher: ".*", hooks: [post] });
+      cfg.hooks.PostToolUse.push({ matcher: "Bash|apply_patch", hooks: [post] });
       writeJson(hooksPath, cfg);
     },
     uninstall: () => {
