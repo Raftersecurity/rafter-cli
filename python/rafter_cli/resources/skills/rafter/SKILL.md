@@ -1,11 +1,35 @@
 ---
 name: rafter
-description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter audit`, policy checks, or command-risk evaluation. If a task is security-relevant and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on security-relevant work is not done."
+description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter audit`, policy checks, or command-risk evaluation. Scope by security surface, not task label: engage when the diff touches auth, credentials/secrets/tokens, untrusted input, SQL, shell/exec, file paths, deserialization, crypto, network endpoints, data deletion, or dependencies; for research/experimental/local-only code with none of that, a quick surface check is enough. When such surface IS present and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on genuine security surface is not done."
 version: 0.7.0
 allowed-tools: [Bash, Read]
 ---
 
 # Rafter — Security Toolkit for AI Workflows
+
+## When Rafter applies (and when it doesn't)
+
+Rafter is a **surface-driven** gate, not a task-label gate. Before you engage — or decide not to — do a 10-second read of the diff's actual security surface. Let that answer, not whether the work is called "research", pick the branch.
+
+**Engage fully** (walk the review + run `rafter run`) when the change touches any of:
+
+- auth, sessions, or access control
+- credentials, secrets, tokens, or keys
+- user-supplied or otherwise untrusted input
+- SQL or any other query / command construction
+- shell, `exec`, or subprocess invocation
+- file paths — reads, writes, uploads, traversal
+- deserialization or parsing of untrusted data
+- crypto (choosing or using primitives)
+- network-facing endpoints or outbound fetchers (SSRF surface)
+- data deletion or other destructive mutations
+- dependency, lockfile, or manifest changes
+
+**Back off** when the change has **none** of the above — research / experimental / exploratory / local-only / throwaway code: training scripts, data analysis, plotting, model eval, notebooks, pure computation over trusted local data. A quick surface check is enough, and if there is genuinely no security surface it is fine to proceed **without** the full `rafter-code-review` + `rafter run`.
+
+**The rule that decides it:** the "research" label buys nothing. Research code that reads a secret, shells out, hits the network, parses untrusted input, or bumps a dependency is on the engage list and gets the full gate. Judge by the surface of the diff, not by what the task is called.
+
+---
 
 ## Picking the right tier — DO NOT stop at "local"
 
