@@ -1,6 +1,11 @@
 import { ConfigManager } from "./config-manager.js";
 import { AuditLogger } from "./audit-logger.js";
-import { assessCommandRisk, matchedCriticalPattern, CommandRiskLevel } from "./risk-rules.js";
+import {
+  assessCommandRisk,
+  matchedCriticalPattern,
+  sanitizeCommandForMatching,
+  CommandRiskLevel,
+} from "./risk-rules.js";
 
 export type { CommandRiskLevel } from "./risk-rules.js";
 
@@ -67,12 +72,19 @@ export class CommandInterceptor {
       };
     }
 
-    // Check blocked patterns (always block)
+    // Check blocked patterns (always block).
+    //
+    // A deny-list match denies — that is what a deny-list is for — but it must
+    // NOT rewrite the command's risk. Reporting every deny-list hit as
+    // "critical" made the hook tell users a `gh pr create` was an irreversible
+    // system-damage command. The assessed risk is reported as assessed; the
+    // genuinely unconditional hard-blocks are the CRITICAL_PATTERNS handled
+    // above, and the default deny-list is exactly that set.
     for (const pattern of policy.blockedPatterns) {
       if (this.matchesPattern(command, pattern)) {
         return {
           command,
-          riskLevel: "critical",
+          riskLevel,
           allowed: false,
           requiresApproval: false,
           reason: `Matches blocked pattern: ${pattern}`,
@@ -84,7 +96,6 @@ export class CommandInterceptor {
     // Check approval patterns
     for (const pattern of policy.requireApproval) {
       if (this.matchesPattern(command, pattern)) {
-        const riskLevel = this.assessRisk(command);
         return {
           command,
           riskLevel,
@@ -96,46 +107,22 @@ export class CommandInterceptor {
       }
     }
 
-    // Check policy mode
-    if (policy.mode === "deny-list") {
-      // If not in blocked or approval lists, allow
-      return {
-        command,
-        riskLevel: this.assessRisk(command),
-        allowed: true,
-        requiresApproval: false
-      };
-    } else if (policy.mode === "approve-dangerous") {
-      // Assess risk and require approval for high/critical
-      const riskLevel = this.assessRisk(command);
-      if (riskLevel === "high" || riskLevel === "critical") {
-        return {
-          command,
-          riskLevel,
-          allowed: false,
-          requiresApproval: true,
-          reason: `High risk command requires approval`
-        };
-      }
+    // Check policy mode. `riskLevel` is the assessment made at the top of
+    // evaluate() — critical already returned, so it is high/medium/low here.
+    if (policy.mode === "approve-dangerous" && riskLevel === "high") {
       return {
         command,
         riskLevel,
-        allowed: true,
-        requiresApproval: false
-      };
-    } else if (policy.mode === "allow-all") {
-      return {
-        command,
-        riskLevel: this.assessRisk(command),
-        allowed: true,
-        requiresApproval: false
+        allowed: false,
+        requiresApproval: true,
+        reason: `High risk command requires approval`
       };
     }
 
-    // Default: allow
+    // deny-list / allow-all / unknown mode: not blocked, not approval-gated.
     return {
       command,
-      riskLevel: this.assessRisk(command),
+      riskLevel,
       allowed: true,
       requiresApproval: false
     };
@@ -154,15 +141,22 @@ export class CommandInterceptor {
   }
 
   /**
-   * Match command against pattern
+   * Match a command against a policy pattern.
+   *
+   * Matching runs against the SANITIZED command line, not the raw string: the
+   * policy patterns describe commands, so quoted text a command merely consumes
+   * as data (a commit message, a PR body) must not match them, while text a
+   * shell or eval wrapper executes (`bash -c "…"`) must. See
+   * `sanitizeCommandForMatching`.
    */
   private matchesPattern(command: string, pattern: string): boolean {
+    const target = sanitizeCommandForMatching(command);
     try {
       const regex = new RegExp(pattern, "i");
-      return regex.test(command);
+      return regex.test(target);
     } catch {
       // If pattern is not valid regex, try case-insensitive substring match
-      return command.toLowerCase().includes(pattern.toLowerCase());
+      return target.toLowerCase().includes(pattern.toLowerCase());
     }
   }
 

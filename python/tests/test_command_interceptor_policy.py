@@ -108,7 +108,9 @@ class TestDenyListMode:
         )
         assert not result.allowed
         assert not result.requires_approval
-        assert result.risk_level == "critical"
+        # A deny-list hit denies, but it does not *rewrite* the risk: this command
+        # is assessed low, and saying "critical" would misreport it to the user.
+        assert result.risk_level == "low"
         assert result.matched_pattern == "dangerous-cmd"
 
     def test_approval_command_requires_approval(self):
@@ -190,7 +192,7 @@ class TestApproveDangerousMode:
         )
         assert not result.allowed
         assert not result.requires_approval  # blocked, not just approval
-        assert result.risk_level == "critical"
+        assert result.risk_level == "high"   # assessed risk, not coerced to critical
 
     def test_approval_pattern_checked_before_risk(self):
         result = _eval_with_policy(
@@ -230,7 +232,7 @@ class TestAllowAllMode:
         )
         assert not result.allowed
         assert not result.requires_approval
-        assert result.risk_level == "critical"
+        assert result.risk_level == "low"  # denied by policy, but not a critical command
 
     def test_approval_still_flags_in_allow_all(self):
         result = _eval_with_policy(
