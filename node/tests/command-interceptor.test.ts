@@ -157,4 +157,94 @@ describe("CommandInterceptor", () => {
       }
     });
   });
+
+  // ── sable-4v6e: quoted DATA must not be read as a COMMAND ──────────────
+  //
+  // The pretool hook denied `gh pr create` because the PR *body* said
+  // "git push --force". Quoted text a command consumes as data is not a
+  // command — but a shell/eval wrapper's quoted argument IS one, and must
+  // still hard-block.
+
+  describe("Argument-aware matching — quoted data is not a command", () => {
+    it("allows a PR body that merely mentions a force push", () => {
+      const result = interceptor.evaluate(
+        'gh pr create --title "Fix hook" --body "Do not git push --force to main; use --force-with-lease."',
+      );
+      expect(result.allowed).toBe(true);
+      expect(result.requiresApproval).toBe(false);
+      expect(result.riskLevel).toBe("low");
+    });
+
+    it("allows a commit message that mentions a force push", () => {
+      const result = interceptor.evaluate('git commit -m "don\'t git push --force"');
+      expect(result.allowed).toBe(true);
+      expect(result.riskLevel).toBe("low");
+    });
+
+    it("allows echoing a destructive command as text", () => {
+      const result = interceptor.evaluate('echo "rm -rf /"');
+      expect(result.allowed).toBe(true);
+      expect(result.riskLevel).toBe("low");
+    });
+
+    it("allows grepping the audit log for a destructive command", () => {
+      const result = interceptor.evaluate("grep 'rm -rf /' ~/.rafter/audit.jsonl");
+      expect(result.allowed).toBe(true);
+      expect(result.riskLevel).toBe("low");
+    });
+
+    it("allows an issue body that mentions rm -rf /", () => {
+      const result = interceptor.evaluate(
+        'gh issue create --title "bug" --body "hook blocks rm -rf / even in prose"',
+      );
+      expect(result.allowed).toBe(true);
+      expect(result.riskLevel).toBe("low");
+    });
+  });
+
+  describe("Argument-aware matching — executed text is still a command", () => {
+    it("still approval-gates a real force push (not silently allowed)", () => {
+      const result = interceptor.evaluate("git push --force origin main");
+      expect(result.riskLevel).toBe("high");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
+    });
+
+    it("still hard-blocks rm -rf /", () => {
+      const result = interceptor.evaluate("rm -rf /");
+      expect(result.riskLevel).toBe("critical");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(false);
+    });
+
+    it("still hard-blocks a shell-wrapped rm -rf / (the trap)", () => {
+      // bash -c EXECUTES its quoted argument — it is a command, not data.
+      for (const cmd of [
+        'bash -c "rm -rf /"',
+        "sh -c 'rm -rf /'",
+        'zsh -c "rm -rf /etc"',
+        'sudo bash -c "rm -rf /"',
+        'bash -lc "rm -rf /usr"',
+      ]) {
+        const result = interceptor.evaluate(cmd);
+        expect(result.riskLevel, cmd).toBe("critical");
+        expect(result.allowed, cmd).toBe(false);
+        expect(result.requiresApproval, cmd).toBe(false);
+      }
+    });
+
+    it("still risk-assesses a shell-wrapped force push", () => {
+      const result = interceptor.evaluate('sh -c "git push --force"');
+      expect(result.riskLevel).toBe("high");
+      expect(result.allowed).toBe(false);
+      expect(result.requiresApproval).toBe(true);
+    });
+
+    it("still hard-blocks a command hidden in a substitution", () => {
+      // Double quotes do not stop $( ) from executing.
+      const result = interceptor.evaluate('git commit -m "oops $(rm -rf /)"');
+      expect(result.riskLevel).toBe("critical");
+      expect(result.allowed).toBe(false);
+    });
+  });
 });
