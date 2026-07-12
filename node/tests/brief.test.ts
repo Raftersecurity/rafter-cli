@@ -145,15 +145,21 @@ describe("brief command — setup guides", () => {
 });
 
 describe("rafter skill — CYOA hierarchy", () => {
-  it("top-level SKILL.md parses and stays under 120 lines", () => {
+  it("top-level SKILL.md parses and stays under 130 lines", () => {
     const skillPath = path.join(RAFTER_SKILL_DIR, "SKILL.md");
     const raw = readFileSync(skillPath, "utf-8");
     expect(raw.startsWith("---")).toBe(true);
     // frontmatter closes (two `---` markers)
     expect(raw.match(/^---$/gm)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    // 130-line budget, matching the Python suite. The limits had drifted apart:
+    // Python was bumped 120 -> 130 for the scanner-scope section, Node never was.
+    // The surface-scoping section ("when Rafter applies") has to live in the
+    // router itself — it decides whether the skill is entered at all — so it
+    // can't be pushed into a sub-doc. Budget is tight on purpose: trim before
+    // you add.
     const lines = raw.split("\n").length;
-    expect(lines, `SKILL.md is ${lines} lines; keep under 120`).toBeLessThan(
-      120,
+    expect(lines, `SKILL.md is ${lines} lines; keep under 130`).toBeLessThan(
+      130,
     );
   });
 
