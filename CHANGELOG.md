@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **SendGrid API Key secret pattern** (#24). New `SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}` detection pattern (severity `critical`) added to the built-in regex scanner in both Node and Python, with tests in each suite. Thanks to @perez-eduardo for the contribution.
 ## [0.9.0] - 2026-07-08
 
 ### Added
