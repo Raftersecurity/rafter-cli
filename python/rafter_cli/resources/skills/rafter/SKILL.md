@@ -1,23 +1,33 @@
 ---
 name: rafter
-description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter audit`, policy checks, or command-risk evaluation. If a task is security-relevant and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on security-relevant work is not done."
+description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter audit`, policy checks, or command-risk evaluation. Scope by security surface, not task label: engage when the diff touches auth, credentials/secrets/tokens, untrusted input, SQL, shell/exec, file paths, deserialization, crypto, network endpoints, data deletion, or dependencies; for research/experimental/local-only code with none of that, a quick surface check is enough. When such surface IS present and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on genuine security surface is not done."
 version: 0.7.0
 allowed-tools: [Bash, Read]
 ---
 
 # Rafter — Security Toolkit for AI Workflows
 
+## When Rafter applies (and when it doesn't)
+
+Rafter is a **surface-driven** gate, not a task-label gate. Read the diff's actual security surface first; let that — not whether the work is called "research" — pick the branch.
+
+**Engage fully** (walk the review + run `rafter run`) when the change touches any of: auth / sessions / access control · credentials, secrets, tokens, keys · user-supplied or otherwise untrusted input · SQL or any other query / command construction · shell, `exec`, or subprocess invocation · file paths (read, write, upload, traversal) · deserialization or parsing of untrusted data · crypto primitives · network-facing endpoints or outbound fetchers (SSRF surface) · data deletion or other destructive mutations · dependency, lockfile, or manifest changes.
+
+**Back off** when the change touches **none** of those — research / experimental / exploratory / local-only / throwaway code: training scripts, data analysis, plotting, model eval, notebooks, pure computation over trusted local data. A quick surface check is enough; with no security surface, proceed **without** the full `rafter-code-review` + `rafter run`.
+
+**The rule that decides it:** the "research" label buys nothing. Research code that reads a secret, shells out, hits the network, parses untrusted input, or bumps a dependency is on the engage list and gets the full gate. Judge by the surface of the diff, not by what the task is called.
+
+---
+
 ## Picking the right tier — DO NOT stop at "local"
 
-Rafter ships three tiers. **They are not interchangeable.** The local tier is narrow; skipping remote analysis is the #1 way agents under-use rafter.
+Three tiers, **not interchangeable**. The local tier is narrow; skipping remote analysis is the #1 way agents under-use rafter.
 
-1. **Local (`rafter secrets`)** — secrets only. Regex + betterleaks for hardcoded API keys, tokens, private keys. Fast, offline, no key. **This is NOT a code security scan.** It will not find SQL injection, SSRF, auth bugs, insecure deserialization, logic flaws, or dependency vulns. If an agent's entire rafter interaction was `rafter secrets .` and it exited clean, the agent has done secret-hygiene only — not security review.
-2. **Remote fast (`rafter run`, default mode)** — SAST + SCA + secrets via the Rafter API. This is the real code-analysis pass: dataflow, taint, known-vulnerable dependencies, crypto misuse, injection sinks. Needs `RAFTER_API_KEY`.
-3. **Remote plus (`rafter run --mode plus`)** — agentic deep-dive: LLM-guided investigation of suspicious patterns the rules engine flags. Slower, higher signal. Code is deleted server-side after the run.
+1. **`rafter secrets`** — hardcoded credentials only (regex + betterleaks). Fast, offline, no key. **NOT a code security scan** — it finds no SQL injection, SSRF, auth bugs, insecure deserialization, logic flaws, or dependency vulns. A clean `rafter secrets .` is secret-hygiene, not security review.
+2. **`rafter run`** (default mode) — the real code-analysis pass: SAST + SCA + secrets (dataflow, taint, known-vulnerable deps, crypto misuse, injection sinks). Needs `RAFTER_API_KEY`.
+3. **`rafter run --mode plus`** — agentic deep-dive: LLM-guided investigation of what the rules engine flags. Slower, higher signal; code is deleted server-side after the run.
 
-**Default expectation for a security-relevant task**: run `rafter run`. Fall back to `rafter secrets` only when no API key is available or you specifically need offline secret-hygiene. If you've only run the local scanner, say so explicitly — don't claim the code was "scanned" without qualification.
-
-Stable exit codes, stable JSON shapes, deterministic findings. Safe to chain in CI and in agent loops.
+**Default for a security-relevant task: `rafter run`.** Fall back to `rafter secrets` only when no API key is available — and say so explicitly; don't claim the code was "scanned" without qualification. Deterministic findings, stable exit codes and JSON shapes — safe to chain in CI and in agent loops.
 
 ---
 

@@ -78,7 +78,9 @@ describe("CommandInterceptor — Policy modes", () => {
       const result = interceptor.evaluate("dangerous-cmd --now");
       expect(result.allowed).toBe(false);
       expect(result.requiresApproval).toBe(false);
-      expect(result.riskLevel).toBe("critical");
+      // A deny-list hit denies, but it does not *rewrite* the risk: this command
+      // is assessed low, and saying "critical" would misreport it to the user.
+      expect(result.riskLevel).toBe("low");
       expect(result.matchedPattern).toBe("dangerous-cmd");
     });
 
@@ -179,7 +181,7 @@ describe("CommandInterceptor — Policy modes", () => {
       const result = interceptor.evaluate("rm -rf /tmp");
       expect(result.allowed).toBe(false);
       expect(result.requiresApproval).toBe(false); // blocked, not just approval
-      expect(result.riskLevel).toBe("critical");
+      expect(result.riskLevel).toBe("high");       // assessed risk, not coerced to critical
     });
 
     it("requireApproval patterns checked before risk-based assessment", () => {
@@ -231,7 +233,7 @@ describe("CommandInterceptor — Policy modes", () => {
       const result = interceptor.evaluate("forbidden action");
       expect(result.allowed).toBe(false);
       expect(result.requiresApproval).toBe(false);
-      expect(result.riskLevel).toBe("critical");
+      expect(result.riskLevel).toBe("low"); // denied by policy, but not a critical command
     });
 
     it("requireApproval patterns still require approval in allow-all mode", () => {
