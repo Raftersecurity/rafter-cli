@@ -332,6 +332,20 @@ describe("Secret patterns — coverage matrix", () => {
     });
   });
 
+  describe("SendGrid API Key", () => {
+    it("detects SG. token", () => {
+      const token = "SG." + "A".repeat(22) + "." + "A".repeat(43);
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("SendGrid"))).toBe(true);
+    });
+
+    it("does not match an SG. token with wrong segment lengths", () => {
+      const token = "SG." + "A".repeat(10) + "." + "A".repeat(20);
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("SendGrid"))).toBe(false);
+    });
+  });
+
   // ── Helper function coverage ──────────────────────────────────────
 
   describe("getPatternsBySeverity", () => {
