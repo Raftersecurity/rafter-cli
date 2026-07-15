@@ -89,6 +89,7 @@ def test_scan_text_ignores_bare_hex_without_datacenter_suffix(scanner):
     token = "a" * 32
     matches = scanner.scan_text(token)
     assert not any(m.pattern.name == "Mailchimp API Key" for m in matches)
+
 def test_scan_text_detects_sendgrid_key(scanner):
     token = "SG." + ("A" * 22) + "." + ("A" * 43)
     matches = scanner.scan_text(token)
