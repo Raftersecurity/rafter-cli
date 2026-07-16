@@ -74,6 +74,17 @@ class ScanConfig:
     # time. Default True. Set False (YAML: ``scan.auto_update_betterleaks``) to
     # opt out, e.g. in CI that provisions its own binary.
     auto_update_betterleaks: bool = True
+    # sable-9ddf — require explicit confirmation before a paid Plus scan
+    # (``rafter run --mode plus``). Default False — existing behavior is
+    # unchanged unless opted in. When True, a Plus scan refuses in a
+    # non-interactive/agent context unless ``--yes`` or ``RAFTER_CONFIRM=1`` is
+    # present, and prompts when a TTY is attached.
+    #
+    # SECURITY: honored additively (OR) across global config and project
+    # ``.rafter.yml`` — a project policy can turn this ON but can NEVER turn OFF
+    # a gate the machine owner enabled globally. YAML key:
+    # ``scan.plus_requires_approval``.
+    plus_requires_approval: bool = False
 
 
 @dataclass

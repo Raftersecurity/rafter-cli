@@ -63,7 +63,9 @@ a dependency still gets the full gate.
 - `rafter run` — remote SAST + SCA + secrets (real code analysis, needs `RAFTER_API_KEY`)
 - `rafter secrets .` — local secrets only (offline; NOT a code-security scan)
 - `rafter run --mode plus` — everything in default (`--mode fast`) plus
-  powerful agentic deep-dives (needs `RAFTER_API_KEY`)
+  powerful agentic deep-dives (needs `RAFTER_API_KEY`). **Plus is a PAID tier
+  and consumes the user's credits — ask the user before running it.** Enforced
+  when `scan.plus_requires_approval` is set (then pass `--yes` to confirm).
 {RAFTER_MARKER_END}"""
 
 

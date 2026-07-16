@@ -41,6 +41,7 @@ export interface PolicyFile {
     excludePaths?: string[];
     customPatterns?: PolicyCustomPattern[];
     autoUpdateBetterleaks?: boolean;
+    plusRequiresApproval?: boolean;
   };
   ignore?: PolicyIgnoreRule[];
   audit?: {
@@ -150,6 +151,9 @@ function mapPolicy(raw: Record<string, any>): PolicyFile {
     }
     if (typeof raw.scan.auto_update_betterleaks === "boolean") {
       policy.scan.autoUpdateBetterleaks = raw.scan.auto_update_betterleaks;
+    }
+    if (typeof raw.scan.plus_requires_approval === "boolean") {
+      policy.scan.plusRequiresApproval = raw.scan.plus_requires_approval;
     }
   }
 
@@ -360,6 +364,12 @@ function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFil
         raw.scan.auto_update_betterleaks !== undefined &&
         typeof raw.scan.auto_update_betterleaks !== "boolean") {
       console.error(`Warning: "scan.auto_update_betterleaks" must be a boolean — ignoring.`);
+    }
+    // sable-9ddf — only a boolean reaches policy.scan (mapping guards the type).
+    if (raw.scan && typeof raw.scan === "object" &&
+        raw.scan.plus_requires_approval !== undefined &&
+        typeof raw.scan.plus_requires_approval !== "boolean") {
+      console.error(`Warning: "scan.plus_requires_approval" must be a boolean — ignoring.`);
     }
   }
 

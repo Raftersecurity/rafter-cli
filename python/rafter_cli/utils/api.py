@@ -16,6 +16,9 @@ EXIT_GENERAL_ERROR = 1
 EXIT_SCAN_NOT_FOUND = 2
 EXIT_QUOTA_EXHAUSTED = 3
 EXIT_INSUFFICIENT_SCOPE = 4
+# sable-9ddf — a paid Plus scan was refused because approval is required and no
+# explicit confirmation (--yes / RAFTER_CONFIRM=1 / interactive yes) was given.
+EXIT_CONFIRMATION_REQUIRED = 5
 
 
 def handle_403(resp: "requests.Response") -> int:
