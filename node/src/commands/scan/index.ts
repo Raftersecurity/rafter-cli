@@ -28,6 +28,7 @@ export function createScanGroupCommand(): Command {
     .option("--provider <provider>", "git provider: gitlab | gitea | bitbucket (default: auto-detected; github requires nothing)")
     .option("--repo-url <url>", "full https clone URL for non-github remotes (default: auto-detected)")
     .option("--skip-interactive", "do not wait for scan to complete")
+    .option("-y, --yes", "confirm a paid Plus scan without prompting (when scan.plus_requires_approval is on)")
     .option("--quiet", "suppress status messages")
     .action(async (opts) => {
       await runRemoteScan(opts);
@@ -46,6 +47,7 @@ export function createScanGroupCommand(): Command {
     .option("--provider <provider>", "git provider: gitlab | gitea | bitbucket (default: auto-detected; github requires nothing)")
     .option("--repo-url <url>", "full https clone URL for non-github remotes (default: auto-detected)")
     .option("--skip-interactive", "do not wait for scan to complete")
+    .option("-y, --yes", "confirm a paid Plus scan without prompting (when scan.plus_requires_approval is on)")
     .option("--quiet", "suppress status messages");
 
   scanGroup.addCommand(localCmd, { hidden: true });
