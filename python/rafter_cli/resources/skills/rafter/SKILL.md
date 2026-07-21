@@ -25,7 +25,7 @@ Three tiers, **not interchangeable**. The local tier is narrow; skipping remote 
 
 1. **`rafter secrets`** — hardcoded credentials only (regex + betterleaks). Fast, offline, no key. **NOT a code security scan** — it finds no SQL injection, SSRF, auth bugs, insecure deserialization, logic flaws, or dependency vulns. A clean `rafter secrets .` is secret-hygiene, not security review.
 2. **`rafter run`** (default mode) — the real code-analysis pass: SAST + SCA + secrets (dataflow, taint, known-vulnerable deps, crypto misuse, injection sinks). Needs `RAFTER_API_KEY`.
-3. **`rafter run --mode plus`** — agentic deep-dive: LLM-guided investigation of what the rules engine flags. Slower, higher signal; code is deleted server-side after the run.
+3. **`rafter run --mode plus`** — agentic deep-dive: LLM-guided investigation of what the rules engine flags. Slower, higher signal; code is deleted server-side after the run. **PAID tier — consumes the user's credits; ask before running it.** If `scan.plus_requires_approval` is set, Plus refuses without `--yes` / `RAFTER_CONFIRM=1`.
 
 **Default for a security-relevant task: `rafter run`.** Fall back to `rafter secrets` only when no API key is available — and say so explicitly; don't claim the code was "scanned" without qualification. Deterministic findings, stable exit codes and JSON shapes — safe to chain in CI and in agent loops.
 

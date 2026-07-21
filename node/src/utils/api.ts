@@ -8,6 +8,9 @@ export const EXIT_GENERAL_ERROR = 1;
 export const EXIT_SCAN_NOT_FOUND = 2;
 export const EXIT_QUOTA_EXHAUSTED = 3;
 export const EXIT_INSUFFICIENT_SCOPE = 4;
+// sable-9ddf — a paid Plus scan was refused because approval is required and no
+// explicit confirmation (--yes / RAFTER_CONFIRM=1 / interactive yes) was given.
+export const EXIT_CONFIRMATION_REQUIRED = 5;
 
 /**
  * Detect a 403 error from the API and print a helpful message.

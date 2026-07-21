@@ -26,6 +26,7 @@ The CLI follows UNIX principles:
 | 2 | Scan not found (HTTP 404) |
 | 3 | Quota exhausted (HTTP 429 or 403 scan-mode limit) |
 | 4 | Insufficient scope / forbidden (HTTP 403) |
+| 5 | Paid Plus scan refused — approval required (`scan.plus_requires_approval` on) and no `--yes`/`RAFTER_CONFIRM=1`/interactive confirmation |
 
 ### Local Secret Scan (`rafter secrets`)
 
@@ -68,13 +69,19 @@ Trigger a new security scan for a repository.
 - `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
 - `-b, --branch TEXT` — branch (default: current branch or 'main')
 - `-f, --format [json|md]` — output format (default: md)
-- `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds agentic deep-dive analysis that examines your codebase the way a professional cybersecurity auditor would — tracing data flows and reasoning about business logic on top of the full SAST/SCA toolchain.
+- `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds agentic deep-dive analysis that examines your codebase the way a professional cybersecurity auditor would — tracing data flows and reasoning about business logic on top of the full SAST/SCA toolchain. **Plus is a paid tier that consumes credits.**
 - `--github-token TEXT` — GitHub PAT for private repos (or `RAFTER_GITHUB_TOKEN` env var)
 - `--provider [gitlab|gitea|bitbucket]` — git provider for non-GitHub remotes. Default: auto-detected from the git remote host. GitHub requires nothing — leave unset. Overrides the inferred provider when set.
 - `--repo-url TEXT` — full HTTPS clone URL for non-GitHub remotes (e.g. `https://gitlab.com/owner/repo`). Default: auto-detected and normalized from the git remote. Overrides the inferred URL when set.
 - `--skip-interactive` — fire-and-forget mode (don't poll for completion)
+- `-y, --yes` — confirm a paid Plus scan without an interactive prompt. Only consulted when the Plus-approval gate is on (`scan.plus_requires_approval`); `RAFTER_CONFIRM=1` is an equivalent env-var form. Ignored for `--mode fast`.
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
+
+**Plus-scan approval gate.** Plus scans spend credits, so an agent running one unprompted can burn a user's balance. Set `scan.plus_requires_approval: true` (in project `.rafter.yml` or global `~/.rafter/config.json`) to require explicit confirmation before any `--mode plus` scan. Default is **off** — existing behavior is unchanged unless enabled. When on:
+- With a TTY: rafter prompts `[y/N]` before submitting.
+- Without a TTY (agent/CI): rafter refuses with exit code `5` unless `--yes` or `RAFTER_CONFIRM=1` is present.
+- Precedence is **additive (OR)**: a project `.rafter.yml` can turn the gate *on*, but cannot turn *off* a gate the machine owner enabled in global config. `fast` scans are never gated.
 
 #### Scan request body (provider fields)
 
@@ -1185,6 +1192,12 @@ scan:
   # rafter then falls back to the patterns engine instead. Equivalent to passing
   # --no-auto-update on every scan. See `rafter secrets --no-auto-update`.
   auto_update_betterleaks: true
+  # Default: false. Set true to require explicit confirmation before a paid
+  # `rafter run --mode plus` scan (which consumes credits). When on, Plus
+  # refuses in a non-interactive/agent context unless `--yes` or
+  # `RAFTER_CONFIRM=1` is present, and prompts when a TTY is attached. Additive
+  # (OR) with the global config: a project file can turn this ON but never OFF.
+  plus_requires_approval: false
 ignore:
   - paths: ["tests/fixtures/**", "*.example.env"]
     rules: ["AWS Access Key", "Generic API Key"]

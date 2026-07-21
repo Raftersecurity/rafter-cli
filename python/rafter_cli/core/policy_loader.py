@@ -107,6 +107,8 @@ def _map_policy(raw: dict) -> dict:
             ]
         if isinstance(scan.get("auto_update_betterleaks"), bool):
             policy["scan"]["auto_update_betterleaks"] = scan["auto_update_betterleaks"]
+        if isinstance(scan.get("plus_requires_approval"), bool):
+            policy["scan"]["plus_requires_approval"] = scan["plus_requires_approval"]
 
     # sable-c1c — backend flat-shape compat. rafter-backend reads
     # exclude_paths / custom_patterns at the top level (no `scan:` nesting),
@@ -287,6 +289,9 @@ def _validate_policy(policy: dict, raw: dict) -> dict:
     raw_scan = raw.get("scan")
     if isinstance(raw_scan, dict) and "auto_update_betterleaks" in raw_scan and not isinstance(raw_scan["auto_update_betterleaks"], bool):
         print('Warning: "scan.auto_update_betterleaks" must be a boolean — ignoring.', file=sys.stderr)
+    # sable-9ddf — same guard for the Plus-approval flag.
+    if isinstance(raw_scan, dict) and "plus_requires_approval" in raw_scan and not isinstance(raw_scan["plus_requires_approval"], bool):
+        print('Warning: "scan.plus_requires_approval" must be a boolean — ignoring.', file=sys.stderr)
 
     ignore = policy.get("ignore")
     if ignore is not None:

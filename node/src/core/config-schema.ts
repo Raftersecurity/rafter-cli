@@ -117,6 +117,19 @@ export interface RafterConfig {
        * to opt out, e.g. in CI that provisions its own binary.
        */
       autoUpdateBetterleaks?: boolean;
+      /**
+       * sable-9ddf — require explicit confirmation before a paid Plus scan
+       * (`rafter run --mode plus`). Default false (undefined) — existing
+       * behavior is unchanged unless opted in. When true, a Plus scan refuses
+       * in a non-interactive/agent context unless `--yes` or `RAFTER_CONFIRM=1`
+       * is present, and prompts when a TTY is attached.
+       *
+       * SECURITY: honored additively (OR) across global config and project
+       * `.rafter.yml` — a project policy can turn this ON but can NEVER turn OFF
+       * a gate the machine owner enabled globally. See runRemoteScan.
+       * YAML key: `scan.plus_requires_approval`.
+       */
+      plusRequiresApproval?: boolean;
     };
     /**
      * Fine-grained per-component install state. Keys are component IDs like

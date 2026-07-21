@@ -12,6 +12,7 @@ from ..utils.api import (
     API_BASE,
     API_TIMEOUT,
     API_TIMEOUT_SHORT,
+    EXIT_CONFIRMATION_REQUIRED,
     EXIT_GENERAL_ERROR,
     EXIT_QUOTA_EXHAUSTED,
     EXIT_SCAN_NOT_FOUND,
@@ -21,6 +22,70 @@ from ..utils.api import (
     write_payload,
 )
 from ..utils.git import detect_repo
+
+
+def _plus_approval_gate_enabled() -> bool:
+    """sable-9ddf — is the Plus-scan approval gate enabled?
+
+    OR semantics across the machine-owner's global config and the project's
+    ``.rafter.yml``: if EITHER opts in, approval is required. A project policy
+    can turn the gate ON but can NEVER turn it OFF — a hostile repo must not be
+    able to silently re-open the credit-burn hole a user closed globally.
+
+    Fails open (returns False) if config/policy can't be read, consistent with
+    the OFF-by-default product behavior and the codebase's config-load fallback.
+    """
+    from ..core.config_manager import ConfigManager
+    from ..core.policy_loader import load_policy
+
+    global_flag = False
+    try:
+        global_flag = ConfigManager().load().agent.scan.plus_requires_approval is True
+    except Exception:
+        pass  # fail open
+    policy_flag = False
+    try:
+        policy = load_policy()
+        policy_flag = bool(policy and policy.get("scan", {}).get("plus_requires_approval") is True)
+    except Exception:
+        pass  # fail open
+    return global_flag or policy_flag
+
+
+def _confirm_plus_scan(mode: str, yes: bool) -> None:
+    """Gate a paid Plus scan behind explicit confirmation when the switch is on.
+
+    Returns normally if the scan may proceed; raises ``typer.Exit`` otherwise.
+    No-op for non-plus modes and when the gate is disabled (the default).
+    """
+    import os as _os
+
+    if (mode or "fast") != "plus":
+        return
+    if not _plus_approval_gate_enabled():
+        return
+
+    env_confirm = _os.environ.get("RAFTER_CONFIRM")
+    if yes or env_confirm in ("1", "true"):
+        return
+
+    if sys.stdin.isatty():
+        answer = input(
+            "  Plus is a PAID scan tier and will consume your credits. Proceed? [y/N] "
+        ).strip().lower()
+        if answer in ("y", "yes"):
+            return
+        print("Plus scan cancelled.", file=sys.stderr)
+        raise typer.Exit(code=EXIT_CONFIRMATION_REQUIRED)
+
+    print(
+        "Refusing to run a paid Plus scan: approval is required "
+        "(scan.plus_requires_approval is enabled).\n"
+        "Re-run with --yes (or set RAFTER_CONFIRM=1) to confirm the credit spend, "
+        "or use the free --mode fast scan.",
+        file=sys.stderr,
+    )
+    raise typer.Exit(code=EXIT_CONFIRMATION_REQUIRED)
 
 
 def _handle_scan_status_interactive(
@@ -93,9 +158,14 @@ def _do_remote_scan(
     github_token: "str | None" = None,
     provider: "str | None" = None,
     repo_url: "str | None" = None,
+    yes: bool = False,
 ) -> None:
     """Shared implementation for remote backend scan — used by both `rafter run` and `rafter scan`."""
     import os as _os
+
+    # sable-9ddf — gate paid Plus scans before doing any work (key resolution,
+    # repo detection, or the billable API call).
+    _confirm_plus_scan(mode, yes)
 
     key = resolve_key(api_key)
     gh_token = github_token or _os.environ.get("RAFTER_GITHUB_TOKEN")
@@ -166,10 +236,11 @@ def register_backend_commands(app: typer.Typer) -> None:
         provider: str = typer.Option(None, "--provider", help="git provider: gitlab | gitea | bitbucket (default: auto-detected; github requires nothing)"),
         repo_url: str = typer.Option(None, "--repo-url", help="full https clone URL for non-github remotes (default: auto-detected)"),
         skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
+        yes: bool = typer.Option(False, "--yes", "-y", help="confirm a paid Plus scan without prompting (when scan.plus_requires_approval is on)"),
         quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
     ):
         """Trigger a security scan."""
-        _do_remote_scan(repo, branch, api_key, fmt, skip_interactive, quiet, mode, github_token=github_token, provider=provider, repo_url=repo_url)
+        _do_remote_scan(repo, branch, api_key, fmt, skip_interactive, quiet, mode, github_token=github_token, provider=provider, repo_url=repo_url, yes=yes)
 
     @app.command()
     def get(

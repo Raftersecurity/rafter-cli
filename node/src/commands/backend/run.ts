@@ -7,8 +7,12 @@ import {
   resolveKey,
   EXIT_GENERAL_ERROR,
   EXIT_QUOTA_EXHAUSTED,
+  EXIT_CONFIRMATION_REQUIRED,
   handle403
 } from "../../utils/api.js";
+import { ConfigManager } from "../../core/config-manager.js";
+import { loadPolicy } from "../../core/policy-loader.js";
+import { askYesNo } from "../../utils/prompt.js";
 import { handleScanStatus } from "./scan-status.js";
 
 export interface RunOpts {
@@ -22,12 +26,72 @@ export interface RunOpts {
   githubToken?: string;
   provider?: string;
   repoUrl?: string;
+  yes?: boolean;
+}
+
+/**
+ * sable-9ddf — is the Plus-scan approval gate enabled?
+ *
+ * OR semantics across the machine-owner's global config and the project's
+ * `.rafter.yml`: if EITHER opts in, approval is required. A project policy can
+ * turn the gate ON but can NEVER turn it OFF — a hostile repo must not be able
+ * to silently re-open the credit-burn hole a user closed globally.
+ *
+ * Fails open (returns false) if config/policy can't be read, consistent with
+ * the OFF-by-default product behavior and the codebase's config-load fallback.
+ */
+export function plusApprovalGateEnabled(): boolean {
+  let globalFlag = false;
+  try {
+    globalFlag = new ConfigManager().load().agent?.scan?.plusRequiresApproval === true;
+  } catch { /* fail open */ }
+  let policyFlag = false;
+  try {
+    policyFlag = loadPolicy()?.scan?.plusRequiresApproval === true;
+  } catch { /* fail open */ }
+  return globalFlag || policyFlag;
+}
+
+/**
+ * Gate a paid Plus scan behind explicit confirmation when the switch is on.
+ * Returns normally if the scan may proceed; calls process.exit otherwise.
+ * No-op for non-plus modes and when the gate is disabled (the default).
+ */
+export async function confirmPlusScan(opts: RunOpts): Promise<void> {
+  if ((opts.mode ?? "fast") !== "plus") return;
+  if (!plusApprovalGateEnabled()) return;
+
+  const envConfirm = process.env.RAFTER_CONFIRM;
+  const confirmed = opts.yes === true || envConfirm === "1" || envConfirm === "true";
+  if (confirmed) return;
+
+  if (process.stdin.isTTY) {
+    const ok = await askYesNo(
+      "Plus is a PAID scan tier and will consume your credits. Proceed?",
+      false
+    );
+    if (ok) return;
+    console.error("Plus scan cancelled.");
+    process.exit(EXIT_CONFIRMATION_REQUIRED);
+  }
+
+  console.error(
+    "Refusing to run a paid Plus scan: approval is required " +
+      "(scan.plus_requires_approval is enabled).\n" +
+      "Re-run with --yes (or set RAFTER_CONFIRM=1) to confirm the credit spend, " +
+      "or use the free --mode fast scan."
+  );
+  process.exit(EXIT_CONFIRMATION_REQUIRED);
 }
 
 /**
  * Shared handler for the remote backend scan (used by both `rafter run` and `rafter scan` / `rafter scan remote`).
  */
 export async function runRemoteScan(opts: RunOpts): Promise<void> {
+  // sable-9ddf — gate paid Plus scans before doing any work (key resolution,
+  // repo detection, or the billable API call).
+  await confirmPlusScan(opts);
+
   const key = resolveKey(opts.apiKey);
   const ghToken = opts.githubToken || process.env.RAFTER_GITHUB_TOKEN;
   let repo: string | undefined, branch: string | undefined;
@@ -134,6 +198,7 @@ function addRunOptions(cmd: Command): Command {
     .option("--provider <provider>", "git provider: gitlab | gitea | bitbucket (default: auto-detected; github requires nothing)")
     .option("--repo-url <url>", "full https clone URL for non-github remotes (default: auto-detected)")
     .option("--skip-interactive", "do not wait for scan to complete")
+    .option("-y, --yes", "confirm a paid Plus scan without prompting (when scan.plus_requires_approval is on)")
     .option("--quiet", "suppress status messages");
 }
 

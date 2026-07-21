@@ -246,6 +246,10 @@ class ConfigManager:
                 if key in scan and not isinstance(scan[key], bool):
                     print(f'rafter: config "scan.{key}" must be a boolean — using default.', file=sys.stderr)
                     del scan[key]
+            for key in ("plusRequiresApproval", "plus_requires_approval"):
+                if key in scan and not isinstance(scan[key], bool):
+                    print(f'rafter: config "scan.{key}" must be a boolean — using default.', file=sys.stderr)
+                    del scan[key]
 
     # ------------------------------------------------------------------
     # Policy-merged config
@@ -284,6 +288,11 @@ class ConfigManager:
                 ]
             if scan.get("auto_update_betterleaks") is not None:
                 config.agent.scan.auto_update_betterleaks = scan["auto_update_betterleaks"]
+            # sable-9ddf — OR merge: a project policy may turn the Plus-approval
+            # gate ON, but must never turn OFF a gate the machine owner set
+            # globally.
+            if scan.get("plus_requires_approval") is True:
+                config.agent.scan.plus_requires_approval = True
 
         if policy.get("ignore"):
             from .config_schema import ScanIgnoreRule

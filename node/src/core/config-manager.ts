@@ -141,6 +141,10 @@ function validateConfig(raw: any): RafterConfig {
         console.error('Warning: config "agent.scan.autoUpdateBetterleaks" must be a boolean — using default.');
         delete scan.autoUpdateBetterleaks;
       }
+      if (scan.plusRequiresApproval !== undefined && typeof scan.plusRequiresApproval !== "boolean") {
+        console.error('Warning: config "agent.scan.plusRequiresApproval" must be a boolean — using default.');
+        delete scan.plusRequiresApproval;
+      }
     }
   }
 
@@ -334,6 +338,11 @@ export class ConfigManager {
       }
       if (policy.scan.autoUpdateBetterleaks !== undefined) {
         config.agent.scan.autoUpdateBetterleaks = policy.scan.autoUpdateBetterleaks;
+      }
+      // sable-9ddf — OR merge: a project policy may turn the Plus-approval gate
+      // ON, but must never turn OFF a gate the machine owner set globally.
+      if (policy.scan.plusRequiresApproval === true) {
+        config.agent.scan.plusRequiresApproval = true;
       }
     }
 
