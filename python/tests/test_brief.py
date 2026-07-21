@@ -1,6 +1,8 @@
 """Tests for the brief command — knowledge delivery."""
 from __future__ import annotations
 
+import re
+
 import pytest
 from typer.testing import CliRunner
 
@@ -18,8 +20,22 @@ from rafter_cli.commands.brief import (
     PLATFORM_GUIDES,
     TOPIC_DESCRIPTIONS,
 )
+from rafter_cli.utils.formatter import set_agent_mode
 
 runner = CliRunner()
+EMOJI_RE = re.compile(
+    "[\u2600-\u27BF\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF]"
+    "|[0-9#*]\ufe0f?\u20e3"
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_agent_mode():
+    set_agent_mode(False)
+    try:
+        yield
+    finally:
+        set_agent_mode(False)
 
 
 class TestTopicListing:
@@ -53,6 +69,14 @@ class TestTopicListing:
 
 
 class TestTopicRendering:
+    def test_agent_mode_has_no_terminal_formatting(self):
+        result = runner.invoke(app, ["--agent", "brief", "scanning"], color=True)
+
+        assert result.exit_code == 0
+        assert "# Rafter" in result.output
+        assert "\x1b" not in result.output
+        assert EMOJI_RE.search(result.output) is None
+
     def test_scanning_topic_loads_skill(self):
         result = runner.invoke(app, ["brief", "scanning"])
         assert result.exit_code == 0
