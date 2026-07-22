@@ -155,6 +155,20 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
         severity="critical",
         description="DigitalOcean Personal Access Token detected",
     ),
+    # Mailchimp
+    Pattern(
+        name="Mailchimp API Key",
+        regex=r"[a-f0-9]{32}-us\d{1,2}",
+        severity="critical",
+        description="Mailchimp API Key detected",
+    ),
+    # SendGrid
+    Pattern(
+        name="SendGrid API Key",
+        regex=r"SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}",
+        severity="critical",
+        description="SendGrid API Key detected",
+    ),
 ]
 
 

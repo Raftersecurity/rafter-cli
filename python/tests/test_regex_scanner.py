@@ -80,6 +80,26 @@ def test_scan_text_detects_digitalocean_token(scanner):
     matches = scanner.scan_text(token)
     assert any(m.pattern.name == "DigitalOcean Personal Access Token" for m in matches)
 
+def test_scan_text_detects_mailchimp_key(scanner):
+    token = ("a" * 32) + "-us12"
+    matches = scanner.scan_text(token)
+    assert any(m.pattern.name == "Mailchimp API Key" for m in matches)
+
+def test_scan_text_ignores_bare_hex_without_datacenter_suffix(scanner):
+    token = "a" * 32
+    matches = scanner.scan_text(token)
+    assert not any(m.pattern.name == "Mailchimp API Key" for m in matches)
+
+def test_scan_text_detects_sendgrid_key(scanner):
+    token = "SG." + ("A" * 22) + "." + ("A" * 43)
+    matches = scanner.scan_text(token)
+    assert any(m.pattern.name == "SendGrid API Key" for m in matches)
+
+def test_scan_text_ignores_short_sendgrid_like_string(scanner):
+    token = "SG." + ("A" * 10) + "." + ("A" * 20)
+    matches = scanner.scan_text(token)
+    assert not any(m.pattern.name == "SendGrid API Key" for m in matches)
+
 def test_has_secrets(scanner):
     assert scanner.has_secrets("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij")
     assert not scanner.has_secrets("just a normal string")

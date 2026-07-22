@@ -318,6 +318,34 @@ describe("Secret patterns — coverage matrix", () => {
     });
   });
 
+  describe("Mailchimp API Key", () => {
+    it("detects mailchimp key", () => {
+      const token = "a".repeat(32) + "-us12";
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("Mailchimp"))).toBe(true);
+    });
+
+    it("does not match a bare 32-char hex string without the -us datacenter suffix", () => {
+      const notAKey = "a".repeat(32);
+      const r = scanString(notAKey + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("Mailchimp"))).toBe(false);
+    });
+  });
+
+  describe("SendGrid API Key", () => {
+    it("detects SG. token", () => {
+      const token = "SG." + "A".repeat(22) + "." + "A".repeat(43);
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("SendGrid"))).toBe(true);
+    });
+
+    it("does not match an SG. token with wrong segment lengths", () => {
+      const token = "SG." + "A".repeat(10) + "." + "A".repeat(20);
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("SendGrid"))).toBe(false);
+    });
+  });
+
   // ── Helper function coverage ──────────────────────────────────────
 
   describe("getPatternsBySeverity", () => {

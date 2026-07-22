@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-21
+
+### Added
+
+- **Opt-in approval gate for paid Plus scans** (sable-9ddf). New `scan.plus_requires_approval` config flag (`.rafter.yml` or global `~/.rafter/config.json`), **off by default** so existing behavior is unchanged. When enabled, `rafter run --mode plus` (and the `rafter scan` / `rafter scan remote` aliases) requires explicit confirmation before spending credits: it prompts `[y/N]` on a TTY and refuses in a non-interactive/agent context with new exit code `5` unless `--yes` (`-y`) or `RAFTER_CONFIRM=1` is passed. Fast scans are never gated. Precedence is additive (OR) — a project `.rafter.yml` can turn the gate *on* but can never turn *off* a gate the machine owner enabled globally, so a hostile repo can't silently re-open the credit-burn hole. The rafter agent skill and injected instruction block now tell agents Plus is a paid tier and to ask the user before running it. Node + Python, tests in both suites. Addresses an external user whose agent auto-ran a Plus scan and consumed credits without asking.
+- **SendGrid API Key secret pattern** (#24). New `SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}` detection pattern (severity `critical`) added to the built-in regex scanner in both Node and Python, with tests in each suite. Thanks to @perez-eduardo for the contribution.
+
 ## [0.9.0] - 2026-07-08
 
 ### Added

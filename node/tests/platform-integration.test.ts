@@ -1367,12 +1367,13 @@ describe("Platform Integration — MCP Installs via CLI", () => {
 
       // Codex matchers per developers.openai.com/codex/hooks (rf-ovql verified):
       // PreToolUse intercepts Bash + apply_patch (file edits via apply_patch).
-      // PostToolUse is catch-all so all completed events land in audit.jsonl.
+      // PostToolUse mirrors that write/exec surface (narrowed from `.*` to skip
+      // Read/MCP log noise), matching claude-code posttool scoping (sable-h0ah).
       const preMatchers = config.hooks.PreToolUse.map((e: any) => e.matcher);
       expect(preMatchers).toContain("Bash|apply_patch");
 
       const postMatchers = config.hooks.PostToolUse.map((e: any) => e.matcher);
-      expect(postMatchers).toContain(".*");
+      expect(postMatchers).toContain("Bash|apply_patch");
     });
 
     it("should deduplicate hooks on repeated installs", () => {
