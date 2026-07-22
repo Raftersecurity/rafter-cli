@@ -576,3 +576,11 @@ More badge variants (HTML, reStructuredText) available in [`badges/`](badges/).
 ## License
 
 [MIT](LICENSE)
+
+## Setup
+
+Copy the example environment file and adjust values:
+
+```bash
+cp .env.example .env
+```
