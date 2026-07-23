@@ -15,6 +15,9 @@ import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager, redactConfigSecrets, isSecretConfigKey, maskSecretValue } from "../../core/config-manager.js";
 import { listDocs, resolveDocSelector, fetchDoc } from "../../core/docs-loader.js";
 import { writeSuppression } from "../../core/suppression-writer.js";
+import { API } from "../../utils/api.js";
+import { describeSitesError, resolveMcpApiKey } from "../sites/errors.js";
+import axios from "axios";
 import { createRequire } from "module";
 
 const _require = createRequire(import.meta.url);
@@ -155,6 +158,56 @@ export function createServer(): Server {
             reason: { type: "string", description: "Why this is a false positive — persisted with the rule. Strongly recommended." },
           },
           required: ["path"],
+        },
+      },
+      {
+        name: "sites_create",
+        description: "Register a URL as a Rafter Site for live-application security monitoring (exposed backends, DNS misconfig, SEO, accessibility) and kick off its first scan. Use when asked to start monitoring a domain/site.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            url: { type: "string", description: "URL of the site to monitor" },
+          },
+          required: ["url"],
+        },
+      },
+      {
+        name: "sites_scan",
+        description: "Trigger a re-scan of an existing Rafter Site. Identify the site by projectId OR url (exactly one required). Use when asked to re-scan or refresh a site's findings.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            projectId: { type: "string", description: "The site's project id (use this or url, not both)" },
+            url: { type: "string", description: "The site's URL (use this or projectId, not both)" },
+            sections: {
+              type: "array",
+              items: { type: "string", enum: ["flight", "security", "dns"] },
+              description: "Subset of scan sections to run. Omit to run all.",
+            },
+          },
+        },
+      },
+      {
+        name: "sites_list",
+        description: "List Rafter Sites registered for monitoring, paginated. Use when asked 'what sites are being monitored?' or to browse before calling sites_get.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            limit: { type: "number", description: "Results per page, 1-100 (default: 25)" },
+            offset: { type: "number", description: "Pagination offset (default: 0)" },
+            include_archived: { type: "boolean", description: "Include archived sites (default: false)" },
+          },
+        },
+      },
+      {
+        name: "sites_get",
+        description: "Get a Rafter Site's status, latest scan run, and findings summary by its project id. Use after sites_list or sites_create to check a specific site's results.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            id: { type: "string", description: "The site's project id" },
+          },
+          required: ["id"],
         },
       },
     ],
@@ -299,6 +352,63 @@ export function createServer(): Server {
           });
         } catch (err: any) {
           return errorResult(`Failed to write suppression: ${err.message || err}`);
+        }
+      }
+
+      case "sites_create": {
+        const url = args?.url as string | undefined;
+        if (!url) return errorResult("url is required");
+        const key = resolveMcpApiKey();
+        if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
+        try {
+          const { data } = await axios.post(`${API}/static/sites`, { url }, { headers: { "x-api-key": key } });
+          return textResult(data);
+        } catch (e: any) {
+          return errorResult(describeSitesError(e).message);
+        }
+      }
+
+      case "sites_scan": {
+        const projectId = args?.projectId as string | undefined;
+        const url = args?.url as string | undefined;
+        if (!projectId && !url) return errorResult("Provide projectId or url");
+        const key = resolveMcpApiKey();
+        if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
+        const body: Record<string, unknown> = projectId ? { projectId } : { url };
+        if (Array.isArray(args?.sections)) body.sections = (args!.sections as unknown[]).map((s) => String(s));
+        try {
+          const { data } = await axios.post(`${API}/static/sites/scan`, body, { headers: { "x-api-key": key } });
+          return textResult(data);
+        } catch (e: any) {
+          return errorResult(describeSitesError(e).message);
+        }
+      }
+
+      case "sites_list": {
+        const key = resolveMcpApiKey();
+        if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
+        const params: Record<string, string> = {};
+        if (args?.limit !== undefined) params.limit = String(args.limit);
+        if (args?.offset !== undefined) params.offset = String(args.offset);
+        if (args?.include_archived) params.include_archived = "true";
+        try {
+          const { data } = await axios.get(`${API}/static/sites`, { params, headers: { "x-api-key": key } });
+          return textResult(data);
+        } catch (e: any) {
+          return errorResult(describeSitesError(e).message);
+        }
+      }
+
+      case "sites_get": {
+        const id = args?.id as string | undefined;
+        if (!id) return errorResult("id is required");
+        const key = resolveMcpApiKey();
+        if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
+        try {
+          const { data } = await axios.get(`${API}/static/sites/${encodeURIComponent(id)}`, { headers: { "x-api-key": key } });
+          return textResult(data);
+        } catch (e: any) {
+          return errorResult(describeSitesError(e).message);
         }
       }
 
