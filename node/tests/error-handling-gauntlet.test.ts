@@ -277,7 +277,7 @@ describe("ConfigManager — Error Handling", () => {
     const manager = new ConfigManager(configPath);
     const config = manager.load();
     expect(config.agent?.riskLevel).toBe("moderate");
-    const warningMsg = stderrSpy.mock.calls.find((c) =>
+    const warningMsg = stderrSpy.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes("not a JSON object"),
     );
     expect(warningMsg).toBeDefined();
@@ -292,7 +292,7 @@ describe("ConfigManager — Error Handling", () => {
     const manager = new ConfigManager(configPath);
     const config = manager.load();
     expect(config.agent?.riskLevel).toBe("moderate");
-    const warningMsg = stderrSpy.mock.calls.find((c) =>
+    const warningMsg = stderrSpy.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes("agent.riskLevel"),
     );
     expect(warningMsg).toBeDefined();
@@ -309,7 +309,7 @@ describe("ConfigManager — Error Handling", () => {
     const manager = new ConfigManager(configPath);
     const config = manager.load();
     expect(config.agent?.commandPolicy.mode).toBe("approve-dangerous");
-    const warningMsg = stderrSpy.mock.calls.find((c) =>
+    const warningMsg = stderrSpy.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes("agent.commandPolicy.mode"),
     );
     expect(warningMsg).toBeDefined();
@@ -328,7 +328,7 @@ describe("ConfigManager — Error Handling", () => {
     expect(Array.isArray(config.agent?.commandPolicy.blockedPatterns)).toBe(
       true,
     );
-    const warningMsg = stderrSpy.mock.calls.find((c) =>
+    const warningMsg = stderrSpy.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes("blockedPatterns"),
     );
     expect(warningMsg).toBeDefined();
@@ -345,7 +345,7 @@ describe("ConfigManager — Error Handling", () => {
     const manager = new ConfigManager(configPath);
     const config = manager.load();
     expect(typeof config.agent?.audit.retentionDays).toBe("number");
-    const warningMsg = stderrSpy.mock.calls.find((c) =>
+    const warningMsg = stderrSpy.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes("retentionDays"),
     );
     expect(warningMsg).toBeDefined();
@@ -409,7 +409,7 @@ describe("ConfigManager — Error Handling", () => {
     const patterns = config.agent?.scan?.customPatterns ?? [];
     expect(patterns.length).toBe(1);
     expect(patterns[0].name).toBe("valid");
-    const warningMsg = stderrSpy.mock.calls.find((c) =>
+    const warningMsg = stderrSpy.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes("invalid regex"),
     );
     expect(warningMsg).toBeDefined();
@@ -426,7 +426,7 @@ describe("ConfigManager — Error Handling", () => {
     const manager = new ConfigManager(configPath);
     const config = manager.load();
     expect(config.agent?.scan?.excludePaths).toBeUndefined();
-    const warningMsg = stderrSpy.mock.calls.find((c) =>
+    const warningMsg = stderrSpy.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes("excludePaths"),
     );
     expect(warningMsg).toBeDefined();
@@ -448,7 +448,7 @@ describe("ConfigManager — Error Handling", () => {
     const manager = new ConfigManager(configPath);
     const config = manager.load();
     expect(typeof config.agent?.outputFiltering.redactSecrets).toBe("boolean");
-    const warningMsg = stderrSpy.mock.calls.find((c) =>
+    const warningMsg = stderrSpy.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes("redactSecrets"),
     );
     expect(warningMsg).toBeDefined();
@@ -459,7 +459,7 @@ describe("ConfigManager — Error Handling", () => {
     fs.writeFileSync(configPath, JSON.stringify({ version: 42 }));
     const manager = new ConfigManager(configPath);
     manager.load();
-    const warningMsg = stderrSpy.mock.calls.find((c) =>
+    const warningMsg = stderrSpy.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes('"version" must be a string'),
     );
     expect(warningMsg).toBeDefined();
@@ -635,9 +635,25 @@ describe("AuditLogger — Error Paths", () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-audit-gauntlet-"));
+
+    // AuditLogger.log() reads the global ~/.rafter/config.json and no-ops
+    // unless agent.audit.logAllActions is set. Mock the config so log() writes
+    // deterministically regardless of this machine's global config state.
+    vi.spyOn(ConfigManager.prototype, "load").mockReturnValue({
+      version: "1",
+      agent: {
+        riskLevel: "moderate",
+        commandPolicy: { mode: "approve-dangerous", blockedPatterns: [], requireApproval: [] },
+        audit: { retentionDays: 30, logLevel: "info", logAllActions: true },
+        outputFiltering: { redactSecrets: true, blockPatterns: false },
+        notifications: {},
+        scan: {},
+      },
+    } as any);
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
