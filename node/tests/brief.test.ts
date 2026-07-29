@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import path from "path";
 
@@ -15,25 +15,24 @@ const RAFTER_SUBDOCS = [
   "shift-left",
   "finding-triage",
 ];
+const emojiRe =
+  /(?:[\u2600-\u27BF\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}]|[0-9#*]\uFE0F?\u20E3)/u;
 
 function rafter(
   args: string | string[],
+  env?: NodeJS.ProcessEnv,
 ): { stdout: string; stderr: string; exitCode: number } {
   const argList = Array.isArray(args) ? args : args.split(/\s+/);
-  try {
-    const result = execFileSync("node", [CLI, ...argList], {
-      encoding: "utf-8",
-      env: { ...process.env },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return { stdout: result, stderr: "", exitCode: 0 };
-  } catch (e: any) {
-    return {
-      stdout: e.stdout || "",
-      stderr: e.stderr || "",
-      exitCode: e.status ?? 1,
-    };
-  }
+  const result = spawnSync("node", [CLI, ...argList], {
+    encoding: "utf-8",
+    env: { ...process.env, ...env },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  return {
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    exitCode: result.status ?? 1,
+  };
 }
 
 beforeAll(() => {
@@ -85,6 +84,19 @@ describe("brief command — topic listing", () => {
 });
 
 describe("brief command — topic rendering", () => {
+  it("renders agent-mode output without terminal formatting", () => {
+    const r = rafter(["--agent", "brief", "scanning"], {
+      CI: "1",
+      FORCE_COLOR: "1",
+    });
+    const output = r.stdout + r.stderr;
+
+    expect(r.exitCode).toBe(0);
+    expect(output).toContain("# Rafter");
+    expect(output).not.toContain("\u001b");
+    expect(output).not.toMatch(emojiRe);
+  });
+
   it("renders scanning topic from skill file", () => {
     const r = rafter("brief scanning");
     expect(r.exitCode).toBe(0);
