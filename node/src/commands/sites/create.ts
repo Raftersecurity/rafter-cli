@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import axios from "axios";
-import { API, resolveKey, writePayload } from "../../utils/api.js";
-import { describeSitesError } from "./errors.js";
+import { apiUrl, resolveKey, writePayload, EXIT_GENERAL_ERROR } from "../../utils/api.js";
+import { describeSitesError, rejectUnsupportedFormat } from "./errors.js";
 
 export interface SitesCreateOpts {
   apiKey?: string;
@@ -11,10 +11,11 @@ export interface SitesCreateOpts {
 
 /** Register a URL as a Site and kick off its first scan. Returns the process exit code. */
 export async function runSitesCreate(url: string, opts: SitesCreateOpts): Promise<number> {
+  if (rejectUnsupportedFormat(opts.format)) return EXIT_GENERAL_ERROR;
   const key = resolveKey(opts.apiKey);
   try {
     const { data } = await axios.post(
-      `${API}/static/sites`,
+      apiUrl("static/sites"),
       { url },
       { headers: { "x-api-key": key } }
     );

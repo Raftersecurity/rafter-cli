@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import axios from "axios";
-import { API, resolveKey, writePayload } from "../../utils/api.js";
-import { describeSitesError } from "./errors.js";
+import { apiUrl, resolveKey, writePayload, EXIT_GENERAL_ERROR } from "../../utils/api.js";
+import { describeSitesError, rejectUnsupportedFormat } from "./errors.js";
 
 export interface SitesGetOpts {
   apiKey?: string;
@@ -11,10 +11,11 @@ export interface SitesGetOpts {
 
 /** Get a site's status, latest run, and findings summary. Returns the process exit code. */
 export async function runSitesGet(id: string, opts: SitesGetOpts): Promise<number> {
+  if (rejectUnsupportedFormat(opts.format)) return EXIT_GENERAL_ERROR;
   const key = resolveKey(opts.apiKey);
   try {
     const { data } = await axios.get(
-      `${API}/static/sites/${encodeURIComponent(id)}`,
+      apiUrl(`static/sites/${encodeURIComponent(id)}`),
       { headers: { "x-api-key": key } }
     );
     return writePayload(data, opts.format, opts.quiet);

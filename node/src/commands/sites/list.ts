@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import axios from "axios";
-import { API, resolveKey, writePayload } from "../../utils/api.js";
-import { describeSitesError } from "./errors.js";
+import { apiUrl, resolveKey, writePayload, EXIT_GENERAL_ERROR } from "../../utils/api.js";
+import { describeSitesError, rejectUnsupportedFormat } from "./errors.js";
 
 export interface SitesListOpts {
   apiKey?: string;
@@ -14,6 +14,7 @@ export interface SitesListOpts {
 
 /** List registered sites, paginated. Returns the process exit code. */
 export async function runSitesList(opts: SitesListOpts): Promise<number> {
+  if (rejectUnsupportedFormat(opts.format)) return EXIT_GENERAL_ERROR;
   const key = resolveKey(opts.apiKey);
   const params: Record<string, string> = {};
   if (opts.limit !== undefined) params.limit = String(opts.limit);
@@ -22,7 +23,7 @@ export async function runSitesList(opts: SitesListOpts): Promise<number> {
 
   try {
     const { data } = await axios.get(
-      `${API}/static/sites`,
+      apiUrl("static/sites"),
       { params, headers: { "x-api-key": key } }
     );
     return writePayload(data, opts.format, opts.quiet);
