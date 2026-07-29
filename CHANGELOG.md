@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-29
+
+### Added
+
+- **Rafter Sites CLI + MCP** (Rome-1/securable-bolt#151). New `rafter sites create|scan|list|get` commands and matching MCP tools (`sites_create`/`sites_scan`/`sites_list`/`sites_get`) for Rafter Sites — live-application security monitoring (exposed backends, DNS misconfig, SEO, accessibility) — calling the new API-key-authenticated `/api/static/sites*` endpoints. `sites scan` accepts either a project id or a URL. Node + Python parity, MCP tools resolve the API key from `RAFTER_API_KEY` or stored config rather than exiting, so a missing key fails the one tool call instead of the whole server.
+- Live-tested against production before release, which surfaced and fixed: `--format md` now fails with a clear error instead of silently returning JSON (the Sites API has no markdown representation yet); MCP `sites_scan` now rejects being given both `projectId` and `url` instead of silently preferring `projectId`; a double-slash in constructed request URLs; and unreachable per-status default error messages.
+
 ## [0.9.1] - 2026-07-21
 
 ### Added
