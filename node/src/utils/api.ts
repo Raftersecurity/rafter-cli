@@ -2,6 +2,11 @@ import { ConfigManager } from "../core/config-manager.js";
 
 export const API = "https://rafter.so/api/";
 
+/** Join API with a path segment without producing a double slash, regardless of leading/trailing slashes on either side. */
+export function apiUrl(path: string): string {
+  return `${API.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
 // Exit codes
 export const EXIT_SUCCESS = 0;
 export const EXIT_GENERAL_ERROR = 1;
