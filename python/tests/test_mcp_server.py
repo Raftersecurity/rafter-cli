@@ -236,6 +236,7 @@ class TestServerFactory:
             expected = {
                 "scan_secrets", "evaluate_command", "read_audit_log", "get_config",
                 "list_docs", "get_doc", "suppress_finding",
+                "sites_create", "sites_scan", "sites_list", "sites_get",
             }
             assert expected == tool_names
 

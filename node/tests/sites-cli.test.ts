@@ -37,16 +37,33 @@ describe("sites create", () => {
 
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      expect.stringContaining("/static/sites"),
+      "https://rafter.so/api/static/sites",
       { url: "https://example.com" },
       { headers: { "x-api-key": "test-key" } }
     );
   });
 
-  it("returns EXIT_GENERAL_ERROR for 401", async () => {
+  it("returns EXIT_GENERAL_ERROR for 401 with the server's error message", async () => {
     mockedAxios.post.mockRejectedValueOnce({ response: { status: 401, data: { error: "bad key" } } });
     const code = await runSitesCreate("https://example.com", opts);
     expect(code).toBe(EXIT_GENERAL_ERROR);
+    expect(console.error).toHaveBeenCalledWith("Error: Unauthorized — bad key");
+  });
+
+  it("uses the status-specific default message when the server sends no error field", async () => {
+    mockedAxios.post.mockRejectedValueOnce({ response: { status: 401, data: {} } });
+    const code = await runSitesCreate("https://example.com", opts);
+    expect(code).toBe(EXIT_GENERAL_ERROR);
+    expect(console.error).toHaveBeenCalledWith("Error: Unauthorized — invalid or missing API key");
+  });
+
+  it("rejects --format md without calling the API", async () => {
+    const code = await runSitesCreate("https://example.com", { ...opts, format: "md" });
+    expect(code).toBe(EXIT_GENERAL_ERROR);
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "Error: Sites does not support --format md yet, use --format json"
+    );
   });
 
   it("returns EXIT_INSUFFICIENT_SCOPE for 403 wrong scope", async () => {
@@ -68,7 +85,7 @@ describe("sites scan", () => {
     const code = await runSitesScan("proj-123", opts);
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      expect.stringContaining("/static/sites/scan"),
+      "https://rafter.so/api/static/sites/scan",
       { projectId: "proj-123" },
       expect.anything()
     );
@@ -79,9 +96,18 @@ describe("sites scan", () => {
     const code = await runSitesScan("https://example.com", opts);
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      expect.stringContaining("/static/sites/scan"),
+      "https://rafter.so/api/static/sites/scan",
       { url: "https://example.com" },
       expect.anything()
+    );
+  });
+
+  it("rejects --format md without calling the API", async () => {
+    const code = await runSitesScan("proj-123", { ...opts, format: "md" });
+    expect(code).toBe(EXIT_GENERAL_ERROR);
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "Error: Sites does not support --format md yet, use --format json"
     );
   });
 
@@ -105,6 +131,14 @@ describe("sites scan", () => {
     mockedAxios.post.mockRejectedValueOnce({ response: { status: 404, data: { error: "not found" } } });
     const code = await runSitesScan("proj-123", opts);
     expect(code).toBe(EXIT_SCAN_NOT_FOUND);
+    expect(console.error).toHaveBeenCalledWith("Error: Not found — not found");
+  });
+
+  it("uses the status-specific default message for 404 when the server sends no error field", async () => {
+    mockedAxios.post.mockRejectedValueOnce({ response: { status: 404, data: {} } });
+    const code = await runSitesScan("proj-123", opts);
+    expect(code).toBe(EXIT_SCAN_NOT_FOUND);
+    expect(console.error).toHaveBeenCalledWith("Error: Not found — site not found, or not owned by this account");
   });
 
   it("returns EXIT_INSUFFICIENT_SCOPE for 403 run-limit reached", async () => {
@@ -120,15 +154,25 @@ describe("sites list", () => {
     const code = await runSitesList({ ...opts, limit: 10, offset: 5, includeArchived: true });
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.get).toHaveBeenCalledWith(
-      expect.stringContaining("/static/sites"),
+      "https://rafter.so/api/static/sites",
       { params: { limit: "10", offset: "5", include_archived: "true" }, headers: { "x-api-key": "test-key" } }
     );
   });
 
-  it("returns EXIT_GENERAL_ERROR for 401", async () => {
+  it("returns EXIT_GENERAL_ERROR for 401 with the status-specific default message", async () => {
     mockedAxios.get.mockRejectedValueOnce({ response: { status: 401 } });
     const code = await runSitesList(opts);
     expect(code).toBe(EXIT_GENERAL_ERROR);
+    expect(console.error).toHaveBeenCalledWith("Error: Unauthorized — invalid or missing API key");
+  });
+
+  it("rejects --format md without calling the API", async () => {
+    const code = await runSitesList({ ...opts, format: "md" });
+    expect(code).toBe(EXIT_GENERAL_ERROR);
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "Error: Sites does not support --format md yet, use --format json"
+    );
   });
 });
 
@@ -138,7 +182,7 @@ describe("sites get", () => {
     const code = await runSitesGet("p1", opts);
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.get).toHaveBeenCalledWith(
-      expect.stringContaining("/static/sites/p1"),
+      "https://rafter.so/api/static/sites/p1",
       { headers: { "x-api-key": "test-key" } }
     );
   });
@@ -147,11 +191,22 @@ describe("sites get", () => {
     mockedAxios.get.mockRejectedValueOnce({ response: { status: 404, data: { error: "not found" } } });
     const code = await runSitesGet("nonexistent", opts);
     expect(code).toBe(EXIT_SCAN_NOT_FOUND);
+    expect(console.error).toHaveBeenCalledWith("Error: Not found — not found");
   });
 
-  it("returns EXIT_QUOTA_EXHAUSTED for 429", async () => {
+  it("returns EXIT_QUOTA_EXHAUSTED for 429 with the server's message", async () => {
     mockedAxios.get.mockRejectedValueOnce({ response: { status: 429, data: { error: "Rate limit exceeded", retryAfter: 30 } } });
     const code = await runSitesGet("p1", opts);
     expect(code).toBe(EXIT_QUOTA_EXHAUSTED);
+    expect(console.error).toHaveBeenCalledWith("Error: Rate limited — Rate limit exceeded");
+  });
+
+  it("rejects --format md without calling the API", async () => {
+    const code = await runSitesGet("p1", { ...opts, format: "md" });
+    expect(code).toBe(EXIT_GENERAL_ERROR);
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "Error: Sites does not support --format md yet, use --format json"
+    );
   });
 });

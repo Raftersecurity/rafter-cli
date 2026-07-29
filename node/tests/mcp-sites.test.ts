@@ -68,7 +68,7 @@ describe("MCP sites_* tools", () => {
     expect(result.isError).toBeFalsy();
     expect(parseResult(result)).toEqual({ site: { id: "p1" }, run: { id: "r1" }, created: true });
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      expect.stringContaining("/static/sites"),
+      "https://rafter.so/api/static/sites",
       { url: "https://example.com" },
       { headers: { "x-api-key": "test-key" } }
     );
@@ -78,7 +78,7 @@ describe("MCP sites_* tools", () => {
     mockedAxios.post.mockRejectedValueOnce({ response: { status: 401, data: { error: "invalid key" } } });
     const result = await client.callTool({ name: "sites_create", arguments: { url: "https://example.com" } });
     expect(result.isError).toBe(true);
-    expect(parseResult(result).error).toContain("Unauthorized");
+    expect(parseResult(result).error).toBe("Unauthorized — invalid key");
   });
 
   it("sites_create 403 wrong scope", async () => {
@@ -93,7 +93,7 @@ describe("MCP sites_* tools", () => {
     const result = await client.callTool({ name: "sites_scan", arguments: { projectId: "proj-1" } });
     expect(result.isError).toBeFalsy();
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      expect.stringContaining("/static/sites/scan"),
+      "https://rafter.so/api/static/sites/scan",
       { projectId: "proj-1" },
       expect.anything()
     );
@@ -102,14 +102,25 @@ describe("MCP sites_* tools", () => {
   it("sites_scan requires projectId or url", async () => {
     const result = await client.callTool({ name: "sites_scan", arguments: {} });
     expect(result.isError).toBe(true);
-    expect(parseResult(result).error).toContain("Provide projectId or url");
+    expect(parseResult(result).error).toBe("Provide exactly one of projectId or url");
+  });
+
+  it("sites_scan rejects when both projectId and url are provided", async () => {
+    const callsBefore = mockedAxios.post.mock.calls.length;
+    const result = await client.callTool({
+      name: "sites_scan",
+      arguments: { projectId: "proj-1", url: "https://example.com" },
+    });
+    expect(result.isError).toBe(true);
+    expect(parseResult(result).error).toBe("Provide exactly one of projectId or url, not both");
+    expect(mockedAxios.post.mock.calls.length).toBe(callsBefore);
   });
 
   it("sites_scan 404 (not owned)", async () => {
     mockedAxios.post.mockRejectedValueOnce({ response: { status: 404, data: { error: "not found" } } });
     const result = await client.callTool({ name: "sites_scan", arguments: { projectId: "proj-1" } });
     expect(result.isError).toBe(true);
-    expect(parseResult(result).error).toContain("Not found");
+    expect(parseResult(result).error).toBe("Not found — not found");
   });
 
   it("sites_list success with params", async () => {
@@ -117,7 +128,7 @@ describe("MCP sites_* tools", () => {
     const result = await client.callTool({ name: "sites_list", arguments: { limit: 5, include_archived: true } });
     expect(result.isError).toBeFalsy();
     expect(mockedAxios.get).toHaveBeenCalledWith(
-      expect.stringContaining("/static/sites"),
+      "https://rafter.so/api/static/sites",
       { params: { limit: "5", include_archived: "true" }, headers: { "x-api-key": "test-key" } }
     );
   });
@@ -126,7 +137,7 @@ describe("MCP sites_* tools", () => {
     mockedAxios.get.mockRejectedValueOnce({ response: { status: 429, data: { error: "Rate limit exceeded" } } });
     const result = await client.callTool({ name: "sites_list", arguments: {} });
     expect(result.isError).toBe(true);
-    expect(parseResult(result).error).toContain("Rate limited");
+    expect(parseResult(result).error).toBe("Rate limited — Rate limit exceeded");
   });
 
   it("sites_get success", async () => {
@@ -136,7 +147,7 @@ describe("MCP sites_* tools", () => {
     const result = await client.callTool({ name: "sites_get", arguments: { id: "p1" } });
     expect(result.isError).toBeFalsy();
     expect(mockedAxios.get).toHaveBeenCalledWith(
-      expect.stringContaining("/static/sites/p1"),
+      "https://rafter.so/api/static/sites/p1",
       { headers: { "x-api-key": "test-key" } }
     );
   });
@@ -145,7 +156,7 @@ describe("MCP sites_* tools", () => {
     mockedAxios.get.mockRejectedValueOnce({ response: { status: 404, data: { error: "not found" } } });
     const result = await client.callTool({ name: "sites_get", arguments: { id: "nonexistent" } });
     expect(result.isError).toBe(true);
-    expect(parseResult(result).error).toContain("Not found");
+    expect(parseResult(result).error).toBe("Not found — not found");
   });
 
   it("sites_get requires id", async () => {

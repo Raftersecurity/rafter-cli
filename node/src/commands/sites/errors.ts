@@ -32,12 +32,28 @@ function errorBodyMessage(e: any): string {
     if (typeof body.error === "string" && body.error) return body.error;
     if (typeof body.message === "string" && body.message) return body.message;
   }
-  return e?.message || "Unknown error";
+  // Deliberately no non-empty fallback here — an unconditional default (e.g.
+  // "Unknown error") would make every `msg || "<status-specific default>"`
+  // check in describeSitesError() below unreachable, since msg would never
+  // be falsy. Let describeSitesError()'s own per-status defaults apply.
+  return e?.message || "";
 }
 
 export interface SitesErrorResult {
   message: string;
   exitCode: number;
+}
+
+/**
+ * The Sites API never returns a `markdown` field, so `--format md` has nothing
+ * to render. Rather than silently falling back to JSON (which looks like
+ * success but produces the wrong format), reject up front with a clear error.
+ * Returns true (and prints the error) when `fmt` is unsupported.
+ */
+export function rejectUnsupportedFormat(fmt: string | undefined): boolean {
+  if (fmt !== "md") return false;
+  console.error("Error: Sites does not support --format md yet, use --format json");
+  return true;
 }
 
 /**
