@@ -132,7 +132,7 @@ describe("MCP Server — tool registration and schema", () => {
 
   it("should register exactly 7 tools", async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(7);
+    expect(tools).toHaveLength(11);
   });
 
   it("should expose suppress_finding with correct schema", async () => {
@@ -189,6 +189,10 @@ describe("MCP Server — tool registration and schema", () => {
       "list_docs",
       "read_audit_log",
       "scan_secrets",
+      "sites_create",
+      "sites_get",
+      "sites_list",
+      "sites_scan",
       "suppress_finding",
     ]);
   });
@@ -467,7 +471,7 @@ describe("MCP Server — lifecycle", () => {
 
       // Quick sanity — tools are still listed
       const { tools } = await c.listTools();
-      expect(tools).toHaveLength(7);
+      expect(tools).toHaveLength(11);
 
       await c.close();
       await s.close();
