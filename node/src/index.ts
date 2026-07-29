@@ -18,6 +18,7 @@ import { createNotifyCommand } from "./commands/notify.js";
 import { createCompletionCommand } from "./commands/completion.js";
 import { createIssuesCommand } from "./commands/issues/index.js";
 import { createReportCommand } from "./commands/report.js";
+import { createSitesCommand } from "./commands/sites/index.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 import { createRequire } from "module";
@@ -44,6 +45,9 @@ const program = new Command()
 program.addCommand(createRunCommand());
 program.addCommand(createGetCommand());
 program.addCommand(createUsageCommand());
+
+// Sites — live-application security monitoring
+program.addCommand(createSitesCommand());
 
 // Scan command group (default: remote scan; subcommands: local, remote)
 program.addCommand(createScanGroupCommand());

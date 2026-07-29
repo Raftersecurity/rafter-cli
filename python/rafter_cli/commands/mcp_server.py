@@ -7,6 +7,7 @@ import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
 
+import requests
 import typer
 
 from ..core.audit_logger import AuditLogger
@@ -21,6 +22,8 @@ from ..core.docs_loader import fetch_doc, list_docs, resolve_doc_selector
 from ..scanners.betterleaks import BetterleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.union import union_scan_results
+from ..utils.api import API_TIMEOUT
+from .sites import SITES_API_BASE, describe_sites_error, resolve_mcp_api_key
 
 mcp_app = typer.Typer(
     name="mcp",
@@ -199,6 +202,86 @@ def handle_suppress_finding(
     return {"ok": True, **result}
 
 
+def _require_mcp_api_key() -> str:
+    """Resolve the Sites API key for an MCP tool call, raising instead of exiting
+    the process — a missing key should fail just this one tool call, not take
+    down the whole MCP server (see resolve_mcp_api_key's docstring)."""
+    key = resolve_mcp_api_key()
+    if not key:
+        raise RuntimeError(
+            "No API key configured. Set RAFTER_API_KEY or run "
+            "'rafter agent config set backend.apiKey <key>'."
+        )
+    return key
+
+
+def handle_sites_create(url: str) -> dict:
+    """Register a URL as a Rafter Site and kick off its first scan."""
+    key = _require_mcp_api_key()
+    resp = requests.post(SITES_API_BASE, headers={"x-api-key": key}, json={"url": url}, timeout=API_TIMEOUT)
+    if resp.status_code != 200:
+        message, _ = describe_sites_error(resp)
+        raise RuntimeError(message)
+    return resp.json()
+
+
+def handle_sites_scan(
+    project_id: "str | None" = None,
+    url: "str | None" = None,
+    sections: "list[str] | None" = None,
+) -> dict:
+    """Trigger a re-scan of an existing Rafter Site, identified by projectId XOR url."""
+    if project_id and url:
+        raise RuntimeError("Provide exactly one of projectId or url, not both")
+    if not project_id and not url:
+        raise RuntimeError("Provide projectId or url")
+
+    key = _require_mcp_api_key()
+    body: dict = {"projectId": project_id} if project_id else {"url": url}
+    if sections:
+        body["sections"] = list(sections)
+
+    resp = requests.post(f"{SITES_API_BASE}/scan", headers={"x-api-key": key}, json=body, timeout=API_TIMEOUT)
+    if resp.status_code != 200:
+        message, _ = describe_sites_error(resp)
+        raise RuntimeError(message)
+    return resp.json()
+
+
+def handle_sites_list(
+    limit: "int | None" = None,
+    offset: "int | None" = None,
+    include_archived: bool = False,
+) -> dict:
+    """List Rafter Sites registered for monitoring, paginated."""
+    key = _require_mcp_api_key()
+    params: dict = {}
+    if limit is not None:
+        params["limit"] = str(limit)
+    if offset is not None:
+        params["offset"] = str(offset)
+    if include_archived:
+        params["include_archived"] = "true"
+
+    resp = requests.get(SITES_API_BASE, headers={"x-api-key": key}, params=params, timeout=API_TIMEOUT)
+    if resp.status_code != 200:
+        message, _ = describe_sites_error(resp)
+        raise RuntimeError(message)
+    return resp.json()
+
+
+def handle_sites_get(id: str) -> dict:
+    """Get a Rafter Site's status, latest scan run, and findings summary."""
+    from urllib.parse import quote
+
+    key = _require_mcp_api_key()
+    resp = requests.get(f"{SITES_API_BASE}/{quote(id, safe='')}", headers={"x-api-key": key}, timeout=API_TIMEOUT)
+    if resp.status_code != 200:
+        message, _ = describe_sites_error(resp)
+        raise RuntimeError(message)
+    return resp.json()
+
+
 # ── MCP server factory ────────────────────────────────────────────────
 
 
@@ -295,6 +378,61 @@ def create_mcp_server():
             reason: Why this is a false positive — persisted with the rule. Strongly recommended.
         """
         return json.dumps(handle_suppress_finding(path, rules, reason))
+
+    @mcp.tool()
+    def sites_create(url: str) -> str:
+        """Register a URL as a Rafter Site for live-application security monitoring
+        (exposed backends, DNS misconfig, SEO, accessibility) and kick off its
+        first scan. Use when asked to start monitoring a domain/site.
+
+        Args:
+            url: URL of the site to monitor.
+        """
+        return json.dumps(handle_sites_create(url))
+
+    @mcp.tool()
+    def sites_scan(
+        projectId: str | None = None,
+        url: str | None = None,
+        sections: list[str] | None = None,
+    ) -> str:
+        """Trigger a re-scan of an existing Rafter Site. Identify the site by
+        projectId OR url (exactly one required). Use when asked to re-scan or
+        refresh a site's findings.
+
+        Args:
+            projectId: The site's project id (use this or url, not both).
+            url: The site's URL (use this or projectId, not both).
+            sections: Subset of scan sections to run (flight, security, dns). Omit to run all.
+        """
+        return json.dumps(handle_sites_scan(projectId, url, sections))
+
+    @mcp.tool()
+    def sites_list(
+        limit: int | None = None,
+        offset: int | None = None,
+        include_archived: bool = False,
+    ) -> str:
+        """List Rafter Sites registered for monitoring, paginated. Use when asked
+        'what sites are being monitored?' or to browse before calling sites_get.
+
+        Args:
+            limit: Results per page, 1-100 (default: 25).
+            offset: Pagination offset (default: 0).
+            include_archived: Include archived sites (default: false).
+        """
+        return json.dumps(handle_sites_list(limit, offset, include_archived))
+
+    @mcp.tool()
+    def sites_get(id: str) -> str:
+        """Get a Rafter Site's status, latest scan run, and findings summary by
+        its project id. Use after sites_list or sites_create to check a
+        specific site's results.
+
+        Args:
+            id: The site's project id.
+        """
+        return json.dumps(handle_sites_get(id))
 
     @mcp.resource("rafter://config")
     def config_resource() -> str:
