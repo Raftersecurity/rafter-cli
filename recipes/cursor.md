@@ -97,7 +97,7 @@ Ask the Cursor agent in natural language — it calls the matching tool:
 - "What's our current command policy?" → `get_config`
 
 Hooks run automatically on tool/shell use; you do not need to invoke them
-manually.
+manually. 
 
 ## Troubleshooting
 
