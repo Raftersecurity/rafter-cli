@@ -2,7 +2,7 @@ name: Stale Issue/PR Cleanup
 
 on:
   schedule:
-    - cron: '30 1 * * *'
+    - cron: "30 1 * * *"
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   stale:
-    name: Mark and close stale issues/PRs
+    name: Mark stale issues and pull requests
     runs-on: ubuntu-latest
 
     steps:
