@@ -87,6 +87,10 @@ function validateConfig(raw: any): RafterConfig {
         console.error('Warning: config "agent.commandPolicy.requireApproval" must be an array of strings — using default.');
         cp.requireApproval = [...defaults.agent!.commandPolicy.requireApproval];
       }
+      if (cp.allowProjectOverride !== undefined && typeof cp.allowProjectOverride !== "boolean") {
+        console.error('Warning: config "agent.commandPolicy.allowProjectOverride" must be a boolean — ignoring (project policies cannot loosen command policy).');
+        delete cp.allowProjectOverride;
+      }
     }
 
     // audit
@@ -296,6 +300,19 @@ export class ConfigManager {
   }
 
   /**
+   * Whether the machine owner has opted out of the project-policy floor.
+   *
+   * Read from `this.load()` — the GLOBAL config file only. It must never be
+   * sourced from the project `.rafter.yml`, because a repo that could set this
+   * flag could switch the floor off and the protection would be worth nothing.
+   * That asymmetry is the whole point of the setting, so it is read here rather
+   * than off the already-merged config.
+   */
+  private allowsProjectOverride(): boolean {
+    return this.load().agent?.commandPolicy?.allowProjectOverride === true;
+  }
+
+  /**
    * Load config merged with .rafter.yml policy (policy wins)
    */
   loadWithPolicy(): RafterConfig {
@@ -314,17 +331,10 @@ export class ConfigManager {
       config.agent.riskLevel = policy.riskLevel as any;
     }
 
-    // Command policy — arrays replace, not append
+    // Command policy — the global config is a FLOOR the project may raise but
+    // never lower. See `mergeCommandPolicy` (sable-nz4y).
     if (policy.commandPolicy && config.agent) {
-      if (policy.commandPolicy.mode) {
-        config.agent.commandPolicy.mode = policy.commandPolicy.mode as any;
-      }
-      if (policy.commandPolicy.blockedPatterns) {
-        config.agent.commandPolicy.blockedPatterns = policy.commandPolicy.blockedPatterns;
-      }
-      if (policy.commandPolicy.requireApproval) {
-        config.agent.commandPolicy.requireApproval = policy.commandPolicy.requireApproval;
-      }
+      mergeCommandPolicy(config.agent.commandPolicy, policy.commandPolicy, this.allowsProjectOverride());
     }
 
     // Scan settings
@@ -433,5 +443,99 @@ export class ConfigManager {
 
   private isObject(item: any): boolean {
     return item && typeof item === "object" && !Array.isArray(item);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Project-policy floor (sable-nz4y)
+// ---------------------------------------------------------------------------
+//
+// Policy discovery walks up from cwd to the git root, so the `.rafter.yml` this
+// merges is a file IN THE REPOSITORY BEING WORKED ON. rafter ships inside agent
+// pretool hooks, so on an untrusted repo that file is attacker-controlled.
+//
+// It used to REPLACE the machine owner's command policy wholesale: a repo
+// shipping `{ mode: allow-all, blocked_patterns: [], require_approval: [] }`
+// switched off every guardrail below the unconditional critical hard-block —
+// including patterns the owner had explicitly deny-listed.
+//
+// The rule this restores is the one the codebase already states ~20 lines below,
+// for the Plus-approval gate (sable-9ddf): a project policy may turn a gate ON,
+// but must never turn OFF a gate the machine owner set globally. So the global
+// config is a FLOOR:
+//
+//   * blockedPatterns / requireApproval — UNION. A project adds rules; removing
+//     one the owner set is not expressible.
+//   * mode — accepted only when at least as strict as the owner's. A project
+//     may tighten `allow-all` to `approve-dangerous`, never the reverse.
+//
+// The owner (never the repo) can opt out with
+// `agent.commandPolicy.allowProjectOverride: true` in the GLOBAL config, which
+// restores the old replace semantics for people who deliberately delegate policy
+// to their projects.
+//
+// Note this does not touch the critical hard-block, which was never reachable
+// from policy: CommandInterceptor.evaluate() returns on `critical` BEFORE any
+// policy is loaded. That property held under every hostile policy tested; this
+// change is about everything *below* critical.
+
+/**
+ * Strictness rank for command-policy modes. Higher is stricter.
+ *
+ * `approve-dangerous` is the only mode that gates on assessed risk, so it is
+ * strictly stronger than the other two. `deny-list` and `allow-all` currently
+ * behave identically in the interceptor (both rely solely on the explicit
+ * pattern lists, which are checked regardless of mode) — they are ranked apart
+ * anyway so that a project moving `allow-all` -> `deny-list` is treated as a
+ * tightening rather than a lateral move if their behavior ever diverges.
+ */
+const COMMAND_MODE_STRICTNESS: Record<string, number> = {
+  "allow-all": 0,
+  "deny-list": 1,
+  "approve-dangerous": 2,
+};
+
+/** Union preserving order: floor entries first, then project entries not already present. */
+function unionPatterns(floor: string[], project: string[]): string[] {
+  const seen = new Set(floor);
+  return [...floor, ...project.filter((p) => !seen.has(p))];
+}
+
+/**
+ * Merge a project command policy over the global one under the floor rule.
+ *
+ * Mutates `target` in place, matching the surrounding merge style. When
+ * `allowOverride` is true the pre-sable-nz4y replace semantics are used.
+ */
+export function mergeCommandPolicy(
+  target: { mode: string; blockedPatterns: string[]; requireApproval: string[] },
+  project: { mode?: string; blockedPatterns?: string[]; requireApproval?: string[] },
+  allowOverride: boolean
+): void {
+  if (allowOverride) {
+    if (project.mode) target.mode = project.mode as any;
+    if (project.blockedPatterns) target.blockedPatterns = project.blockedPatterns;
+    if (project.requireApproval) target.requireApproval = project.requireApproval;
+    return;
+  }
+
+  if (project.mode && project.mode !== target.mode) {
+    const projectRank = COMMAND_MODE_STRICTNESS[project.mode];
+    const floorRank = COMMAND_MODE_STRICTNESS[target.mode];
+    // An unknown mode is not demonstrably at least as strict, so it is refused.
+    if (projectRank !== undefined && floorRank !== undefined && projectRank >= floorRank) {
+      target.mode = project.mode as any;
+    } else {
+      console.error(
+        `Warning: project policy sets agent.commandPolicy.mode "${project.mode}", which is less strict than "${target.mode}" from your global config — ignoring. Set agent.commandPolicy.allowProjectOverride: true in your global config to allow project policies to loosen command policy.`
+      );
+    }
+  }
+
+  if (project.blockedPatterns) {
+    target.blockedPatterns = unionPatterns(target.blockedPatterns, project.blockedPatterns);
+  }
+  if (project.requireApproval) {
+    target.requireApproval = unionPatterns(target.requireApproval, project.requireApproval);
   }
 }

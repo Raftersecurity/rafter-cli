@@ -206,6 +206,10 @@ class ConfigManager:
                 if key in cp and (not isinstance(cp[key], list) or not all(isinstance(v, str) for v in cp[key])):
                     print(f'rafter: config "commandPolicy.{key}" must be an array of strings — using default.', file=sys.stderr)
                     del cp[key]
+            for key in ("allowProjectOverride", "allow_project_override"):
+                if key in cp and not isinstance(cp[key], bool):
+                    print(f'rafter: config "commandPolicy.{key}" must be a boolean — ignoring (project policies cannot loosen command policy).', file=sys.stderr)
+                    del cp[key]
 
         # audit
         audit = agent.get("audit")
@@ -269,12 +273,15 @@ class ConfigManager:
 
         cp = policy.get("command_policy")
         if cp:
-            if cp.get("mode"):
-                config.agent.command_policy.mode = cp["mode"]
-            if cp.get("blocked_patterns") is not None:
-                config.agent.command_policy.blocked_patterns = cp["blocked_patterns"]
-            if cp.get("require_approval") is not None:
-                config.agent.command_policy.require_approval = cp["require_approval"]
+            # The global config is a FLOOR the project may raise but never
+            # lower. See merge_command_policy (sable-nz4y). allow_project_override
+            # is read from self.load() — the GLOBAL config only, never from the
+            # project policy being merged.
+            merge_command_policy(
+                config.agent.command_policy,
+                cp,
+                self.load().agent.command_policy.allow_project_override is True,
+            )
 
         scan = policy.get("scan")
         if scan:
@@ -435,3 +442,101 @@ class ConfigManager:
             else:
                 out[k] = v
         return out
+
+
+# ---------------------------------------------------------------------------
+# Project-policy floor (sable-nz4y)
+# ---------------------------------------------------------------------------
+#
+# Policy discovery walks up from cwd to the git root, so the ``.rafter.yml`` this
+# merges is a file IN THE REPOSITORY BEING WORKED ON. rafter ships inside agent
+# pretool hooks, so on an untrusted repo that file is attacker-controlled.
+#
+# It used to REPLACE the machine owner's command policy wholesale: a repo
+# shipping ``{mode: allow-all, blocked_patterns: [], require_approval: []}``
+# switched off every guardrail below the unconditional critical hard-block —
+# including patterns the owner had explicitly deny-listed.
+#
+# The rule this restores is the one the codebase already states ~20 lines above,
+# for the Plus-approval gate (sable-9ddf): a project policy may turn a gate ON,
+# but must never turn OFF a gate the machine owner set globally. So the global
+# config is a FLOOR:
+#
+#   * blocked_patterns / require_approval — UNION. A project adds rules; removing
+#     one the owner set is not expressible.
+#   * mode — accepted only when at least as strict as the owner's. A project may
+#     tighten ``allow-all`` to ``approve-dangerous``, never the reverse.
+#
+# The owner (never the repo) can opt out with
+# ``agent.commandPolicy.allowProjectOverride: true`` in the GLOBAL config, which
+# restores the old replace semantics for people who deliberately delegate policy
+# to their projects.
+#
+# Note this does not touch the critical hard-block, which was never reachable
+# from policy: CommandInterceptor.evaluate() returns on "critical" BEFORE any
+# policy is loaded. That property held under every hostile policy tested; this
+# change is about everything *below* critical.
+#
+# Mirrors ``mergeCommandPolicy`` in node/src/core/config-manager.ts.
+
+#: Strictness rank for command-policy modes. Higher is stricter.
+#:
+#: ``approve-dangerous`` is the only mode that gates on assessed risk, so it is
+#: strictly stronger than the other two. ``deny-list`` and ``allow-all``
+#: currently behave identically in the interceptor (both rely solely on the
+#: explicit pattern lists, which are checked regardless of mode) — they are
+#: ranked apart anyway so that a project moving ``allow-all`` -> ``deny-list`` is
+#: treated as a tightening rather than a lateral move if their behavior ever
+#: diverges.
+_COMMAND_MODE_STRICTNESS: dict[str, int] = {
+    "allow-all": 0,
+    "deny-list": 1,
+    "approve-dangerous": 2,
+}
+
+
+def _union_patterns(floor: list[str], project: list[str]) -> list[str]:
+    """Union preserving order: floor entries first, then new project entries."""
+    seen = set(floor)
+    return [*floor, *[p for p in project if p not in seen]]
+
+
+def merge_command_policy(target, project: dict, allow_override: bool) -> None:
+    """Merge a project command policy over the global one under the floor rule.
+
+    Mutates ``target`` in place, matching the surrounding merge style. When
+    ``allow_override`` is True the pre-sable-nz4y replace semantics are used.
+    """
+    if allow_override:
+        if project.get("mode"):
+            target.mode = project["mode"]
+        if project.get("blocked_patterns") is not None:
+            target.blocked_patterns = project["blocked_patterns"]
+        if project.get("require_approval") is not None:
+            target.require_approval = project["require_approval"]
+        return
+
+    mode = project.get("mode")
+    if mode and mode != target.mode:
+        project_rank = _COMMAND_MODE_STRICTNESS.get(mode)
+        floor_rank = _COMMAND_MODE_STRICTNESS.get(target.mode)
+        # An unknown mode is not demonstrably at least as strict, so it is refused.
+        if project_rank is not None and floor_rank is not None and project_rank >= floor_rank:
+            target.mode = mode
+        else:
+            print(
+                f'rafter: project policy sets agent.commandPolicy.mode "{mode}", which is '
+                f'less strict than "{target.mode}" from your global config — ignoring. Set '
+                "agent.commandPolicy.allowProjectOverride: true in your global config to "
+                "allow project policies to loosen command policy.",
+                file=sys.stderr,
+            )
+
+    if project.get("blocked_patterns") is not None:
+        target.blocked_patterns = _union_patterns(
+            target.blocked_patterns, project["blocked_patterns"]
+        )
+    if project.get("require_approval") is not None:
+        target.require_approval = _union_patterns(
+            target.require_approval, project["require_approval"]
+        )

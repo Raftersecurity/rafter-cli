@@ -49,6 +49,13 @@ class CommandPolicyConfig:
     require_approval: list[str] = field(
         default_factory=lambda: list(_default_require_approval())
     )
+    #: Opt out of the project-policy floor (sable-nz4y).
+    #:
+    #: Read ONLY from the machine owner's global config — never from a project
+    #: ``.rafter.yml``, or a repo could grant itself the permission and the floor
+    #: would be no floor at all. Default (absent/False) keeps the floor: a
+    #: project policy may tighten command policy, never loosen it.
+    allow_project_override: bool = False
 
 
 @dataclass
