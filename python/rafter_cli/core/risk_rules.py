@@ -15,15 +15,32 @@ import re
 # Directories where `rm -rf /<dir>` is catastrophic (data loss / unbootable).
 _CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt"
 
+# Characters that end a path operand (sable-5adm).
+#
+# These rules used to terminate the path on whitespace or end-of-string alone.
+# A shell operator needs no whitespace before it, so appending one character
+# dropped an unconditional hard-block to "high" — a tier policy and mode *can*
+# opt out of — while the command ran exactly the same:
+#
+#     rm -rf /     -> critical        rm -rf /;      -> high
+#                                     rm -rf /|cat   -> high
+#                                     rm -rf /&& ls  -> high
+#                                     rm -rf />f     -> high
+#
+# Chain operators, the subshell close, and the redirect operators all terminate
+# an operand, so all of them belong here. This is the same token-end class the
+# `rm` flag normalizer uses, widened by the redirects.
+_PATH_END = r"[\s;&|()<>]"
+
 # Catastrophic, irreversible commands. Hard-blocked unconditionally — no policy,
 # mode, or deny-list can opt out of them.
 CRITICAL_PATTERNS: list[str] = [
     # rm -rf / (root only, any flag order: -rf, -fr, -r -f, -f -r)
-    r"rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*\s+/(\s|$)",
-    r"rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*\s+/(\s|$)",
+    rf"rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*\s+/({_PATH_END}|$)",
+    rf"rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*\s+/({_PATH_END}|$)",
     # rm -rf on critical top-level directories
-    rf"rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*\s+/({_CRITICAL_DIRS})(/|\s|$)",
-    rf"rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*\s+/({_CRITICAL_DIRS})(/|\s|$)",
+    rf"rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*\s+/({_CRITICAL_DIRS})(/|{_PATH_END}|$)",
+    rf"rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*\s+/({_CRITICAL_DIRS})(/|{_PATH_END}|$)",
     r":\(\)\{\s*:\|:&\s*\};:",
     r"dd\s+if=.*of=/dev/sd",
     r">\s*/dev/sd",

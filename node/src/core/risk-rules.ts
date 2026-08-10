@@ -15,6 +15,25 @@ export type CommandRiskLevel = "low" | "medium" | "high" | "critical";
 const CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt";
 
 /**
+ * Characters that end a path operand (sable-5adm).
+ *
+ * These rules used to terminate the path on whitespace or end-of-string alone.
+ * A shell operator needs no whitespace before it, so appending one character
+ * dropped an unconditional hard-block to `high` — a tier policy and mode *can*
+ * opt out of — while the command ran exactly the same:
+ *
+ *     rm -rf /     -> critical        rm -rf /;      -> high
+ *                                     rm -rf /|cat   -> high
+ *                                     rm -rf /&& ls  -> high
+ *                                     rm -rf />f     -> high
+ *
+ * Chain operators, the subshell close, and the redirect operators all terminate
+ * an operand, so all of them belong here. This is the same token-end class the
+ * `rm` flag normalizer uses, widened by the redirects.
+ */
+const PATH_END = "[\\s;&|()<>]";
+
+/**
  * Catastrophic, irreversible commands. These are hard-blocked unconditionally —
  * no policy, mode, or deny-list can opt out of them. Kept as pattern *sources*
  * so the default policy deny-list (`DEFAULT_BLOCKED_PATTERNS`) is exactly this
@@ -22,11 +41,11 @@ const CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt";
  */
 const CRITICAL_PATTERN_SOURCES: string[] = [
   // rm -rf / (root only, any flag order)
-  `rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+/(\\s|$)`,
-  `rm\\s+(-[a-z]*f[a-z]*\\s+)*-[a-z]*r[a-z]*\\s+/(\\s|$)`,
+  `rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+/(${PATH_END}|$)`,
+  `rm\\s+(-[a-z]*f[a-z]*\\s+)*-[a-z]*r[a-z]*\\s+/(${PATH_END}|$)`,
   // rm -rf on critical top-level directories
-  `rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+/(${CRITICAL_DIRS})(/|\\s|$)`,
-  `rm\\s+(-[a-z]*f[a-z]*\\s+)*-[a-z]*r[a-z]*\\s+/(${CRITICAL_DIRS})(/|\\s|$)`,
+  `rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+/(${CRITICAL_DIRS})(/|${PATH_END}|$)`,
+  `rm\\s+(-[a-z]*f[a-z]*\\s+)*-[a-z]*r[a-z]*\\s+/(${CRITICAL_DIRS})(/|${PATH_END}|$)`,
   `:\\(\\)\\{\\s*:\\|:&\\s*\\};:`,   // fork bomb
   `dd\\s+if=.*of=/dev/sd`,
   `>\\s*/dev/sd`,
