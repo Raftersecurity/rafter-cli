@@ -475,9 +475,124 @@ def sanitize_command_for_matching(command: str) -> str:
     return _sanitize(command, 0)
 
 
+# ---------------------------------------------------------------------------
+# `rm` flag canonicalization
+# ---------------------------------------------------------------------------
+#
+# The rm rules above spell their flags the short way (`-rf`, `-r -f`, `-fr`).
+# GNU rm accepts long spellings that mean exactly the same thing, and those
+# evaded every rule — `rm --recursive --force /` assessed LOW and was silently
+# allowed. That inversion is the dangerous one: modern coreutils REFUSES
+# `rm -rf /` unless `--no-preserve-root` is also given, so the only interactive
+# form that actually wipes root was precisely the form not caught.
+#
+# Rather than multiply the pattern table by every spelling (short, long,
+# `--flag=value`, and each interleaving), the flag run following an `rm` is
+# rewritten to one canonical short cluster before matching:
+#
+#     rm --recursive --force /              -> rm -rf /
+#     rm --recursive=yes -f /               -> rm -rf /
+#     rm -r --force --no-preserve-root /    -> rm -rf /
+#
+# Collapsing the run also closes a second gap: the critical patterns anchor the
+# path immediately after the flags, so an intervening flag (`--no-preserve-root`)
+# used to break the match even when both -r and -f were present.
+#
+# Only runs carrying a recursive and/or force flag are rewritten; `rm -i -v f`
+# is left byte for byte alone. Note GNU rm's long options take no argument at
+# all, so `--recursive=yes` is in truth an error — treating it as recursive is
+# the conservative reading, which is the correct direction for a blocker.
+#
+# Mirrors ``normalizeRmFlags`` in node/src/core/risk-rules.ts.
+
+#: `--recursive`, bare or in `--flag=value` form.
+_RM_LONG_RECURSIVE = re.compile(r"^--recursive(=|$)", re.IGNORECASE)
+#: `--force`, bare or in `--flag=value` form.
+_RM_LONG_FORCE = re.compile(r"^--force(=|$)", re.IGNORECASE)
+#: A short flag cluster: `-r`, `-rf`, `-vf`, …
+_RM_SHORT_FLAG = re.compile(r"^-[a-z]+$", re.IGNORECASE)
+#: Characters that end a token: whitespace, chain operators, subshell close.
+_TOKEN_END = re.compile(r"[\s;&|)]")
+#: An `rm` command word — at the start of the line or after a chain operator.
+_RM_WORD = re.compile(r"(^|[\s;&|(])rm(?=\s)", re.IGNORECASE)
+
+
+def normalize_rm_flags(command: str) -> str:
+    """Rewrite each `rm` invocation's flag run to a canonical short cluster.
+
+    Flag *spelling* then cannot change the assessed risk. Operates on the
+    sanitized command; returns the input unchanged when nothing needs rewriting.
+    """
+    if "rm" not in command.lower():
+        return command
+
+    out: list[str] = []
+    cursor = 0
+
+    for m in _RM_WORD.finditer(command):
+        rm_end = m.end()  # just past the "rm" token
+
+        i = rm_end
+        has_r = False
+        has_f = False
+        saw_flag = False
+        run_end = rm_end
+
+        # Consume the consecutive flag tokens that follow. Operands, `--`, and
+        # anything past a chain operator end the run.
+        while i < len(command):
+            j = i
+            while j < len(command) and command[j] in " \t":
+                j += 1
+            if j == i:
+                break  # no separator — not a fresh token
+
+            k = j
+            while k < len(command) and not _TOKEN_END.match(command[k]):
+                k += 1
+            tok = command[j:k]
+
+            if not tok.startswith("-") or tok == "--":
+                break
+
+            if _RM_LONG_RECURSIVE.match(tok):
+                has_r = True
+            elif _RM_LONG_FORCE.match(tok):
+                has_f = True
+            elif _RM_SHORT_FLAG.match(tok):
+                low = tok.lower()
+                if "r" in low:
+                    has_r = True
+                if "f" in low:
+                    has_f = True
+
+            saw_flag = True
+            run_end = k
+            i = k
+
+        if not saw_flag or not (has_r or has_f):
+            continue
+
+        canonical = "-" + ("r" if has_r else "") + ("f" if has_f else "")
+        out.append(command[cursor:rm_end])
+        out.append(" " + canonical)
+        cursor = run_end
+
+    if cursor == 0:
+        return command
+    out.append(command[cursor:])
+    return "".join(out)
+
+
+def _match_target(command: str) -> str:
+    """The string the risk patterns are matched against: argument-aware
+    sanitized, with `rm` flag spellings canonicalized."""
+    return normalize_rm_flags(sanitize_command_for_matching(command).strip())
+
+
 def assess_command_risk(command: str) -> str:
     """Assess risk level of a command string."""
-    cmd = sanitize_command_for_matching(command).strip()
+    cmd = _match_target(command)
     if not cmd:
         return "low"
     for p in CRITICAL_PATTERNS:
@@ -499,7 +614,7 @@ def match_critical_pattern(command: str) -> str | None:
     command is already classified "critical", to surface *which* built-in rule
     matched.
     """
-    cmd = sanitize_command_for_matching(command).strip()
+    cmd = _match_target(command)
     for p in CRITICAL_PATTERNS:
         if re.search(p, cmd, re.IGNORECASE):
             return p

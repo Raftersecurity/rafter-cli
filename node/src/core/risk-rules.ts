@@ -463,11 +463,113 @@ export function sanitizeCommandForMatching(command: string): string {
   return sanitize(command, 0);
 }
 
+// ---------------------------------------------------------------------------
+// `rm` flag canonicalization
+// ---------------------------------------------------------------------------
+//
+// The rm rules above spell their flags the short way (`-rf`, `-r -f`, `-fr`).
+// GNU rm accepts long spellings that mean exactly the same thing, and those
+// evaded every rule — `rm --recursive --force /` assessed LOW and was silently
+// allowed. That inversion is the dangerous one: modern coreutils REFUSES
+// `rm -rf /` unless `--no-preserve-root` is also given, so the only interactive
+// form that actually wipes root was precisely the form not caught.
+//
+// Rather than multiply the pattern table by every spelling (short, long,
+// `--flag=value`, and each interleaving), the flag run following an `rm` is
+// rewritten to one canonical short cluster before matching:
+//
+//     rm --recursive --force /              -> rm -rf /
+//     rm --recursive=yes -f /               -> rm -rf /
+//     rm -r --force --no-preserve-root /    -> rm -rf /
+//
+// Collapsing the run also closes a second gap: the critical patterns anchor the
+// path immediately after the flags, so an intervening flag (`--no-preserve-root`)
+// used to break the match even when both -r and -f were present.
+//
+// Only runs carrying a recursive and/or force flag are rewritten; `rm -i -v f`
+// is left byte for byte alone. Note GNU rm's long options take no argument at
+// all, so `--recursive=yes` is in truth an error — treating it as recursive is
+// the conservative reading, which is the correct direction for a blocker.
+
+/** `--recursive`, bare or in `--flag=value` form. */
+const RM_LONG_RECURSIVE = /^--recursive(=|$)/;
+/** `--force`, bare or in `--flag=value` form. */
+const RM_LONG_FORCE = /^--force(=|$)/;
+/** A short flag cluster: `-r`, `-rf`, `-vf`, … */
+const RM_SHORT_FLAG = /^-[a-z]+$/;
+/** Characters that end a token: whitespace, chain operators, subshell close. */
+const TOKEN_END = /[\s;&|)]/;
+
+/**
+ * Rewrite each `rm` invocation's flag run to a canonical short cluster so that
+ * flag *spelling* cannot change the assessed risk. Operates on the sanitized,
+ * lowercased command; returns the input unchanged when nothing needs rewriting.
+ */
+export function normalizeRmFlags(command: string): string {
+  if (!command.includes("rm")) return command;
+
+  const rmRe = /(^|[\s;&|(])rm(?=\s)/g;
+  let out = "";
+  let cursor = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = rmRe.exec(command)) !== null) {
+    const rmEnd = m.index + m[0].length; // just past the "rm" token
+
+    let i = rmEnd;
+    let hasR = false;
+    let hasF = false;
+    let sawFlag = false;
+    let runEnd = rmEnd;
+
+    // Consume the consecutive flag tokens that follow. Operands, `--`, and
+    // anything past a chain operator end the run.
+    while (i < command.length) {
+      let j = i;
+      while (j < command.length && (command[j] === " " || command[j] === "\t")) j++;
+      if (j === i) break; // no separator — not a fresh token
+
+      let k = j;
+      while (k < command.length && !TOKEN_END.test(command[k])) k++;
+      const tok = command.slice(j, k);
+
+      if (!tok.startsWith("-") || tok === "--") break;
+
+      if (RM_LONG_RECURSIVE.test(tok)) hasR = true;
+      else if (RM_LONG_FORCE.test(tok)) hasF = true;
+      else if (RM_SHORT_FLAG.test(tok)) {
+        if (tok.includes("r")) hasR = true;
+        if (tok.includes("f")) hasF = true;
+      }
+
+      sawFlag = true;
+      runEnd = k;
+      i = k;
+    }
+
+    if (!sawFlag || (!hasR && !hasF)) continue;
+
+    const canonical = `-${hasR ? "r" : ""}${hasF ? "f" : ""}`;
+    out += command.slice(cursor, rmEnd) + " " + canonical;
+    cursor = runEnd;
+  }
+
+  return cursor === 0 ? command : out + command.slice(cursor);
+}
+
+/**
+ * The string the risk patterns are matched against: argument-aware sanitized,
+ * lowercased, with `rm` flag spellings canonicalized.
+ */
+function matchTarget(command: string): string {
+  return normalizeRmFlags(sanitizeCommandForMatching(command).toLowerCase().trim());
+}
+
 /**
  * Assess risk level of a command string.
  */
 export function assessCommandRisk(command: string): CommandRiskLevel {
-  const cmd = sanitizeCommandForMatching(command).toLowerCase().trim();
+  const cmd = matchTarget(command);
   if (!cmd) return "low";
 
   for (const pattern of CRITICAL_PATTERNS) {
@@ -489,7 +591,7 @@ export function assessCommandRisk(command: string): CommandRiskLevel {
  * built-in rule matched.
  */
 export function matchedCriticalPattern(command: string): string | null {
-  const cmd = sanitizeCommandForMatching(command).toLowerCase().trim();
+  const cmd = matchTarget(command);
   for (const pattern of CRITICAL_PATTERNS) {
     if (pattern.test(cmd)) return pattern.source;
   }
