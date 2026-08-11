@@ -15,6 +15,35 @@ import re
 # Directories where `rm -rf /<dir>` is catastrophic (data loss / unbootable).
 _CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt"
 
+# Wrappers that run their argument as the command: `sudo -E mkfs …`,
+# `timeout 5 fdisk …`, `sh -c "mkfs …"`. Trailing flags and a bare numeric
+# argument (timeout's duration, nice's level) are consumed so the tool name is
+# still the next token.
+_COMMAND_WRAPPERS = (
+    "sudo|doas|env|command|time|exec|nohup|nice|ionice|timeout|stdbuf"
+    "|strace|watch|xargs|sh|bash|zsh|dash|ash|ksh"
+)
+
+# Start of a command: the beginning of the line, just after a shell operator or
+# a `then`/`do`/`else` keyword, or just after one of the wrappers above. Leading
+# VAR=value assignments and an absolute path (`/sbin/mkfs.ext4`) are allowed
+# between that point and the tool name.
+#
+# Disk tools are catastrophic when INVOKED, not when named. `mkfs`, `fdisk` and
+# `parted` were bare substrings, so `vim departed.md` — 'departed' contains
+# 'parted' — was an unconditional block on a tool that ships inside agent hooks,
+# with no way for the user to configure out of it. Anchoring is only safe if it
+# stays wide enough to hold every real invocation: each alternative below is
+# here because a disk-destroying command was measured escaping without it.
+_COMMAND_POSITION = (
+    rf"(?:^|[\n;&|(`]\s*|\b(?:{_COMMAND_WRAPPERS})\s+(?:-\S+\s+|\d+\s+)*"
+    r"|\b(?:then|do|else)\s+)(?:\w+=\S*\s+)*(?:[\w.-]*/)*"
+)
+
+# Partition/filesystem tools that destroy a disk. `mkfs.<fs>` covers the
+# ext4/xfs/btrfs spellings; `s?fdisk` covers both fdisk and sfdisk.
+_DISK_TOOLS = r"(?:mkfs(?:\.[a-z0-9]+)?|s?fdisk|parted)"
+
 # Catastrophic, irreversible commands. Hard-blocked unconditionally — no policy,
 # mode, or deny-list can opt out of them.
 CRITICAL_PATTERNS: list[str] = [
@@ -27,9 +56,7 @@ CRITICAL_PATTERNS: list[str] = [
     r":\(\)\{\s*:\|:&\s*\};:",
     r"dd\s+if=.*of=/dev/sd",
     r">\s*/dev/sd",
-    r"mkfs",
-    r"fdisk",
-    r"parted",
+    rf"{_COMMAND_POSITION}{_DISK_TOOLS}(?:\s|$)",
 ]
 
 HIGH_PATTERNS: list[str] = [
