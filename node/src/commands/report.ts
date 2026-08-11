@@ -46,6 +46,21 @@ export function createReportCommand(): Command {
         return;
       }
 
+      // Empty input is a missing-input problem, not a malformed-data problem.
+      // Reporting it as "Invalid JSON — Unexpected end of JSON input" points
+      // the user at data they never supplied, which is the opposite of the
+      // hint they need on a first run.
+      if (!jsonData.trim()) {
+        const source = input ? `File is empty: ${path.resolve(input)}` : "No input on stdin";
+        console.error(
+          `Error: ${source}. report reads scan results as JSON.\n` +
+          "  Example: rafter secrets --json . | rafter report -o report.html\n" +
+          "  Example: rafter report scan-results.json -o report.html"
+        );
+        process.exit(2);
+        return;
+      }
+
       let results: ReportResult[];
       try {
         results = JSON.parse(jsonData);

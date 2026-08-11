@@ -1203,7 +1203,13 @@ Generate a standalone HTML security report from scan results.
 - `-o, --output <path>` — output file path (default: stdout)
 - `--title <title>` — report title (default: "Rafter Security Report")
 
-Node only. Not yet implemented in Python.
+Exit codes: `0` report written; `2` input missing, empty, unreadable, or not a JSON array.
+
+Empty input is reported as missing input, not as malformed JSON — `No input on stdin` or
+`File is empty: <path>`, followed by the two usage examples. A parser error about column 1
+of an empty document tells the user their data is wrong when they supplied none.
+
+Implemented in both runtimes.
 
 ### rafter issues create SUBCOMMAND
 
