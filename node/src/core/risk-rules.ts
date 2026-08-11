@@ -15,6 +15,39 @@ export type CommandRiskLevel = "low" | "medium" | "high" | "critical";
 const CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt";
 
 /**
+ * Wrappers that run their argument as the command: `sudo -E mkfs …`,
+ * `timeout 5 fdisk …`, `sh -c "mkfs …"`. Trailing flags and a bare numeric
+ * argument (timeout's duration, nice's level) are consumed so the tool name is
+ * still the next token.
+ */
+const COMMAND_WRAPPERS =
+  "sudo|doas|env|command|time|exec|nohup|nice|ionice|timeout|stdbuf|strace|watch|xargs|sh|bash|zsh|dash|ash|ksh";
+
+/**
+ * Start of a command: the beginning of the line, just after a shell operator or
+ * a `then`/`do`/`else` keyword, or just after one of the wrappers above.
+ * Leading VAR=value assignments and an absolute path (`/sbin/mkfs.ext4`) are
+ * allowed between that point and the tool name.
+ *
+ * Disk tools are catastrophic when INVOKED, not when named. `mkfs`, `fdisk` and
+ * `parted` were bare substrings, so `vim departed.md` — 'departed' contains
+ * 'parted' — was an unconditional block on a tool that ships inside agent
+ * hooks, with no way for the user to configure out of it. Anchoring is only
+ * safe if it stays wide enough to hold every real invocation: each alternative
+ * below is here because a disk-destroying command was measured escaping
+ * without it.
+ */
+const COMMAND_POSITION =
+  `(?:^|[\\n;&|(\`]\\s*|\\b(?:${COMMAND_WRAPPERS})\\s+(?:-\\S+\\s+|\\d+\\s+)*|\\b(?:then|do|else)\\s+)` +
+  `(?:\\w+=\\S*\\s+)*(?:[\\w.-]*/)*`;
+
+/**
+ * Partition/filesystem tools that destroy a disk. `mkfs.<fs>` covers the
+ * ext4/xfs/btrfs spellings; `s?fdisk` covers both fdisk and sfdisk.
+ */
+const DISK_TOOLS = `(?:mkfs(?:\\.[a-z0-9]+)?|s?fdisk|parted)`;
+
+/**
  * Catastrophic, irreversible commands. These are hard-blocked unconditionally —
  * no policy, mode, or deny-list can opt out of them. Kept as pattern *sources*
  * so the default policy deny-list (`DEFAULT_BLOCKED_PATTERNS`) is exactly this
@@ -30,9 +63,7 @@ const CRITICAL_PATTERN_SOURCES: string[] = [
   `:\\(\\)\\{\\s*:\\|:&\\s*\\};:`,   // fork bomb
   `dd\\s+if=.*of=/dev/sd`,
   `>\\s*/dev/sd`,
-  `mkfs`,
-  `fdisk`,
-  `parted`,
+  `${COMMAND_POSITION}${DISK_TOOLS}(?:\\s|$)`,
 ];
 
 export const CRITICAL_PATTERNS: RegExp[] = CRITICAL_PATTERN_SOURCES.map((s) => new RegExp(s));
