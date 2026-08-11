@@ -169,6 +169,27 @@ describe("rafter report", () => {
     expect(r.stderr).toContain("Invalid JSON");
   });
 
+  it("names the missing input on empty stdin, not the JSON", () => {
+    // `rafter report </dev/null` used to say "Invalid JSON — Unexpected end of
+    // JSON input", pointing a first-time user at data they never supplied.
+    const r = rafter(["report"], { input: "" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("No input on stdin");
+    expect(r.stderr).not.toContain("Invalid JSON");
+    expect(r.stderr).toContain("rafter report scan-results.json");
+  });
+
+  it("names the file on an empty input file", () => {
+    const inputFile = path.join(tmpDir, "empty.json");
+    fs.writeFileSync(inputFile, "   \n", "utf-8");
+
+    const r = rafter(["report", inputFile]);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("File is empty");
+    expect(r.stderr).toContain(inputFile);
+    expect(r.stderr).not.toContain("Invalid JSON");
+  });
+
   it("errors on non-existent input file", () => {
     const r = rafter(["report", "/nonexistent/path.json"]);
     expect(r.exitCode).toBe(2);

@@ -133,6 +133,25 @@ class TestReportCli:
         assert result.exit_code == 2
         assert "Invalid JSON" in result.output
 
+    def test_empty_stdin_names_the_missing_input_not_the_json(self):
+        # `rafter report </dev/null` used to say "Invalid JSON — Expecting
+        # value: line 1 column 1", pointing a first-time user at data they
+        # never supplied.
+        result = runner.invoke(app, ["report"], input="")
+        assert result.exit_code == 2
+        assert "No input on stdin" in result.output
+        assert "Invalid JSON" not in result.output
+        assert "rafter report scan-results.json" in result.output
+
+    def test_empty_input_file_names_the_file(self, tmp_path):
+        empty = tmp_path / "empty.json"
+        empty.write_text("   \n", encoding="utf-8")
+
+        result = runner.invoke(app, ["report", str(empty)])
+        assert result.exit_code == 2
+        assert "File is empty" in result.output
+        assert "Invalid JSON" not in result.output
+
     def test_nonexistent_file_errors(self):
         result = runner.invoke(app, ["report", "/nonexistent/path.json"])
         assert result.exit_code == 2

@@ -43,6 +43,24 @@ def report_main(
         )
         raise typer.Exit(code=2)
 
+    # Empty input is a missing-input problem, not a malformed-data problem.
+    # Reporting it as "Invalid JSON — Expecting value: line 1 column 1" points
+    # the user at data they never supplied, which is the opposite of the hint
+    # they need on a first run.
+    if not json_data.strip():
+        source = (
+            f"File is empty: {Path(input_file).resolve()}"
+            if input_file is not None
+            else "No input on stdin"
+        )
+        typer.echo(
+            f"Error: {source}. report reads scan results as JSON.\n"
+            "  Example: rafter secrets --json . | rafter report -o report.html\n"
+            "  Example: rafter report scan-results.json -o report.html",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
     try:
         results = json.loads(json_data)
         if not isinstance(results, list):
