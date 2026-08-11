@@ -37,6 +37,20 @@ function createTempHome(): string {
   return dir;
 }
 
+/**
+ * PATH with every entry that holds a `betterleaks` binary removed, so tests
+ * that exercise the "betterleaks not installed" branches behave the same on a
+ * developer box that has it installed as they do on CI, which does not.
+ */
+function pathWithoutBetterleaks(): string {
+  const sep = process.platform === "win32" ? ";" : ":";
+  const exeExt = process.platform === "win32" ? ".exe" : "";
+  return (process.env.PATH || "")
+    .split(sep)
+    .filter((dir) => dir && !fs.existsSync(path.join(dir, `betterleaks${exeExt}`)))
+    .join(sep);
+}
+
 function runCli(
   args: string,
   homeDir: string,
@@ -707,7 +721,9 @@ describe("agent status", () => {
     const binDir = path.join(home, ".rafter", "bin");
     fs.mkdirSync(binDir, { recursive: true });
     fs.writeFileSync(path.join(binDir, "gitleaks"), "#!/bin/sh\necho fake\n", { mode: 0o755 });
-    const r = runCli("agent status", home);
+    // The hint is only reachable when betterleaks itself is absent; without
+    // this the test passes on CI and fails on any box that has it on PATH.
+    const r = runCli("agent status", home, { PATH: pathWithoutBetterleaks() });
     expect(r.stdout).toMatch(/legacy gitleaks/i);
     expect(r.stdout).toMatch(/update-betterleaks/i);
   });
