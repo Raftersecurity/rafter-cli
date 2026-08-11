@@ -105,6 +105,45 @@ function parseResultsArray(stdout: string): any[] {
 // Skip all parity tests when Python + rafter_cli deps aren't available
 const describeIfPython = PYTHON_AVAILABLE ? describe : describe.skip;
 
+/** Strip ANSI colors and box-drawing padding so two help texts can be read. */
+function plain(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+/**
+ * Subcommand names a runtime advertises in its own help output. Commander
+ * prints "  name  description"; typer prints them inside a box, "│ name  …".
+ */
+function advertisedCommands(help: string): string[] {
+  const names = new Set<string>();
+  for (const line of plain(help).split("\n")) {
+    const commander = line.match(/^ {2}([a-z][a-z0-9-]*)(?:\s|\[|<|$)/);
+    if (commander) names.add(commander[1]);
+    const typer = line.match(/^│ ([a-z][a-z0-9-]*)\s/);
+    if (typer) names.add(typer[1]);
+  }
+  return [...names].sort();
+}
+
+/**
+ * Divergences that exist TODAY and are tracked as their own bugs. Listing them
+ * here keeps the equality assertions strict — a NEW divergence fails the gate —
+ * while making the current parity debt countable instead of invisible, which
+ * was the whole complaint in sable-u0po. Delete an entry when its bead closes;
+ * never add one to make a red test green without filing the bug first.
+ */
+const KNOWN_PARITY_GAPS = {
+  /** Commander ships a built-in `help` command; typer has no equivalent. */
+  topLevelCommands: ["help"],
+  /** `rafter agent init-project` is Node-only, and the shipped skill docs
+   *  document it as if both had it. Tracked in sable-gjwm. */
+  agentSubcommands: ["help", "init-project"],
+  /** `agent config show` emits these three under Python only. Tracked in
+   *  sable-53wo. Names are normalized (case-folded, underscores stripped). */
+  configAgentKeys: ["components", "hooks", "scan"],
+};
+
 // ─── Version ────────────────────────────────────────────────────────
 
 describeIfPython("parity: version", () => {
@@ -114,13 +153,29 @@ describeIfPython("parity: version", () => {
     expect(r.python.exitCode).toBe(0);
   });
 
-  it("both report the same semver", () => {
+  it("print the identical --version string", () => {
+    // Compares the WHOLE line, not a semver extracted from it. The old test
+    // regexed the number out of each side and compared only that, so Python
+    // printing "rafter 0.10.0" against Node's "0.10.0" passed the very test
+    // meant to catch it (sable-6erx).
     const r = runBoth(["--version"]);
-    // Node: "0.6.6\n", Python: "rafter 0.6.6\n" — extract semver
-    const nodeSemver = r.node.stdout.trim().match(/(\d+\.\d+\.\d+)/)?.[1];
-    const pythonSemver = r.python.stdout.trim().match(/(\d+\.\d+\.\d+)/)?.[1];
-    expect(nodeSemver).toBeTruthy();
-    expect(nodeSemver).toBe(pythonSemver);
+    expect(r.node.stdout.trim()).toBeTruthy();
+    expect(r.node.stdout.trim()).toBe(r.python.stdout.trim());
+  });
+
+  it("print the identical `version` subcommand string", () => {
+    const r = runBoth(["version"]);
+    expect(r.node.stdout.trim()).toBeTruthy();
+    expect(r.node.stdout.trim()).toBe(r.python.stdout.trim());
+  });
+
+  it("agree between their own --version and version forms", () => {
+    // Internal consistency, per runtime: the two spellings of the same
+    // question must not answer differently.
+    const flag = runBoth(["--version"]);
+    const sub = runBoth(["version"]);
+    expect(flag.node.stdout.trim()).toBe(sub.node.stdout.trim());
+    expect(flag.python.stdout.trim()).toBe(sub.python.stdout.trim());
   });
 });
 
@@ -133,24 +188,41 @@ describeIfPython("parity: help", () => {
     expect(r.python.exitCode).toBe(0);
   });
 
-  it("both mention core subcommands in help", () => {
+  it("advertise the same top-level command set", () => {
+    // The old test asserted each runtime's help contained "scan" and "agent".
+    // Two entirely different command sets satisfy that, which is the class of
+    // hole sable-u0po is about. Compare the sets to each other instead.
     const r = runBoth(["--help"]);
-    for (const runtime of [r.node, r.python]) {
-      const out = runtime.stdout.toLowerCase();
-      expect(out).toContain("scan");
-      expect(out).toContain("agent");
-    }
+    const nodeCommands = advertisedCommands(r.node.stdout);
+    const pythonCommands = advertisedCommands(r.python.stdout);
+    expect(nodeCommands.length).toBeGreaterThan(5);
+
+    const gaps = KNOWN_PARITY_GAPS.topLevelCommands;
+    expect(nodeCommands.filter((c) => !gaps.includes(c)))
+      .toEqual(pythonCommands.filter((c) => !gaps.includes(c)));
   });
 
-  it("agent --help lists subcommands in both", () => {
+  it("advertise the same agent subcommand set", () => {
     const r = runBoth(["agent", "--help"]);
     expect(r.node.exitCode).toBe(0);
     expect(r.python.exitCode).toBe(0);
-    for (const runtime of [r.node, r.python]) {
-      const out = runtime.stdout.toLowerCase();
-      expect(out).toContain("exec");
-      expect(out).toContain("audit");
-    }
+
+    const nodeCommands = advertisedCommands(r.node.stdout);
+    const pythonCommands = advertisedCommands(r.python.stdout);
+    expect(nodeCommands).toContain("exec");
+
+    const gaps = KNOWN_PARITY_GAPS.agentSubcommands;
+    expect(nodeCommands.filter((c) => !gaps.includes(c)))
+      .toEqual(pythonCommands.filter((c) => !gaps.includes(c)));
+  });
+
+  it("has no stale entry in KNOWN_PARITY_GAPS", () => {
+    // A gap that has been closed must not keep excusing a comparison —
+    // otherwise the list silently grows into the hole it documents.
+    const top = advertisedCommands(runBoth(["--help"]).node.stdout);
+    const agent = advertisedCommands(runBoth(["agent", "--help"]).node.stdout);
+    for (const c of KNOWN_PARITY_GAPS.topLevelCommands) expect(top).toContain(c);
+    for (const c of KNOWN_PARITY_GAPS.agentSubcommands) expect(agent).toContain(c);
   });
 });
 
@@ -387,16 +459,27 @@ describeIfPython("parity: agent config", () => {
     expect(() => JSON.parse(r.python.stdout)).not.toThrow();
   });
 
-  it("config structures have equivalent top-level keys", () => {
+  it("config exposes the same key set at both levels", () => {
+    // Was: each side must have "version" and "agent". Every other key could
+    // differ. The implementations legitimately differ in key CASE (camel vs
+    // snake), so normalize case and compare the sets themselves.
     const r = runBoth(["agent", "config", "show"], { env: { HOME: tmpDir } });
     const nodeConfig = JSON.parse(r.node.stdout);
     const pyConfig = JSON.parse(r.python.stdout);
+    const keys = (o: any) =>
+      Object.keys(o ?? {}).map((k) => k.replace(/_/g, "").toLowerCase()).sort();
 
-    // Both must have version and agent sections
-    expect(nodeConfig).toHaveProperty("version");
-    expect(pyConfig).toHaveProperty("version");
-    expect(nodeConfig).toHaveProperty("agent");
-    expect(pyConfig).toHaveProperty("agent");
+    const gaps = KNOWN_PARITY_GAPS.configAgentKeys;
+    expect(keys(nodeConfig)).toContain("agent");
+    expect(keys(nodeConfig)).toEqual(keys(pyConfig));
+    expect(keys(nodeConfig.agent).filter((k) => !gaps.includes(k)))
+      .toEqual(keys(pyConfig.agent).filter((k) => !gaps.includes(k)));
+    // The gap list must not outlive the gap: every excused key is one Python
+    // really does emit and Node really does not.
+    for (const k of gaps) {
+      expect(keys(pyConfig.agent), `${k} no longer Python-only`).toContain(k);
+      expect(keys(nodeConfig.agent)).not.toContain(k);
+    }
   });
 
   it("config risk level defaults match", () => {
@@ -442,11 +525,13 @@ describeIfPython("parity: brief", () => {
     expect(r.python.exitCode).toBe(0);
   });
 
-  it("brief commands produces matching content", () => {
+  it("brief commands is byte-identical between runtimes", () => {
+    // Was: both outputs contain the same heading — which two entirely
+    // different documents satisfy. `brief` ships static knowledge to agents,
+    // so the whole document is the contract.
     const r = runBoth(["brief", "commands"]);
-    // Both should have the same markdown heading
     expect(r.node.stdout).toContain("# Rafter Command Reference");
-    expect(r.python.stdout).toContain("# Rafter Command Reference");
+    expect(r.node.stdout).toBe(r.python.stdout);
   });
 
   it("both exit 0 for brief scanning", () => {
@@ -459,12 +544,12 @@ describeIfPython("parity: brief", () => {
     expect(r.python.exitCode).toBe(0);
   });
 
-  it("brief output length is within 20% between runtimes", () => {
-    const r = runBoth(["brief", "commands"]);
-    const nodeLenght = r.node.stdout.length;
-    const pyLength = r.python.stdout.length;
-    const ratio = Math.min(nodeLenght, pyLength) / Math.max(nodeLenght, pyLength);
-    expect(ratio).toBeGreaterThan(0.8);
+  it("brief scanning is byte-identical between runtimes", () => {
+    // Replaces a within-20%-length check, which a rewritten document of
+    // similar size would have passed.
+    const r = runBoth(["brief", "scanning"]);
+    expect(r.node.stdout.trim()).toBeTruthy();
+    expect(r.node.stdout).toBe(r.python.stdout);
   });
 });
 
@@ -529,12 +614,15 @@ describeIfPython("parity: backend commands without API key", () => {
     expect(r.python.exitCode).toBe(1);
   });
 
-  it("both mention API key in error output", () => {
+  it("emit the identical missing-API-key message", () => {
+    // Was: each runtime's output must contain "api key". Wording, guidance and
+    // exit path could diverge freely under that. They are identical today, so
+    // the contract worth holding is equality.
     const r = runBoth(["run", "--repo", "test/repo", "--branch", "main"], { env: noKeyEnv });
-    const nodeMsg = (r.node.stderr + r.node.stdout).toLowerCase();
-    const pyMsg = (r.python.stderr + r.python.stdout).toLowerCase();
-    expect(nodeMsg).toContain("api key");
-    expect(pyMsg).toContain("api key");
+    const nodeMsg = plain(r.node.stderr + r.node.stdout).trim();
+    const pyMsg = plain(r.python.stderr + r.python.stdout).trim();
+    expect(nodeMsg.toLowerCase()).toContain("api key");
+    expect(nodeMsg).toBe(pyMsg);
   });
 });
 

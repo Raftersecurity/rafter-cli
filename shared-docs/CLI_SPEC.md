@@ -60,7 +60,9 @@ The CLI follows UNIX principles:
 ## Global Options
 
 - `-a, --agent` — Plain output (no colors, no emoji)
-- `-V, --version` — Print version and exit (preferred form; `rafter version` subcommand also works)
+- `-V, --version` — Print version and exit (preferred form; `rafter version` subcommand also works).
+  Output is the bare semver and nothing else — `0.10.0`, not `rafter 0.10.0` — identical across
+  both implementations and across both spellings, so a script parsing it works either way.
 - `-h, --help` — Show help
 
 ---

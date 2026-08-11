@@ -30,7 +30,10 @@ app = typer.Typer(
 
 def _version_callback(value: bool):
     if value:
-        typer.echo(f"rafter {__version__}")
+        # Bare version, no "rafter " prefix: this must match both `rafter
+        # version` here and `rafter --version` under Node, or a script parsing
+        # the output breaks depending on which implementation is installed.
+        typer.echo(__version__)
         raise typer.Exit()
 
 
