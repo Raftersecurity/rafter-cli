@@ -143,7 +143,12 @@ def find_git_repo_root(start_dir: Path, max_depth: int = 20) -> str | None:
 
 
 class AuditLogger:
-    def __init__(self, log_path: Path | None = None):
+    def __init__(self, log_path: Path | None = None, config_manager: Any = None):
+        """``config_manager`` is injectable so a test can point at a fixture
+        config instead of reading the developer's real ~/.rafter/config.json —
+        whose contents otherwise decide whether the test passes.
+        """
+        self._config_manager = config_manager
         if log_path is not None:
             self._path = log_path
         else:
@@ -162,7 +167,7 @@ class AuditLogger:
     def log(self, entry: dict[str, Any]) -> None:
         """Append an audit entry (JSONL)."""
         from .config_manager import ConfigManager
-        config = ConfigManager().load()
+        config = (self._config_manager or ConfigManager()).load()
         if not config.agent.audit.log_all_actions:
             return
 

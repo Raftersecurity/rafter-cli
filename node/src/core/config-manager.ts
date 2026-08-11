@@ -44,6 +44,58 @@ export function redactConfigSecrets<T>(value: T): T {
 }
 
 /**
+ * Keys under which the object's own key names are DATA, not field names.
+ * `agent.components` is keyed by component IDs ("claude-code.hooks"), so its
+ * keys must survive normalization untouched — only its values are normalized.
+ */
+const DATA_KEYED_MAPS = new Set(["components"]);
+
+function snakeToCamel(key: string): string {
+  return key.replace(/_([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
+}
+
+/**
+ * Normalize snake_case config keys to the camelCase this implementation reads.
+ *
+ * The Python CLI writes snake_case (`log_all_actions`, `command_policy`,
+ * `risk_level`); this one writes and reads camelCase. Nothing rejected the
+ * other spelling — it simply read as `undefined`, so a config written by
+ * `rafter agent init` under the Python CLI made every Node audit write a silent
+ * no-op, and left the command policy at its defaults with no warning. Python
+ * already tolerates both spellings (ConfigManager._pick_fields maps camelCase
+ * to snake_case on load); this is the missing mirror image.
+ *
+ * A camelCase key already present wins — a config holding both spellings keeps
+ * the one this implementation wrote.
+ */
+export function normalizeConfigKeys<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((v) => normalizeConfigKeys(v)) as unknown as T;
+  }
+  if (!value || typeof value !== "object") return value;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    const normalized = DATA_KEYED_MAPS.has(key)
+      ? mapValues(v, (inner) => normalizeConfigKeys(inner))
+      : normalizeConfigKeys(v);
+    const camel = snakeToCamel(key);
+    // A camelCase sibling already written by this implementation wins.
+    if (camel !== key && Object.prototype.hasOwnProperty.call(value, camel)) continue;
+    out[camel] = normalized;
+  }
+  return out as unknown as T;
+}
+
+/** Apply `fn` to each value of a plain object, leaving its keys alone. */
+function mapValues(value: unknown, fn: (v: unknown) => unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return fn(value);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = fn(v);
+  return out;
+}
+
+/**
  * Validate a parsed config JSON object, warning and falling back to defaults for invalid fields.
  */
 function validateConfig(raw: any): RafterConfig {
@@ -168,7 +220,7 @@ export class ConfigManager {
 
     try {
       const content = fs.readFileSync(this.configPath, "utf-8");
-      const parsed = JSON.parse(content);
+      const parsed = normalizeConfigKeys(JSON.parse(content));
       const config = validateConfig(parsed);
 
       // Migrate config if needed
