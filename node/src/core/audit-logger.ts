@@ -232,8 +232,13 @@ export class AuditLogger {
   private configManager: ConfigManager;
   private scanner: RegexScanner;
 
-  constructor(logPath?: string) {
-    this.configManager = new ConfigManager();
+  /**
+   * @param configManager injectable so a test can point at a fixture config
+   *   instead of reading the developer's real ~/.rafter/config.json — whose
+   *   contents otherwise decide whether the test passes.
+   */
+  constructor(logPath?: string, configManager?: ConfigManager) {
+    this.configManager = configManager ?? new ConfigManager();
     this.scanner = new RegexScanner();
     this.sessionId = this.generateSessionId();
 
