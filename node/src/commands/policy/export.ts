@@ -1,4 +1,6 @@
 import { Command } from "commander";
+import fs from "fs";
+import path from "path";
 import { ConfigManager } from "../../core/config-manager.js";
 import { fmt } from "../../utils/formatter.js";
 
@@ -23,8 +25,9 @@ export function createPolicyExportCommand(): Command {
         : generateCodexConfig();
 
       if (opts.output) {
-        const fs = require("fs");
-        const path = require("path");
+        // fs/path are imported at module scope: this package is "type": "module",
+        // so a require() here threw ReferenceError on every --output run while the
+        // stdout path — the one every test exercised — worked fine.
         const dir = path.dirname(opts.output);
         if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
