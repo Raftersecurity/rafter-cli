@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -176,29 +177,48 @@ describe("Policy export — file output", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  // These run the REAL command. The previous versions re-implemented the
+  // command's fs.writeFileSync in the test body and asserted the file appeared
+  // — which asserts that Node can write a file, not that `rafter policy export`
+  // can. That is why a require() in an ESM module (ReferenceError on every
+  // --output invocation, exit 0, nothing written) passed this suite for
+  // however long it was there.
+  function runExport(args: string[]): { stdout: string; stderr: string; exitCode: number } {
+    const cli = path.resolve(__dirname, "../dist/index.js");
+    const r = spawnSync(process.execPath, [cli, "policy", "export", ...args], {
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+    return { stdout: r.stdout || "", stderr: r.stderr || "", exitCode: r.status ?? 1 };
+  }
+
   it("writes to file when --output is specified", () => {
     const outputPath = path.join(tmpDir, "output.json");
-    const content = '{"test": true}\n';
 
-    // Simulate what the export command does with --output
-    const dir = path.dirname(outputPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(outputPath, content, "utf-8");
+    const r = runExport(["--format", "claude", "--output", outputPath]);
 
+    expect(r.stderr).not.toMatch(/ReferenceError|is not defined/);
+    expect(r.exitCode).toBe(0);
     expect(fs.existsSync(outputPath)).toBe(true);
-    expect(fs.readFileSync(outputPath, "utf-8")).toBe(content);
+    expect(() => JSON.parse(fs.readFileSync(outputPath, "utf-8"))).not.toThrow();
   });
 
   it("creates nested directories for --output path", () => {
-    const outputPath = path.join(tmpDir, "nested", "dir", "policy.json");
-    const content = '{"test": true}\n';
+    const outputPath = path.join(tmpDir, "nested", "dir", "policy.toml");
 
-    const dir = path.dirname(outputPath);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(outputPath, content, "utf-8");
+    const r = runExport(["--format", "codex", "--output", outputPath]);
 
+    expect(r.exitCode).toBe(0);
     expect(fs.existsSync(outputPath)).toBe(true);
+    expect(fs.readFileSync(outputPath, "utf-8").length).toBeGreaterThan(0);
+  });
+
+  it("writes the same content it would have printed to stdout", () => {
+    const outputPath = path.join(tmpDir, "same.json");
+
+    const piped = runExport(["--format", "claude"]);
+    runExport(["--format", "claude", "--output", outputPath]);
+
+    expect(fs.readFileSync(outputPath, "utf-8")).toBe(piped.stdout);
   });
 });
