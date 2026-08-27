@@ -64,7 +64,7 @@ Suppress only when the finding is a real false positive *for this context*, with
   ```
   Each `rules` entry matches (case-insensitively) the finding's **rule name** (e.g. `AWS Access Key ID`) **or** its **rule id** (e.g. `R-6D5E2`) — use the name for local pattern findings, the id for remote SAST/SCA findings. Path globs are gitignore-style: `*` stays within a path segment, `**` crosses segments, a bare name matches the basename. The same `.rafter.yml ignore` block is honored by **local** scans and **remote `rafter run`** alike. Suppressed findings move into a `_suppressed[]` array and don't affect the exit code — you only fail on a *non-suppressed* finding. Docs: https://docs.rafter.so/suppression
 - **MCP `suppress_finding` tool**: agents can triage a false positive directly through the MCP — it writes the same `.rafter.yml` `ignore` rule above (path, optional rule names, reason). No hand-editing required.
-- **Baseline**: `rafter agent baseline create` snapshots current findings; scan with `rafter scan --baseline` so only *new* findings surface. Good for adopting Rafter on a legacy codebase without a big bang.
+- **Baseline**: `rafter agent baseline create` snapshots current findings; later scans then surface only *new* findings. Good for adopting Rafter on a legacy codebase without a big bang.
 
 Never suppress by:
 - Commenting out the rule globally.

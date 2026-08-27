@@ -64,9 +64,12 @@ When: before firing multiple remote scans, or when the user asks about limits.
 
 Classify and optionally run a shell command through Rafter's risk tiers (critical / high / medium / low).
 
-When: any time a destructive-looking command is about to be executed by an agent. Use `--dry-run` to classify without running.
+When: any time a destructive-looking command is about to be executed by an agent.
 
-Example: `rafter agent exec --dry-run -- rm -rf $WORK_DIR`
+Example: `rafter agent exec -- rm -rf $WORK_DIR`
+
+To classify a command WITHOUT running it, pipe a hook event instead — that is the read-only path:
+`echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf $WORK_DIR"}}' | rafter hook pretool`
 
 ### `rafter agent audit [path]`
 
@@ -103,9 +106,11 @@ Read/write Rafter config (global `~/.rafter/config.yml` and local `.rafter.yml`)
 
 Snapshot current findings so only *new* ones fail future scans.
 
-### `rafter agent instruction-block`
+### `rafter brief <topic>`
 
-Emit a ready-to-paste instruction block for an agent's system prompt.
+Emit ready-to-paste knowledge for an agent's system prompt (`rafter brief guardrails`,
+`rafter brief scanning`, …). For wiring a platform up automatically instead, use
+`rafter agent init --with-<platform>`.
 
 ### `rafter agent update-betterleaks`
 
@@ -133,9 +138,7 @@ See `docs/guardrails.md` for how these plug into Claude Code / other platforms.
 
 Emit the effective merged policy (defaults + global + `.rafter.yml`).
 
-### `rafter policy validate <file>`
-
-Lint a policy file. Non-zero exit on invalid structure.
+A malformed `.rafter.yml` is reported when any command loads it — the parse error names the line and column, and unknown top-level keys are warned about on stderr.
 
 ---
 
@@ -165,17 +168,18 @@ Use from any MCP-capable client (Gemini, Cursor, Windsurf, Aider, Continue.dev).
 
 Print rafter knowledge for any agent. Topics include: `security`, `scanning`, `commands`, `pricing`, `setup`, `setup/<platform>`, `all`, plus sub-doc topics (`cli-reference`, `guardrails`, `backend`, `shift-left`, `finding-triage`).
 
-### `rafter notify --scan-id <id> --to <slack|discord-webhook>`
+### `rafter notify [scan_id] --webhook <url>`
 
 Post a scan summary to Slack or Discord.
 
-### `rafter report --scan-id <id> [--out report.html]`
+### `rafter report [input] [-o report.html]`
 
-Generate a self-contained HTML security report for sharing.
+Generate a self-contained HTML security report for sharing. Reads scan JSON from a file or stdin:
+`rafter secrets --json . | rafter report -o report.html`
 
-### `rafter issues sync --scan-id <id>`
+### `rafter issues create from-scan [--scan-id <id> | --from-local <path>]`
 
-Open / update GitHub Issues from scan findings (one issue per rule).
+Open GitHub Issues from scan findings (one issue per finding, deduplicated).
 
 ### `rafter completion <bash|zsh|fish>`
 
@@ -189,9 +193,9 @@ Emit shell completion script.
 |---|---|
 | Fast secret check locally | `rafter secrets .` |
 | Full repo security review | `rafter run` (then `rafter get <id>`) |
-| "Is this command safe?" | `rafter agent exec --dry-run -- <cmd>` |
+| "Is this command safe?" | `echo '{"tool_name":"Bash","tool_input":{"command":"<cmd>"}}' \| rafter hook pretool` |
 | "Is this skill safe to install?" | `rafter agent audit <path>` |
 | Add pre-commit protection | `rafter agent install-hook` |
 | Wire up CI | `rafter ci init` |
 | Connect an agent | `rafter agent init --with-<platform>` |
-| Share a report | `rafter report --scan-id <id>` |
+| Share a report | `rafter secrets --json . \| rafter report -o report.html` |

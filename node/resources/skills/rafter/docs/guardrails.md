@@ -10,7 +10,7 @@ Rafter exposes two hook handlers over stdio:
 - `rafter hook posttool` — read a JSON event after a tool ran; log to audit trail, optionally rescan written files for secrets.
 
 For platforms without hooks, the same classifier is reachable as:
-- `rafter agent exec --dry-run -- <command>` (returns risk, exits 0/1)
+- `echo '{"tool_name":"Bash","tool_input":{"command":"<command>"}}' | rafter hook pretool` (returns an approve/block decision as JSON, without running the command)
 - `rafter mcp serve` → MCP tool `evaluate_command`
 
 ## Risk Tiers
@@ -31,14 +31,17 @@ Tiers are derived from regex patterns in `risk-rules.ts` (`CRITICAL_PATTERNS`, `
 `.rafter.yml` (project) and `~/.rafter/config.yml` (global) can override defaults:
 
 ```yaml
-risk:
+command_policy:
+  mode: deny-list            # allow-all | approve-dangerous | deny-list
   blocked_patterns:
     - "terraform destroy"
   require_approval:
     - "^npm publish"
-  allow:
-    - "^pnpm run test"     # force low regardless of content
 ```
+
+The top-level key is `command_policy`. These arrays REPLACE the built-in
+defaults, they do not append to them — dump the effective merged policy with
+`rafter policy export --format claude` to see what is actually in force.
 
 Merge order (most specific wins): project `.rafter.yml` > global config > built-in defaults. Dump the effective merged policy with `rafter policy export`.
 
@@ -60,12 +63,16 @@ When a hook blocks a command, the JSON response includes:
 
 If the block is a false positive **for this specific context**, the right path is:
 
-1. Add an allow pattern scoped to the project in `.rafter.yml`:
+1. Narrow the project's deny-list in `.rafter.yml`. The arrays replace the
+   defaults rather than appending, so listing only what you want blocked is
+   how a specific command stops being blocked:
    ```yaml
-   risk:
-     allow:
-       - "^terraform destroy -target=module\\.sandbox"
+   command_policy:
+     blocked_patterns:
+       - "terraform destroy -auto-approve"   # the unattended form only
    ```
+   This cannot unblock a CRITICAL built-in (`rm -rf /`, disk wipes, fork
+   bombs) — those are hard-blocked before any policy is consulted, by design.
 2. Or run once with an explicit ack flag: `rafter agent exec --force -- <command>` (logged to audit trail; still shows up in `rafter agent audit` history).
 3. Never disable the hook globally to get past one command — that silently drops protection for every future call.
 
@@ -74,14 +81,14 @@ If the block is a false positive **for this specific context**, the right path i
 Every hook decision (approve / ask / block) is appended to the JSONL audit log:
 
 - Location: `rafter agent status` prints the path.
-- Read: `rafter agent audit --log` (or MCP `read_audit_log`).
+- Read: `rafter agent audit` (`--last <n>`, `--event <type>`, `--since <date>`, `--repo <pattern>`), or MCP `read_audit_log`.
 - Use it for postmortems: *why did this command run?*, *what did the agent try before the block?*
 
 ## Platform Notes
 
 - **Claude Code**: `rafter agent init --with-claude-code` wires `pretool` + `posttool` into `~/.claude/settings.json`. Hook timeout is 5s; long scans defer to the async posttool path.
 - **MCP clients (Gemini, Cursor, …)**: no native hook; use the `evaluate_command` MCP tool from your agent's system prompt ("before Bash, call rafter.evaluate_command").
-- **CI**: hooks don't fire in CI. Use `rafter scan` + `rafter policy validate` in the pipeline instead.
+- **CI**: hooks don't fire in CI. Use `rafter secrets --json .` (exit 1 on findings) in the pipeline, and `rafter policy export --format claude` to check the effective policy is the one you expect.
 
 ## Common Pitfalls
 
