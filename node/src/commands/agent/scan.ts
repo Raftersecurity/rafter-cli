@@ -145,6 +145,33 @@ function applyBaseline(results: ScanResult[], entries: BaselineEntry[]): ScanRes
     .filter((r) => r.matches.length > 0);
 }
 
+/**
+ * An engine the user asked for by name could not run.
+ *
+ * Distinct from an ordinary scan failure because it must NOT fall back: the
+ * caller named the engine, so answering with a different one — or with
+ * "clean" — misrepresents what was checked.
+ */
+class EngineUnavailableError extends Error {}
+
+/**
+ * Coverage gaps recorded during the current scan and drained by
+ * `outputScanResults`: paths we could not read, and engines that degraded.
+ *
+ * Kept module-scoped because the scanners are constructed inside per-mode
+ * closures. Reset at the start of each scan so a long-lived process (watch
+ * mode) doesn't accumulate.
+ */
+const coverageGaps: { skipped: Array<{ path: string; reason: string }>; degraded: string[] } = {
+  skipped: [],
+  degraded: [],
+};
+
+function resetCoverageGaps(): void {
+  coverageGaps.skipped = [];
+  coverageGaps.degraded = [];
+}
+
 export function createScanCommand(): Command {
   return new Command("scan")
     .description("Scan files or directories for secrets")
@@ -219,23 +246,51 @@ export function createScanCommand(): Command {
         return;
       }
 
+      resetCoverageGaps();
+
       // Determine scan engine
       const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
+
+      // The target the user NAMED must be readable. Scanning it and reporting
+      // "no secrets, exit 0" when we could not open it at all is a false
+      // negative dressed as a clean bill of health.
+      try {
+        fs.accessSync(resolvedPath, fs.constants.R_OK);
+      } catch {
+        console.error(
+          `Error: Cannot read ${resolvedPath} — permission denied.\n` +
+          "  Nothing was scanned. This is reported as an error rather than as a clean result."
+        );
+        process.exit(2);
+      }
 
       // Determine if path is file or directory
       const stats = fs.statSync(resolvedPath);
       let results;
 
-      if (stats.isDirectory()) {
-        if (!opts.quiet) {
-          console.error(`Scanning directory: ${resolvedPath} (${engine})`);
+      try {
+        if (stats.isDirectory()) {
+          if (!opts.quiet) {
+            console.error(`Scanning directory: ${resolvedPath} (${engine})`);
+          }
+          results = await scanDirectory(resolvedPath, engine, scanCfg, opts.history, opts.gitignore);
+        } else {
+          if (!opts.quiet) {
+            console.error(`Scanning file: ${resolvedPath} (${engine})`);
+          }
+          results = await scanFile(resolvedPath, engine, scanCfg);
         }
-        results = await scanDirectory(resolvedPath, engine, scanCfg, opts.history, opts.gitignore);
-      } else {
-        if (!opts.quiet) {
-          console.error(`Scanning file: ${resolvedPath} (${engine})`);
+      } catch (e) {
+        if (e instanceof EngineUnavailableError) {
+          console.error(
+            `Error: ${e.message}\n` +
+            "  You asked for --engine betterleaks specifically, so rafter will not\n" +
+            "  quietly answer with the other engine. Re-run with --engine auto to\n" +
+            "  scan with whatever is working, or fix the binary above."
+          );
+          process.exit(2);
         }
-        results = await scanFile(resolvedPath, engine, scanCfg);
+        throw e;
       }
 
       outputScanResults(applyBaseline(results, baselineEntries), opts, undefined, true, suppressions);
@@ -359,7 +414,18 @@ function outputScanResults(
         ...(m.engines ? { engines: m.engines } : {}),
       })),
     }));
-    const out: { _note: string; scan_mode: string; triage_applied: boolean; results: typeof filesOut; _suppressed?: SuppressedFinding[] } = {
+    const out: {
+      _note: string;
+      scan_mode: string;
+      triage_applied: boolean;
+      results: typeof filesOut;
+      _suppressed?: SuppressedFinding[];
+      // sable-kxjt / sable-pg5b — coverage gaps, so a machine can tell an
+      // empty `results` from a scan that never happened. Present only when
+      // non-empty, so a clean scan's payload is unchanged.
+      skipped?: Array<{ path: string; reason: string }>;
+      degraded?: string[];
+    } = {
       _note:
         "Local-only scan: pattern-based detection without agentic-intelligence triage. " +
         "Findings have not been evaluated for context (public exposure, key validity, " +
@@ -372,6 +438,8 @@ function outputScanResults(
     if (suppressed.length > 0) {
       out._suppressed = suppressed;
     }
+    if (coverageGaps.skipped.length > 0) out.skipped = coverageGaps.skipped;
+    if (coverageGaps.degraded.length > 0) out.degraded = coverageGaps.degraded;
     console.log(JSON.stringify(out, null, 2));
     if (exitOnFindings) process.exit(keptResults.length > 0 ? 1 : 0);
     return;
@@ -380,6 +448,21 @@ function outputScanResults(
   // Text output — note suppression on stderr so stdout remains parseable.
   if (suppressed.length > 0 && !opts.quiet) {
     console.error(fmt.info(`(${suppressed.length} finding(s) hidden by .rafter.yml)`));
+  }
+
+  if (coverageGaps.skipped.length > 0 && !opts.quiet) {
+    console.error(fmt.warning(
+      `${coverageGaps.skipped.length} path(s) could not be read and were NOT scanned:`
+    ));
+    for (const s of coverageGaps.skipped.slice(0, 5)) {
+      console.error(`    ${s.path} (${s.reason})`);
+    }
+    if (coverageGaps.skipped.length > 5) {
+      console.error(`    … and ${coverageGaps.skipped.length - 5} more`);
+    }
+  }
+  for (const d of coverageGaps.degraded) {
+    if (!opts.quiet) console.error(fmt.warning(d));
   }
 
   if (keptResults.length === 0) {
@@ -664,6 +747,7 @@ async function scanFile(
   const runPatterns = (): ScanResult[] => {
     const scanner = new RegexScanner(scanCfg?.customPatterns);
     const result = scanner.scanFile(filePath);
+    coverageGaps.skipped.push(...scanner.takeSkipped());
     return result.matches.length > 0 ? [result] : [];
   };
 
@@ -672,10 +756,16 @@ async function scanFile(
     // synchronous regex scan while it works, then union. A betterleaks failure
     // degrades to patterns-only rather than losing the scan.
     const blPromise = (async (): Promise<ScanResult[]> => {
+      const bl = new BetterleaksScanner();
       try {
-        const result = await new BetterleaksScanner().scanFile(filePath);
+        const result = await bl.scanFile(filePath);
+        const degraded = bl.takeDegradation();
+        if (degraded) coverageGaps.degraded.push(degraded);
         return result.matches.length > 0 ? [result] : [];
-      } catch {
+      } catch (e) {
+        coverageGaps.degraded.push(
+          `Betterleaks scan failed: ${e instanceof Error ? e.message : String(e)} — patterns engine only for this run`
+        );
         console.error(fmt.warning("Betterleaks scan failed, using patterns only for this run"));
         return [];
       }
@@ -688,10 +778,17 @@ async function scanFile(
     try {
       const bl = new BetterleaksScanner();
       const result = await bl.scanFile(filePath);
+      // The user NAMED this engine. If it could not run there is no fallback
+      // to hide behind: answering "clean, exit 0" about a file we never
+      // scanned is the worst thing a security tool can do.
+      const degraded = bl.takeDegradation();
+      if (degraded) throw new EngineUnavailableError(degraded);
       return result.matches.length > 0 ? [result] : [];
     } catch (e) {
-      console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
-      return runPatterns();
+      if (e instanceof EngineUnavailableError) throw e;
+      throw new EngineUnavailableError(
+        `Betterleaks scan failed: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   }
 
@@ -713,10 +810,12 @@ async function scanDirectory(
   // ancestry — reads .gitignore unless --no-git is set).
   const runPatterns = (): ScanResult[] => {
     const scanner = new RegexScanner(scanCfg?.customPatterns);
-    return scanner.scanDirectory(dirPath, {
+    const found = scanner.scanDirectory(dirPath, {
       excludePaths: scanCfg?.excludePaths,
       respectGitignore,
     });
+    coverageGaps.skipped.push(...scanner.takeSkipped());
+    return found;
   };
 
   let results: ScanResult[];
@@ -725,9 +824,16 @@ async function scanDirectory(
     // with the synchronous patterns engine while it runs, then union. The
     // exclude-paths post-filter below applies to the merged set.
     const blPromise = (async (): Promise<ScanResult[]> => {
+      const bl = new BetterleaksScanner();
       try {
-        return await new BetterleaksScanner().scanDirectory(dirPath, { useGit: history ?? false });
-      } catch {
+        const found = await bl.scanDirectory(dirPath, { useGit: history ?? false });
+        const degraded = bl.takeDegradation();
+        if (degraded) coverageGaps.degraded.push(degraded);
+        return found;
+      } catch (e) {
+        coverageGaps.degraded.push(
+          `Betterleaks scan failed: ${e instanceof Error ? e.message : String(e)} — patterns engine only for this run`
+        );
         console.error(fmt.warning("Betterleaks scan failed, using patterns only for this run"));
         return [];
       }
@@ -738,9 +844,15 @@ async function scanDirectory(
     try {
       const bl = new BetterleaksScanner();
       results = await bl.scanDirectory(dirPath, { useGit: history ?? false });
+      // See scanFile: an explicitly-named engine that could not run is an
+      // error, never a clean result.
+      const degraded = bl.takeDegradation();
+      if (degraded) throw new EngineUnavailableError(degraded);
     } catch (e) {
-      console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
-      results = runPatterns();
+      if (e instanceof EngineUnavailableError) throw e;
+      throw new EngineUnavailableError(
+        `Betterleaks scan failed: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   } else {
     results = runPatterns();

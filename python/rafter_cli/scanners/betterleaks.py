@@ -30,6 +30,7 @@ class BetterleaksCheckResult(NamedTuple):
 class BetterleaksScanner:
     def __init__(self) -> None:
         self._binary_manager = BinaryManager()
+        self._degradation: str | None = None
         # Prefer managed binary, fall back to system PATH
         if self._binary_manager.is_betterleaks_installed():
             self._path: str | None = str(self._binary_manager.get_betterleaks_path())
@@ -168,9 +169,16 @@ class BetterleaksScanner:
                 with open(report_path) as f:
                     content = f.read().strip()
                 if not content:
+                    # Silent until now, and the quietest failure path: a binary
+                    # that crashed and wrote nothing looked exactly like a
+                    # clean scan.
+                    self._degradation = (
+                        "Betterleaks wrote an empty report — the scan produced no results"
+                    )
                     return []
                 parsed = json.loads(content)
             except json.JSONDecodeError as exc:
+                self._degradation = f"Failed to parse Betterleaks report: {exc}"
                 print(f"[rafter] Warning: Failed to parse Betterleaks report: {exc}", file=sys.stderr)
                 return []
 
@@ -180,13 +188,24 @@ class BetterleaksScanner:
                 # managed binary is auto-updated upstream; this covers a stale
                 # binary on PATH, which we can't safely overwrite — so point the
                 # user at the fix.
-                print(
-                    "[rafter] Warning: Betterleaks output is not an array — possible version mismatch. "
-                    "Run: rafter agent update-betterleaks",
-                    file=sys.stderr,
+                self._degradation = (
+                    "Betterleaks output is not an array — possible version mismatch. "
+                    "Run: rafter agent update-betterleaks"
                 )
                 return []
             return parsed
+
+    def take_degradation(self) -> str | None:
+        """Why this scan produced nothing usable, or None if it ran cleanly.
+
+        Every ``return []`` above is a scan that did NOT happen. Reporting them
+        only on stderr left the machine-readable answer indistinguishable from
+        "clean": exit 0, empty results, no field to check. A CI job saw green
+        from a scanner running with one engine dead.
+        """
+        out = self._degradation
+        self._degradation = None
+        return out
 
     @staticmethod
     def _convert(result: dict) -> PatternMatch:

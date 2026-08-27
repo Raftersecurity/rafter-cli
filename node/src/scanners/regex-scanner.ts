@@ -12,6 +12,7 @@ export interface ScanResult {
 
 export class RegexScanner {
   private engine: PatternEngine;
+  private skippedPaths: Array<{ path: string; reason: string }> = [];
 
   constructor(customPatterns?: Array<{ name: string; regex: string; severity: string }>) {
     const patterns: Pattern[] = [...DEFAULT_SECRET_PATTERNS, ...loadCustomPatterns()];
@@ -36,9 +37,27 @@ export class RegexScanner {
       const content = fs.readFileSync(filePath, "utf-8");
       const matches = this.engine.scanWithPosition(content);
       return { file: filePath, matches };
-    } catch (e) {
+    } catch (e: any) {
+      // A path we could not read is NOT a path with no secrets in it. Record
+      // it so the caller can say so; returning an empty match list on its own
+      // is indistinguishable from a clean file.
+      this.skippedPaths.push({ path: filePath, reason: e?.code || "unreadable" });
       return { file: filePath, matches: [] };
     }
+  }
+
+  /**
+   * Paths this scanner could not read, drained (and cleared) by the caller.
+   *
+   * Both skip sites — an unreadable file and an unreadable directory — used to
+   * be silent, so `rafter secrets <unreadable>` returned exit 0 with empty
+   * results, byte-identical to a genuinely clean scan. The directory a scanner
+   * cannot enter is exactly where an unnoticed credential is most likely to be.
+   */
+  takeSkipped(): Array<{ path: string; reason: string }> {
+    const out = this.skippedPaths;
+    this.skippedPaths = [];
+    return out;
   }
 
   /**
@@ -180,8 +199,10 @@ export class RegexScanner {
           }
         }
       }
-    } catch (e) {
-      // Skip directories we can't read
+    } catch (e: any) {
+      // A directory we can't read is not an empty directory — record it so the
+      // caller can report coverage honestly instead of implying a clean scan.
+      this.skippedPaths.push({ path: dir, reason: e?.code || "unreadable" });
     }
 
     return files;
