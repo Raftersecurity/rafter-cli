@@ -1711,6 +1711,31 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
     return run_patterns()
 
 
+def _output_empty_diff_scan(
+    empty_message: str,
+    json_output: bool,
+    quiet: bool,
+    context_label: str,
+    format: str,
+    suppressions,
+) -> None:
+    """Emit the result of a diff scan that had no files to scan.
+
+    ``empty_message`` ("No files changed since <ref>") is a *status* line, so it
+    goes to stderr — stdout has to stay parseable as JSON under ``--json``, and
+    ``_output_scan_results`` owns the single stdout success line. Mirrors the
+    empty branches of ``runGitAddedLineScan`` in
+    node/src/commands/agent/scan.ts — keep the two in sync.
+    """
+    if not quiet:
+        # rprint, not print — fmt.success returns rich markup that plain print
+        # would emit literally as "[green]...[/green]".
+        rprint(fmt.success(empty_message), file=sys.stderr)
+    _output_scan_results(
+        [], json_output, quiet, context_label, format=format, suppressions=suppressions
+    )
+
+
 def _run_git_added_line_scan(
     git_args: list[str],
     git_cwd: str | None,
@@ -1743,14 +1768,16 @@ def _run_git_added_line_scan(
         raise typer.Exit(code=2)
 
     if not patch.strip():
-        if not quiet:
-            rprint(fmt.success(empty_message))
+        _output_empty_diff_scan(
+            empty_message, json_output, quiet, context_label, format, suppressions
+        )
         raise typer.Exit(code=0)
 
     added = parse_unified_diff_added_lines(patch)
     if not added:
-        if not quiet:
-            rprint(fmt.success(empty_message))
+        _output_empty_diff_scan(
+            empty_message, json_output, quiet, context_label, format, suppressions
+        )
         raise typer.Exit(code=0)
 
     try:
