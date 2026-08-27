@@ -274,7 +274,12 @@ function deriveDocId(source: string, kind: "path" | "url"): string {
   return crypto.createHash("sha256").update(source).digest("hex").slice(0, 8);
 }
 
-const VALID_TOP_LEVEL_KEYS = new Set([
+/**
+ * Exported so a test can hold the docs we ship to the keys we accept. A
+ * documented key the loader rejects fails OPEN — a stderr warning nobody reads,
+ * and the command is allowed.
+ */
+export const VALID_TOP_LEVEL_POLICY_KEYS = new Set([
   "version", "risk_level", "command_policy", "scan", "ignore", "audit", "docs",
   // sable-c1c — backend flat-shape compat keys.
   "exclude_paths", "custom_patterns",
@@ -290,7 +295,7 @@ const VALID_LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
 function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFile {
   // 1. Unknown top-level keys
   for (const key of Object.keys(raw)) {
-    if (!VALID_TOP_LEVEL_KEYS.has(key)) {
+    if (!VALID_TOP_LEVEL_POLICY_KEYS.has(key)) {
       console.error(`Warning: Unknown policy key "${key}" — ignoring.`);
     }
   }
