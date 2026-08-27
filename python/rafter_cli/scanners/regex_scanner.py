@@ -45,12 +45,19 @@ class RegexScanner:
                     severity=cp.get("severity", "high"),
                 ))
         self._engine = PatternEngine(patterns)
+        self._skipped: list[dict[str, str]] = []
 
     def scan_file(self, file_path: str) -> ScanResult:
         # Suppression is applied at the scan command boundary (engine-agnostic).
         try:
             content = Path(file_path).read_text(errors="ignore")
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as exc:
+            # A path we could not read is NOT a path with no secrets in it.
+            # Record it so the caller can say so; an empty match list on its
+            # own is indistinguishable from a clean file.
+            self._skipped.append(
+                {"path": file_path, "reason": getattr(exc, "strerror", None) or type(exc).__name__}
+            )
             return ScanResult(file=file_path)
         matches = self._engine.scan_with_position(content)
         return ScanResult(file=file_path, matches=matches)
@@ -107,8 +114,20 @@ class RegexScanner:
 
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _walk(directory: str, exclude: list[str], max_depth: int, depth: int = 0) -> list[str]:
+    def take_skipped(self) -> list[dict[str, str]]:
+        """Paths this scanner could not read, drained (and cleared) by the caller.
+
+        Both skip sites — an unreadable file and an unreadable directory — used
+        to be silent, so ``rafter secrets <unreadable>`` returned exit 0 with
+        empty results, byte-identical to a genuinely clean scan. The directory
+        a scanner cannot enter is exactly where an unnoticed credential is most
+        likely to be.
+        """
+        out = self._skipped
+        self._skipped = []
+        return out
+
+    def _walk(self, directory: str, exclude: list[str], max_depth: int, depth: int = 0) -> list[str]:
         if depth >= max_depth:
             return []
         files: list[str] = []
@@ -120,13 +139,17 @@ class RegexScanner:
                 if entry.is_symlink():
                     continue
                 if entry.is_dir(follow_symlinks=False):
-                    files.extend(RegexScanner._walk(entry.path, exclude, max_depth, depth + 1))
+                    files.extend(self._walk(entry.path, exclude, max_depth, depth + 1))
                 elif entry.is_file(follow_symlinks=False):
                     ext = os.path.splitext(entry.name)[1].lower()
                     if ext not in BINARY_EXTENSIONS:
                         files.append(entry.path)
-        except PermissionError:
-            pass
+        except PermissionError as exc:
+            # A directory we can't read is not an empty directory — record it
+            # so the caller can report coverage honestly.
+            self._skipped.append(
+                {"path": directory, "reason": getattr(exc, "strerror", None) or "PermissionError"}
+            )
         return files
 
 

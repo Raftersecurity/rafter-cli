@@ -42,6 +42,7 @@ export interface BetterleaksScanResult {
 export class BetterleaksScanner {
   private binaryManager: BinaryManager;
   private resolvedPath: string | null = null;
+  private degradation: string | null = null;
 
   constructor() {
     this.binaryManager = new BinaryManager();
@@ -199,14 +200,33 @@ export class BetterleaksScanner {
     }
   }
 
+  /**
+   * Why this scan produced nothing usable, or null if it ran cleanly.
+   *
+   * Every `return []` below is a scan that did NOT happen. Reporting them only
+   * as a stderr line left the machine-readable answer indistinguishable from
+   * "clean": exit 0, `results: []`, no field to check. A CI job saw green from
+   * a scanner running with one engine dead. Callers drain this and report it.
+   */
+  takeDegradation(): string | null {
+    const out = this.degradation;
+    this.degradation = null;
+    return out;
+  }
+
   private parseResults(reportPath: string): BetterleaksResult[] {
     try {
       const content = fs.readFileSync(reportPath, "utf-8");
       if (!content.trim()) {
+        // Silent until now, and the quietest of the failure paths: a binary
+        // that crashed and wrote nothing looked exactly like a clean scan.
+        this.degradation = "Betterleaks wrote an empty report — the scan produced no results";
         return [];
       }
       const parsed = JSON.parse(content);
       if (!Array.isArray(parsed)) {
+        this.degradation =
+          "Betterleaks output is not an array — possible version mismatch. Run: rafter agent update-betterleaks";
         // sable-o4k — a stale/incompatible binary emits a non-array shape and
         // would otherwise silently yield zero findings. The managed binary is
         // auto-updated upstream; this covers a stale binary on PATH, which we
@@ -216,7 +236,9 @@ export class BetterleaksScanner {
       }
       return parsed;
     } catch (e) {
-      console.error(`[rafter] Warning: Failed to parse Betterleaks report: ${e instanceof Error ? e.message : e}`);
+      const detail = e instanceof Error ? e.message : String(e);
+      this.degradation = `Failed to parse Betterleaks report: ${detail}`;
+      console.error(`[rafter] Warning: Failed to parse Betterleaks report: ${detail}`);
       return [];
     }
   }

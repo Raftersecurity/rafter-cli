@@ -1681,32 +1681,65 @@ def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
         return "patterns"
 
 
+class EngineUnavailableError(Exception):
+    """An engine the user asked for by name could not run.
+
+    Distinct from an ordinary scan failure because it must NOT fall back: the
+    caller named the engine, so answering with a different one — or with
+    "clean" — misrepresents what was checked.
+    """
+
+
+# Coverage gaps recorded during the current scan and drained by
+# _output_scan_results: paths we could not read, and engines that degraded.
+# Module-scoped because the scanners are constructed inside per-mode closures.
+_COVERAGE_GAPS: dict[str, list] = {"skipped": [], "degraded": []}
+
+
+def _reset_coverage_gaps() -> None:
+    _COVERAGE_GAPS["skipped"] = []
+    _COVERAGE_GAPS["degraded"] = []
+
+
 def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanResult]:
     def run_patterns() -> list[ScanResult]:
         scanner = RegexScanner(custom_patterns)
         r = scanner.scan_file(file_path)
+        _COVERAGE_GAPS["skipped"].extend(scanner.take_skipped())
         return [r] if r.matches else []
 
     if engine == "both":
         # sable-j85 — run both engines and union. A betterleaks failure
         # degrades to patterns-only rather than losing the scan.
         bl_results: list[ScanResult] = []
+        bl = BetterleaksScanner()
         try:
-            bl = BetterleaksScanner()
             result = bl.scan_file(file_path)
             if result.matches:
                 bl_results = [ScanResult(file=result.file, matches=result.matches)]
-        except Exception:
+            degraded = bl.take_degradation()
+            if degraded:
+                _COVERAGE_GAPS["degraded"].append(degraded)
+        except Exception as exc:
+            _COVERAGE_GAPS["degraded"].append(
+                f"Betterleaks scan failed: {exc} — patterns engine only for this run"
+            )
             print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
         return union_scan_results(bl_results, run_patterns())
 
     if engine == "betterleaks":
+        # The user NAMED this engine. If it could not run there is no fallback
+        # to hide behind: answering "clean, exit 0" about a file we never
+        # scanned is the worst thing a security tool can do.
+        bl = BetterleaksScanner()
         try:
-            bl = BetterleaksScanner()
             result = bl.scan_file(file_path)
-            return [ScanResult(file=result.file, matches=result.matches)] if result.matches else []
-        except Exception:
-            return run_patterns()
+        except Exception as exc:
+            raise EngineUnavailableError(f"Betterleaks scan failed: {exc}") from exc
+        degraded = bl.take_degradation()
+        if degraded:
+            raise EngineUnavailableError(degraded)
+        return [ScanResult(file=result.file, matches=result.matches)] if result.matches else []
 
     return run_patterns()
 
@@ -1859,25 +1892,38 @@ def _scan_directory(
 
     def run_patterns() -> list[ScanResult]:
         scanner = RegexScanner(custom)
-        return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+        found = scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+        _COVERAGE_GAPS["skipped"].extend(scanner.take_skipped())
+        return found
 
     if engine == "both":
         # sable-j85 — run both engines and union; the exclude-paths post-filter
         # below applies to the merged set.
         bl_results: list[ScanResult] = []
+        bl = BetterleaksScanner()
         try:
-            bl = BetterleaksScanner()
             bl_results = [ScanResult(file=r.file, matches=r.matches) for r in bl.scan_directory(dir_path, use_git=history)]
-        except Exception:
+            degraded = bl.take_degradation()
+            if degraded:
+                _COVERAGE_GAPS["degraded"].append(degraded)
+        except Exception as exc:
+            _COVERAGE_GAPS["degraded"].append(
+                f"Betterleaks scan failed: {exc} — patterns engine only for this run"
+            )
             print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
         results = union_scan_results(bl_results, run_patterns())
     elif engine == "betterleaks":
+        # See _scan_file: an explicitly-named engine that could not run is an
+        # error, never a clean result.
+        bl = BetterleaksScanner()
         try:
-            bl = BetterleaksScanner()
-            results = bl.scan_directory(dir_path, use_git=history)
-            results = [ScanResult(file=r.file, matches=r.matches) for r in results]
-        except Exception:
-            results = run_patterns()
+            found = bl.scan_directory(dir_path, use_git=history)
+        except Exception as exc:
+            raise EngineUnavailableError(f"Betterleaks scan failed: {exc}") from exc
+        degraded = bl.take_degradation()
+        if degraded:
+            raise EngineUnavailableError(degraded)
+        results = [ScanResult(file=r.file, matches=r.matches) for r in found]
     else:
         results = run_patterns()
     # sable-yz0 — post-filter chokepoint. See _apply_exclude_paths docstring.
@@ -1926,6 +1972,13 @@ def _output_scan_results(
         if suppressed:
             from dataclasses import asdict
             out["_suppressed"] = [asdict(s) for s in suppressed]
+        # sable-kxjt / sable-pg5b — coverage gaps, so a machine can tell an
+        # empty `results` from a scan that never happened. Present only when
+        # non-empty, so a clean scan's payload is unchanged.
+        if _COVERAGE_GAPS["skipped"]:
+            out["skipped"] = _COVERAGE_GAPS["skipped"]
+        if _COVERAGE_GAPS["degraded"]:
+            out["degraded"] = _COVERAGE_GAPS["degraded"]
         print(json.dumps(out, indent=2))
         if exit_on_findings:
             raise typer.Exit(code=1 if kept_results else 0)
@@ -1933,6 +1986,18 @@ def _output_scan_results(
 
     if suppressed and not quiet:
         print(f"({len(suppressed)} finding(s) hidden by .rafter.yml)", file=sys.stderr)
+
+    if _COVERAGE_GAPS["skipped"] and not quiet:
+        print_stderr(fmt.warning(
+            f"{len(_COVERAGE_GAPS['skipped'])} path(s) could not be read and were NOT scanned:"
+        ))
+        for s in _COVERAGE_GAPS["skipped"][:5]:
+            print(f"    {s['path']} ({s['reason']})", file=sys.stderr)
+        if len(_COVERAGE_GAPS["skipped"]) > 5:
+            print(f"    … and {len(_COVERAGE_GAPS['skipped']) - 5} more", file=sys.stderr)
+    if not quiet:
+        for d in _COVERAGE_GAPS["degraded"]:
+            print_stderr(fmt.warning(d))
 
     if not kept_results:
         if not quiet:
@@ -2193,16 +2258,38 @@ def scan(
         _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
+    # The target the user NAMED must be readable. Scanning it and reporting
+    # "no secrets, exit 0" when we could not open it at all is a false negative
+    # dressed as a clean bill of health.
+    if not os.access(resolved_path, os.R_OK):
+        print(
+            f"Error: Cannot read {resolved_path} — permission denied.\n"
+            "  Nothing was scanned. This is reported as an error rather than as a clean result.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=2)
+
+    _reset_coverage_gaps()
     eng = _select_engine(engine, quiet, auto_update_enabled)
 
-    if os.path.isdir(resolved_path):
-        if not quiet:
-            print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
-    else:
-        if not quiet:
-            print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_file(resolved_path, eng, custom_patterns)
+    try:
+        if os.path.isdir(resolved_path):
+            if not quiet:
+                print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
+            results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
+        else:
+            if not quiet:
+                print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
+            results = _scan_file(resolved_path, eng, custom_patterns)
+    except EngineUnavailableError as exc:
+        print(
+            f"Error: {exc}\n"
+            "  You asked for --engine betterleaks specifically, so rafter will not\n"
+            "  quietly answer with the other engine. Re-run with --engine auto to\n"
+            "  scan with whatever is working, or fix the binary above.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=2)
 
     filtered = _apply_baseline(results, baseline_entries)
     _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions)

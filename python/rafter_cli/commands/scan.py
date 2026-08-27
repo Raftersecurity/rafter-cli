@@ -88,6 +88,18 @@ def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode=
     _do_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token=github_token, provider=provider, repo_url=repo_url, yes=yes)
 
 
+def _report_engine_unavailable(exc: Exception) -> None:
+    """An explicitly-named engine could not run — error, never a clean result."""
+    print(
+        f"Error: {exc}\n"
+        "  You asked for --engine betterleaks specifically, so rafter will not\n"
+        "  quietly answer with the other engine. Re-run with --engine auto to\n"
+        "  scan with whatever is working, or fix the binary above.",
+        file=sys.stderr,
+    )
+    raise typer.Exit(code=2)
+
+
 # ── rafter scan local ─────────────────────────────────────────────────
 
 @local_app.callback(invoke_without_command=True)
@@ -111,6 +123,8 @@ def scan_local(
         _scan_file,
         _scan_directory,
         _output_scan_results,
+        _reset_coverage_gaps,
+        EngineUnavailableError,
         _output_sarif,
         _watch_and_scan,
         _apply_baseline,
@@ -190,16 +204,34 @@ def scan_local(
         _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
+    # The target the user NAMED must be readable. Scanning it and reporting
+    # "no secrets, exit 0" when we could not open it at all is a false negative
+    # dressed as a clean bill of health.
+    if not os.access(resolved_path, os.R_OK):
+        print(
+            f"Error: Cannot read {resolved_path} — permission denied.\n"
+            "  Nothing was scanned. This is reported as an error rather than as a clean result.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=2)
+
+    _reset_coverage_gaps()
     eng = _select_engine(engine, quiet, auto_update_enabled)
 
     if os.path.isdir(resolved_path):
         if not quiet:
             print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
+        try:
+            results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
+        except EngineUnavailableError as exc:
+            _report_engine_unavailable(exc)
     else:
         if not quiet:
             print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_file(resolved_path, eng, custom_patterns)
+        try:
+            results = _scan_file(resolved_path, eng, custom_patterns)
+        except EngineUnavailableError as exc:
+            _report_engine_unavailable(exc)
 
     filtered = _apply_baseline(results, baseline_entries)
     _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions)
