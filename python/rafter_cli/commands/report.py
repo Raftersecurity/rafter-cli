@@ -44,9 +44,7 @@ def report_main(
         raise typer.Exit(code=2)
 
     try:
-        results = json.loads(json_data)
-        if not isinstance(results, list):
-            raise ValueError("Expected a JSON array of scan results")
+        results = _extract_results(json.loads(json_data))
     except (json.JSONDecodeError, ValueError) as exc:
         typer.echo(f"Error: Invalid JSON input — {exc}", err=True)
         raise typer.Exit(code=2)
@@ -55,10 +53,47 @@ def report_main(
 
     if output:
         out_path = Path(output).resolve()
+        # Never write THROUGH a symlink. rafter runs inside repos that
+        # untrusted parties contribute to; a committed symlink at the output
+        # name would otherwise turn a routine report into an
+        # arbitrary-file-overwrite with the caller's privileges. Needs no
+        # traversal in the argument, so sanitizing the argument misses it.
+        named = Path(output).absolute()
+        if named.is_symlink() or out_path.is_symlink():
+            typer.echo(
+                f"Error: Refusing to write through a symlink: {named}\n"
+                f"  It points at {named.resolve(strict=False)}\n"
+                "  Remove the symlink or choose a different --output path.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
         out_path.write_text(html, encoding="utf-8")
         typer.echo(f"Report written to {out_path}", err=True)
     else:
         sys.stdout.write(html)
+
+
+def _extract_results(parsed: Any) -> list[dict[str, Any]]:
+    """Pull the per-file results out of whatever shape ``rafter secrets --json`` emits.
+
+    Since v0.7.7 that command wraps its findings in
+    ``{_note, scan_mode, triage_applied, results: [...]}``; before then it
+    emitted a bare array. This command only ever accepted the bare array, so
+    the pipeline its own help recommends —
+    ``rafter secrets --json . | rafter report`` — has failed for every user
+    since the wrapper landed. Accept both.
+    """
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        wrapped = parsed.get("results")
+        if isinstance(wrapped, list):
+            return wrapped
+        raise ValueError(
+            'Expected scan results — a JSON array, or an object with a "results" '
+            "array (the shape `rafter secrets --json` emits)"
+        )
+    raise ValueError("Expected a JSON array of scan results")
 
 
 def generate_html_report(results: list[dict[str, Any]], title: str) -> str:

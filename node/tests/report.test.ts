@@ -169,6 +169,64 @@ describe("rafter report", () => {
     expect(r.stderr).toContain("Invalid JSON");
   });
 
+  it("accepts the object shape that `rafter secrets --json` actually emits", () => {
+    // The documented pipeline — `rafter secrets --json . | rafter report` —
+    // failed for every user from v0.7.7 until this fix: secrets wraps its
+    // findings in {_note, scan_mode, triage_applied, results}, and report
+    // demanded a bare array.
+    const wrapped = JSON.stringify({
+      _note: "Local-only scan",
+      scan_mode: "patterns",
+      triage_applied: false,
+      results: JSON.parse(sampleResults),
+    });
+
+    const r = rafter(["report"], { input: wrapped });
+
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("<!DOCTYPE html>");
+    expect(r.stdout).toContain("AWS Access Key");
+  });
+
+  it("still accepts a bare array", () => {
+    const r = rafter(["report"], { input: sampleResults });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("AWS Access Key");
+  });
+
+  it("names the results key when given an object without one", () => {
+    const r = rafter(["report"], { input: '{"findings": []}' });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("results");
+  });
+
+  it("refuses to write through a symlink instead of overwriting its target", () => {
+    // rafter runs inside repos untrusted parties contribute to. A committed
+    // symlink at the output name was an arbitrary-file-overwrite primitive.
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-outside-"));
+    const protectedFile = path.join(outsideDir, "protected.txt");
+    fs.writeFileSync(protectedFile, "ORIGINAL CONTENT", "utf-8");
+    const link = path.join(tmpDir, "report.html");
+    fs.symlinkSync(protectedFile, link);
+
+    try {
+      const r = rafter(["report", "-o", link], { input: sampleResults });
+
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("Refusing to write through a symlink");
+      expect(fs.readFileSync(protectedFile, "utf-8")).toBe("ORIGINAL CONTENT");
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes normally to a regular --output path", () => {
+    const out = path.join(tmpDir, "fine.html");
+    const r = rafter(["report", "-o", out], { input: sampleResults });
+    expect(r.exitCode).toBe(0);
+    expect(fs.readFileSync(out, "utf-8")).toContain("<!DOCTYPE html>");
+  });
+
   it("errors on non-existent input file", () => {
     const r = rafter(["report", "/nonexistent/path.json"]);
     expect(r.exitCode).toBe(2);
