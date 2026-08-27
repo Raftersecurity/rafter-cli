@@ -133,6 +133,62 @@ class TestReportCli:
         assert result.exit_code == 2
         assert "Invalid JSON" in result.output
 
+    def test_accepts_the_object_shape_secrets_json_emits(self, tmp_path):
+        # The documented pipeline — `rafter secrets --json . | rafter report` —
+        # failed for every user from v0.7.7 until this fix: secrets wraps its
+        # findings in {_note, scan_mode, triage_applied, results}, and report
+        # demanded a bare array.
+        wrapped = json.dumps(
+            {
+                "_note": "Local-only scan",
+                "scan_mode": "patterns",
+                "triage_applied": False,
+                "results": SAMPLE_RESULTS,
+            }
+        )
+        result = runner.invoke(app, ["report"], input=wrapped)
+        assert result.exit_code == 0
+        assert "<!DOCTYPE html>" in result.stdout
+        assert "AWS Access Key" in result.stdout
+
+    def test_still_accepts_a_bare_array(self):
+        result = runner.invoke(app, ["report"], input=json.dumps(SAMPLE_RESULTS))
+        assert result.exit_code == 0
+        assert "AWS Access Key" in result.stdout
+
+    def test_names_the_results_key_for_an_object_without_one(self):
+        result = runner.invoke(app, ["report"], input='{"findings": []}')
+        assert result.exit_code == 2
+        assert "results" in result.output
+
+    def test_refuses_to_write_through_a_symlink(self, tmp_path):
+        # rafter runs inside repos untrusted parties contribute to. A committed
+        # symlink at the output name was an arbitrary-file-overwrite primitive.
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        protected = outside / "protected.txt"
+        protected.write_text("ORIGINAL CONTENT", encoding="utf-8")
+        work = tmp_path / "work"
+        work.mkdir()
+        link = work / "report.html"
+        link.symlink_to(protected)
+
+        result = runner.invoke(
+            app, ["report", "-o", str(link)], input=json.dumps(SAMPLE_RESULTS)
+        )
+
+        assert result.exit_code == 2
+        assert "Refusing to write through a symlink" in result.output
+        assert protected.read_text(encoding="utf-8") == "ORIGINAL CONTENT"
+
+    def test_writes_normally_to_a_regular_output_path(self, tmp_path):
+        out = tmp_path / "fine.html"
+        result = runner.invoke(
+            app, ["report", "-o", str(out)], input=json.dumps(SAMPLE_RESULTS)
+        )
+        assert result.exit_code == 0
+        assert "<!DOCTYPE html>" in out.read_text(encoding="utf-8")
+
     def test_nonexistent_file_errors(self):
         result = runner.invoke(app, ["report", "/nonexistent/path.json"])
         assert result.exit_code == 2

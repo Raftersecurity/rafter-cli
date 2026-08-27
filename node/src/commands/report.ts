@@ -48,10 +48,7 @@ export function createReportCommand(): Command {
 
       let results: ReportResult[];
       try {
-        results = JSON.parse(jsonData);
-        if (!Array.isArray(results)) {
-          throw new Error("Expected a JSON array of scan results");
-        }
+        results = extractResults(JSON.parse(jsonData));
       } catch (e: any) {
         console.error(`Error: Invalid JSON input — ${e.message}`);
         process.exit(2);
@@ -62,12 +59,55 @@ export function createReportCommand(): Command {
 
       if (opts.output) {
         const outPath = path.resolve(opts.output);
+        // Never write THROUGH a symlink. rafter runs inside repos that
+        // untrusted parties contribute to; a committed symlink at the output
+        // name would otherwise turn a routine report into an
+        // arbitrary-file-overwrite with the caller's privileges. Needs no
+        // traversal in the argument, so sanitizing the argument misses it.
+        let link: fs.Stats | undefined;
+        try {
+          link = fs.lstatSync(outPath);
+        } catch {
+          // does not exist yet — the normal case
+        }
+        if (link?.isSymbolicLink()) {
+          console.error(
+            `Error: Refusing to write through a symlink: ${outPath}\n` +
+            `  It points at ${fs.realpathSync(outPath)}\n` +
+            "  Remove the symlink or choose a different --output path."
+          );
+          process.exit(2);
+          return;
+        }
         fs.writeFileSync(outPath, html, "utf-8");
         console.error(`Report written to ${outPath}`);
       } else {
         process.stdout.write(html);
       }
     });
+}
+
+/**
+ * Pull the per-file results out of whatever shape `rafter secrets --json` is
+ * emitting.
+ *
+ * Since v0.7.7 that command wraps its findings in
+ * `{_note, scan_mode, triage_applied, results: [...]}`; before then it emitted
+ * a bare array. This command only ever accepted the bare array, so the
+ * pipeline its own help recommends — `rafter secrets --json . | rafter report`
+ * — has failed for every user since the wrapper landed. Accept both.
+ */
+function extractResults(parsed: unknown): ReportResult[] {
+  if (Array.isArray(parsed)) return parsed as ReportResult[];
+  if (parsed && typeof parsed === "object") {
+    const wrapped = (parsed as { results?: unknown }).results;
+    if (Array.isArray(wrapped)) return wrapped as ReportResult[];
+    throw new Error(
+      "Expected scan results — a JSON array, or an object with a \"results\" array " +
+      "(the shape `rafter secrets --json` emits)"
+    );
+  }
+  throw new Error("Expected a JSON array of scan results");
 }
 
 function readStdin(): Promise<string> {
