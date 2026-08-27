@@ -387,6 +387,9 @@ function outputScanResults(
       const msg = context ? `No secrets detected in ${context}` : "No secrets detected";
       console.log(`\n${fmt.success(msg)}\n`);
     }
+    // A clean scan is a fact worth recording too — "we looked on this date and
+    // found nothing" is exactly what a postmortem needs.
+    logScanToAudit(keptResults, 0, context);
     if (exitOnFindings) process.exit(0);
     return;
   }
@@ -411,6 +414,8 @@ function outputScanResults(
   }
 
   console.log(`\n${fmt.warning(`Total: ${totalMatches} secret(s) detected in ${keptResults.length} file(s)`)}\n`);
+
+  logScanToAudit(keptResults, totalMatches, context);
 
   if (context === "staged files") {
     console.log(`${fmt.error("Commit blocked. Remove secrets before committing.")}\n`);
@@ -852,6 +857,44 @@ async function watchAndScan(
 /**
  * Log watch findings to audit log
  */
+/**
+ * Record that a scan ran, so `rafter agent audit` has something in it.
+ *
+ * `rafter secrets` told the user "Run 'rafter agent audit' to see the security
+ * log" and the log was always empty, because only command interception ever
+ * wrote to it — three of seven beta users followed that hint and hit a dead
+ * end, one of them immediately after a correct and useful scan result. The
+ * first thing a careful person does with a security finding is look for the
+ * record of it.
+ *
+ * Counts and pattern NAMES only — never a matched value, not even redacted.
+ * The audit log is a postmortem artifact that outlives the terminal, so it
+ * must not become a second place secrets live.
+ */
+function logScanToAudit(results: ScanResult[], totalMatches: number, context?: string): void {
+  try {
+    const patterns = [...new Set(results.flatMap((r) => r.matches.map((m) => m.pattern.name)))];
+    new AuditLogger().log({
+      eventType: "scan_executed",
+      securityCheck: {
+        passed: totalMatches === 0,
+        reason: totalMatches === 0
+          ? "Secret scan completed with no findings"
+          : `Secret scan found ${totalMatches} secret(s) in ${results.length} file(s)`,
+        details: {
+          filesWithFindings: results.length,
+          totalMatches,
+          patterns,
+          ...(context ? { context } : {}),
+        },
+      },
+      resolution: { actionTaken: totalMatches === 0 ? "allowed" : "blocked" },
+    });
+  } catch {
+    // Never let audit logging break a scan — the scan result is the product.
+  }
+}
+
 function logWatchFindings(logger: AuditLogger, results: ScanResult[]): void {
   for (const result of results) {
     for (const match of result.matches) {
