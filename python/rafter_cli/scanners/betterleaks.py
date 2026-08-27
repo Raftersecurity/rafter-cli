@@ -164,29 +164,46 @@ class BetterleaksScanner:
                     )
                 return []
 
-            try:
-                with open(report_path) as f:
-                    content = f.read().strip()
-                if not content:
-                    return []
-                parsed = json.loads(content)
-            except json.JSONDecodeError as exc:
-                print(f"[rafter] Warning: Failed to parse Betterleaks report: {exc}", file=sys.stderr)
-                return []
+            return self._parse_report(report_path)
 
-            if not isinstance(parsed, list):
-                # sable-o4k — a stale/incompatible binary emits a non-array
-                # shape and would otherwise silently yield zero findings. The
-                # managed binary is auto-updated upstream; this covers a stale
-                # binary on PATH, which we can't safely overwrite — so point the
-                # user at the fix.
-                print(
-                    "[rafter] Warning: Betterleaks output is not an array — possible version mismatch. "
-                    "Run: rafter agent update-betterleaks",
-                    file=sys.stderr,
-                )
+    @staticmethod
+    def _parse_report(report_path: str) -> list[dict]:
+        """Read a betterleaks JSON report into a findings list.
+
+        Mirrors `parseResults` in node/src/scanners/betterleaks.ts — keep the
+        two in sync.
+        """
+        try:
+            with open(report_path) as f:
+                content = f.read().strip()
+            if not content:
                 return []
-            return parsed
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            print(f"[rafter] Warning: Failed to parse Betterleaks report: {exc}", file=sys.stderr)
+            return []
+
+        # #217 — betterleaks >=1.1.2 writes the literal `null` (not `[]`)
+        # for a clean scan via the `dir`/`git` subcommands we invoke. That
+        # is a valid empty result, not a version mismatch, so it must not
+        # reach the warning branch below — otherwise every clean file
+        # scanned emits warning noise.
+        if parsed is None:
+            return []
+
+        if not isinstance(parsed, list):
+            # sable-o4k — a stale/incompatible binary emits a non-array
+            # shape and would otherwise silently yield zero findings. The
+            # managed binary is auto-updated upstream; this covers a stale
+            # binary on PATH, which we can't safely overwrite — so point the
+            # user at the fix.
+            print(
+                "[rafter] Warning: Betterleaks output is not an array — possible version mismatch. "
+                "Run: rafter agent update-betterleaks",
+                file=sys.stderr,
+            )
+            return []
+        return parsed
 
     @staticmethod
     def _convert(result: dict) -> PatternMatch:
