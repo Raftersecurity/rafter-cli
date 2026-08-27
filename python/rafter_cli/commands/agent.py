@@ -1938,6 +1938,9 @@ def _output_scan_results(
         if not quiet:
             msg = f"No secrets detected in {context}" if context else "No secrets detected"
             rprint(f"\n{fmt.success(msg)}\n")
+        # A clean scan is a fact worth recording too — "we looked on this date
+        # and found nothing" is exactly what a postmortem needs.
+        _log_scan_to_audit(kept_results, 0, context)
         if exit_on_findings:
             raise typer.Exit(code=0)
         return
@@ -1958,6 +1961,8 @@ def _output_scan_results(
 
     rprint(f"\n{fmt.warning(f'Total: {total} secret(s) detected in {len(kept_results)} file(s)')}\n")
 
+    _log_scan_to_audit(kept_results, total, context)
+
     if context == "staged files":
         rprint(f"{fmt.error('Commit blocked. Remove secrets before committing.')}\n")
     elif exit_on_findings:
@@ -1965,6 +1970,47 @@ def _output_scan_results(
 
     if exit_on_findings:
         raise typer.Exit(code=1)
+
+
+def _log_scan_to_audit(results: list[ScanResult], total_matches: int, context: str | None = None) -> None:
+    """Record that a scan ran, so ``rafter agent audit`` has something in it.
+
+    ``rafter secrets`` told the user "Run 'rafter agent audit' to see the
+    security log" and the log was always empty, because only command
+    interception ever wrote to it — three of seven beta users followed that
+    hint and hit a dead end, one of them immediately after a correct and useful
+    scan result. The first thing a careful person does with a security finding
+    is look for the record of it.
+
+    Counts and pattern NAMES only — never a matched value, not even redacted.
+    The audit log is a postmortem artifact that outlives the terminal, so it
+    must not become a second place secrets live.
+    """
+    try:
+        patterns = sorted({m.pattern.name for r in results for m in r.matches})
+        details = {
+            "filesWithFindings": len(results),
+            "totalMatches": total_matches,
+            "patterns": patterns,
+        }
+        if context:
+            details["context"] = context
+        AuditLogger().log({
+            "eventType": "scan_executed",
+            "securityCheck": {
+                "passed": total_matches == 0,
+                "reason": (
+                    "Secret scan completed with no findings"
+                    if total_matches == 0
+                    else f"Secret scan found {total_matches} secret(s) in {len(results)} file(s)"
+                ),
+                "details": details,
+            },
+            "resolution": {"actionTaken": "allowed" if total_matches == 0 else "blocked"},
+        })
+    except Exception:
+        # Never let audit logging break a scan — the scan result is the product.
+        pass
 
 
 def _watch_and_scan(
