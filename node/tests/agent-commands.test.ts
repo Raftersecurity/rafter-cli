@@ -707,7 +707,12 @@ describe("agent status", () => {
     const binDir = path.join(home, ".rafter", "bin");
     fs.mkdirSync(binDir, { recursive: true });
     fs.writeFileSync(path.join(binDir, "gitleaks"), "#!/bin/sh\necho fake\n", { mode: 0o755 });
-    const r = runCli("agent status", home);
+    // `agent status` probes `betterleaks` on PATH first and only falls through
+    // to the legacy-gitleaks hint when that fails — so the assertion below is
+    // only meaningful with an empty PATH. Otherwise this passes on CI and fails
+    // on any dev box that has betterleaks installed.
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-empty-path-"));
+    const r = runCli("agent status", home, { PATH: emptyDir });
     expect(r.stdout).toMatch(/legacy gitleaks/i);
     expect(r.stdout).toMatch(/update-betterleaks/i);
   });
