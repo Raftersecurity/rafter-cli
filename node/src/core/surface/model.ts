@@ -31,6 +31,8 @@ export interface Property {
   kind: PropertyKind;
   /** Stable identity. See the §3.2 rules. */
   key: string;
+  /** Stable identity with locative key components elided. */
+  discriminator: string;
   /** Human-facing name of the thing this property is about. */
   subject: string;
   /** Axis name to level name. Null means observed but not decidable. */
@@ -45,6 +47,8 @@ export interface Property {
 
 export interface AxisSpec {
   name: string;
+  /** Artifact fields from which this comparison axis is derived. */
+  derivedFrom: readonly string[];
   /** Safest first. */
   ranks: readonly string[];
   absentRank: "below" | "above";
@@ -60,6 +64,7 @@ export interface KindSpec {
   severityWhenIncomparable?: SurfaceSeverity;
   invertDanger: boolean;
   allowResidualPairing: boolean;
+  keyMayRepeat: boolean;
   display: string;
 }
 
@@ -75,6 +80,7 @@ export interface Transition {
   kind: PropertyKind;
   key: string;
   subject: string;
+  label: string;
   change: Change;
   danger: Danger;
   severity: SurfaceSeverity;

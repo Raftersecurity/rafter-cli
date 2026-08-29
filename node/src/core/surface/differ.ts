@@ -31,21 +31,24 @@ export function compareUtf8(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
-function indexUnique(
+function indexBuckets(
   properties: readonly Property[],
   side: "base" | "head",
+  specs: ReadonlyMap<PropertyKind, KindSpec>,
   coverage: DiffCoverage,
-): Map<string, Property> {
+): Map<string, Property[]> {
   const groups = new Map<string, Property[]>();
   for (const property of properties) {
     const group = groups.get(property.key) ?? [];
     group.push(property);
     groups.set(property.key, group);
   }
-  const indexed = new Map<string, Property>();
+  const indexed = new Map<string, Property[]>();
   for (const [key, group] of groups) {
-    if (group.length === 1) {
-      indexed.set(key, group[0]);
+    const spec = specs.get(group[0].kind);
+    if (spec === undefined) throw new Error(`missing kind spec for ${group[0].kind}`);
+    if (group.length === 1 || spec.keyMayRepeat) {
+      indexed.set(key, group);
       continue;
     }
     for (const file of new Set(group.map((property) => property.evidence.file))) {
@@ -65,11 +68,51 @@ function specMap(specs: readonly KindSpec[]): Map<PropertyKind, KindSpec> {
   return new Map(specs.map((spec) => [spec.kind, spec]));
 }
 
+function levelVector(property: Property, spec: KindSpec): string {
+  return JSON.stringify(spec.axes.map((axis) => property.levels[axis.name] ?? null));
+}
+
+function cancelEqualVectors(
+  base: readonly Property[],
+  head: readonly Property[],
+  spec: KindSpec,
+): { leftBase: Property[]; leftHead: Property[] } {
+  const sortByVector = (properties: readonly Property[]): Property[] => properties
+    .map((property, index) => ({ property, index, vector: levelVector(property, spec) }))
+    .sort((left, right) => compareUtf8(left.vector, right.vector) || left.index - right.index)
+    .map(({ property }) => property);
+  const sortedBase = sortByVector(base);
+  const sortedHead = sortByVector(head);
+  const leftBase: Property[] = [];
+  const leftHead: Property[] = [];
+  let baseIndex = 0;
+  let headIndex = 0;
+  while (baseIndex < sortedBase.length && headIndex < sortedHead.length) {
+    const baseVector = levelVector(sortedBase[baseIndex], spec);
+    const headVector = levelVector(sortedHead[headIndex], spec);
+    const order = compareUtf8(baseVector, headVector);
+    if (order === 0) {
+      baseIndex += 1;
+      headIndex += 1;
+    } else if (order < 0) {
+      leftBase.push(sortedBase[baseIndex]);
+      baseIndex += 1;
+    } else {
+      leftHead.push(sortedHead[headIndex]);
+      headIndex += 1;
+    }
+  }
+  leftBase.push(...sortedBase.slice(baseIndex));
+  leftHead.push(...sortedHead.slice(headIndex));
+  return { leftBase, leftHead };
+}
+
 function classify(
   base: Property | null,
   head: Property | null,
   specs: ReadonlyMap<PropertyKind, KindSpec>,
   paired = false,
+  emitUnchanged = paired,
 ): Transition[] {
   const endpoint = head ?? base;
   if (endpoint === null) return [];
@@ -83,7 +126,7 @@ function classify(
     : latticeCompare(spec, base, head);
   const semanticOrder = spec.invertDanger ? flipOrder(comparison.order) : comparison.order;
   const danger = dangerFor(semanticOrder);
-  if (danger === "unchanged" && !paired) return [];
+  if (danger === "unchanged" && !emitUnchanged) return [];
   const change = base === null ? "added" : head === null ? "removed" : "modified";
   const key = paired && base !== null && head !== null
     ? [base.key, head.key].sort(compareUtf8)[0]
@@ -93,6 +136,7 @@ function classify(
     kind: endpoint.kind,
     key,
     subject: endpoint.subject,
+    label: endpoint.label,
     change,
     danger,
     severity,
@@ -105,6 +149,47 @@ function classify(
     attrs: endpoint.attrs,
     paired,
   }];
+}
+
+function relocationPairs(
+  base: readonly Property[],
+  head: readonly Property[],
+): { pairs: Array<[Property, Property]>; leftBase: Property[]; leftHead: Property[] } {
+  const relocationKey = (property: Property): string | null => {
+    if (
+      property.pairingScope === null
+      || property.discriminator === ""
+    ) return null;
+    return `${property.kind}\0${property.pairingScope}\0${property.discriminator}`;
+  };
+  const baseGroups = new Map<string, Property[]>();
+  const headGroups = new Map<string, Property[]>();
+  for (const property of base) {
+    const key = relocationKey(property);
+    if (key !== null) baseGroups.set(key, [...(baseGroups.get(key) ?? []), property]);
+  }
+  for (const property of head) {
+    const key = relocationKey(property);
+    if (key !== null) headGroups.set(key, [...(headGroups.get(key) ?? []), property]);
+  }
+  const usedBase = new Set<Property>();
+  const usedHead = new Set<Property>();
+  const pairs: Array<[Property, Property]> = [];
+  const keys = [...baseGroups.keys()].filter((key) => headGroups.has(key)).sort(compareUtf8);
+  for (const key of keys) {
+    const baseGroup = baseGroups.get(key)!;
+    const headGroup = headGroups.get(key)!;
+    if (baseGroup.length === 1 && headGroup.length === 1) {
+      pairs.push([baseGroup[0], headGroup[0]]);
+      usedBase.add(baseGroup[0]);
+      usedHead.add(headGroup[0]);
+    }
+  }
+  return {
+    pairs,
+    leftBase: base.filter((property) => !usedBase.has(property)),
+    leftHead: head.filter((property) => !usedHead.has(property)),
+  };
 }
 
 function residualPairs(
@@ -160,20 +245,42 @@ export function diffProperties(
   coverage: DiffCoverage = { unanalyzed: [] },
 ): Transition[] {
   const byKind = specMap(specs);
-  const base = indexUnique(baseProperties, "base", coverage);
-  const head = indexUnique(headProperties, "head", coverage);
+  const base = indexBuckets(baseProperties, "base", byKind, coverage);
+  const head = indexBuckets(headProperties, "head", byKind, coverage);
   const out: Transition[] = [];
+  const unmatchedBase: Property[] = [];
+  const unmatchedHead: Property[] = [];
 
   const exactKeys = [...base.keys()].filter((key) => head.has(key)).sort(compareUtf8);
-  for (const key of exactKeys) out.push(...classify(base.get(key)!, head.get(key)!, byKind));
+  for (const key of exactKeys) {
+    const baseGroup = base.get(key)!;
+    const headGroup = head.get(key)!;
+    const spec = byKind.get(baseGroup[0].kind);
+    if (spec === undefined) throw new Error(`missing kind spec for ${baseGroup[0].kind}`);
+    if (baseGroup.length === 1 && headGroup.length === 1) {
+      out.push(...classify(baseGroup[0], headGroup[0], byKind));
+      continue;
+    }
+    const cancelled = cancelEqualVectors(baseGroup, headGroup, spec);
+    if (cancelled.leftBase.length === 1 && cancelled.leftHead.length === 1) {
+      out.push(...classify(cancelled.leftBase[0], cancelled.leftHead[0], byKind));
+    } else {
+      unmatchedBase.push(...cancelled.leftBase);
+      unmatchedHead.push(...cancelled.leftHead);
+    }
+  }
+  for (const [key, group] of base) {
+    if (!head.has(key)) unmatchedBase.push(...group);
+  }
+  for (const [key, group] of head) {
+    if (!base.has(key)) unmatchedHead.push(...group);
+  }
 
-  const unmatchedBase = [...base.entries()]
-    .filter(([key]) => !head.has(key))
-    .map(([, property]) => property);
-  const unmatchedHead = [...head.entries()]
-    .filter(([key]) => !base.has(key))
-    .map(([, property]) => property);
-  const residual = residualPairs(unmatchedBase, unmatchedHead, byKind);
+  const relocated = relocationPairs(unmatchedBase, unmatchedHead);
+  for (const [baseProperty, headProperty] of relocated.pairs) {
+    out.push(...classify(baseProperty, headProperty, byKind, true, false));
+  }
+  const residual = residualPairs(relocated.leftBase, relocated.leftHead, byKind);
   for (const [baseProperty, headProperty] of residual.pairs) {
     out.push(...classify(baseProperty, headProperty, byKind, true));
   }

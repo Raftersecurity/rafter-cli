@@ -4,6 +4,7 @@
     "axes": [
       {
         "absentRank": "below",
+        "derivedFrom": ["ports[].host_ip", "ports[].published", "ports[].mode", "expose"],
         "name": "binding",
         "ranks": ["not-published", "loopback-published", "host-published"],
         "severityAtTop": "high"
@@ -12,6 +13,7 @@
     "comparator": "ordinal",
     "display": "published ports",
     "invertDanger": false,
+    "keyMayRepeat": false,
     "kind": "container.port",
     "severityByLevel": [null, "low", "high"]
   },
@@ -20,24 +22,28 @@
     "axes": [
       {
         "absentRank": "below",
+        "derivedFrom": ["Action"],
         "name": "action",
         "ranks": ["literal", "service-wildcard", "global-wildcard"],
         "severityAtTop": "high"
       },
       {
         "absentRank": "below",
+        "derivedFrom": ["Resource"],
         "name": "resource",
         "ranks": ["literal", "prefix-wildcard", "global-wildcard"],
         "severityAtTop": "high"
       },
       {
         "absentRank": "below",
+        "derivedFrom": ["Principal"],
         "name": "principal",
         "ranks": ["absent-or-literal", "wildcard"],
         "severityAtTop": "critical"
       },
       {
         "absentRank": "below",
+        "derivedFrom": ["Condition"],
         "name": "condition",
         "ranks": ["present", "absent"],
         "severityAtTop": "medium"
@@ -46,6 +52,7 @@
     "comparator": "lattice",
     "display": "IAM allows",
     "invertDanger": false,
+    "keyMayRepeat": true,
     "kind": "iam.allow",
     "severityWhenIncomparable": "medium"
   },
@@ -54,24 +61,28 @@
     "axes": [
       {
         "absentRank": "below",
+        "derivedFrom": ["Action"],
         "name": "action",
         "ranks": ["literal", "service-wildcard", "global-wildcard"],
         "severityAtTop": "high"
       },
       {
         "absentRank": "below",
+        "derivedFrom": ["Resource"],
         "name": "resource",
         "ranks": ["literal", "prefix-wildcard", "global-wildcard"],
         "severityAtTop": "high"
       },
       {
         "absentRank": "below",
+        "derivedFrom": ["Principal"],
         "name": "principal",
         "ranks": ["absent-or-literal", "wildcard"],
         "severityAtTop": "critical"
       },
       {
         "absentRank": "below",
+        "derivedFrom": ["Condition"],
         "name": "condition",
         "ranks": ["present", "absent"],
         "severityAtTop": "medium"
@@ -80,6 +91,7 @@
     "comparator": "lattice",
     "display": "IAM denies",
     "invertDanger": true,
+    "keyMayRepeat": true,
     "kind": "iam.deny",
     "severityWhenIncomparable": "medium"
   },
@@ -88,6 +100,7 @@
     "axes": [
       {
         "absentRank": "below",
+        "derivedFrom": ["scripts.<name>.body"],
         "name": "fetch",
         "ranks": ["local", "fetches-remote", "pipes-remote-to-interpreter"],
         "severityAtTop": "critical"
@@ -96,6 +109,7 @@
     "comparator": "ordinal",
     "display": "lifecycle scripts",
     "invertDanger": false,
+    "keyMayRepeat": false,
     "kind": "pkg.lifecycle_script",
     "severityByLevel": [null, "medium", "critical"]
   }

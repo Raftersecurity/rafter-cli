@@ -74,6 +74,7 @@ def transition_to_wire(transition: Transition) -> dict[str, Any]:
         "kind": transition.kind,
         "key": transition.key,
         "subject": transition.subject,
+        "label": transition.label,
         "change": transition.change,
         "danger": transition.danger,
         "severity": transition.severity,
@@ -111,6 +112,7 @@ def kind_spec_to_wire(spec: KindSpec) -> dict[str, Any]:
         "axes": [
             {
                 "name": axis.name,
+                "derivedFrom": list(axis.derived_from),
                 "ranks": list(axis.ranks),
                 "absentRank": axis.absent_rank,
                 "severityAtTop": axis.severity_at_top,
@@ -119,6 +121,7 @@ def kind_spec_to_wire(spec: KindSpec) -> dict[str, Any]:
         ],
         "invertDanger": spec.invert_danger,
         "allowResidualPairing": spec.allow_residual_pairing,
+        "keyMayRepeat": spec.key_may_repeat,
         "display": spec.display,
     }
     if spec.severity_by_level is not None:

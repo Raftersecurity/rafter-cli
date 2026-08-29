@@ -30,6 +30,7 @@ class Evidence:
 class Property:
     kind: str
     key: str
+    discriminator: str
     subject: str
     levels: Mapping[str, Optional[str]]
     label: str
@@ -42,6 +43,7 @@ class Property:
 @dataclass(frozen=True, slots=True)
 class AxisSpec:
     name: str
+    derived_from: Sequence[str]
     ranks: Sequence[str]
     absent_rank: Literal["below", "above"]
     severity_at_top: SurfaceSeverity
@@ -55,6 +57,7 @@ class KindSpec:
     display: str
     invert_danger: bool = False
     allow_residual_pairing: bool = False
+    key_may_repeat: bool = False
     severity_by_level: Optional[Sequence[SurfaceSeverity]] = None
     severity_when_absent: SurfaceSeverity = None
     severity_when_incomparable: SurfaceSeverity = None
@@ -73,6 +76,7 @@ class Transition:
     kind: str
     key: str
     subject: str
+    label: str
     change: Change
     danger: Danger
     severity: SurfaceSeverity
