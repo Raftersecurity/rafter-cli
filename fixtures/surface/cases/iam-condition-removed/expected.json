@@ -20,7 +20,7 @@
       "kind": "iam.allow",
       "key": "iam.allow:iam-json:policy.json|sid=OfficeOnly",
       "subject": "statement OfficeOnly",
-      "label": "Allow s3:GetObject — condition removed",
+      "label": "Allow s3:GetObject on arn:aws:s3:::app-bucket/*",
       "change": "modified",
       "danger": "increased",
       "severity": "medium",
