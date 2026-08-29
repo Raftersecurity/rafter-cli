@@ -20,7 +20,7 @@
       "kind": "iam.allow",
       "key": "iam.allow:iam-json:policy.json|sid=AppBucketAccess",
       "subject": "statement AppBucketAccess",
-      "label": "Allow s3:GetObject — resource widened to *",
+      "label": "Allow s3:GetObject on *",
       "change": "modified",
       "danger": "increased",
       "severity": "high",

@@ -18,9 +18,9 @@
   "transitions": [
     {
       "kind": "iam.allow",
-      "key": "iam.allow:iam-json:policy.json|act=1e63caf99cd654591e8916273241630a7117703bb5f6129bf7108ccef9e9ef52|prin=none",
+      "key": "iam.allow:iam-json:policy.json|nosid",
       "subject": "statement 1",
-      "label": "Allow: action narrowed to s3:GetObject, resource widened to *",
+      "label": "Allow s3:GetObject on *",
       "change": "modified",
       "danger": "incomparable",
       "severity": "medium",
@@ -36,7 +36,7 @@
       "base_evidence": {"file": "policy.json", "line": 5},
       "head_evidence": {"file": "policy.json", "line": 5},
       "attrs": {"effect": "Allow", "action": "s3:GetObject", "resource": "*"},
-      "paired": true
+      "paired": false
     }
   ],
   "coverage": {"analyzed": 2, "degraded": false, "inconclusive": false, "unanalyzed": []}
