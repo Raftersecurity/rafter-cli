@@ -1,0 +1,40 @@
+{
+  "_note": "Attack-surface diff: a delta of security properties between two trees, not a findings list. `change` is structural (added/removed/modified); `danger` is semantic and is the only thing severity attaches to. An empty `transitions` array with `coverage.inconclusive: false` means the analyzed surface is unchanged — it does not mean the code is safe.",
+  "schema_version": 1,
+  "base": {"ref": "BASE", "resolved": null},
+  "head": {"ref": "HEAD", "resolved": null},
+  "summary": {
+    "increased": 0,
+    "decreased": 1,
+    "incomparable": 0,
+    "unchanged": 0,
+    "unknown": 0,
+    "added": 0,
+    "removed": 0,
+    "modified": 1,
+    "highest_severity": null,
+    "reportable": 0
+  },
+  "transitions": [
+    {
+      "kind": "container.port",
+      "key": "container.port:compose:compose.yml|redis|6379/tcp",
+      "subject": "service redis",
+      "label": "redis port 6379 published on 127.0.0.1",
+      "change": "modified",
+      "danger": "decreased",
+      "severity": null,
+      "axes": [
+        {"axis": "binding", "from": "host-published", "to": "loopback-published", "order": "less"}
+      ],
+      "from": "host-published",
+      "to": "loopback-published",
+      "confidence": "certain",
+      "base_evidence": {"file": "compose.yml", "line": 5},
+      "head_evidence": {"file": "compose.yml", "line": 5},
+      "attrs": {"service": "redis", "bind": "127.0.0.1", "container_port": 6379, "protocol": "tcp"},
+      "paired": false
+    }
+  ],
+  "coverage": {"analyzed": 2, "degraded": false, "inconclusive": false, "unanalyzed": []}
+}
