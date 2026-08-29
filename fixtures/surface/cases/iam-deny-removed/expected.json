@@ -20,7 +20,7 @@
       "kind": "iam.deny",
       "key": "iam.deny:iam-json:policy.json|sid=BlockAllS3",
       "subject": "statement BlockAllS3",
-      "label": "Deny * on * removed",
+      "label": "Deny * on *",
       "change": "removed",
       "danger": "increased",
       "severity": "critical",

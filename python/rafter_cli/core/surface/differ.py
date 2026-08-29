@@ -7,6 +7,7 @@ from typing import Callable, Mapping, Optional, Sequence
 from .compare import danger_for, flip_order, lattice_compare, ordinal_compare, severity_for
 from .kind_specs import KIND_SPECS
 from .model import KindSpec, Property, SurfaceSeverity, Transition, Unanalyzed
+from .serialize import canonical_json
 
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -60,20 +61,30 @@ def _level_vector(prop: Property, spec: KindSpec) -> str:
     )
 
 
+def _content_signature(prop: Property) -> str:
+    """Content-derived ordering key for cancellation.
+
+    Deliberately excludes evidence (line numbers move when a document is
+    reordered) and input position, so that reordering semantically-unordered
+    entries — IAM ``Statement[]`` order carries no meaning — cannot change which
+    property survives cancellation. Ties broken on label then attrs, both content.
+    """
+    return canonical_json([prop.label, prop.attrs])
+
+
 def _cancel_equal_vectors(
     base: Sequence[Property],
     head: Sequence[Property],
     spec: KindSpec,
 ) -> tuple[list[Property], list[Property]]:
     def sorted_by_vector(properties: Sequence[Property]) -> list[Property]:
-        indexed = enumerate(properties)
-        return [
-            prop
-            for _, prop in sorted(
-                indexed,
-                key=lambda item: (_utf8(_level_vector(item[1], spec)), item[0]),
-            )
-        ]
+        return sorted(
+            properties,
+            key=lambda prop: (
+                _utf8(_level_vector(prop, spec)),
+                _utf8(_content_signature(prop)),
+            ),
+        )
 
     sorted_base = sorted_by_vector(base)
     sorted_head = sorted_by_vector(head)
@@ -262,7 +273,15 @@ def diff_properties(
             continue
         left_base, left_head = _cancel_equal_vectors(base_group, head_group, spec)
         if len(left_base) == 1 and len(left_head) == 1:
-            output.extend(_classify(left_base[0], left_head[0], by_kind))
+            # The key matched, but it does not discriminate within a repeated-key
+            # bucket: which surviving statement corresponds to which is inferred,
+            # not proven, so this carries paired=True exactly as Phase 2 residual
+            # pairing does. A 1:1 bucket is handled above as a true exact match.
+            # Cancellation has already removed every equal-vector pair, so a
+            # residue pair never compares equal.
+            output.extend(
+                _classify(left_base[0], left_head[0], by_kind, paired=True, emit_unchanged=False)
+            )
         else:
             unmatched_base.extend(left_base)
             unmatched_head.extend(left_head)
