@@ -69,6 +69,7 @@ export function transitionToWire(transition: Transition): JsonValue {
     kind: transition.kind,
     key: transition.key,
     subject: transition.subject,
+    label: transition.label,
     change: transition.change,
     danger: transition.danger,
     severity: transition.severity,
@@ -98,12 +99,14 @@ export function kindSpecToWire(spec: KindSpec): JsonValue {
     comparator: spec.comparator,
     axes: spec.axes.map((axis) => ({
       name: axis.name,
+      derivedFrom: [...axis.derivedFrom],
       ranks: [...axis.ranks],
       absentRank: axis.absentRank,
       severityAtTop: axis.severityAtTop,
     })),
     invertDanger: spec.invertDanger,
     allowResidualPairing: spec.allowResidualPairing,
+    keyMayRepeat: spec.keyMayRepeat,
     display: spec.display,
   };
   if (spec.severityByLevel !== undefined) output.severityByLevel = [...spec.severityByLevel];

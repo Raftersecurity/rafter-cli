@@ -25,18 +25,24 @@ def prop(
     levels: dict[str, str | None],
     *,
     subject: str | None = None,
+    label: str | None = None,
     attrs: dict[str, str | int | bool | None] | None = None,
     file: str | None = None,
+    line: int = 5,
+    discriminator: str | None = None,
     pairing_scope: str | None = None,
 ) -> Property:
     return Property(
         kind=kind,
         key=key,
+        discriminator=key if discriminator is None else discriminator,
         subject=subject or key,
         levels=levels,
-        label=key,
+        label=label or key,
         attrs=attrs or {},
-        evidence=Evidence(file or ("policy.json" if kind.startswith("iam.") else "compose.yml"), 5),
+        evidence=Evidence(
+            file or ("policy.json" if kind.startswith("iam.") else "compose.yml"), line
+        ),
         pairing_scope=pairing_scope,
     )
 
@@ -53,9 +59,7 @@ def iam_levels(**overrides: str | None) -> dict[str, str | None]:
 
 def expected_transition(case_id: str) -> dict[str, object]:
     fixture = REPO_ROOT / "fixtures" / "surface" / "cases" / case_id / "expected.json"
-    transition = json.loads(fixture.read_text(encoding="utf-8"))["transitions"][0]
-    transition.pop("label")
-    return transition
+    return json.loads(fixture.read_text(encoding="utf-8"))["transitions"][0]
 
 
 def assert_case(case_id: str, base: list[Property], head: list[Property]) -> None:
@@ -74,6 +78,7 @@ def test_compose_port_appears() -> None:
                 "container.port:compose:compose.yml|redis|6379/tcp",
                 {"binding": "host-published"},
                 subject="service redis",
+                label="redis port 6379 published on 0.0.0.0",
                 attrs={
                     "service": "redis",
                     "bind": "0.0.0.0",
@@ -96,6 +101,7 @@ def test_compose_port_narrowed_to_loopback() -> None:
                 key,
                 {"binding": "loopback-published"},
                 subject="service redis",
+                label="redis port 6379 published on 127.0.0.1",
                 attrs={
                     "service": "redis",
                     "bind": "127.0.0.1",
@@ -125,6 +131,7 @@ def test_compose_service_rename_is_paired_unchanged() -> None:
                 "container.port:compose:compose.yml|cache|6379/tcp",
                 {"binding": "host-published"},
                 subject="service cache",
+                label="cache port 6379 published on 0.0.0.0",
                 pairing_scope="compose.yml",
                 attrs={
                     "service": "cache",
@@ -148,6 +155,7 @@ def test_iam_resource_widened_with_sid() -> None:
                 key,
                 iam_levels(resource="global-wildcard"),
                 subject="statement AppBucketAccess",
+                label="Allow s3:GetObject on *",
                 attrs={"effect": "Allow", "action": "s3:GetObject", "resource": "*"},
             )
         ],
@@ -155,10 +163,7 @@ def test_iam_resource_widened_with_sid() -> None:
 
 
 def test_iam_resource_widened_without_sid() -> None:
-    key = (
-        "iam.allow:iam-json:policy.json|"
-        "act=f084bba5e84ede8168b6c5b1ac07f2eea93c5e78290171b83d8f3f2709d10ba1|prin=none"
-    )
+    key = "iam.allow:iam-json:policy.json|nosid"
     assert_case(
         "iam-resource-widened-no-sid",
         [prop("iam.allow", key, iam_levels(), subject="statement 1")],
@@ -168,6 +173,7 @@ def test_iam_resource_widened_without_sid() -> None:
                 key,
                 iam_levels(resource="global-wildcard"),
                 subject="statement 1",
+                label="Allow s3:GetObject on *",
                 attrs={"effect": "Allow", "action": "s3:GetObject", "resource": "*"},
             )
         ],
@@ -175,32 +181,26 @@ def test_iam_resource_widened_without_sid() -> None:
 
 
 def test_iam_mixed_axis_change_is_incomparable() -> None:
-    base_key = (
-        "iam.allow:iam-json:policy.json|"
-        "act=1e63caf99cd654591e8916273241630a7117703bb5f6129bf7108ccef9e9ef52|prin=none"
-    )
-    head_key = (
-        "iam.allow:iam-json:policy.json|"
-        "act=f084bba5e84ede8168b6c5b1ac07f2eea93c5e78290171b83d8f3f2709d10ba1|prin=none"
-    )
+    key = "iam.allow:iam-json:policy.json|nosid"
     assert_case(
         "iam-incomparable",
         [
             prop(
                 "iam.allow",
-                base_key,
+                key,
                 iam_levels(action="service-wildcard"),
                 subject="statement 1",
-                pairing_scope="policy.json",
+                discriminator="",
             )
         ],
         [
             prop(
                 "iam.allow",
-                head_key,
+                key,
                 iam_levels(resource="global-wildcard"),
                 subject="statement 1",
-                pairing_scope="policy.json",
+                label="Allow s3:GetObject on *",
+                discriminator="",
                 attrs={"effect": "Allow", "action": "s3:GetObject", "resource": "*"},
             )
         ],
@@ -216,6 +216,7 @@ def test_iam_deny_removal_inverts_danger() -> None:
                 "iam.deny:iam-json:policy.json|sid=BlockAllS3",
                 iam_levels(action="global-wildcard", resource="global-wildcard"),
                 subject="statement BlockAllS3",
+                label="Deny * on * removed",
                 attrs={"effect": "Deny", "action": "*", "resource": "*"},
             )
         ],
@@ -234,6 +235,7 @@ def test_iam_condition_removal_increases_danger() -> None:
                 key,
                 iam_levels(),
                 subject="statement OfficeOnly",
+                label="Allow s3:GetObject on arn:aws:s3:::app-bucket/*",
                 attrs={
                     "effect": "Allow",
                     "action": "s3:GetObject",
@@ -262,6 +264,85 @@ def test_duplicate_keys_abort_file_instead_of_merging() -> None:
             changed=False,
         )
     ]
+
+
+def test_repeated_key_bucket_cancels_equal_vectors_before_classifying_residue() -> None:
+    key = "iam.allow:iam-json:policy.json|nosid"
+    assert_case(
+        "iam-two-nosid-statements-changed",
+        [
+            prop(
+                "iam.allow",
+                key,
+                iam_levels(resource="literal"),
+                subject="statement 1",
+                discriminator="",
+                line=5,
+            ),
+            prop(
+                "iam.allow",
+                key,
+                iam_levels(),
+                subject="statement 2",
+                discriminator="",
+                line=10,
+            ),
+        ],
+        [
+            prop(
+                "iam.allow",
+                key,
+                iam_levels(resource="literal"),
+                subject="statement 1",
+                discriminator="",
+                line=5,
+            ),
+            prop(
+                "iam.allow",
+                key,
+                iam_levels(resource="global-wildcard"),
+                subject="statement 2",
+                label="Allow s3:GetObject on *",
+                discriminator="",
+                line=10,
+                attrs={"effect": "Allow", "action": "s3:GetObject", "resource": "*"},
+            ),
+        ],
+    )
+
+
+def test_unique_discriminators_match_across_file_relocation_without_noops() -> None:
+    def relocated(file: str, service: str, port: int) -> Property:
+        return prop(
+            "container.port",
+            f"container.port:compose:{file}|{service}|{port}/tcp",
+            {"binding": "host-published"},
+            subject=f"service {service}",
+            discriminator=f"{service}|{port}/tcp",
+            pairing_scope="infra",
+            file=file,
+        )
+
+    specs_without_phase_2 = tuple(
+        replace(spec, allow_residual_pairing=False)
+        if spec.kind == "container.port"
+        else spec
+        for spec in KIND_SPECS
+    )
+    assert (
+        diff_properties(
+            [
+                relocated("infra/docker-compose.yml", "redis", 6379),
+                relocated("infra/docker-compose.yml", "web", 8080),
+            ],
+            [
+                relocated("infra/compose.prod.yml", "redis", 6379),
+                relocated("infra/compose.prod.yml", "web", 8080),
+            ],
+            specs_without_phase_2,
+        )
+        == []
+    )
 
 
 def test_absent_rank_above_makes_removal_dangerous() -> None:
@@ -350,10 +431,63 @@ def test_transition_sort_uses_utf8_bytes() -> None:
     assert [transition.key for transition in transitions] == ["z", "é"]
 
 
-def test_key_components_are_disjoint_from_axes() -> None:
+def test_key_component_provenance_is_disjoint_from_axis_provenance() -> None:
     for spec in KIND_SPECS:
-        axes = {axis.name for axis in spec.axes}
-        assert not (set(KEY_COMPONENTS[spec.kind]) & axes)
+        key_fields = {
+            field
+            for component in KEY_COMPONENTS[spec.kind]
+            for field in component["derived_from"]
+        }
+        axis_fields = {field for axis in spec.axes for field in axis.derived_from}
+        assert not (key_fields & axis_fields)
+
+
+def test_discriminator_elides_locative_key_components() -> None:
+    key = "container.port:compose:infra/docker-compose.yml|redis|6379/tcp"
+    observed = prop(
+        "container.port",
+        key,
+        {"binding": "host-published"},
+        discriminator="redis|6379/tcp",
+    )
+    key_body = key.split(":compose:", maxsplit=1)[1]
+    assert [
+        component["component"]
+        for component in KEY_COMPONENTS[observed.kind]
+        if component["locative"]
+    ] == ["path"]
+    assert observed.discriminator == "|".join(key_body.split("|")[1:])
+
+
+def test_serializer_emits_complete_transition_key_set_in_schema_order() -> None:
+    transition = diff_properties(
+        [],
+        [
+            prop(
+                "container.port",
+                "added",
+                {"binding": "host-published"},
+                label="published port",
+            )
+        ],
+    )[0]
+    assert list(transition_to_wire(transition)) == [
+        "kind",
+        "key",
+        "subject",
+        "label",
+        "change",
+        "danger",
+        "severity",
+        "axes",
+        "from",
+        "to",
+        "confidence",
+        "base_evidence",
+        "head_evidence",
+        "attrs",
+        "paired",
+    ]
 
 
 def test_kind_specs_match_shared_canonical_dump() -> None:
@@ -366,7 +500,9 @@ def test_kind_specs_match_shared_canonical_dump() -> None:
 def test_expected_fixtures_are_internally_consistent() -> None:
     severity_rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
     cases_root = REPO_ROOT / "fixtures" / "surface" / "cases"
-    for fixture in cases_root.glob("*/expected.json"):
+    fixtures = list(cases_root.glob("*/expected.json"))
+    assert len(fixtures) == 10
+    for fixture in fixtures:
         expected = json.loads(fixture.read_text(encoding="utf-8"))
         transitions = expected["transitions"]
         assert expected["schema_version"] == 1
@@ -392,6 +528,23 @@ def test_expected_fixtures_are_internally_consistent() -> None:
             item["changed"] for item in expected["coverage"]["unanalyzed"]
         )
         for transition in transitions:
+            assert list(transition) == [
+                "kind",
+                "key",
+                "subject",
+                "label",
+                "change",
+                "danger",
+                "severity",
+                "axes",
+                "from",
+                "to",
+                "confidence",
+                "base_evidence",
+                "head_evidence",
+                "attrs",
+                "paired",
+            ]
             spec = next(spec for spec in KIND_SPECS if spec.kind == transition["kind"])
             assert [axis["axis"] for axis in transition["axes"]] == [axis.name for axis in spec.axes]
             assert all(key.isascii() for key in transition["attrs"])
