@@ -69,23 +69,24 @@ rafter agent verify
 Confirms MCP server is configured and Cursor is detected. In Cursor, open
 **Settings → MCP** and check that the `rafter` server is connected.
 
-## MCP tools reference
+## Available MCP tools
 
 Once the MCP server is configured, Cursor can call the following tools:
 
 | Tool | Description |
 |------|-------------|
-| `scan_secrets` | Scan files or directories for hardcoded secrets and credentials. Supports `betterleaks` and `patterns` engines. |
+| `scan_secrets` | Scan files or directories for hardcoded secrets and credentials. Supports `auto` (default), `betterleaks`, and `patterns` engines — `auto` runs both engines and unions the results. |
 | `evaluate_command` | Check if a shell command is allowed by Rafter security policy. Returns risk level and approval requirement. |
 | `read_audit_log` | Query the Rafter audit log with optional filtering by event type, count, or timestamp. |
 | `get_config` | Read Rafter configuration — full config or a specific key via dot-path (e.g. `agent.commandPolicy`). |
 
-Two MCP resources are also exposed:
+Three MCP resources are also exposed:
 
 | Resource | Description |
 |----------|-------------|
 | `rafter://config` | Current Rafter configuration as JSON |
 | `rafter://policy` | Active security policy (merged `.rafter.yml` + config) |
+| `rafter://docs` | Repo-specific security docs declared in `.rafter.yml` (metadata only, no content) |
 
 ### Tool usage examples
 
@@ -97,7 +98,7 @@ Ask the Cursor agent in natural language — it calls the matching tool:
 - "What's our current command policy?" → `get_config`
 
 Hooks run automatically on tool/shell use; you do not need to invoke them
-manually. 
+manually.
 
 ## Troubleshooting
 
