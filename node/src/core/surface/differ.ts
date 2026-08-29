@@ -6,6 +6,7 @@ import {
   severityFor,
 } from "./compare.js";
 import { KIND_SPECS } from "./kind-specs.js";
+import { canonicalJson } from "./serialize.js";
 import type {
   KindSpec,
   Property,
@@ -72,14 +73,30 @@ function levelVector(property: Property, spec: KindSpec): string {
   return JSON.stringify(spec.axes.map((axis) => property.levels[axis.name] ?? null));
 }
 
+/**
+ * Content-derived ordering key for cancellation. Deliberately excludes evidence
+ * (line numbers move when a document is reordered) and input position, so that
+ * reordering semantically-unordered entries — IAM `Statement[]` order carries no
+ * meaning — cannot change which property survives cancellation. Ties broken on
+ * label then attrs, both of which are content.
+ */
+function contentSignature(property: Property): string {
+  return canonicalJson([property.label, property.attrs]);
+}
+
 function cancelEqualVectors(
   base: readonly Property[],
   head: readonly Property[],
   spec: KindSpec,
 ): { leftBase: Property[]; leftHead: Property[] } {
   const sortByVector = (properties: readonly Property[]): Property[] => properties
-    .map((property, index) => ({ property, index, vector: levelVector(property, spec) }))
-    .sort((left, right) => compareUtf8(left.vector, right.vector) || left.index - right.index)
+    .map((property) => ({
+      property,
+      vector: levelVector(property, spec),
+      signature: contentSignature(property),
+    }))
+    .sort((left, right) => compareUtf8(left.vector, right.vector)
+      || compareUtf8(left.signature, right.signature))
     .map(({ property }) => property);
   const sortedBase = sortByVector(base);
   const sortedHead = sortByVector(head);
@@ -263,7 +280,12 @@ export function diffProperties(
     }
     const cancelled = cancelEqualVectors(baseGroup, headGroup, spec);
     if (cancelled.leftBase.length === 1 && cancelled.leftHead.length === 1) {
-      out.push(...classify(cancelled.leftBase[0], cancelled.leftHead[0], byKind));
+      // The key matched, but it does not discriminate within a repeated-key bucket:
+      // which surviving statement corresponds to which is inferred, not proven, so
+      // this carries paired=true exactly as Phase 2 residual pairing does. A 1:1
+      // bucket is handled above as a true exact match. Cancellation has already
+      // removed every equal-vector pair, so a residue pair never compares equal.
+      out.push(...classify(cancelled.leftBase[0], cancelled.leftHead[0], byKind, true, false));
     } else {
       unmatchedBase.push(...cancelled.leftBase);
       unmatchedHead.push(...cancelled.leftHead);

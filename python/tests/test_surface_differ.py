@@ -216,7 +216,7 @@ def test_iam_deny_removal_inverts_danger() -> None:
                 "iam.deny:iam-json:policy.json|sid=BlockAllS3",
                 iam_levels(action="global-wildcard", resource="global-wildcard"),
                 subject="statement BlockAllS3",
-                label="Deny * on * removed",
+                label="Deny * on *",
                 attrs={"effect": "Deny", "action": "*", "resource": "*"},
             )
         ],
@@ -586,3 +586,37 @@ def test_unanalyzed_sort_uses_utf8_bytes() -> None:
         "z.yml",
         "é.yml",
     ]
+
+
+def test_cancellation_survivor_is_independent_of_input_order() -> None:
+    """IAM ``Statement[]`` order carries no meaning, so reordering a document must
+    not change which property survives cancellation. Ordering cancellation by input
+    position instead of by content makes the surviving label and evidence depend on
+    emission order — reorder-variance the W7 M1 mutation would fail on.
+    """
+    key = "iam.allow:iam-json:policy.json|nosid"
+
+    def bucket(subject: str, line: int) -> Property:
+        return prop(
+            "iam.allow",
+            key,
+            iam_levels(),
+            subject=subject,
+            label=f"Allow s3:GetObject on {subject}",
+            discriminator="",
+            file="policy.json",
+            line=line,
+            attrs={"effect": "Allow", "action": "s3:GetObject", "resource": subject},
+        )
+
+    alpha = bucket("bucket-alpha", 5)
+    beta = bucket("bucket-beta", 12)
+    head = [bucket("bucket-alpha", 5)]
+
+    forward = [transition_to_wire(t) for t in diff_properties([alpha, beta], head)]
+    reversed_ = [transition_to_wire(t) for t in diff_properties([beta, alpha], head)]
+
+    assert canonical_json(forward) == canonical_json(reversed_)
+    assert len(forward) == 1
+    assert forward[0]["change"] == "removed"
+    assert forward[0]["subject"] == "bucket-beta"
