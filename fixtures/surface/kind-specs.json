@@ -1,0 +1,102 @@
+[
+  {
+    "allowResidualPairing": true,
+    "axes": [
+      {
+        "absentRank": "below",
+        "name": "binding",
+        "ranks": ["not-published", "loopback-published", "host-published"],
+        "severityAtTop": "high"
+      }
+    ],
+    "comparator": "ordinal",
+    "display": "published ports",
+    "invertDanger": false,
+    "kind": "container.port",
+    "severityByLevel": [null, "low", "high"]
+  },
+  {
+    "allowResidualPairing": true,
+    "axes": [
+      {
+        "absentRank": "below",
+        "name": "action",
+        "ranks": ["literal", "service-wildcard", "global-wildcard"],
+        "severityAtTop": "high"
+      },
+      {
+        "absentRank": "below",
+        "name": "resource",
+        "ranks": ["literal", "prefix-wildcard", "global-wildcard"],
+        "severityAtTop": "high"
+      },
+      {
+        "absentRank": "below",
+        "name": "principal",
+        "ranks": ["absent-or-literal", "wildcard"],
+        "severityAtTop": "critical"
+      },
+      {
+        "absentRank": "below",
+        "name": "condition",
+        "ranks": ["present", "absent"],
+        "severityAtTop": "medium"
+      }
+    ],
+    "comparator": "lattice",
+    "display": "IAM allows",
+    "invertDanger": false,
+    "kind": "iam.allow",
+    "severityWhenIncomparable": "medium"
+  },
+  {
+    "allowResidualPairing": true,
+    "axes": [
+      {
+        "absentRank": "below",
+        "name": "action",
+        "ranks": ["literal", "service-wildcard", "global-wildcard"],
+        "severityAtTop": "high"
+      },
+      {
+        "absentRank": "below",
+        "name": "resource",
+        "ranks": ["literal", "prefix-wildcard", "global-wildcard"],
+        "severityAtTop": "high"
+      },
+      {
+        "absentRank": "below",
+        "name": "principal",
+        "ranks": ["absent-or-literal", "wildcard"],
+        "severityAtTop": "critical"
+      },
+      {
+        "absentRank": "below",
+        "name": "condition",
+        "ranks": ["present", "absent"],
+        "severityAtTop": "medium"
+      }
+    ],
+    "comparator": "lattice",
+    "display": "IAM denies",
+    "invertDanger": true,
+    "kind": "iam.deny",
+    "severityWhenIncomparable": "medium"
+  },
+  {
+    "allowResidualPairing": false,
+    "axes": [
+      {
+        "absentRank": "below",
+        "name": "fetch",
+        "ranks": ["local", "fetches-remote", "pipes-remote-to-interpreter"],
+        "severityAtTop": "critical"
+      }
+    ],
+    "comparator": "ordinal",
+    "display": "lifecycle scripts",
+    "invertDanger": false,
+    "kind": "pkg.lifecycle_script",
+    "severityByLevel": [null, "medium", "critical"]
+  }
+]
