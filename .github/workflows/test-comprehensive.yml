@@ -4,14 +4,49 @@ on:
   pull_request:
     branches:
       - prod
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # ── Who gets the suite ────────────────────────────────────────────
+  # PRs into prod are the release gate and always run.
+  # PRs into main run only for outside contributions: our own work (Rome-1's
+  # PRs, or any branch living in the Raftersecurity repo) is reviewed and
+  # tested locally before it is pushed, so running the full matrix again
+  # would just burn runner minutes.
+  #
+  # Note this is `pull_request`, not `pull_request_target` — fork PRs run with
+  # a read-only token and no access to secrets. Do not "fix" that.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        # Values go through env rather than direct ${{ }} interpolation into
+        # the script, so nothing from the PR can be shell-injected.
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD_OWNER: ${{ github.event.pull_request.head.repo.owner.login }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          if [ "$EVENT" != "pull_request" ] || [ "$BASE" != "main" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$HEAD_OWNER" = "Raftersecurity" ] || [ "$AUTHOR" = "Rome-1" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Internal PR into main (author=$AUTHOR, head repo owner=$HEAD_OWNER) — suite skipped." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   # ── Unit & integration tests (both languages) ─────────────────────
   test-node:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -55,6 +90,8 @@ jobs:
           RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
 
   test-python:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -78,6 +115,8 @@ jobs:
 
   # ── E2E CLI tests ─────────────────────────────────────────────────
   e2e-node:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -102,6 +141,8 @@ jobs:
 
   # ── Secret detection accuracy ──────────────────────────────────────
   secret-detection-accuracy:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -124,6 +165,8 @@ jobs:
 
   # ── SARIF output validation ────────────────────────────────────────
   sarif-validation:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -160,6 +203,8 @@ jobs:
 
   # ── Remote API integration (only when key available) ───────────────
   backend-api:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     env:
       RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
@@ -185,6 +230,8 @@ jobs:
 
   # ── Package build verification ─────────────────────────────────────
   package-integrity:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -231,6 +278,8 @@ jobs:
 
   # ── Cross-platform smoke test ──────────────────────────────────────
   cross-platform:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
