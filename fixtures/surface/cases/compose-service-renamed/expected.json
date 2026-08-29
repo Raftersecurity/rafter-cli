@@ -1,0 +1,40 @@
+{
+  "_note": "Attack-surface diff: a delta of security properties between two trees, not a findings list. `change` is structural (added/removed/modified); `danger` is semantic and is the only thing severity attaches to. An empty `transitions` array with `coverage.inconclusive: false` means the analyzed surface is unchanged — it does not mean the code is safe.",
+  "schema_version": 1,
+  "base": {"ref": "BASE", "resolved": null},
+  "head": {"ref": "HEAD", "resolved": null},
+  "summary": {
+    "increased": 0,
+    "decreased": 0,
+    "incomparable": 0,
+    "unchanged": 1,
+    "unknown": 0,
+    "added": 0,
+    "removed": 0,
+    "modified": 1,
+    "highest_severity": null,
+    "reportable": 0
+  },
+  "transitions": [
+    {
+      "kind": "container.port",
+      "key": "container.port:compose:compose.yml|cache|6379/tcp",
+      "subject": "service cache",
+      "label": "cache port 6379 published on 0.0.0.0",
+      "change": "modified",
+      "danger": "unchanged",
+      "severity": null,
+      "axes": [
+        {"axis": "binding", "from": "host-published", "to": "host-published", "order": "equal"}
+      ],
+      "from": "host-published",
+      "to": "host-published",
+      "confidence": "certain",
+      "base_evidence": {"file": "compose.yml", "line": 5},
+      "head_evidence": {"file": "compose.yml", "line": 5},
+      "attrs": {"service": "cache", "bind": "0.0.0.0", "container_port": 6379, "protocol": "tcp"},
+      "paired": true
+    }
+  ],
+  "coverage": {"analyzed": 2, "degraded": false, "inconclusive": false, "unanalyzed": []}
+}

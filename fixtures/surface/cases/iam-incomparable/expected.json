@@ -1,0 +1,43 @@
+{
+  "_note": "Attack-surface diff: a delta of security properties between two trees, not a findings list. `change` is structural (added/removed/modified); `danger` is semantic and is the only thing severity attaches to. An empty `transitions` array with `coverage.inconclusive: false` means the analyzed surface is unchanged — it does not mean the code is safe.",
+  "schema_version": 1,
+  "base": {"ref": "BASE", "resolved": null},
+  "head": {"ref": "HEAD", "resolved": null},
+  "summary": {
+    "increased": 0,
+    "decreased": 0,
+    "incomparable": 1,
+    "unchanged": 0,
+    "unknown": 0,
+    "added": 0,
+    "removed": 0,
+    "modified": 1,
+    "highest_severity": "medium",
+    "reportable": 1
+  },
+  "transitions": [
+    {
+      "kind": "iam.allow",
+      "key": "iam.allow:iam-json:policy.json|act=1e63caf99cd654591e8916273241630a7117703bb5f6129bf7108ccef9e9ef52|prin=none",
+      "subject": "statement 1",
+      "label": "Allow: action narrowed to s3:GetObject, resource widened to *",
+      "change": "modified",
+      "danger": "incomparable",
+      "severity": "medium",
+      "axes": [
+        {"axis": "action", "from": "service-wildcard", "to": "literal", "order": "less"},
+        {"axis": "resource", "from": "prefix-wildcard", "to": "global-wildcard", "order": "greater"},
+        {"axis": "principal", "from": "absent-or-literal", "to": "absent-or-literal", "order": "equal"},
+        {"axis": "condition", "from": "absent", "to": "absent", "order": "equal"}
+      ],
+      "from": null,
+      "to": null,
+      "confidence": "certain",
+      "base_evidence": {"file": "policy.json", "line": 5},
+      "head_evidence": {"file": "policy.json", "line": 5},
+      "attrs": {"effect": "Allow", "action": "s3:GetObject", "resource": "*"},
+      "paired": true
+    }
+  ],
+  "coverage": {"analyzed": 2, "degraded": false, "inconclusive": false, "unanalyzed": []}
+}
