@@ -32,4 +32,4 @@ Rafter is a security CLI for AI coding agents. It ships as two feature-identical
 - Scanners use dual-engine: Betterleaks binary first, regex fallback. Patterns defined in `secret-patterns.ts` / `secret_patterns.py`
 - Risk classification: critical > high > medium > low
 - Audit log: JSONL format, append-only, documented schema in CLI_SPEC.md
-- MCP server: 4 tools + 2 resources over stdio transport
+- MCP server: 4 tools + 3 resources over stdio transport

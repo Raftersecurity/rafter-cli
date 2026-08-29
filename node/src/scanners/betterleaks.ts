@@ -206,6 +206,13 @@ export class BetterleaksScanner {
         return [];
       }
       const parsed = JSON.parse(content);
+      // #217 — betterleaks >=1.1.2 writes the literal `null` (not `[]`) for a
+      // clean scan via the `dir`/`git` subcommands we invoke. That is a valid
+      // empty result, not a version mismatch, so it must not reach the warning
+      // branch below — otherwise every clean file scanned emits warning noise.
+      if (parsed === null) {
+        return [];
+      }
       if (!Array.isArray(parsed)) {
         // sable-o4k — a stale/incompatible binary emits a non-array shape and
         // would otherwise silently yield zero findings. The managed binary is
