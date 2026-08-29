@@ -18,9 +18,9 @@
   "transitions": [
     {
       "kind": "iam.allow",
-      "key": "iam.allow:iam-json:policy.json|act=f084bba5e84ede8168b6c5b1ac07f2eea93c5e78290171b83d8f3f2709d10ba1|prin=none",
+      "key": "iam.allow:iam-json:policy.json|nosid",
       "subject": "statement 1",
-      "label": "Allow s3:GetObject — resource widened to *",
+      "label": "Allow s3:GetObject on *",
       "change": "modified",
       "danger": "increased",
       "severity": "high",

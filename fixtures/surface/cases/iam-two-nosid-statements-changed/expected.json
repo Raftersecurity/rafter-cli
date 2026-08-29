@@ -18,8 +18,8 @@
   "transitions": [
     {
       "kind": "iam.allow",
-      "key": "iam.allow:iam-json:policy.json|sid=AppBucketAccess",
-      "subject": "statement AppBucketAccess",
+      "key": "iam.allow:iam-json:policy.json|nosid",
+      "subject": "statement 2",
       "label": "Allow s3:GetObject on *",
       "change": "modified",
       "danger": "increased",
@@ -33,8 +33,8 @@
       "from": null,
       "to": null,
       "confidence": "certain",
-      "base_evidence": {"file": "policy.json", "line": 5},
-      "head_evidence": {"file": "policy.json", "line": 5},
+      "base_evidence": {"file": "policy.json", "line": 10},
+      "head_evidence": {"file": "policy.json", "line": 10},
       "attrs": {"effect": "Allow", "action": "s3:GetObject", "resource": "*"},
       "paired": false
     }

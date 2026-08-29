@@ -1,0 +1,20 @@
+{
+  "_note": "Attack-surface diff: a delta of security properties between two trees, not a findings list. `change` is structural (added/removed/modified); `danger` is semantic and is the only thing severity attaches to. An empty `transitions` array with `coverage.inconclusive: false` means the analyzed surface is unchanged — it does not mean the code is safe.",
+  "schema_version": 1,
+  "base": {"ref": "BASE", "resolved": null},
+  "head": {"ref": "HEAD", "resolved": null},
+  "summary": {
+    "increased": 0,
+    "decreased": 0,
+    "incomparable": 0,
+    "unchanged": 0,
+    "unknown": 0,
+    "added": 0,
+    "removed": 0,
+    "modified": 0,
+    "highest_severity": null,
+    "reportable": 0
+  },
+  "transitions": [],
+  "coverage": {"analyzed": 2, "degraded": false, "inconclusive": false, "unanalyzed": []}
+}
