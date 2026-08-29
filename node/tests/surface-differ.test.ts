@@ -23,6 +23,7 @@ function property(
   return {
     kind,
     key,
+    discriminator: options.discriminator ?? key,
     subject: options.subject ?? key,
     levels,
     label: options.label ?? key,
@@ -45,8 +46,7 @@ function expectedTransition(caseId: string): Record<string, unknown> {
   const expected = JSON.parse(
     fs.readFileSync(path.join(REPO_ROOT, "fixtures/surface/cases", caseId, "expected.json"), "utf8"),
   );
-  const { label: _label, ...transition } = expected.transitions[0];
-  return transition;
+  return expected.transitions[0];
 }
 
 function expectCase(caseId: string, base: Property[], head: Property[]): void {
@@ -64,6 +64,7 @@ describe("surface semantic fixtures", () => {
         { binding: "host-published" },
         {
           subject: "service redis",
+          label: "redis port 6379 published on 0.0.0.0",
           attrs: { service: "redis", bind: "0.0.0.0", container_port: 6379, protocol: "tcp" },
         },
       ),
@@ -77,6 +78,7 @@ describe("surface semantic fixtures", () => {
       [property("container.port", key, { binding: "host-published" }, { subject: "service redis" })],
       [property("container.port", key, { binding: "loopback-published" }, {
         subject: "service redis",
+        label: "redis port 6379 published on 127.0.0.1",
         attrs: { service: "redis", bind: "127.0.0.1", container_port: 6379, protocol: "tcp" },
       })],
     );
@@ -91,6 +93,7 @@ describe("surface semantic fixtures", () => {
       })],
       [property("container.port", "container.port:compose:compose.yml|cache|6379/tcp", { binding: "host-published" }, {
         subject: "service cache",
+        label: "cache port 6379 published on 0.0.0.0",
         pairingScope: "compose.yml",
         attrs: { service: "cache", bind: "0.0.0.0", container_port: 6379, protocol: "tcp" },
       })],
@@ -104,35 +107,37 @@ describe("surface semantic fixtures", () => {
       [property("iam.allow", key, iamLevels(), { subject: "statement AppBucketAccess" })],
       [property("iam.allow", key, iamLevels({ resource: "global-wildcard" }), {
         subject: "statement AppBucketAccess",
+        label: "Allow s3:GetObject on *",
         attrs: { effect: "Allow", action: "s3:GetObject", resource: "*" },
       })],
     );
   });
 
   it("classifies an IAM resource widening without Sid", () => {
-    const key = "iam.allow:iam-json:policy.json|act=f084bba5e84ede8168b6c5b1ac07f2eea93c5e78290171b83d8f3f2709d10ba1|prin=none";
+    const key = "iam.allow:iam-json:policy.json|nosid";
     expectCase(
       "iam-resource-widened-no-sid",
       [property("iam.allow", key, iamLevels(), { subject: "statement 1" })],
       [property("iam.allow", key, iamLevels({ resource: "global-wildcard" }), {
         subject: "statement 1",
+        label: "Allow s3:GetObject on *",
         attrs: { effect: "Allow", action: "s3:GetObject", resource: "*" },
       })],
     );
   });
 
   it("reports an IAM mixed-axis transition as incomparable", () => {
-    const baseKey = "iam.allow:iam-json:policy.json|act=1e63caf99cd654591e8916273241630a7117703bb5f6129bf7108ccef9e9ef52|prin=none";
-    const headKey = "iam.allow:iam-json:policy.json|act=f084bba5e84ede8168b6c5b1ac07f2eea93c5e78290171b83d8f3f2709d10ba1|prin=none";
+    const key = "iam.allow:iam-json:policy.json|nosid";
     expectCase(
       "iam-incomparable",
-      [property("iam.allow", baseKey, iamLevels({ action: "service-wildcard" }), {
+      [property("iam.allow", key, iamLevels({ action: "service-wildcard" }), {
         subject: "statement 1",
-        pairingScope: "policy.json",
+        discriminator: "",
       })],
-      [property("iam.allow", headKey, iamLevels({ resource: "global-wildcard" }), {
+      [property("iam.allow", key, iamLevels({ resource: "global-wildcard" }), {
         subject: "statement 1",
-        pairingScope: "policy.json",
+        label: "Allow s3:GetObject on *",
+        discriminator: "",
         attrs: { effect: "Allow", action: "s3:GetObject", resource: "*" },
       })],
     );
@@ -145,6 +150,7 @@ describe("surface semantic fixtures", () => {
         resource: "global-wildcard",
       }), {
         subject: "statement BlockAllS3",
+        label: "Deny * on * removed",
         attrs: { effect: "Deny", action: "*", resource: "*" },
       }),
     ], []);
@@ -157,6 +163,7 @@ describe("surface semantic fixtures", () => {
       [property("iam.allow", key, iamLevels({ condition: "present" }), { subject: "statement OfficeOnly" })],
       [property("iam.allow", key, iamLevels(), {
         subject: "statement OfficeOnly",
+        label: "Allow s3:GetObject on arn:aws:s3:::app-bucket/*",
         attrs: { effect: "Allow", action: "s3:GetObject", resource: "arn:aws:s3:::app-bucket/*" },
       })],
     );
@@ -180,6 +187,71 @@ describe("surface differ", () => {
       detail: "duplicate property key 'duplicate'",
       changed: false,
     }]);
+  });
+
+  it("cancels identical vectors within a repeated-key bucket before classifying the residue", () => {
+    const key = "iam.allow:iam-json:policy.json|nosid";
+    expectCase(
+      "iam-two-nosid-statements-changed",
+      [
+        property("iam.allow", key, iamLevels({ resource: "literal" }), {
+          subject: "statement 1",
+          discriminator: "",
+          evidence: { file: "policy.json", line: 5 },
+        }),
+        property("iam.allow", key, iamLevels(), {
+          subject: "statement 2",
+          discriminator: "",
+          evidence: { file: "policy.json", line: 10 },
+        }),
+      ],
+      [
+        property("iam.allow", key, iamLevels({ resource: "literal" }), {
+          subject: "statement 1",
+          discriminator: "",
+          evidence: { file: "policy.json", line: 5 },
+        }),
+        property("iam.allow", key, iamLevels({ resource: "global-wildcard" }), {
+          subject: "statement 2",
+          label: "Allow s3:GetObject on *",
+          discriminator: "",
+          evidence: { file: "policy.json", line: 10 },
+          attrs: { effect: "Allow", action: "s3:GetObject", resource: "*" },
+        }),
+      ],
+    );
+  });
+
+  it("matches unique discriminators across a file relocation without emitting no-ops", () => {
+    const relocated = (
+      file: string,
+      service: string,
+      port: number,
+    ) => property(
+      "container.port",
+      `container.port:compose:${file}|${service}|${port}/tcp`,
+      { binding: "host-published" },
+      {
+        subject: `service ${service}`,
+        discriminator: `${service}|${port}/tcp`,
+        pairingScope: "infra",
+        evidence: { file, line: 5 },
+      },
+    );
+    const specsWithoutPhase2 = KIND_SPECS.map((spec) => spec.kind === "container.port"
+      ? { ...spec, allowResidualPairing: false }
+      : spec);
+    expect(diffProperties(
+      [
+        relocated("infra/docker-compose.yml", "redis", 6379),
+        relocated("infra/docker-compose.yml", "web", 8080),
+      ],
+      [
+        relocated("infra/compose.prod.yml", "redis", 6379),
+        relocated("infra/compose.prod.yml", "web", 8080),
+      ],
+      specsWithoutPhase2,
+    )).toEqual([]);
   });
 
   it("supports absentRank above", () => {
@@ -260,11 +332,47 @@ describe("surface differ", () => {
 });
 
 describe("surface structure and serialization", () => {
-  it("keeps identity component names disjoint from axis names", () => {
+  it("keeps key-component provenance disjoint from compared-axis provenance", () => {
     for (const spec of KIND_SPECS) {
-      const axes = new Set(spec.axes.map((axis) => axis.name));
-      expect(KEY_COMPONENTS[spec.kind].filter((component) => axes.has(component))).toEqual([]);
+      const keyFields = new Set(KEY_COMPONENTS[spec.kind].flatMap((component) => component.derivedFrom));
+      const axisFields = new Set(spec.axes.flatMap((axis) => axis.derivedFrom));
+      expect([...keyFields].filter((field) => axisFields.has(field)).sort()).toEqual([]);
     }
+  });
+
+  it("derives a discriminator by eliding locative key components", () => {
+    const key = "container.port:compose:infra/docker-compose.yml|redis|6379/tcp";
+    const observed = property("container.port", key, { binding: "host-published" }, {
+      discriminator: "redis|6379/tcp",
+    });
+    const keyBody = key.split(":compose:")[1];
+    expect(KEY_COMPONENTS[observed.kind].filter((component) => component.locative).map(
+      (component) => component.component,
+    )).toEqual(["path"]);
+    expect(observed.discriminator).toBe(keyBody.split("|").slice(1).join("|"));
+  });
+
+  it("serializes the complete transition key set in schema order", () => {
+    const transition = diffProperties([], [
+      property("container.port", "added", { binding: "host-published" }, { label: "published port" }),
+    ])[0];
+    expect(Object.keys(transitionToWire(transition))).toEqual([
+      "kind",
+      "key",
+      "subject",
+      "label",
+      "change",
+      "danger",
+      "severity",
+      "axes",
+      "from",
+      "to",
+      "confidence",
+      "base_evidence",
+      "head_evidence",
+      "attrs",
+      "paired",
+    ]);
   });
 
   it("matches the canonical shared kind-spec dump", () => {
@@ -277,7 +385,9 @@ describe("surface structure and serialization", () => {
   it("keeps every expected fixture internally consistent with the output schema", () => {
     const severityRank = { low: 0, medium: 1, high: 2, critical: 3 } as const;
     const casesRoot = path.join(REPO_ROOT, "fixtures/surface/cases");
-    for (const caseId of fs.readdirSync(casesRoot)) {
+    const caseIds = fs.readdirSync(casesRoot);
+    expect(caseIds).toHaveLength(10);
+    for (const caseId of caseIds) {
       const expected = JSON.parse(fs.readFileSync(path.join(casesRoot, caseId, "expected.json"), "utf8"));
       expect(expected.schema_version).toBe(1);
       expect(expected.summary.reportable).toBe(
@@ -303,6 +413,10 @@ describe("surface structure and serialization", () => {
         expected.coverage.unanalyzed.some((item: { changed: boolean }) => item.changed),
       );
       for (const transition of expected.transitions) {
+        expect(Object.keys(transition)).toEqual([
+          "kind", "key", "subject", "label", "change", "danger", "severity", "axes",
+          "from", "to", "confidence", "base_evidence", "head_evidence", "attrs", "paired",
+        ]);
         const spec = KIND_SPECS.find((candidate) => candidate.kind === transition.kind)!;
         expect(transition.axes.map((axis: { axis: string }) => axis.axis)).toEqual(
           spec.axes.map((axis) => axis.name),
