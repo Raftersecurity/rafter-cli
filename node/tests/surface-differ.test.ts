@@ -150,7 +150,7 @@ describe("surface semantic fixtures", () => {
         resource: "global-wildcard",
       }), {
         subject: "statement BlockAllS3",
-        label: "Deny * on * removed",
+        label: "Deny * on *",
         attrs: { effect: "Deny", action: "*", resource: "*" },
       }),
     ], []);
@@ -328,6 +328,35 @@ describe("surface differ", () => {
       property("container.port", "z", { binding: "host-published" }),
     ]);
     expect(transitions.map((transition) => transition.key)).toEqual(["z", "é"]);
+  });
+});
+
+describe("surface cancellation determinism", () => {
+  // IAM `Statement[]` order carries no meaning, so reordering a document must not
+  // change which property survives cancellation. Ordering cancellation by input
+  // position instead of by content makes the surviving label and evidence depend
+  // on emission order — reorder-variance the W7 M1 mutation would fail on.
+  const key = "iam.allow:iam-json:policy.json|nosid";
+  const bucket = (subject: string, line: number): Property =>
+    property("iam.allow", key, iamLevels(), {
+      subject,
+      label: `Allow s3:GetObject on ${subject}`,
+      discriminator: "",
+      evidence: { file: "policy.json", line },
+      attrs: { effect: "Allow", action: "s3:GetObject", resource: subject },
+    });
+
+  it("picks the same cancellation survivor regardless of input order", () => {
+    const alpha = bucket("bucket-alpha", 5);
+    const beta = bucket("bucket-beta", 12);
+    const head = [bucket("bucket-alpha", 5)];
+
+    const forward = diffProperties([alpha, beta], head).map(transitionToWire);
+    const reversed = diffProperties([beta, alpha], head).map(transitionToWire);
+
+    expect(canonicalJson(forward)).toBe(canonicalJson(reversed));
+    expect(forward).toHaveLength(1);
+    expect(forward[0]).toMatchObject({ change: "removed", subject: "bucket-beta" });
   });
 });
 

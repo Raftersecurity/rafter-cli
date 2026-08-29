@@ -75,6 +75,40 @@ pair has identical compared vectors, so `classify()` returns `order:"equal"` →
 byte-identical output, so the choice among them is unobservable. Phase 2 pairing still runs only
 on a 1:1 residual, so §3.3's original argument survives intact for every emitted transition.
 
+**Correction (A1.1) — invariance holds for the verdict, not automatically for the survivor.**
+The paragraph above is true of `danger` and `severity` but not of the whole wire record when
+equal-vector *multiplicities* differ between the sides. With base `{X, Y}` sharing vector `V` and
+head `{Z}` at `V`, one of `X`/`Y` survives as `removed`, and *which* one determines the emitted
+`label`, `subject`, and `evidence`. Ordering cancellation by input position makes that depend on
+emission order, so reordering an IAM `Statement[]` — semantically meaningless in AWS — changes the
+output. That is exactly the mutation W7's M1 suite asserts against.
+
+**Resolution.** Cancellation orders by `(levelVector, contentSignature)`, where `contentSignature`
+is `canonicalJson([label, attrs])` — content only, never evidence (line numbers move under
+reorder) and never input position. The survivor is then a function of content alone. Enforced by
+`picks the same cancellation survivor regardless of input order` in both runtimes, which fails
+without the content tiebreak.
+
+**`paired` within a bucket (A1.1).** A1 was contradictory here: it said to run the Phase 2 rule on
+the residue (which implies `paired: true`) while specifying `paired: false` in the fixture.
+Resolved by bucket size, because the two cases differ epistemically:
+
+- **1:1 bucket** — one property per side under an equal key, exactly one possible correspondence.
+  This is a true exact match: `paired: false`. Covers `iam-resource-widened-no-sid` and
+  `iam-incomparable`.
+- **Multi-property bucket** — the key matched but does not discriminate *within* the bucket, so
+  which surviving statement corresponds to which is inferred, not proven. Same epistemic status as
+  Phase 2 residual pairing, therefore `paired: true`. Covers
+  `iam-two-nosid-statements-changed`, whose fixture is corrected accordingly.
+
+Cancellation has already removed every equal-vector pair, so a residue pair never compares equal
+and `emitUnchanged` stays false — the flag does not resurrect no-ops.
+
+**Label consistency (A1.1).** A1 scoped label rewrites to four fixtures, but `iam-deny-removed`
+also carried delta prose (`"Deny * on * removed"`). Under `label = (head ?? base).label` the
+endpoint is the base property, whose own description is `"Deny * on *"`. Corrected; the rule
+applies to all ten fixtures, not the four originally enumerated.
+
 **What remains broken, and in which direction.** Two or more no-Sid statements whose action or
 principal sets both changed still produce unpaired add/remove. The flagship-class line is **not**
 lost: an unpaired head statement is classified against absence, every axis moves from
