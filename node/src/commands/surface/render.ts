@@ -189,9 +189,34 @@ export function renderText(model: RenderModel, options: RenderOptions): string {
   return `${lines.join("\n")}\n`;
 }
 
+function branchOf(ref: string): string {
+  return ref.includes("/") ? ref.slice(ref.lastIndexOf("/") + 1) : ref;
+}
+
+/**
+ * §4.4 point 4 — the machine-readable half of exit 3. Emitted on stdout under
+ * `--json`; a JSON consumer must not have to scrape stderr to learn that no
+ * comparison happened.
+ */
+export function baseUnresolvedEnvelope(ref: string, shallow: boolean): Record<string, unknown> {
+  return {
+    _note: "Attack-surface diff could not run: the base ref could not be resolved, so no "
+      + "comparison was performed. This is not a clean result.",
+    schema_version: 1,
+    error: "base_unreachable",
+    base: ref,
+    shallow,
+    hint: shallow
+      ? "actions/checkout defaults to fetch-depth: 1, which cannot resolve a base ref. "
+        + `Set fetch-depth: 0, or run: git fetch --no-tags --depth=50 origin ${branchOf(ref)}`
+      : `No commit matches base ref '${ref}' in this repository. Check the ref name, or `
+        + `fetch it: git fetch --no-tags --depth=50 origin ${branchOf(ref)}`,
+  };
+}
+
 /** §4.4 / §9.2 — the actionable exit-3 message. Never a bare "base not found". */
 export function renderBaseUnresolved(ref: string, shallow: boolean): string {
-  const branch = ref.includes("/") ? ref.slice(ref.lastIndexOf("/") + 1) : ref;
+  const branch = branchOf(ref);
   const cause = shallow
     ? `Cannot resolve base ref '${ref}' — this is a shallow clone.`
     : `Cannot resolve base ref '${ref}' — no such commit in this repository.`;

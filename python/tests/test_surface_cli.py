@@ -35,6 +35,24 @@ def rafter(args, *, cwd=None):
     return result.stdout, result.stderr, result.returncode
 
 
+_NODE_CLI = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "node",
+    "dist",
+    "index.js",
+)
+# Byte-for-byte parity on the exit-3 envelope needs the built Node CLI; skip it
+# when dist/ has not been built.
+_NODE_AVAILABLE = os.path.isfile(_NODE_CLI)
+
+
+def rafter_node(args, *, cwd=None):
+    result = subprocess.run(
+        ["node", _NODE_CLI, *args], capture_output=True, text=True, cwd=cwd, timeout=60
+    )
+    return result.stdout, result.stderr, result.returncode
+
+
 def git(repo, *args):
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
@@ -159,6 +177,54 @@ class TestExitCodes:
         assert "--fetch-base" in stderr
         # Never silently treated as an empty base: nothing is reported as appeared.
         assert stdout == ""
+
+    def test_exit_3_emits_machine_readable_envelope_under_json(self, repo):
+        commit0(repo)
+        stdout, _, rc = rafter(["surface", "diff", "--json", "--base", "origin/main"], cwd=repo)
+        assert rc == 3
+        envelope = json.loads(stdout)
+        assert envelope["error"] == "base_unreachable"
+        assert envelope["schema_version"] == 1
+        assert envelope["base"] == "origin/main"
+        assert envelope["shallow"] is False
+        assert "git fetch --no-tags --depth=50 origin main" in envelope["hint"]
+        assert "not a clean result" in envelope["_note"]
+        # Not a report: no transitions array to mistake for "nothing changed".
+        assert "transitions" not in envelope
+
+    def test_shallow_clone_reports_shallow_and_fetch_depth_remedy(self, repo, tmp_path):
+        # A depth-1 clone cannot resolve the origin repo's first commit.
+        (repo / "one.txt").write_text("1\n", encoding="utf-8")
+        commit(repo, "first")
+        first_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        (repo / "two.txt").write_text("2\n", encoding="utf-8")
+        commit(repo, "second")
+
+        shallow = tmp_path / "shallow-clone"
+        subprocess.run(
+            ["git", "clone", "-q", "--depth=1", f"file://{repo}", str(shallow)],
+            check=True,
+            capture_output=True,
+        )
+        stdout, _, rc = rafter(
+            ["surface", "diff", "--json", "--base", first_sha], cwd=shallow
+        )
+        assert rc == 3
+        envelope = json.loads(stdout)
+        assert envelope["shallow"] is True
+        assert "fetch-depth: 0" in envelope["hint"]
+
+    @pytest.mark.skipif(not _NODE_AVAILABLE, reason="node dist/ is not built")
+    def test_exit_3_envelope_is_byte_identical_across_runtimes(self, repo):
+        commit0(repo)
+        args = ["surface", "diff", "--json", "--base", "origin/main"]
+        py_stdout, _, py_rc = rafter(args, cwd=repo)
+        node_stdout, _, node_rc = rafter_node(args, cwd=repo)
+        assert py_rc == 3
+        assert node_rc == 3
+        assert py_stdout == node_stdout
 
     def test_exit_4_when_changed_candidate_unanalyzable(self, repo):
         commit0(repo)
