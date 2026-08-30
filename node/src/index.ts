@@ -12,6 +12,7 @@ import { createCiCommand } from "./commands/ci/index.js";
 import { createHookCommand } from "./commands/hook/index.js";
 import { createMcpCommand } from "./commands/mcp/index.js";
 import { createPolicyCommand } from "./commands/policy/index.js";
+import { createSurfaceCommand } from "./commands/surface/index.js";
 import { createBriefCommand } from "./commands/brief.js";
 import { createDocsCommand } from "./commands/docs/index.js";
 import { createNotifyCommand } from "./commands/notify.js";
@@ -72,6 +73,9 @@ program.addCommand(createMcpCommand());
 
 // Policy commands
 program.addCommand(createPolicyCommand());
+
+// Attack-surface diff
+program.addCommand(createSurfaceCommand());
 
 // Docs — repo-specific security docs from .rafter.yml
 program.addCommand(createDocsCommand());
