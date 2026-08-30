@@ -33,6 +33,11 @@ When making CLI changes, update these files in Rome-1/docs:
 - [ ] `guides/agent-security/audit-log.mdx` — Event types, schema, webhook config
 - [ ] `guides/agent-security/policy-file.mdx` — Policy file format
 
+### After adding/changing attack-surface diff
+
+- [ ] `guides/agent-security/surface-diff.mdx` — Property kinds, the change/danger axes, exit codes 0–4
+- [ ] `guides/ci-cd.mdx` — `fetch-depth: 0` is required; a shallow clone cannot resolve the base ref
+
 ### After adding/changing integrations
 
 - [ ] `guides/agent-security/claude-code-integration.mdx` — Claude Code hooks/skills

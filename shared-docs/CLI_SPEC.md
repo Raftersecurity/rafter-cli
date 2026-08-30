@@ -55,6 +55,28 @@ The CLI follows UNIX principles:
 | 2 | Selector did not match any configured doc |
 | 3 | No docs configured in `.rafter.yml` |
 
+### Attack-Surface Diff (`rafter surface diff`)
+
+| Code | Meaning |
+|------|---------|
+| 0 | No reportable danger increase at or above `--fail-on` (includes "surface unchanged") |
+| 1 | One or more reportable danger increases at or above `--fail-on` (default: `high`) |
+| 2 | Runtime error — not a git repo, path not found, invalid flag value, extractor crash |
+| 3 | Base ref unresolvable — unknown ref, or a shallow clone lacking the base commit |
+| 4 | Inconclusive — a **changed** security artifact could not be analyzed |
+
+Precedence when several apply: **3 > 2 > 4 > 1 > 0**.
+
+Exit 1 deliberately does not mean "the surface changed" — nearly every PR changes
+something, and a check that fails every build gets removed from CI. It means a
+*danger increase* at or above the `--fail-on` threshold.
+
+Exit 4 exists so that a file this change touched, which the tool could not parse,
+never reads as clean. Without it, a PR author could disable the gate by
+introducing syntax the parser rejects. A file that was already unanalyzable before
+the change is reported but does not gate. `--fail-on none` forces 0 and downgrades
+4; it does **not** affect exit 3.
+
 ---
 
 ## Global Options
@@ -1251,6 +1273,221 @@ repos:
       - id: rafter-scan           # Node.js
       # - id: rafter-scan-python  # Python alternative
 ```
+
+---
+
+### rafter surface diff [PATH] [OPTIONS]
+
+Reports **what became more dangerous** between two trees — a delta of security
+*properties*, not a findings list. Extracts properties at `base` and at `head`,
+diffs the property sets, and reports only transitions.
+
+The unit of output is a **property**, not a finding. Two axes describe every
+transition and they are independent:
+
+- `change` — structural: `added`, `removed`, `modified`.
+- `danger` — semantic: `increased`, `decreased`, `unchanged`, `incomparable`, `unknown`.
+
+Severity attaches only to `danger`. Removing an IAM `Deny` statement is
+`change: "removed"` with `danger: "increased"` — the two axes must not be
+conflated.
+
+**Options**
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--base <ref>` | `HEAD` | Base ref to compare against |
+| `--head <ref>` | working tree | Head ref; omitted means the working tree, including uncommitted and untracked files |
+| `--format <text\|json>` | `text` | Output format |
+| `--json` | — | Alias for `--format json` |
+| `--fail-on <low\|medium\|high\|critical\|none>` | `high` | Exit-1 threshold; `none` is report-only |
+| `--min-severity <low\|medium\|high\|critical>` | `low` | Display floor |
+| `--include-decreased` | off | Include `danger: "decreased"` transitions in text output |
+| `--all` | off | Include transitions carrying no severity |
+| `--explain` | off | Enumerate unanalyzable files in text output |
+| `--on-inconclusive <fail\|warn>` | `fail` | Whether an unanalyzable changed artifact exits 4 |
+| `--fetch-base` | off | Permit one `git fetch` to resolve an unreachable base |
+| `--quiet` | off | Suppress stderr status messages |
+
+Scope in v1: Docker Compose published ports, IAM policy JSON, and `package.json`
+install-time lifecycle scripts. All are file-local declarative artifacts.
+Constructs the extractors cannot resolve — Compose `extends`, IAM `NotAction` /
+`NotResource`, policy variables — are reported as unanalyzable rather than
+guessed at.
+
+#### JSON Output (`--json` / `--format json`)
+
+```json
+{
+  "_note": "Attack-surface diff: a delta of security properties between two trees, not a findings list. `change` is structural (added/removed/modified); `danger` is semantic and is the only thing severity attaches to. An empty `transitions` array with `coverage.inconclusive: false` means the analyzed surface is unchanged — it does not mean the code is safe.",
+  "schema_version": 1,
+  "base": { "ref": "origin/main", "resolved": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0" },
+  "head": { "ref": "WORKTREE", "resolved": null },
+  "summary": {
+    "increased": 2, "decreased": 0, "incomparable": 1, "unchanged": 1, "unknown": 0,
+    "added": 1, "removed": 0, "modified": 3,
+    "highest_severity": "high", "reportable": 3
+  },
+  "transitions": [
+    {
+      "kind": "iam.allow",
+      "key": "iam.allow:iam-json:infra/policy.json|sid=AppBucketAccess",
+      "subject": "statement AppBucketAccess",
+      "label": "Allow s3:GetObject on *",
+      "change": "modified",
+      "danger": "increased",
+      "severity": "high",
+      "axes": [
+        { "axis": "action",    "from": "literal",           "to": "literal",           "order": "equal" },
+        { "axis": "resource",  "from": "prefix-wildcard",   "to": "global-wildcard",   "order": "greater" },
+        { "axis": "principal", "from": "absent-or-literal", "to": "absent-or-literal", "order": "equal" },
+        { "axis": "condition", "from": "present",           "to": "present",           "order": "equal" }
+      ],
+      "from": null,
+      "to": null,
+      "confidence": "certain",
+      "base_evidence": { "file": "infra/policy.json", "line": 18 },
+      "head_evidence": { "file": "infra/policy.json", "line": 18 },
+      "attrs": { "effect": "Allow", "action": "s3:GetObject", "resource": "*" },
+      "paired": false
+    },
+    {
+      "kind": "container.port",
+      "key": "container.port:compose:infra/docker-compose.yml|redis|6379/tcp",
+      "subject": "service redis",
+      "label": "redis port 6379 published on 0.0.0.0",
+      "change": "added",
+      "danger": "increased",
+      "severity": "high",
+      "axes": [
+        { "axis": "binding", "from": null, "to": "host-published", "order": "greater" }
+      ],
+      "from": null,
+      "to": "host-published",
+      "confidence": "certain",
+      "base_evidence": null,
+      "head_evidence": { "file": "infra/docker-compose.yml", "line": 15 },
+      "attrs": { "service": "redis", "bind": "0.0.0.0", "container_port": 6379, "protocol": "tcp" },
+      "paired": false
+    },
+    {
+      "kind": "iam.allow",
+      "key": "iam.allow:iam-json:infra/policy.json|nosid",
+      "subject": "statement 2",
+      "label": "Allow s3:GetObject on *",
+      "change": "modified",
+      "danger": "incomparable",
+      "severity": "medium",
+      "axes": [
+        { "axis": "action",    "from": "service-wildcard",  "to": "literal",           "order": "less" },
+        { "axis": "resource",  "from": "prefix-wildcard",   "to": "global-wildcard",   "order": "greater" },
+        { "axis": "principal", "from": "absent-or-literal", "to": "absent-or-literal", "order": "equal" },
+        { "axis": "condition", "from": "absent",            "to": "absent",            "order": "equal" }
+      ],
+      "from": null,
+      "to": null,
+      "confidence": "certain",
+      "base_evidence": { "file": "infra/policy.json", "line": 31 },
+      "head_evidence": { "file": "infra/policy.json", "line": 31 },
+      "attrs": { "effect": "Allow", "action": "s3:GetObject", "resource": "*" },
+      "paired": true
+    }
+  ],
+  "coverage": {
+    "analyzed": 12,
+    "degraded": true,
+    "inconclusive": false,
+    "unanalyzed": [
+      {
+        "file": "deploy/legacy-compose.yml",
+        "side": "base",
+        "reason": "unsupported_syntax",
+        "detail": "service 'web' uses extends",
+        "changed": false
+      }
+    ]
+  }
+}
+```
+
+**Top-level field reference:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `_note` | string | Human-readable scope note. JSON has no comments — this `_*` key is the convention. |
+| `schema_version` | number | Integer, incremented on any breaking change to this object. Currently `1`. |
+| `base` | object | The base side of the comparison. |
+| `head` | object | The head side of the comparison. |
+| `summary` | object | Transition counts by `danger` and by `change`, plus the highest severity present. |
+| `transitions` | array | Every transition, sorted by severity (desc), then `kind`, then `key` (UTF-8 byte order). Empty when the analyzed surface is unchanged. |
+| `coverage` | object | What was and was not analyzable. |
+
+**`base` / `head` field reference:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `base.ref` | string | The ref as supplied (`--base`), e.g. `"origin/main"`, `"HEAD"`. `"EMPTY_TREE"` for a proven root/unborn base. |
+| `base.resolved` | string\|null | Full 40-char commit SHA; the empty-tree OID `4b825dc6…` for a root/unborn base |
+| `head.ref` | string | `"WORKTREE"` when `--head` was not supplied, otherwise the supplied ref |
+| `head.resolved` | string\|null | Full commit SHA, or `null` for the working tree |
+
+**`summary` field reference:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `summary.increased` | number | Transitions where head is more dangerous than base |
+| `summary.decreased` | number | Transitions where head is less dangerous than base |
+| `summary.incomparable` | number | Transitions where one axis widened and another narrowed — neither side dominates |
+| `summary.unchanged` | number | Transitions emitted with no danger change (residually-paired renames only) |
+| `summary.unknown` | number | Transitions whose danger could not be decided — asymmetric coverage loss, or an undecidable axis |
+| `summary.added` | number | Properties absent at base, present at head |
+| `summary.removed` | number | Properties present at base, absent at head |
+| `summary.modified` | number | Properties present on both sides |
+| `summary.highest_severity` | string\|null | `"low"`, `"medium"`, `"high"`, `"critical"`, or `null` when no transition carries a severity |
+| `summary.reportable` | number | Count of transitions with a non-null `severity` at or above `--min-severity` |
+
+**`transitions[]` field reference:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transitions[].kind` | string | `"container.port"`, `"iam.allow"`, `"iam.deny"`, or `"pkg.lifecycle_script"` |
+| `transitions[].key` | string | Stable property identity. Independent of line numbers and formatting. Never contains a value that appears in `axes` — identity and comparison are disjoint. |
+| `transitions[].subject` | string | Human-facing name of the thing the property is about, e.g. `"service redis"` |
+| `transitions[].label` | string | Display description of the property itself. Not stable across versions — never key on it. Delta phrasing ("widened to X") is composed by the text renderer, not carried here. |
+| `transitions[].change` | string | `"added"`, `"removed"`, or `"modified"`. **Structural only.** `added` always means absent at base and present at head; there are no exceptions. |
+| `transitions[].danger` | string | `"increased"`, `"decreased"`, `"unchanged"`, `"incomparable"`, or `"unknown"`. **Semantic.** Independent of `change`: removing a `Deny` statement is `change:"removed"`, `danger:"increased"`. |
+| `transitions[].severity` | string\|null | `"low"`, `"medium"`, `"high"`, `"critical"` when `danger` is `"increased"` or `"incomparable"`; `null` otherwise. Same four-value vocabulary used everywhere else in Rafter. |
+| `transitions[].axes` | array | Per-axis comparison. Always present and always authoritative. |
+| `transitions[].axes[].axis` | string | Axis name, e.g. `"binding"`, `"action"`, `"resource"`, `"principal"`, `"condition"`, `"fetch"` |
+| `transitions[].axes[].from` | string\|null | Rank at base; `null` when the property was absent at base |
+| `transitions[].axes[].to` | string\|null | Rank at head; `null` when the property is absent at head |
+| `transitions[].axes[].order` | string | `"equal"`, `"greater"` (head more dangerous), `"less"`, or `"unknown"`. **Pre-inversion** — for `iam.deny`, `order:"greater"` corresponds to `danger:"decreased"`. |
+| `transitions[].from` | string\|null | Convenience mirror of `axes[0].from` when there is exactly one axis; `null` for multi-axis kinds |
+| `transitions[].to` | string\|null | Convenience mirror of `axes[0].to` when there is exactly one axis; `null` for multi-axis kinds |
+| `transitions[].confidence` | string | Always `"certain"` in schema version 1. Reserved for a future `"probable"` tier. |
+| `transitions[].base_evidence` | object\|null | `{file, line}` on the base side; `null` when absent at base |
+| `transitions[].head_evidence` | object\|null | `{file, line}` on the head side; `null` when absent at head |
+| `transitions[].attrs` | object | Descriptive key/value pairs for rendering. **Not part of identity and never compared.** ASCII keys; values are string, integer, boolean, or null — never floats. |
+| `transitions[].paired` | boolean | `true` when the two sides were matched by unique-residual pairing rather than proven `key` equality. A `true` here means the identity match is inferred. |
+
+**`coverage` field reference:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `coverage.analyzed` | number | Count of (file, side) pairs fully parsed |
+| `coverage.degraded` | boolean | `true` when at least one candidate file failed to analyze on either side. When true, some `added`/`removed` transitions were forced to `danger:"unknown"` because absence could not be proven. |
+| `coverage.inconclusive` | boolean | `true` when at least one **changed** candidate file failed to analyze. Drives exit code 4. |
+| `coverage.unanalyzed[].file` | string | Repo-relative path |
+| `coverage.unanalyzed[].side` | string | `"base"` or `"head"` |
+| `coverage.unanalyzed[].reason` | string | `"parse_error"`, `"unsupported_syntax"`, `"too_large"`, `"too_many_candidates"`, `"binary"`, `"symlink"`, `"timeout"` |
+| `coverage.unanalyzed[].detail` | string | Short human explanation. Never contains file content. |
+| `coverage.unanalyzed[].changed` | boolean | `true` when this file differs between base and head. A `true` here is the author's to fix; a `false` is pre-existing and never gates. |
+
+**"Analyzed and found nothing" and "could not analyze" are distinct and must not be
+conflated.** An empty `transitions` array with `coverage.degraded: false` means the
+analyzed surface is unchanged. An empty `transitions` array with
+`coverage.inconclusive: true` means part of the answer is missing on a file this
+change touched — and the process exits 4.
 
 ---
 
