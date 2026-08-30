@@ -18,6 +18,7 @@ from .commands.report import report_main
 from .commands.scan import scan_app, secrets_app
 from .commands.sites import sites_app
 from .commands.skill import skill_app
+from .commands.surface import surface_app
 from .utils.formatter import set_agent_mode
 
 app = typer.Typer(
@@ -113,6 +114,7 @@ app.add_typer(notify_app)
 app.add_typer(policy_app)
 app.add_typer(sites_app)
 app.add_typer(skill_app)
+app.add_typer(surface_app)
 app.command("report")(report_main)
 
 if __name__ == "__main__":
