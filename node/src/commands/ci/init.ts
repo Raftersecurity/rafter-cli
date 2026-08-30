@@ -114,6 +114,24 @@ jobs:
 
       - name: Scan for secrets
         run: rafter secrets . --quiet
+
+  surface-diff:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      # fetch-depth: 0 is required. actions/checkout fetches a single commit by
+      # default, which cannot resolve the base ref — surface diff exits 3 rather
+      # than treating an unreachable base as empty and reporting the whole
+      # surface as newly added.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rafter CLI
+        run: npm install -g @rafter-security/cli
+
+      - name: Report what became more dangerous
+        run: rafter surface diff --base \${{ github.event.pull_request.base.sha }}
 `;
 
   if (withBackend) {

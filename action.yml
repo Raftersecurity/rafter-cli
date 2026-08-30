@@ -41,6 +41,16 @@ inputs:
     description: "Output format: json or text"
     required: false
     default: 'json'
+  surface-base:
+    description: >-
+      Base ref for the attack-surface diff (e.g. ${{ github.event.pull_request.base.sha }}).
+      Leave empty to skip the surface diff entirely.
+    required: false
+    default: ''
+  surface-args:
+    description: Additional arguments passed to `rafter surface diff`
+    required: false
+    default: ''
 
 outputs:
   finding-count:
@@ -52,6 +62,12 @@ outputs:
   exit-code:
     description: Scanner exit code (0=clean, 1=findings, 2=error)
     value: ${{ steps.scan.outputs.exit-code }}
+  surface-exit-code:
+    description: Surface-diff exit code (0=no increase, 1=increase, 2=error, 3=base unresolvable, 4=inconclusive)
+    value: ${{ steps.surface.outputs.surface-exit-code }}
+  surface-report:
+    description: Full surface-diff report (JSON when format=json)
+    value: ${{ steps.surface.outputs.surface-report }}
 
 runs:
   using: composite
@@ -75,6 +91,40 @@ runs:
         else
           pip install rafter-cli==${{ inputs.version }}
         fi
+
+    # This composite action does not own the checkout step, so it cannot set
+    # fetch-depth. actions/checkout fetches a single commit by default, which
+    # cannot resolve a base ref — so fetch the base narrowly here rather than
+    # letting `surface diff` exit 3 on the ordinary CI setup.
+    - name: Fetch surface base ref
+      if: inputs.surface-base != ''
+      shell: bash
+      run: |
+        git fetch --no-tags --depth=1 origin "${{ inputs.surface-base }}" 2>/dev/null \
+          || echo "rafter: could not fetch base '${{ inputs.surface-base }}'; surface diff will report exit 3" >&2
+
+    - name: Attack-surface diff
+      id: surface
+      if: inputs.surface-base != ''
+      shell: bash
+      run: |
+        set +e
+        STDERR_FILE=$(mktemp)
+        OUTPUT=$(rafter surface diff --base "${{ inputs.surface-base }}" \
+          --format ${{ inputs.format }} ${{ inputs.surface-args }} 2>"$STDERR_FILE")
+        EXIT_CODE=$?
+        STDERR_OUTPUT=$(cat "$STDERR_FILE")
+        rm -f "$STDERR_FILE"
+        set -e
+
+        echo "surface-exit-code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+        echo "surface-report<<RAFTER_EOF" >> "$GITHUB_OUTPUT"
+        echo "${OUTPUT}" >> "$GITHUB_OUTPUT"
+        echo "RAFTER_EOF" >> "$GITHUB_OUTPUT"
+
+        [ -n "$STDERR_OUTPUT" ] && echo "$STDERR_OUTPUT" >&2
+        echo "${OUTPUT}"
+        exit ${EXIT_CODE}
 
     - name: Scan for secrets
       id: scan

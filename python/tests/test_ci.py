@@ -46,6 +46,16 @@ class TestTemplates:
         assert "rafter secrets . --quiet" in content
         assert "security-audit" not in content
 
+    def test_github_template_surface_job_has_fetch_depth_zero(self):
+        content = _github_template(with_backend=False)
+        assert "surface-diff:" in content
+        # actions/checkout fetches one commit by default, which cannot resolve a
+        # base ref. Without fetch-depth: 0 the job exits 3 on every PR.
+        assert "fetch-depth: 0" in content
+        assert "rafter surface diff --base" in content
+        # The base only exists on a pull_request event.
+        assert "if: github.event_name == 'pull_request'" in content
+
     def test_github_template_with_backend(self):
         content = _github_template(with_backend=True)
         assert "security-audit" in content

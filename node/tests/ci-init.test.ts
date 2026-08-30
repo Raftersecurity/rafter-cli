@@ -100,6 +100,22 @@ describe("ci init — explicit platform", () => {
     expect(content).not.toContain("security-audit");
   });
 
+  it("gives the surface-diff job fetch-depth: 0", () => {
+    const r = rafter("ci init --platform github", { cwd: tmpDir });
+    expect(r.exitCode).toBe(0);
+    const content = fs.readFileSync(
+      path.join(tmpDir, ".github/workflows/rafter-security.yml"),
+      "utf-8",
+    );
+    expect(content).toContain("surface-diff:");
+    // actions/checkout fetches one commit by default, which cannot resolve a
+    // base ref. Without fetch-depth: 0 the job exits 3 on every PR.
+    expect(content).toContain("fetch-depth: 0");
+    expect(content).toContain("rafter surface diff --base");
+    // The base only exists on a pull_request event.
+    expect(content).toContain("if: github.event_name == 'pull_request'");
+  });
+
   it("--platform gitlab generates GitLab CI config", () => {
     const r = rafter("ci init --platform gitlab", { cwd: tmpDir });
     expect(r.exitCode).toBe(0);
@@ -215,7 +231,9 @@ describe("ci init — generated workflow YAML validation", () => {
     it("without --with-backend has no security-audit job", () => {
       rafter("ci init --platform github", { cwd: tmpDir });
       const doc = readAndParse(path.join(tmpDir, ".github/workflows/rafter-security.yml"));
-      expect(Object.keys(doc.jobs)).toEqual(["secret-scan"]);
+      // surface-diff is local-only like secret-scan; security-audit is the one
+      // job that needs an API key, so only it is gated behind --with-backend.
+      expect(Object.keys(doc.jobs)).toEqual(["secret-scan", "surface-diff"]);
     });
   });
 
