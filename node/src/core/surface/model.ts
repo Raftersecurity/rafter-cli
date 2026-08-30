@@ -94,14 +94,22 @@ export interface Transition {
   paired: boolean;
 }
 
-export type UnanalyzedReason =
-  | "parse_error"
-  | "unsupported_syntax"
-  | "too_large"
-  | "too_many_candidates"
-  | "binary"
-  | "symlink"
-  | "timeout";
+/**
+ * Runtime list, with the type derived from it, so the values are enumerable at
+ * runtime. The docs-sync test walks these to assert every reason a user can be
+ * shown is documented in CLI_SPEC.md; a type alone would not be inspectable.
+ */
+export const UNANALYZED_REASONS = [
+  "parse_error",
+  "unsupported_syntax",
+  "too_large",
+  "too_many_candidates",
+  "binary",
+  "symlink",
+  "timeout",
+] as const;
+
+export type UnanalyzedReason = (typeof UNANALYZED_REASONS)[number];
 
 export interface Unanalyzed {
   file: string;

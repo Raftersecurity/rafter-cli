@@ -227,6 +227,39 @@ Raw secret values are never included in output. Pipe to `jq`, feed to CI gates, 
 
 **Engine selection:** Uses Betterleaks when available (more patterns), falls back to built-in regex. Override with `--engine betterleaks|patterns|auto`.
 
+### Attack-Surface Diff
+
+Answers one question about a change: **what became more dangerous?** A delta of
+security properties rather than a finding count — the thing a reviewer otherwise
+has to derive by hand on every PR.
+
+```sh
+rafter surface diff                          # working tree vs HEAD
+rafter surface diff --base origin/main       # PR-shaped comparison
+rafter surface diff --json                   # structured output
+rafter surface diff --fail-on none           # report-only, always exits 0
+```
+
+```
+Attack surface: 2 properties became more dangerous  (origin/main -> working tree)
+
+  critical  IAM AppBucketAccess         infra/policy.json:22    scoped -> resource *
+  high      redis 6379 published        docker-compose.yml:15   new
+```
+
+Every transition carries two independent axes: `change` (structural — added,
+removed, modified) and `danger` (semantic — increased, decreased, unchanged,
+incomparable, unknown). Severity attaches only to `danger`, so deleting an IAM
+`Deny` statement is reported as a removal that *increased* danger.
+
+v1 covers Docker Compose published ports, IAM policy JSON, and `package.json`
+install-time lifecycle scripts. Constructs it cannot resolve are reported as
+unanalyzable rather than guessed at — and if an artifact your change *touched*
+could not be parsed, the command exits 4 rather than reporting a clean surface.
+
+**CI note:** requires `fetch-depth: 0`. `actions/checkout` fetches a single
+commit by default, which cannot resolve a base ref.
+
 ### Pre-Commit Hook
 
 Automatically scan staged files before every `git commit`. The most effective way to prevent secrets from entering version control.
@@ -513,6 +546,18 @@ Exit codes are part of Rafter's output contract — CI pipelines and orchestrato
 | 0 | Clean — no secrets detected | Proceed |
 | 1 | Findings — one or more secrets detected | Stop / review |
 | 2 | Runtime error — path not found, invalid ref | Fix input and retry |
+
+### Attack-Surface Diff (`rafter surface diff`)
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| 0 | No reportable danger increase | Proceed |
+| 1 | Danger increased at or above `--fail-on` | Review the delta |
+| 2 | Runtime error — not a git repo, invalid flag | Fix input and retry |
+| 3 | Base ref unresolvable (usually a shallow clone) | Set `fetch-depth: 0` |
+| 4 | Inconclusive — a changed artifact could not be analyzed | Review by hand |
+
+Precedence when several apply: 3 > 2 > 4 > 1 > 0.
 
 ### Remote Commands (`rafter run` / `rafter get` / `rafter usage`)
 
