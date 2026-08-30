@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { diffProperties, type DiffCoverage } from "../src/core/surface/differ.js";
 import { KEY_COMPONENTS, KIND_SPECS } from "../src/core/surface/kind-specs.js";
+import { parentScope } from "../src/core/surface/paths.js";
 import type { KindSpec, Property, PropertyKind } from "../src/core/surface/model.js";
 import {
   canonicalJson,
@@ -117,9 +118,9 @@ describe("surface semantic fixtures", () => {
     const key = "iam.allow:iam-json:policy.json|nosid";
     expectCase(
       "iam-resource-widened-no-sid",
-      [property("iam.allow", key, iamLevels(), { subject: "statement 1" })],
+      [property("iam.allow", key, iamLevels(), { subject: "unnamed statement" })],
       [property("iam.allow", key, iamLevels({ resource: "global-wildcard" }), {
-        subject: "statement 1",
+        subject: "unnamed statement",
         label: "Allow s3:GetObject on *",
         attrs: { effect: "Allow", action: "s3:GetObject", resource: "*" },
       })],
@@ -131,11 +132,11 @@ describe("surface semantic fixtures", () => {
     expectCase(
       "iam-incomparable",
       [property("iam.allow", key, iamLevels({ action: "service-wildcard" }), {
-        subject: "statement 1",
+        subject: "unnamed statement",
         discriminator: "",
       })],
       [property("iam.allow", key, iamLevels({ resource: "global-wildcard" }), {
-        subject: "statement 1",
+        subject: "unnamed statement",
         label: "Allow s3:GetObject on *",
         discriminator: "",
         attrs: { effect: "Allow", action: "s3:GetObject", resource: "*" },
@@ -195,24 +196,24 @@ describe("surface differ", () => {
       "iam-two-nosid-statements-changed",
       [
         property("iam.allow", key, iamLevels({ resource: "literal" }), {
-          subject: "statement 1",
+          subject: "unnamed statement",
           discriminator: "",
           evidence: { file: "policy.json", line: 5 },
         }),
         property("iam.allow", key, iamLevels(), {
-          subject: "statement 2",
+          subject: "unnamed statement",
           discriminator: "",
           evidence: { file: "policy.json", line: 10 },
         }),
       ],
       [
         property("iam.allow", key, iamLevels({ resource: "literal" }), {
-          subject: "statement 1",
+          subject: "unnamed statement",
           discriminator: "",
           evidence: { file: "policy.json", line: 5 },
         }),
         property("iam.allow", key, iamLevels({ resource: "global-wildcard" }), {
-          subject: "statement 2",
+          subject: "unnamed statement",
           label: "Allow s3:GetObject on *",
           discriminator: "",
           evidence: { file: "policy.json", line: 10 },
@@ -270,7 +271,7 @@ describe("surface differ", () => {
     expect(transition.axes[0]).toMatchObject({ from: "host-published", to: null, order: "greater" });
   });
 
-  it("keeps a null severityByLevel transition non-reportable", () => {
+  it("keeps a null severityByRank transition non-reportable", () => {
     const transition = diffProperties([], [
       property("container.port", "internal", { binding: "not-published" }),
     ])[0];
@@ -357,6 +358,154 @@ describe("surface cancellation determinism", () => {
     expect(canonicalJson(forward)).toBe(canonicalJson(reversed));
     expect(forward).toHaveLength(1);
     expect(forward[0]).toMatchObject({ change: "removed", subject: "bucket-beta" });
+  });
+});
+
+describe("surface severity by arrival rank", () => {
+  // A2 F2. Severity is a function of the rank an axis ARRIVED at, never of the
+  // fact that it moved. Before the fix every IAM axis moved from absent (rank -1)
+  // to present, each contributed its old `severityAtTop`, and `principal`'s was
+  // `critical` — so the narrowest expressible statement gated CI at `critical`.
+  it("scores the narrowest expressible added Allow as severity null", () => {
+    const transition = diffProperties([], [
+      property("iam.allow", "iam.allow:iam-json:policy.json|sid=NarrowRead", {
+        action: "literal",
+        resource: "literal",
+        principal: "absent-or-literal",
+        condition: "present",
+      }, {
+        subject: "statement NarrowRead",
+        label: "Allow s3:GetObject on arn:aws:s3:::app-bucket/report.csv",
+      }),
+    ])[0];
+    expect(transition).toMatchObject({
+      change: "added",
+      danger: "increased",
+      severity: null,
+    });
+  });
+
+  // The accepted false positive: an added Allow with no Condition arrives at
+  // `condition: absent`, a single `medium` contributor. Visible, never gating.
+  it("scores an added Allow with no Condition as medium, not critical", () => {
+    const transition = diffProperties([], [
+      property("iam.allow", "iam.allow:iam-json:policy.json|sid=NoCondition", {
+        action: "literal",
+        resource: "literal",
+        principal: "absent-or-literal",
+        condition: "absent",
+      }),
+    ])[0];
+    expect(transition).toMatchObject({ danger: "increased", severity: "medium" });
+  });
+
+  // The upper bound the fix must not flatten: two axes arriving at a `high` rank
+  // promote to critical.
+  it("promotes two strong contributing axes to critical", () => {
+    const transition = diffProperties([], [
+      property("iam.allow", "iam.allow:iam-json:policy.json|sid=Admin", {
+        action: "global-wildcard",
+        resource: "global-wildcard",
+        principal: "absent-or-literal",
+        condition: "absent",
+      }),
+    ])[0];
+    expect(transition).toMatchObject({ danger: "increased", severity: "critical" });
+  });
+
+  it("gives every axis a severityByRank entry per rank, in both tables", () => {
+    for (const spec of KIND_SPECS) {
+      for (const axis of spec.axes) {
+        expect(axis.severityByRank).toHaveLength(axis.ranks.length);
+      }
+    }
+    const shared = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, "fixtures/surface/kind-specs.json"), "utf8"),
+    ) as Array<{ axes: Array<{ ranks: string[]; severityByRank: unknown[] }> }>;
+    for (const spec of shared) {
+      for (const axis of spec.axes) {
+        expect(axis.severityByRank).toHaveLength(axis.ranks.length);
+      }
+    }
+  });
+});
+
+describe("surface sort totality", () => {
+  // A2 F8b. Under `keyMayRepeat`, two transitions can share severity, kind and
+  // key; the v1 three-component sort left that tie to a stable sort, so the order
+  // was a function of emission order — i.e. of `Statement[]` position.
+  it("orders same-key transitions by content, not by emission order", () => {
+    const key = "iam.allow:iam-json:policy.json|nosid";
+    const statement = (resource: string, line: number): Property =>
+      property("iam.allow", key, iamLevels({ resource: "global-wildcard" }), {
+        subject: "unnamed statement",
+        label: `Allow s3:GetObject on ${resource}`,
+        discriminator: "",
+        evidence: { file: "policy.json", line },
+        attrs: { effect: "Allow", action: "s3:GetObject", resource },
+      });
+    const alpha = statement("*", 5);
+    const beta = statement("**", 12);
+
+    const forward = diffProperties([], [alpha, beta]);
+    const reversed = diffProperties([], [beta, alpha]);
+
+    expect(forward).toHaveLength(2);
+    expect(forward.map((transition) => transition.key)).toEqual([key, key]);
+    expect(forward.map((transition) => transition.severity)).toEqual(["high", "high"]);
+    expect(canonicalJson(forward.map(transitionToWire)))
+      .toBe(canonicalJson(reversed.map(transitionToWire)));
+    expect(forward.map((transition) => transition.attrs.resource)).toEqual(["*", "**"]);
+  });
+
+  // The last resort: two byte-identical statements in one file differ only by
+  // evidence line, and must still order deterministically.
+  it("falls back to evidence for content-identical transitions", () => {
+    const key = "iam.allow:iam-json:policy.json|nosid";
+    const twin = (line: number): Property =>
+      property("iam.allow", key, iamLevels({ resource: "global-wildcard" }), {
+        subject: "unnamed statement",
+        label: "Allow s3:GetObject on *",
+        discriminator: "",
+        evidence: { file: "policy.json", line },
+      });
+    const forward = diffProperties([], [twin(5), twin(12)]);
+    const reversed = diffProperties([], [twin(12), twin(5)]);
+    expect(forward.map((transition) => transition.headEvidence?.line)).toEqual([5, 12]);
+    expect(canonicalJson(forward.map(transitionToWire)))
+      .toBe(canonicalJson(reversed.map(transitionToWire)));
+  });
+});
+
+describe("surface paired provenance", () => {
+  // A2 F5. Every non-comparison field of a paired transition comes from the head
+  // endpoint. The keys here are chosen so the deleted min-of-two rule would pick
+  // the base key: all ten committed fixtures pass under either rule.
+  it("takes the head-side key for a paired transition", () => {
+    const transition = diffProperties(
+      [property("container.port", "container.port:compose:a/compose.yml|cache|6379/tcp", {
+        binding: "host-published",
+      }, { subject: "service cache", pairingScope: "a" })],
+      [property("container.port", "container.port:compose:a/compose.yml|redis|6379/tcp", {
+        binding: "host-published",
+      }, { subject: "service redis", pairingScope: "a" })],
+    )[0];
+    expect(transition).toMatchObject({
+      key: "container.port:compose:a/compose.yml|redis|6379/tcp",
+      subject: "service redis",
+      paired: true,
+      danger: "unchanged",
+    });
+  });
+});
+
+describe("surface path scopes", () => {
+  // A2 F10. The repo root is spelled "", never "." and never "/". The empty
+  // string is a valid scope and is not null, so callers must test `!== null`.
+  it("takes the POSIX dirname with the repo root spelled empty", () => {
+    expect(parentScope("compose.yml")).toBe("");
+    expect(parentScope("a/compose.yml")).toBe("a");
+    expect(parentScope("a/b/compose.yml")).toBe("a/b");
   });
 });
 

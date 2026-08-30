@@ -52,14 +52,18 @@ export interface AxisSpec {
   /** Safest first. */
   ranks: readonly string[];
   absentRank: "below" | "above";
-  severityAtTop: SurfaceSeverity;
+  /**
+   * Severity of a property whose comparison endpoint sits at `ranks[i]`. Same
+   * length as `ranks`. Severity is a function of the rank an axis ARRIVED at,
+   * never of the fact that it moved — see A2 F2.
+   */
+  severityByRank: readonly SurfaceSeverity[];
 }
 
 export interface KindSpec {
   kind: PropertyKind;
   comparator: "ordinal" | "lattice";
   axes: readonly AxisSpec[];
-  severityByLevel?: readonly SurfaceSeverity[];
   severityWhenAbsent?: SurfaceSeverity;
   severityWhenIncomparable?: SurfaceSeverity;
   invertDanger: boolean;

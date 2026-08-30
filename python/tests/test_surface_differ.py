@@ -8,7 +8,8 @@ import pytest
 
 from rafter_cli.core.surface.differ import DiffCoverage, diff_properties
 from rafter_cli.core.surface.kind_specs import KEY_COMPONENTS, KIND_SPECS
-from rafter_cli.core.surface.model import AxisSpec, Evidence, KindSpec, Property, Unanalyzed
+from rafter_cli.core.surface.model import Evidence, Property, Unanalyzed
+from rafter_cli.core.surface.paths import parent_scope
 from rafter_cli.core.surface.serialize import (
     canonical_json,
     kind_specs_to_wire,
@@ -166,13 +167,13 @@ def test_iam_resource_widened_without_sid() -> None:
     key = "iam.allow:iam-json:policy.json|nosid"
     assert_case(
         "iam-resource-widened-no-sid",
-        [prop("iam.allow", key, iam_levels(), subject="statement 1")],
+        [prop("iam.allow", key, iam_levels(), subject="unnamed statement")],
         [
             prop(
                 "iam.allow",
                 key,
                 iam_levels(resource="global-wildcard"),
-                subject="statement 1",
+                subject="unnamed statement",
                 label="Allow s3:GetObject on *",
                 attrs={"effect": "Allow", "action": "s3:GetObject", "resource": "*"},
             )
@@ -189,7 +190,7 @@ def test_iam_mixed_axis_change_is_incomparable() -> None:
                 "iam.allow",
                 key,
                 iam_levels(action="service-wildcard"),
-                subject="statement 1",
+                subject="unnamed statement",
                 discriminator="",
             )
         ],
@@ -198,7 +199,7 @@ def test_iam_mixed_axis_change_is_incomparable() -> None:
                 "iam.allow",
                 key,
                 iam_levels(resource="global-wildcard"),
-                subject="statement 1",
+                subject="unnamed statement",
                 label="Allow s3:GetObject on *",
                 discriminator="",
                 attrs={"effect": "Allow", "action": "s3:GetObject", "resource": "*"},
@@ -275,7 +276,7 @@ def test_repeated_key_bucket_cancels_equal_vectors_before_classifying_residue() 
                 "iam.allow",
                 key,
                 iam_levels(resource="literal"),
-                subject="statement 1",
+                subject="unnamed statement",
                 discriminator="",
                 line=5,
             ),
@@ -283,7 +284,7 @@ def test_repeated_key_bucket_cancels_equal_vectors_before_classifying_residue() 
                 "iam.allow",
                 key,
                 iam_levels(),
-                subject="statement 2",
+                subject="unnamed statement",
                 discriminator="",
                 line=10,
             ),
@@ -293,7 +294,7 @@ def test_repeated_key_bucket_cancels_equal_vectors_before_classifying_residue() 
                 "iam.allow",
                 key,
                 iam_levels(resource="literal"),
-                subject="statement 1",
+                subject="unnamed statement",
                 discriminator="",
                 line=5,
             ),
@@ -301,7 +302,7 @@ def test_repeated_key_bucket_cancels_equal_vectors_before_classifying_residue() 
                 "iam.allow",
                 key,
                 iam_levels(resource="global-wildcard"),
-                subject="statement 2",
+                subject="unnamed statement",
                 label="Allow s3:GetObject on *",
                 discriminator="",
                 line=10,
@@ -632,3 +633,184 @@ def test_unanalyzed_reasons_tuple_matches_literal() -> None:
     from rafter_cli.core.surface.model import UNANALYZED_REASONS, UnanalyzedReason
 
     assert set(UNANALYZED_REASONS) == set(get_args(UnanalyzedReason))
+
+
+# --- A2 F2: severity is a function of arrival rank, never of movement ---------
+
+
+def test_narrowest_added_allow_is_severity_null() -> None:
+    """Before the fix every IAM axis moved from absent (rank -1) to present, each
+    contributed its old ``severity_at_top``, and ``principal``'s was ``critical`` —
+    so the narrowest expressible statement gated CI at ``critical``."""
+    transition = diff_properties(
+        [],
+        [
+            prop(
+                "iam.allow",
+                "iam.allow:iam-json:policy.json|sid=NarrowRead",
+                {
+                    "action": "literal",
+                    "resource": "literal",
+                    "principal": "absent-or-literal",
+                    "condition": "present",
+                },
+                subject="statement NarrowRead",
+                label="Allow s3:GetObject on arn:aws:s3:::app-bucket/report.csv",
+            )
+        ],
+    )[0]
+    assert transition.change == "added"
+    assert transition.danger == "increased"
+    assert transition.severity is None
+
+
+def test_added_allow_without_condition_is_medium() -> None:
+    """The accepted false positive: a single ``medium`` contributor. Visible under
+    the default ``--min-severity low``, never gating under ``--fail-on high``."""
+    transition = diff_properties(
+        [],
+        [
+            prop(
+                "iam.allow",
+                "iam.allow:iam-json:policy.json|sid=NoCondition",
+                {
+                    "action": "literal",
+                    "resource": "literal",
+                    "principal": "absent-or-literal",
+                    "condition": "absent",
+                },
+            )
+        ],
+    )[0]
+    assert (transition.danger, transition.severity) == ("increased", "medium")
+
+
+def test_two_strong_axes_promote_to_critical() -> None:
+    transition = diff_properties(
+        [],
+        [
+            prop(
+                "iam.allow",
+                "iam.allow:iam-json:policy.json|sid=Admin",
+                {
+                    "action": "global-wildcard",
+                    "resource": "global-wildcard",
+                    "principal": "absent-or-literal",
+                    "condition": "absent",
+                },
+            )
+        ],
+    )[0]
+    assert (transition.danger, transition.severity) == ("increased", "critical")
+
+
+def test_every_axis_has_one_severity_per_rank() -> None:
+    for spec in KIND_SPECS:
+        for axis in spec.axes:
+            assert len(axis.severity_by_rank) == len(axis.ranks)
+    shared = json.loads(
+        (REPO_ROOT / "fixtures" / "surface" / "kind-specs.json").read_text(encoding="utf-8")
+    )
+    for spec_wire in shared:
+        for axis_wire in spec_wire["axes"]:
+            assert len(axis_wire["severityByRank"]) == len(axis_wire["ranks"])
+
+
+# --- A2 F8b: the final sort is a total order ---------------------------------
+
+
+def test_same_key_transitions_order_by_content_not_emission() -> None:
+    """Under ``key_may_repeat``, two transitions can share severity, kind and key;
+    the v1 three-component sort left that tie to a stable sort, so the order was a
+    function of emission order — i.e. of ``Statement[]`` position."""
+    key = "iam.allow:iam-json:policy.json|nosid"
+
+    def statement(resource: str, line: int) -> Property:
+        return prop(
+            "iam.allow",
+            key,
+            iam_levels(resource="global-wildcard"),
+            subject="unnamed statement",
+            label=f"Allow s3:GetObject on {resource}",
+            discriminator="",
+            line=line,
+            attrs={"effect": "Allow", "action": "s3:GetObject", "resource": resource},
+        )
+
+    alpha = statement("*", 5)
+    beta = statement("**", 12)
+    forward = diff_properties([], [alpha, beta])
+    reversed_ = diff_properties([], [beta, alpha])
+
+    assert len(forward) == 2
+    assert [transition.key for transition in forward] == [key, key]
+    assert [transition.severity for transition in forward] == ["high", "high"]
+    assert canonical_json([transition_to_wire(t) for t in forward]) == canonical_json(
+        [transition_to_wire(t) for t in reversed_]
+    )
+    assert [transition.attrs["resource"] for transition in forward] == ["*", "**"]
+
+
+def test_content_identical_transitions_fall_back_to_evidence() -> None:
+    key = "iam.allow:iam-json:policy.json|nosid"
+
+    def twin(line: int) -> Property:
+        return prop(
+            "iam.allow",
+            key,
+            iam_levels(resource="global-wildcard"),
+            subject="unnamed statement",
+            label="Allow s3:GetObject on *",
+            discriminator="",
+            line=line,
+        )
+
+    forward = diff_properties([], [twin(5), twin(12)])
+    reversed_ = diff_properties([], [twin(12), twin(5)])
+    assert [t.head_evidence.line for t in forward if t.head_evidence] == [5, 12]
+    assert canonical_json([transition_to_wire(t) for t in forward]) == canonical_json(
+        [transition_to_wire(t) for t in reversed_]
+    )
+
+
+# --- A2 F5: a paired transition takes the head-side key ----------------------
+
+
+def test_paired_transition_takes_the_head_key() -> None:
+    """The keys here are chosen so the deleted min-of-two rule would pick the base
+    key: all ten committed fixtures pass under either rule."""
+    transition = diff_properties(
+        [
+            prop(
+                "container.port",
+                "container.port:compose:a/compose.yml|cache|6379/tcp",
+                {"binding": "host-published"},
+                subject="service cache",
+                pairing_scope="a",
+            )
+        ],
+        [
+            prop(
+                "container.port",
+                "container.port:compose:a/compose.yml|redis|6379/tcp",
+                {"binding": "host-published"},
+                subject="service redis",
+                pairing_scope="a",
+            )
+        ],
+    )[0]
+    assert transition.key == "container.port:compose:a/compose.yml|redis|6379/tcp"
+    assert transition.subject == "service redis"
+    assert transition.paired is True
+    assert transition.danger == "unchanged"
+
+
+# --- A2 F10: the repo root is spelled "" ------------------------------------
+
+
+def test_parent_scope_spells_the_repo_root_empty() -> None:
+    """The empty string is a valid scope and is not ``None``, so callers gating on
+    a scope must test ``is not None``, never truthiness."""
+    assert parent_scope("compose.yml") == ""
+    assert parent_scope("a/compose.yml") == "a"
+    assert parent_scope("a/b/compose.yml") == "a/b"

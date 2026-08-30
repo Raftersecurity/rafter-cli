@@ -59,7 +59,10 @@ class AxisSpec:
     derived_from: Sequence[str]
     ranks: Sequence[str]
     absent_rank: Literal["below", "above"]
-    severity_at_top: SurfaceSeverity
+    # Severity of a property whose comparison endpoint sits at ``ranks[i]``. Same
+    # length as ``ranks``. Severity is a function of the rank an axis ARRIVED at,
+    # never of the fact that it moved — see A2 F2.
+    severity_by_rank: Sequence[SurfaceSeverity]
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +74,6 @@ class KindSpec:
     invert_danger: bool = False
     allow_residual_pairing: bool = False
     key_may_repeat: bool = False
-    severity_by_level: Optional[Sequence[SurfaceSeverity]] = None
     severity_when_absent: SurfaceSeverity = None
     severity_when_incomparable: SurfaceSeverity = None
 

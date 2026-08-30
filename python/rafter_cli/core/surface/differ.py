@@ -6,7 +6,7 @@ from typing import Callable, Mapping, Optional, Sequence
 
 from .compare import danger_for, flip_order, lattice_compare, ordinal_compare, severity_for
 from .kind_specs import KIND_SPECS
-from .model import KindSpec, Property, SurfaceSeverity, Transition, Unanalyzed
+from .model import KindSpec, Property, Transition, Unanalyzed
 from .serialize import canonical_json
 
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -61,15 +61,15 @@ def _level_vector(prop: Property, spec: KindSpec) -> str:
     )
 
 
-def _content_signature(prop: Property) -> str:
-    """Content-derived ordering key for cancellation.
+def _content_signature(item: Property | Transition) -> str:
+    """Content-derived ordering key for cancellation and for the final sort.
 
     Deliberately excludes evidence (line numbers move when a document is
     reordered) and input position, so that reordering semantically-unordered
     entries — IAM ``Statement[]`` order carries no meaning — cannot change which
     property survives cancellation. Ties broken on label then attrs, both content.
     """
-    return canonical_json([prop.label, prop.attrs])
+    return canonical_json([item.label, item.attrs])
 
 
 def _cancel_equal_vectors(
@@ -135,9 +135,10 @@ def _classify(
     if danger == "unchanged" and not should_emit_unchanged:
         return []
     change = "added" if base is None else "removed" if head is None else "modified"
+    # A2 F5: every non-comparison field of a paired transition comes from the same
+    # endpoint property. The head-side key names the state that exists now — the
+    # path a reader opens and the identity the next run matches against.
     key = endpoint.key
-    if paired and base is not None and head is not None:
-        key = min((base.key, head.key), key=_utf8)
     severity = severity_for(spec, base, head, danger, axes)
     return [
         Transition(
@@ -316,8 +317,23 @@ def diff_properties(
         if blocked:
             output[index] = replace(transition, danger="unknown", severity=None)
 
-    def sort_key(transition: Transition) -> tuple[int, bytes, bytes]:
+    # A2 F8b: ``key_may_repeat`` kinds can produce two transitions sharing
+    # severity, kind and key, so the v1 three-component sort was not a total order
+    # and ties fell through to emission order — a function of ``Statement[]``
+    # position. The first five components make the order a function of content
+    # alone; evidence is the deterministic last resort for two genuinely identical
+    # statements in one file. UTF-8 byte comparison throughout, per §8.4.
+    def sort_key(transition: Transition) -> tuple[int, bytes, bytes, bytes, bytes, bytes, int]:
         severity_rank = -1 if transition.severity is None else SEVERITY_RANK[transition.severity]
-        return (-severity_rank, _utf8(transition.kind), _utf8(transition.key))
+        evidence = transition.head_evidence or transition.base_evidence
+        return (
+            -severity_rank,
+            _utf8(transition.kind),
+            _utf8(transition.key),
+            _utf8(transition.change),
+            _utf8(_content_signature(transition)),
+            _utf8(evidence.file if evidence is not None else ""),
+            evidence.line if evidence is not None and evidence.line is not None else -1,
+        )
 
     return sorted(output, key=sort_key)
