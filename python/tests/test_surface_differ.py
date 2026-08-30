@@ -620,3 +620,15 @@ def test_cancellation_survivor_is_independent_of_input_order() -> None:
     assert len(forward) == 1
     assert forward[0]["change"] == "removed"
     assert forward[0]["subject"] == "bucket-beta"
+
+
+def test_unanalyzed_reasons_tuple_matches_literal() -> None:
+    """Python cannot derive a Literal from a tuple, so the runtime tuple and the
+    type are necessarily written twice. Guard the drift: the docs-sync test walks
+    the tuple, so a reason present only in the Literal would go undocumented.
+    """
+    from typing import get_args
+
+    from rafter_cli.core.surface.model import UNANALYZED_REASONS, UnanalyzedReason
+
+    assert set(UNANALYZED_REASONS) == set(get_args(UnanalyzedReason))

@@ -8,6 +8,19 @@ Confidence = Literal["certain"]
 Change = Literal["added", "removed", "modified"]
 Danger = Literal["increased", "decreased", "unchanged", "incomparable", "unknown"]
 AxisOrder = Literal["equal", "greater", "less", "unknown"]
+# Runtime tuple, with the type derived from it, so the values are enumerable at
+# runtime. Mirrors UNANALYZED_REASONS in the Node model; the docs-sync test walks
+# these to assert every reason a user can be shown is documented in CLI_SPEC.md.
+UNANALYZED_REASONS = (
+    "parse_error",
+    "unsupported_syntax",
+    "too_large",
+    "too_many_candidates",
+    "binary",
+    "symlink",
+    "timeout",
+)
+
 UnanalyzedReason = Literal[
     "parse_error",
     "unsupported_syntax",

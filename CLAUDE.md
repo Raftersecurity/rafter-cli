@@ -24,13 +24,15 @@ cd python && poetry install && pytest
 │   │   │   ├── hook/        # hook pretool/commit
 │   │   │   ├── policy/      # policy export/validate
 │   │   │   ├── ci/          # ci init
+│   │   │   ├── surface/     # surface diff (attack-surface property delta)
 │   │   │   ├── brief.ts     # knowledge delivery
 │   │   │   ├── notify.ts    # Slack/Discord webhooks
 │   │   │   └── report.ts    # HTML security reports
 │   │   ├── core/            # Shared logic
 │   │   │   ├── command-interceptor.ts  # Risk classification + policy enforcement
 │   │   │   ├── audit-logger.ts         # JSONL audit trail
-│   │   │   └── config-manager.ts       # .rafter.yml + global config
+│   │   │   ├── config-manager.ts       # .rafter.yml + global config
+│   │   │   └── surface/                # Property model, comparators, differ, extractors
 │   │   └── scanners/
 │   │       ├── betterleaks.ts          # Betterleaks binary integration
 │   │       ├── secret-patterns.ts      # DEFAULT_SECRET_PATTERNS array (21+ patterns)
@@ -59,6 +61,8 @@ cd python && poetry install && pytest
 **Risk classification**: Commands are classified into 4 tiers (critical/high/medium/low) by pattern matching in `command-interceptor.ts`. Policy files (`.rafter.yml`) can override defaults.
 
 **Secret scanning**: Dual-engine — tries Betterleaks binary first (higher accuracy), falls back to built-in regex patterns (21+ patterns, zero dependencies). Deterministic for a given version. Betterleaks is the gitleaks successor maintained by the original gitleaks authors. Existing installs with a leftover `~/.rafter/bin/gitleaks` are detected by `agent verify`/`status` so users get an upgrade hint, but the legacy CLI flags (`--with-gitleaks`, `--engine gitleaks`, `update-gitleaks`) have been removed.
+
+**Attack-surface diff**: `rafter surface diff` reports *what became more dangerous* between two trees — a delta of security properties, not a finding count. Every transition has two independent axes: `change` (structural: added/removed/modified) and `danger` (semantic: increased/decreased/unchanged/incomparable/unknown). Severity attaches only to `danger`, so removing an IAM `Deny` is `change: "removed"` with `danger: "increased"`. Extractors produce properties and never see the other side or express a severity — all ordering and severity live in one kind-spec table per runtime. Design: `docs/proposals/attack-surface-diff.md` plus amendment A1.
 
 **MCP server**: `rafter mcp serve` exposes 4 tools (`scan_secrets`, `evaluate_command`, `read_audit_log`, `get_config`) and 3 resources (`rafter://config`, `rafter://policy`, `rafter://docs`) over stdio.
 
