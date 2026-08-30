@@ -658,7 +658,9 @@ Exit 1 cannot mean "the surface changed," because nearly every PR changes someth
 
 Precedence when several apply: **3 > 2 > 4 > 1 > 0.** Exit 3 wins because no comparison happened at all. Exit 4 beats 1 because "I could not see part of this change" is a stronger statement than "here is what I did see" — but the JSON body still carries every transition found, so a consumer loses nothing.
 
-`--fail-on none` forces exit 0 for the 0/1 axis (report-only, for the post-a-PR-comment workflow) and downgrades 4 to a warning. It does not suppress 2 or 3.
+`--fail-on none` forces exit 0 for the 0/1 axis (report-only, for the post-a-PR-comment workflow) and makes `--on-inconclusive` *default* to `warn`, downgrading 4. It does not suppress 2 or 3.
+
+**Clarification (A1.3).** As originally written this section read as an unconditional override while §5 R4 described it as a default, and the two dispositions differ when a user passes both flags. §5 R4's reading governs: `--on-inconclusive` explicitly set beats the `--fail-on none` default, so `--fail-on none --on-inconclusive exit` still exits 4. An explicit flag beating a default is the ordinary CLI convention, and it errs toward gating rather than silence — the right direction for a security check. Test-locked in both runtimes.
 
 Exit 3 and 4 are distinct top-level codes rather than variants of 2 because they are the two most common operational outcomes and conflating them with "runtime error" makes every user debug them from scratch. The repo already precedents per-family codes 3/4/5 (`shared-docs/CLI_SPEC.md:20-58`).
 

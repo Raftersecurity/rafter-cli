@@ -74,8 +74,18 @@ something, and a check that fails every build gets removed from CI. It means a
 Exit 4 exists so that a file this change touched, which the tool could not parse,
 never reads as clean. Without it, a PR author could disable the gate by
 introducing syntax the parser rejects. A file that was already unanalyzable before
-the change is reported but does not gate. `--fail-on none` forces 0 and downgrades
-4; it does **not** affect exit 3.
+the change is reported but does not gate.
+
+`--fail-on none` forces exit 0 on the 0/1 axis and makes `--on-inconclusive`
+default to `warn`, so report-only mode reports rather than gating. That is a
+*default*, not an override: passing `--on-inconclusive exit` explicitly still
+exits 4. Neither flag affects exit 2 or exit 3.
+
+On exit 3 under `--json`, stdout carries a machine-readable error object rather
+than a diff — `{"error": "base_unreachable", "base": …, "shallow": …, "hint": …}`
+— so a consumer can distinguish "no comparison happened" from "comparison found
+nothing." Exit 2 reports on stderr only, since it covers failures such as an
+invalid flag that occur before the output mode is resolved.
 
 ---
 
@@ -1305,7 +1315,7 @@ conflated.
 | `--include-decreased` | off | Include `danger: "decreased"` transitions in text output |
 | `--all` | off | Include transitions carrying no severity |
 | `--explain` | off | Enumerate unanalyzable files in text output |
-| `--on-inconclusive <fail\|warn>` | `fail` | Whether an unanalyzable changed artifact exits 4 |
+| `--on-inconclusive <exit\|warn>` | `exit` (`warn` under `--fail-on none`) | Whether an unanalyzable changed artifact exits 4. Passing it explicitly beats the `--fail-on none` default. |
 | `--fetch-base` | off | Permit one `git fetch` to resolve an unreachable base |
 | `--quiet` | off | Suppress stderr status messages |
 
