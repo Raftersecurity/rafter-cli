@@ -19,7 +19,7 @@
     {
       "kind": "iam.allow",
       "key": "iam.allow:iam-json:policy.json|nosid",
-      "subject": "statement 1",
+      "subject": "unnamed statement",
       "label": "Allow s3:GetObject on *",
       "change": "modified",
       "danger": "increased",

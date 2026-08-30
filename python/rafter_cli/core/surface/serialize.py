@@ -115,7 +115,7 @@ def kind_spec_to_wire(spec: KindSpec) -> dict[str, Any]:
                 "derivedFrom": list(axis.derived_from),
                 "ranks": list(axis.ranks),
                 "absentRank": axis.absent_rank,
-                "severityAtTop": axis.severity_at_top,
+                "severityByRank": list(axis.severity_by_rank),
             }
             for axis in spec.axes
         ],
@@ -124,8 +124,6 @@ def kind_spec_to_wire(spec: KindSpec) -> dict[str, Any]:
         "keyMayRepeat": spec.key_may_repeat,
         "display": spec.display,
     }
-    if spec.severity_by_level is not None:
-        output["severityByLevel"] = list(spec.severity_by_level)
     if spec.severity_when_absent is not None:
         output["severityWhenAbsent"] = spec.severity_when_absent
     if spec.severity_when_incomparable is not None:

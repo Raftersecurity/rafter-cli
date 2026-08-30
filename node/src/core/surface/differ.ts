@@ -80,8 +80,10 @@ function levelVector(property: Property, spec: KindSpec): string {
  * meaning — cannot change which property survives cancellation. Ties broken on
  * label then attrs, both of which are content.
  */
-function contentSignature(property: Property): string {
-  return canonicalJson([property.label, property.attrs]);
+function contentSignature(
+  item: { label: string; attrs: Readonly<Record<string, string | number | boolean | null>> },
+): string {
+  return canonicalJson([item.label, item.attrs]);
 }
 
 function cancelEqualVectors(
@@ -145,9 +147,10 @@ function classify(
   const danger = dangerFor(semanticOrder);
   if (danger === "unchanged" && !emitUnchanged) return [];
   const change = base === null ? "added" : head === null ? "removed" : "modified";
-  const key = paired && base !== null && head !== null
-    ? [base.key, head.key].sort(compareUtf8)[0]
-    : endpoint.key;
+  // A2 F5: every non-comparison field of a paired transition comes from the same
+  // endpoint property. The head-side key names the state that exists now — the
+  // path a reader opens and the identity the next run matches against.
+  const key = endpoint.key;
   const severity = severityFor(spec, base, head, danger, comparison.axes);
   return [{
     kind: endpoint.kind,
@@ -318,11 +321,23 @@ export function diffProperties(
     }
   }
 
+  // A2 F8b: `keyMayRepeat` kinds can produce two transitions sharing severity,
+  // kind and key, so the v1 three-component sort was not a total order and ties
+  // fell through to emission order — a function of `Statement[]` position. The
+  // first five components make the order a function of content alone; evidence is
+  // the deterministic last resort for two genuinely identical statements in one
+  // file. UTF-8 byte comparison throughout, per §8.4.
   return out.sort((left, right) => {
     const leftRank = left.severity === null ? -1 : SEVERITY_RANK[left.severity];
     const rightRank = right.severity === null ? -1 : SEVERITY_RANK[right.severity];
     if (leftRank !== rightRank) return rightRank - leftRank;
-    const kindOrder = compareUtf8(left.kind, right.kind);
-    return kindOrder !== 0 ? kindOrder : compareUtf8(left.key, right.key);
+    const leftEvidence = left.headEvidence ?? left.baseEvidence;
+    const rightEvidence = right.headEvidence ?? right.baseEvidence;
+    return compareUtf8(left.kind, right.kind)
+      || compareUtf8(left.key, right.key)
+      || compareUtf8(left.change, right.change)
+      || compareUtf8(contentSignature(left), contentSignature(right))
+      || compareUtf8(leftEvidence?.file ?? "", rightEvidence?.file ?? "")
+      || ((leftEvidence?.line ?? -1) - (rightEvidence?.line ?? -1));
   });
 }
