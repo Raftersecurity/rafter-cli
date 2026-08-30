@@ -109,6 +109,30 @@ def _maximum_severity(values: Sequence[SurfaceSeverity]) -> SurfaceSeverity:
     return best
 
 
+def _axis_severity(
+    spec: KindSpec,
+    axis: Optional[AxisSpec],
+    transition: AxisTransition,
+    endpoint: Optional[Property],
+) -> SurfaceSeverity:
+    """Severity contributed by one increasing axis: the severity of the rank the
+    axis ARRIVED at on the endpoint side. ``endpoint is None`` means the whole
+    property is absent on the dangerous side, which is only reachable — with an
+    increasing axis — when ``absent_rank == "above"``."""
+    if axis is None:
+        return None
+    if endpoint is None:
+        return spec.severity_when_absent if axis.absent_rank == "above" else None
+    level = transition.from_rank if spec.invert_danger else transition.to_rank
+    if level is None:
+        return None
+    try:
+        rank = axis.ranks.index(level)
+    except ValueError:
+        return None
+    return axis.severity_by_rank[rank]
+
+
 def severity_for(
     spec: KindSpec,
     base: Optional[Property],
@@ -116,37 +140,23 @@ def severity_for(
     danger: Danger,
     axes: Sequence[AxisTransition],
 ) -> SurfaceSeverity:
+    """Severity is a function of the rank an axis arrived at, never of the fact
+    that it moved (A2 F2). The ``ordinal`` path is a one-axis special case of the
+    ``lattice`` path: with one axis the two-strong-axis promotion can never fire.
+    """
     if danger == "incomparable":
         return spec.severity_when_incomparable
     if danger != "increased":
         return None
 
-    if spec.comparator == "ordinal":
-        axis = spec.axes[0]
-        arrival = base if spec.invert_danger else head
-        if arrival is None:
-            return spec.severity_when_absent if axis.absent_rank == "above" else None
-        level = arrival.levels.get(axis.name)
-        if level is None:
-            return None
-        try:
-            rank = axis.ranks.index(level)  # type: ignore[union-attr]
-        except ValueError:
-            return None
-        if spec.severity_by_level is None:
-            return None
-        return spec.severity_by_level[rank]
-
+    endpoint = base if spec.invert_danger else head
     increasing_order: AxisOrder = "less" if spec.invert_danger else "greater"
-    increasing_axes = [axis for axis in axes if axis.order == increasing_order]
     axes_by_name = {axis.name: axis for axis in spec.axes}
-    severity = _maximum_severity(
-        [axes_by_name[transition.axis].severity_at_top for transition in increasing_axes]
-    )
-    top_count = sum(
-        1
-        for transition in increasing_axes
-        if (transition.from_rank if spec.invert_danger else transition.to_rank)
-        == axes_by_name[transition.axis].ranks[-1]
-    )
-    return "critical" if top_count >= 2 else severity
+    contributions = [
+        _axis_severity(spec, axes_by_name.get(transition.axis), transition, endpoint)
+        for transition in axes
+        if transition.order == increasing_order
+    ]
+    if sum(1 for value in contributions if value in ("high", "critical")) >= 2:
+        return "critical"
+    return _maximum_severity(contributions)

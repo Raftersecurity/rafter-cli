@@ -102,14 +102,13 @@ export function kindSpecToWire(spec: KindSpec): JsonValue {
       derivedFrom: [...axis.derivedFrom],
       ranks: [...axis.ranks],
       absentRank: axis.absentRank,
-      severityAtTop: axis.severityAtTop,
+      severityByRank: [...axis.severityByRank],
     })),
     invertDanger: spec.invertDanger,
     allowResidualPairing: spec.allowResidualPairing,
     keyMayRepeat: spec.keyMayRepeat,
     display: spec.display,
   };
-  if (spec.severityByLevel !== undefined) output.severityByLevel = [...spec.severityByLevel];
   if (spec.severityWhenAbsent !== undefined) output.severityWhenAbsent = spec.severityWhenAbsent;
   if (spec.severityWhenIncomparable !== undefined) {
     output.severityWhenIncomparable = spec.severityWhenIncomparable;

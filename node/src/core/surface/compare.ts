@@ -102,6 +102,37 @@ function maximumSeverity(values: readonly SurfaceSeverity[]): SurfaceSeverity {
   return best;
 }
 
+/**
+ * Severity contributed by one increasing axis: the severity of the rank the axis
+ * ARRIVED at on the endpoint side. `endpoint === null` means the whole property
+ * is absent on the dangerous side, which is only reachable — with an increasing
+ * axis — when `absentRank === "above"`.
+ */
+function axisSeverity(
+  spec: KindSpec,
+  axis: AxisSpec | undefined,
+  transition: AxisTransition,
+  endpoint: Property | null,
+): SurfaceSeverity {
+  if (axis === undefined) return null;
+  if (endpoint === null) {
+    return axis.absentRank === "above" ? spec.severityWhenAbsent ?? null : null;
+  }
+  const level = spec.invertDanger ? transition.from : transition.to;
+  if (level === null) return null;
+  const rank = axis.ranks.indexOf(level);
+  return rank >= 0 ? axis.severityByRank[rank] ?? null : null;
+}
+
+function isStrong(severity: SurfaceSeverity): boolean {
+  return severity === "high" || severity === "critical";
+}
+
+/**
+ * Severity is a function of the rank an axis arrived at, never of the fact that
+ * it moved (A2 F2). The `ordinal` path is a one-axis special case of the
+ * `lattice` path: with one axis the two-strong-axis promotion can never fire.
+ */
 export function severityFor(
   spec: KindSpec,
   base: Property | null,
@@ -112,30 +143,16 @@ export function severityFor(
   if (danger === "incomparable") return spec.severityWhenIncomparable ?? null;
   if (danger !== "increased") return null;
 
-  if (spec.comparator === "ordinal") {
-    const axis = spec.axes[0];
-    const arrival = spec.invertDanger ? base : head;
-    if (arrival === null) {
-      return axis.absentRank === "above" ? spec.severityWhenAbsent ?? null : null;
-    }
-    const level = arrival.levels[axis.name];
-    if (level === null || level === undefined) return null;
-    const rank = axis.ranks.indexOf(level);
-    return rank >= 0 ? spec.severityByLevel?.[rank] ?? null : null;
-  }
-
+  const endpoint = spec.invertDanger ? base : head;
   const increasingOrder: AxisOrder = spec.invertDanger ? "less" : "greater";
-  const increasingAxes = axes.filter((axis) => axis.order === increasingOrder);
-  const severity = maximumSeverity(
-    increasingAxes.map((transition) => {
-      const axis = spec.axes.find((candidate) => candidate.name === transition.axis);
-      return axis?.severityAtTop ?? null;
-    }),
-  );
-  const topCount = increasingAxes.filter((transition) => {
-    const axis = spec.axes.find((candidate) => candidate.name === transition.axis);
-    const endpoint = spec.invertDanger ? transition.from : transition.to;
-    return axis !== undefined && endpoint === axis.ranks[axis.ranks.length - 1];
-  }).length;
-  return topCount >= 2 ? "critical" : severity;
+  const contributions = axes
+    .filter((transition) => transition.order === increasingOrder)
+    .map((transition) => axisSeverity(
+      spec,
+      spec.axes.find((candidate) => candidate.name === transition.axis),
+      transition,
+      endpoint,
+    ));
+  if (contributions.filter(isStrong).length >= 2) return "critical";
+  return maximumSeverity(contributions);
 }
