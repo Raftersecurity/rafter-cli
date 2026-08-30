@@ -51,11 +51,19 @@ MAX_ROWS = 10
 class SurfaceCliError(Exception):
     """Exit 2 and exit 3 are raised, never returned — that is how 3 > 2 > 4 > 1 > 0 stays true."""
 
-    def __init__(self, message: str, exit_code: int, code: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        exit_code: int,
+        code: str,
+        details: Optional[dict[str, Any]] = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.exit_code = exit_code
         self.code = code
+        # Machine-readable envelope for stdout under --json. Exit 3 only — see _execute().
+        self.details = details
 
 
 @dataclasses.dataclass(frozen=True)
@@ -225,7 +233,10 @@ def _resolve_base(
         except Exception:  # noqa: BLE001
             shallow = False
         raise SurfaceCliError(
-            render_base_unresolved(options.base, shallow), 3, "base_unresolved"
+            render_base_unresolved(options.base, shallow),
+            3,
+            "base_unresolved",
+            base_unresolved_envelope(options.base, shallow),
         ) from None
 
 
@@ -564,9 +575,40 @@ def render_text(model: RenderModel, options: SurfaceDiffOptions) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _branch_of(ref: str) -> str:
+    return ref.rsplit("/", 1)[-1]
+
+
+def base_unresolved_envelope(ref: str, shallow: bool) -> dict[str, Any]:
+    """§4.4 point 4 — the machine-readable half of exit 3.
+
+    Emitted on stdout under ``--json``; a JSON consumer must not have to scrape
+    stderr to learn that no comparison happened.
+    """
+    return {
+        "_note": (
+            "Attack-surface diff could not run: the base ref could not be resolved, so "
+            "no comparison was performed. This is not a clean result."
+        ),
+        "schema_version": 1,
+        "error": "base_unreachable",
+        "base": ref,
+        "shallow": shallow,
+        "hint": (
+            "actions/checkout defaults to fetch-depth: 1, which cannot resolve a base ref. "
+            f"Set fetch-depth: 0, or run: git fetch --no-tags --depth=50 origin {_branch_of(ref)}"
+            if shallow
+            else (
+                f"No commit matches base ref '{ref}' in this repository. Check the ref name, "
+                f"or fetch it: git fetch --no-tags --depth=50 origin {_branch_of(ref)}"
+            )
+        ),
+    }
+
+
 def render_base_unresolved(ref: str, shallow: bool) -> str:
     """§4.4 / §9.2 — the actionable exit-3 message. Never a bare "base not found"."""
-    branch = ref.rsplit("/", 1)[-1]
+    branch = _branch_of(ref)
     cause = (
         f"Cannot resolve base ref '{ref}' — this is a shallow clone."
         if shallow
@@ -679,7 +721,15 @@ def _execute(
     )
 
     repo_path = Path(os.path.abspath(path if path is not None else os.getcwd()))
-    outcome = run_surface_diff(repo_path, options)
+    try:
+        outcome = run_surface_diff(repo_path, options)
+    except SurfaceCliError as error:
+        # Exit 3 only. §4.4 point 4 asks for a machine-readable failure specifically
+        # here; exit 2 stays on stderr because it covers cases — an invalid --format
+        # among them — where the CLI fails before the output mode is even resolved.
+        if error.exit_code == 3 and error.details is not None and resolved_format == "json":
+            sys.stdout.write(canonical_json(error.details) + "\n")
+        raise
 
     # stdout carries the result and nothing else; every status message is stderr.
     if resolved_format == "json":

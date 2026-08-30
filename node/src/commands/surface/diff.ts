@@ -25,7 +25,12 @@ import {
   InvalidRefError,
   RefResolutionError,
 } from "../../utils/git-tree.js";
-import { renderBaseUnresolved, renderText, type RenderModel } from "./render.js";
+import {
+  baseUnresolvedEnvelope,
+  renderBaseUnresolved,
+  renderText,
+  type RenderModel,
+} from "./render.js";
 
 const NOTE = "Attack-surface diff: a delta of security properties between two trees, not a "
   + "findings list. `change` is structural (added/removed/modified); `danger` is semantic and is "
@@ -62,6 +67,8 @@ export class SurfaceCliError extends Error {
     message: string,
     readonly exitCode: number,
     readonly code: string,
+    /** Machine-readable envelope for stdout under --json. Exit 3 only — see execute(). */
+    readonly details: JsonValue | null = null,
   ) {
     super(message);
     this.name = "SurfaceCliError";
@@ -372,7 +379,12 @@ function resolveBase(
     } catch {
       shallow = false;
     }
-    throw new SurfaceCliError(renderBaseUnresolved(options.base, shallow), 3, "base_unresolved");
+    throw new SurfaceCliError(
+      renderBaseUnresolved(options.base, shallow),
+      3,
+      "base_unresolved",
+      baseUnresolvedEnvelope(options.base, shallow) as JsonValue,
+    );
   }
 }
 
@@ -445,7 +457,19 @@ function execute(pathArg: string | undefined, opts: Record<string, unknown>): nu
   };
 
   const repoPath = path.resolve(pathArg ?? process.cwd());
-  const outcome = runSurfaceDiff(repoPath, options);
+  let outcome: SurfaceDiffOutcome;
+  try {
+    outcome = runSurfaceDiff(repoPath, options);
+  } catch (error) {
+    // Exit 3 only. §4.4 point 4 asks for a machine-readable failure specifically
+    // here; exit 2 stays on stderr because it covers cases — an invalid --format
+    // among them — where the CLI fails before the output mode is even resolved.
+    if (error instanceof SurfaceCliError && error.exitCode === 3 && error.details !== null
+      && format === "json") {
+      writeSync(1, `${canonicalJson(error.details)}\n`);
+    }
+    throw error;
+  }
 
   // stdout carries the result and nothing else; every status message is stderr.
   if (format === "json") {
