@@ -15,6 +15,42 @@ import path from "path";
  */
 
 const CLI = path.resolve(__dirname, "../dist/index.js");
+const REPO_ROOT = path.resolve(__dirname, "../..");
+
+// Byte-for-byte parity on the exit-3 envelope needs the Python CLI; skip it when
+// the Python side is not installed, exactly as cross-runtime-parity.test.ts does.
+let PYTHON_USER_SITE = "";
+let PYTHON_AVAILABLE = false;
+try {
+  PYTHON_USER_SITE = execFileSync(
+    "python3",
+    ["-c", "import site; print(site.getusersitepackages())"],
+    { encoding: "utf-8", timeout: 5000 },
+  ).trim();
+  execFileSync("python3", ["-c", "import typer"], {
+    encoding: "utf-8",
+    timeout: 5000,
+    env: {
+      ...process.env,
+      PYTHONPATH: [path.join(REPO_ROOT, "python"), PYTHON_USER_SITE].join(path.delimiter),
+    },
+  });
+  PYTHON_AVAILABLE = true;
+} catch {
+  // Python or its deps are unavailable — the parity assertion is skipped.
+}
+
+function rafterPython(args: string[], cwd: string): { stdout: string; exitCode: number } {
+  const result = spawnSync("python3", ["-m", "rafter_cli", ...args], {
+    encoding: "utf-8",
+    cwd,
+    env: {
+      ...process.env,
+      PYTHONPATH: [path.join(REPO_ROOT, "python"), PYTHON_USER_SITE].join(path.delimiter),
+    },
+  });
+  return { stdout: result.stdout ?? "", exitCode: result.status ?? 1 };
+}
 
 function rafter(
   args: string[],
@@ -172,6 +208,57 @@ describe("rafter surface diff", () => {
     expect(result.stderr).toContain("--fetch-base");
     // Never silently treated as an empty base: nothing is reported as appeared.
     expect(result.stdout).toBe("");
+  });
+
+  it("exit 3 emits a machine-readable envelope on stdout under --json", () => {
+    commit0(repo);
+    const result = rafter(["surface", "diff", "--json", "--base", "origin/main"], { cwd: repo });
+    expect(result.exitCode).toBe(3);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.error).toBe("base_unreachable");
+    expect(envelope.schema_version).toBe(1);
+    expect(envelope.base).toBe("origin/main");
+    expect(envelope.shallow).toBe(false);
+    expect(envelope.hint).toContain("git fetch --no-tags --depth=50 origin main");
+    expect(envelope._note).toContain("not a clean result");
+    // Not a report: no transitions array to mistake for "nothing changed".
+    expect(envelope.transitions).toBeUndefined();
+  });
+
+  it("reports shallow: true and the fetch-depth remedy on a shallow clone", () => {
+    // A depth-1 clone cannot resolve the origin repo's first commit.
+    fs.writeFileSync(path.join(repo, "one.txt"), "1\n", "utf-8");
+    commit("first");
+    const firstSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repo,
+      encoding: "utf-8",
+    }).trim();
+    fs.writeFileSync(path.join(repo, "two.txt"), "2\n", "utf-8");
+    commit("second");
+
+    const shallow = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-surface-shallow-"));
+    try {
+      execFileSync("git", ["clone", "-q", "--depth=1", `file://${repo}`, shallow], {
+        stdio: "ignore",
+      });
+      const result = rafter(["surface", "diff", "--json", "--base", firstSha], { cwd: shallow });
+      expect(result.exitCode).toBe(3);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.shallow).toBe(true);
+      expect(envelope.hint).toContain("fetch-depth: 0");
+    } finally {
+      fs.rmSync(shallow, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!PYTHON_AVAILABLE)("both runtimes emit identical exit-3 envelope bytes", () => {
+    commit0(repo);
+    const args = ["surface", "diff", "--json", "--base", "origin/main"];
+    const node = rafter(args, { cwd: repo });
+    const python = rafterPython(args, repo);
+    expect(node.exitCode).toBe(3);
+    expect(python.exitCode).toBe(3);
+    expect(python.stdout).toBe(node.stdout);
   });
 
   it("exits 4 when a changed candidate could not be analyzed", () => {
