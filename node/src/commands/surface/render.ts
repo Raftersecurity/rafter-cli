@@ -85,7 +85,7 @@ function visibleTransitions(
   });
 }
 
-function headline(model: RenderModel, visible: readonly Transition[], pair: string): string {
+function headline(visible: readonly Transition[], pair: string): string {
   const increased = visible.filter((transition) => transition.danger === "increased").length;
   const ambiguous = visible.filter((transition) => transition.danger === "incomparable").length;
   const parts: string[] = [];
@@ -128,7 +128,7 @@ export function renderText(model: RenderModel, options: RenderOptions): string {
   const lines: string[] = [];
 
   if (visible.length > 0 || model.transitions.length > 0) {
-    lines.push(headline(model, visible, pair));
+    lines.push(headline(visible, pair));
     if (visible.length > 0) lines.push("");
     for (const transition of visible.slice(0, MAX_ROWS)) {
       const severity = transition.severity ?? "-";
