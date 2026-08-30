@@ -60,7 +60,9 @@ The v1 `Direction` enum conflated membership with danger and was internally cont
 change:   "added" | "removed" | "modified"                       -- structural. Never carries severity.
 danger:   "increased" | "decreased" | "unchanged"
         | "incomparable" | "unknown"                             -- semantic.
-severity: non-null iff danger == "increased".
+severity: non-null ONLY when danger is "increased" or "incomparable" — and may be
+          null even then, when the property arrived at a rank the kind-spec table
+          scores as unreportable (A2 F2).
 ```
 
 The two axes are independent, and every combination is meaningful:
@@ -100,11 +102,18 @@ any axis unknown                            -> "unknown"
 ### 2.3 Severity assignment
 
 Severity is a lookup in the kind-spec table, never a computation in an extractor.
+**Severity is a function of the rank an axis arrived at, never of the fact that it moved** (A2 F2).
 
-- **`ordinal`:** `severityByLevel[rankOf(head)]`. A `null` entry means "this transition is real, record it, but it is not worth a reported line." A new `expose:`-only port is a real transition with `severity: null`; it appears only under `--all`.
-- **`lattice`, `danger:"increased"`:** `max` over `severityByAxisTop[axis]` for every axis that increased; promoted to `critical` if two or more axes reached their top rank.
+Let `endpoint = invertDanger ? base : head` — the side whose ranks describe the dangerous state.
+
+- **`ordinal`, `danger:"increased"`:** `axes[0].severityByRank[rankOf(endpoint)]`, or `severityWhenAbsent` when the endpoint is absent and `absentRank === "above"`. A `null` entry means "this transition is real, record it, but it is not worth a reported line." A new `expose:`-only port is a real transition with `severity: null`; it appears only under `--all`.
+- **`lattice`, `danger:"increased"`:** `max` over every axis that increased of `severityByRank[rank of that axis on the endpoint]`. **Promoted to `critical` when two or more increasing axes each contribute `high` or `critical`.**
 - **`lattice`, `danger:"incomparable"`:** `severityWhenIncomparable` from the table. This is deliberately reported — an incomparable IAM change is a change a human must look at.
 - **Any other `danger` value:** `null`.
+
+The ordinal path is a one-axis special case of the lattice path: with one axis the promotion can never fire.
+
+**Why arrival, not movement.** Every IAM axis has `absentRank: "below"`, so an added statement moves every axis from absent to present. Scoring the *movement* made the narrowest expressible statement — literal `Action`, literal `Resource`, no wildcard `Principal`, a restricting `Condition` — return `critical`, so under the default `--fail-on high` every PR adding any IAM statement failed CI. Scoring the *arrival* returns `null` for that statement and leaves every genuinely broad one reporting. The promotion rule is stated in severity terms rather than rank terms for the same reason: `condition` arriving at `absent` is a top rank, and promoting on it would make "has no condition" — a property of most real statements — half of a `critical`.
 
 **No fifth severity value.** The repo-wide vocabulary is `low | medium | high | critical` (`node/src/core/risk-rules.ts:12`; Python's equivalents around `python/rafter_cli/core/risk_rules.py:485`; secret-pattern severities; `action.riskLevel` in the audit-log schema at `shared-docs/CLI_SPEC.md:790`). Adding `"info"` would force every existing consumer of that vocabulary to widen. Severity is simply undefined outside `danger:"increased"`, and `danger` is the discriminator. "How severe is it that a port got closed" is not a well-posed question.
 
@@ -149,7 +158,13 @@ export type AxisOrder = "equal" | "greater" | "less" | "unknown";
 export interface Evidence {
   /** Repo-relative, forward slashes, NFC-normalized. */
   file: string;
-  /** 1-based; null when the artifact has no meaningful line. */
+  /**
+   * 1-based line of the FIRST CONTENT-BEARING LINE OF THE CONSTRUCT — for a JSON
+   * object, the line of its first member (not its `{`); for a YAML sequence entry,
+   * the line of the entry itself; for a `package.json` lifecycle script, the line
+   * of the `"<name>":` member. For a flow/inline collection, the line the
+   * collection starts on. Null when the artifact has no meaningful line.
+   */
   line: number | null;
 }
 
@@ -174,6 +189,11 @@ export interface Property {
   /**
    * Optional scope for residual pairing (§3.3). Two properties may only be
    * residually paired if their pairingScope is equal and non-null.
+   *
+   * A scope is the POSIX dirname of the repo-relative path, with the repo root
+   * spelled `""` — never `"."`, never `"/"`, no trailing slash (`parentScope()`
+   * in `core/surface/paths.ts`). The empty string is a VALID scope and is not
+   * `null`; implementations must test `!== null`, never truthiness.
    */
   pairingScope: string | null;
 }
@@ -184,17 +204,20 @@ export interface AxisSpec {
   ranks: readonly string[];
   /** Where absence of the whole property sits relative to `ranks`. */
   absentRank: "below" | "above";
-  /** Severity contributed when this axis reaches its highest rank. */
-  severityAtTop: SurfaceSeverity;
+  /**
+   * Severity of a property whose comparison endpoint sits at `ranks[i]`. Same
+   * length as `ranks`, test-enforced in both runtimes and against
+   * `fixtures/surface/kind-specs.json`. Severity is a function of the rank an
+   * axis ARRIVED at, never of the fact that it moved (§2.3).
+   */
+  severityByRank: readonly SurfaceSeverity[];
 }
 
 export interface KindSpec {
   kind: PropertyKind;
   comparator: "ordinal" | "lattice";
   axes: readonly AxisSpec[];               // length 1 for `ordinal`
-  /** ordinal only: severity of ARRIVING at ranks[i]. Same length as axes[0].ranks. */
-  severityByLevel?: readonly SurfaceSeverity[];
-  /** ordinal only: severity when the property becomes absent and absentRank==="above". */
+  /** Severity when the property becomes absent and absentRank==="above". */
   severityWhenAbsent?: SurfaceSeverity;
   /** lattice only. */
   severityWhenIncomparable?: SurfaceSeverity;
@@ -293,6 +316,8 @@ AttrValue = Optional[str | int | bool]   # no floats — see §2.5
 @dataclass(frozen=True, slots=True)
 class Evidence:
     file: str
+    # 1-based line of the FIRST CONTENT-BEARING LINE OF THE CONSTRUCT — see the
+    # TypeScript `Evidence.line` doc comment in §2.6 for the full rule.
     line: Optional[int]
 
 
@@ -306,6 +331,9 @@ class Property:
     attrs: Mapping[str, AttrValue]
     evidence: Evidence
     confidence: Confidence = "certain"
+    # POSIX dirname of the repo-relative path, repo root spelled "" (never "."),
+    # via `parent_scope()` in `core/surface/paths.py`. "" is a VALID scope and is
+    # not None; test `is not None`, never truthiness.
     pairing_scope: Optional[str] = None
 
 
@@ -314,7 +342,9 @@ class AxisSpec:
     name: str
     ranks: Sequence[str]
     absent_rank: Literal["below", "above"]
-    severity_at_top: SurfaceSeverity
+    # Severity of a property whose comparison endpoint sits at ranks[i]. Same
+    # length as ranks. Arrival, never movement — §2.3.
+    severity_by_rank: Sequence[SurfaceSeverity]
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,7 +355,6 @@ class KindSpec:
     display: str
     invert_danger: bool = False
     allow_residual_pairing: bool = False
-    severity_by_level: Optional[Sequence[SurfaceSeverity]] = None
     severity_when_absent: SurfaceSeverity = None
     severity_when_incomparable: SurfaceSeverity = None
 
@@ -405,7 +434,14 @@ diff(baseProps, headProps, specs, coverage) -> Transition[]:
   for t in out:
       if coverage.blocksAbsenceProof(t): t.danger, t.severity = "unknown", None
 
-  sort by (severityRank desc, kind, key utf8-bytes asc)
+  # A total order. Under `keyMayRepeat`, two transitions can share severity,
+  # kind and key, and a stable sort would resolve that tie to emission order —
+  # a function of `Statement[]` position. `contentSignature` is
+  # canonicalJson([label, attrs]); `evidence` is head evidence falling back to
+  # base, the deterministic last resort for two identical statements in one
+  # file. UTF-8 byte comparison throughout (§8.4).
+  sort by (severityRank desc, kind, key, change, contentSignature,
+           evidence.file, evidence.line ?? -1)
   return out
 
 
@@ -420,7 +456,11 @@ classify(b, h, specs, paired=False):
             "unknown":"unknown"}[order]
   if danger == "unchanged" and not paired: return []   # never emit no-ops
   severity = severityFor(spec, b, h, danger)
-  return [Transition(...)]
+  # Every non-comparison field — key, subject, label, attrs, confidence —
+  # comes from ONE endpoint property, `h or b`. For a paired transition that
+  # is the head-side key: it names the state that exists now, the path a
+  # reader opens, and the identity the next run matches against.
+  return [Transition(key = (h or b).key, ...)]
 ```
 
 Two rules worth calling out because they are the anti-noise core:
@@ -687,7 +727,11 @@ The path *is* in the key here, deliberately, and this is a change from v1's "fil
 | `loopback-published` | host IP is `127.0.0.1` or `::1` | `low` |
 | `host-published` | no host IP, `0.0.0.0`, `::`, or any other literal address | `high` |
 
-`severityByLevel: [null, "low", "high"]`. Adding an `expose:`-only port is a real transition at `severity: null` — visible only under `--all`, never a reported line. That mechanism (a `null` in the severity table rather than special-casing in code) is v1's and survives.
+`severityByRank: [null, "low", "high"]`. Adding an `expose:`-only port is a real transition at `severity: null` — visible only under `--all`, never a reported line. That mechanism (a `null` in the severity table rather than special-casing in code) is v1's and survives.
+
+**Evidence.** `evidence.line` is the line of the port sequence entry itself — for a flow/inline sequence, the line the sequence starts on. See §2.6.
+
+**Pairing scope.** `pairingScope` is `parentScope(<repo-relative path>)` (A1, A2 F10): the POSIX dirname, with the repo root spelled `""`. A root-level `compose.yml` therefore has scope `""`, which is a valid scope and is not `null`.
 
 **Refused constructs, each producing `Unanalyzed{reason:"unsupported_syntax"}` for the affected service:** `extends` on the service; top-level `include`; a YAML merge key (`<<`) anywhere in the service mapping; a port value containing `${...}` interpolation; a port range (`8000-8010:8000-8010`) — ranges are deferred to v1.1 rather than guessed at; `profiles` on the service (whether it is deployed is external state).
 
@@ -709,14 +753,20 @@ When the Action set *also* changes, the key changes and the statement falls to r
 
 **Comparator:** `lattice`, four axes.
 
-| axis | ranks (safest first) | `severityAtTop` |
+| axis | ranks (safest first) | `severityByRank` |
 |---|---|---|
-| `action` | `literal` < `service-wildcard` (`s3:*`, `s3:Get*`) < `global-wildcard` (`*`) | `high` |
-| `resource` | `literal` < `prefix-wildcard` (contains `*` or `?` but is not bare `*`) < `global-wildcard` (`*`) | `high` |
-| `principal` | `absent-or-literal` < `wildcard` (`"*"` or `{"AWS":"*"}`) | `critical` |
-| `condition` | `present` < `absent` | `medium` |
+| `action` | `literal` < `service-wildcard` (`s3:*`, `s3:Get*`) < `global-wildcard` (`*`) | `[null, "medium", "high"]` |
+| `resource` | `literal` < `prefix-wildcard` (contains `*` or `?` but is not bare `*`) < `global-wildcard` (`*`) | `[null, "medium", "high"]` |
+| `principal` | `absent-or-literal` < `wildcard` (`"*"` or `{"AWS":"*"}`) | `[null, "critical"]` |
+| `condition` | `present` < `absent` | `[null, "medium"]` |
 
-`severityWhenIncomparable: "medium"`. Two or more axes reaching their top rank promotes to `critical`.
+`severityWhenIncomparable: "medium"`. Two or more increasing axes each contributing `high` or `critical` promotes to `critical` (§2.3).
+
+**An added `Allow` with no `Condition` scores `medium`** — one contributor on the `condition` axis. That is an accepted false positive: `--min-severity` defaults to `low` so the line displays, `--fail-on` defaults to `high` so it never gates. The alternative (`condition: [null, null]`) would silence "someone deleted the `aws:SourceIp` condition and changed nothing else," which is the headline capability below.
+
+**`subject`.** `"statement <Sid>"` when a `Sid` is present; otherwise the constant **`"unnamed statement"`** — not a position, not a content hash. A hash is unreadable and unfindable in the source; a position is a lie under a `Statement[]` reorder. Disambiguation is `evidence`'s job, and `label` (effect, action, resource) distinguishes two unnamed statements semantically.
+
+**Evidence.** `evidence.line` is the line of the statement object's **first member**, not its opening `{`. See §2.6.
 
 The `condition` axis is what makes "someone deleted the `aws:SourceIp` condition and changed nothing else" visible — a real widening that v1 could not see at all, because conditions appeared in neither its key nor its levels. When both sides have a condition and the two conditions differ textually, that axis returns **`unknown`** (not `equal`, not `greater`), which propagates to `danger:"unknown"` for the whole statement. Comparing condition *semantics* is out of v1 scope; pretending they are equal because we cannot compare them would be a false negative.
 
@@ -743,7 +793,9 @@ The `condition` axis is what makes "someone deleted the `aws:SourceIp` condition
 
 This replaces v1's `["local-only", "network-or-shell"]`, which the reviewer correctly called incoherent: npm runs *every* lifecycle script through a shell, so "shell" is not a discriminator. "Does this install-time script pull code off the network, and does it execute what it pulls" is a real, ordered, syntactically decidable question — and `curl … | sh` in a `postinstall` is exactly the thing a reviewer wants flagged.
 
-The token match runs against the script string only. Adding a lifecycle script that is purely local is `severity: null` — a real transition, not a reported line.
+`severityByRank: [null, "medium", "critical"]`. The token match runs against the script string only. Adding a lifecycle script that is purely local is `severity: null` — a real transition, not a reported line.
+
+**Evidence.** `evidence.line` is the line of the `"<name>":` member inside `scripts`. See §2.6.
 
 **Refused constructs:** a script whose body references another script via `npm run` (we do not follow the indirection — `Unanalyzed{reason:"unsupported_syntax"}`); a non-string script value; a `package.json` that is not a JSON object.
 
@@ -922,7 +974,7 @@ The reviewer is right that "no floats" was not sufficient. The full rule:
     {
       "kind": "iam.allow",
       "key": "iam.allow:iam-json:infra/policy.json|act=9f2c1b7e|prin=none",
-      "subject": "statement 2",
+      "subject": "unnamed statement",
       "label": "Allow: action narrowed to s3:GetObject, resource widened to *",
       "change": "modified",
       "danger": "incomparable",
@@ -968,7 +1020,7 @@ The reviewer is right that "no floats" was not sufficient. The full rule:
 | `base` | object | The base side of the comparison. |
 | `head` | object | The head side of the comparison. |
 | `summary` | object | Transition counts by `danger` and by `change`, plus the highest severity present. |
-| `transitions` | array | Every transition, sorted by severity (desc), then `kind`, then `key` (UTF-8 byte order). Empty when the analyzed surface is unchanged. |
+| `transitions` | array | Every transition, in a total order: severity (desc), then `kind`, `key`, `change`, a canonical signature of `label` and `attrs`, and finally head-or-base `evidence` file and line. All string comparison is UTF-8 byte order. Empty when the analyzed surface is unchanged. |
 | `coverage` | object | What was and was not analyzable. |
 
 **`base` / `head` field reference:**
@@ -1005,7 +1057,7 @@ The reviewer is right that "no floats" was not sufficient. The full rule:
 | `transitions[].label` | string | Human-readable phrase for display. Not stable across versions — never key on it. |
 | `transitions[].change` | string | `"added"`, `"removed"`, or `"modified"`. **Structural only.** `added` always means absent at base and present at head; there are no exceptions. |
 | `transitions[].danger` | string | `"increased"`, `"decreased"`, `"unchanged"`, `"incomparable"`, or `"unknown"`. **Semantic.** Independent of `change`: removing a `Deny` statement is `change:"removed"`, `danger:"increased"`. |
-| `transitions[].severity` | string\|null | `"low"`, `"medium"`, `"high"`, `"critical"` when `danger` is `"increased"` or `"incomparable"`; `null` otherwise. Same four-value vocabulary used everywhere else in Rafter. |
+| `transitions[].severity` | string\|null | `"low"`, `"medium"`, `"high"`, `"critical"`. Non-null **only** when `danger` is `"increased"` or `"incomparable"` — and **may be `null` even then**, when the property arrived at a rank the kind-spec table scores as unreportable (an added `expose:`-only port, a narrow added IAM `Allow`). Same four-value vocabulary used everywhere else in Rafter. |
 | `transitions[].axes` | array | Per-axis comparison. Always present and always authoritative. |
 | `transitions[].axes[].axis` | string | Axis name, e.g. `"binding"`, `"action"`, `"resource"`, `"principal"`, `"condition"`, `"fetch"` |
 | `transitions[].axes[].from` | string\|null | Rank at base; `null` when the property was absent at base |
@@ -1046,8 +1098,8 @@ Attack surface: 2 properties became more dangerous, 1 is ambiguous  (origin/main
 
   high      redis 6379 published on 0.0.0.0        infra/docker-compose.yml:15   new
   high      IAM AppBucketAccess resource → *       infra/policy.json:18          prefix-wildcard → global-wildcard
-  medium    IAM statement 2: action narrowed,      infra/policy.json:31          incomparable — review by hand
-            resource widened
+  medium    IAM unnamed statement: action          infra/policy.json:31          incomparable — review by hand
+            narrowed, resource widened
 
   1 property became safer                          (--include-decreased)
   1 file could not be analyzed                     (--explain)
@@ -1102,8 +1154,8 @@ Every unit touches **both** runtimes. That is non-negotiable per `CLAUDE.md` ("E
 This unit is deliberately ordered fixtures-before-types, adopting the reviewer's closing recommendation. Writing the paired Compose and IAM cases first is what proves the two-axis model and the lattice comparator before any interface is frozen.
 
 - Files: `fixtures/surface/cases/` — **8 hand-authored paired cases** with hand-written `expected.json`: compose port appears; compose port narrowed to loopback; compose service renamed (must be `unchanged`); IAM resource widened with `Sid`; IAM resource widened without `Sid`; IAM incomparable (action narrows, resource widens); IAM `Deny` removed; IAM `Condition` removed. Plus `fixtures/surface/kind-specs.json` and `fixtures/surface/yaml-divergence.yml`.
-- Files: `node/src/core/surface/{model.ts,kind-specs.ts,compare.ts,differ.ts,serialize.ts}`, `python/rafter_cli/core/surface/{model.py,kind_specs.py,compare.py,differ.py,serialize.py}`.
-- Tests: `node/tests/surface-differ.test.ts`, `python/tests/test_surface_differ.py` — pure unit tests over synthetic `Property` lists, no I/O: unchanged properties emit nothing; duplicate keys within one side abort the file rather than merging; `absentRank:"above"` inverts absence; `invertDanger` flips `iam.deny`; `severityByLevel: null` yields a non-reportable transition; lattice returns `incomparable` on mixed axes and `unknown` on any unknown axis; residual pairing fires only on a 1:1 residual; coverage-blocked `added` → `unknown`; deterministic UTF-8-byte sort.
+- Files: `node/src/core/surface/{model.ts,kind-specs.ts,compare.ts,differ.ts,serialize.ts,paths.ts}`, `python/rafter_cli/core/surface/{model.py,kind_specs.py,compare.py,differ.py,serialize.py,paths.py}`. `paths` exports `parentScope`/`parent_scope` so W6 and W8 cannot each reinvent the repo-root spelling (A2 F10).
+- Tests: `node/tests/surface-differ.test.ts`, `python/tests/test_surface_differ.py` — pure unit tests over synthetic `Property` lists, no I/O: unchanged properties emit nothing; duplicate keys within one side abort the file rather than merging; `absentRank:"above"` inverts absence; `invertDanger` flips `iam.deny`; a `null` `severityByRank` entry yields a non-reportable transition; severity follows the rank an axis arrived at, never the fact that it moved; lattice returns `incomparable` on mixed axes and `unknown` on any unknown axis; residual pairing fires only on a 1:1 residual; coverage-blocked `added` → `unknown`; deterministic UTF-8-byte sort.
 - Tests: the invariant test that `keyComponents(kind) ∩ axisNames(kind) = ∅` for every kind.
 - Tests: kind-spec equality against `fixtures/surface/kind-specs.json` in both runtimes.
 
