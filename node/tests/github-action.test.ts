@@ -63,6 +63,34 @@ describe("action.yml — structure", () => {
     expect(action.runs.steps.length).toBeGreaterThan(0);
   });
 
+  it("fetches the surface base before running the surface diff", () => {
+    const names: string[] = action.runs.steps.map((s: any) => s.name ?? "");
+    const fetchIdx = names.findIndex((n) => n.includes("Fetch surface base"));
+    const surfaceIdx = names.findIndex((n) => n.includes("Attack-surface diff"));
+    const scanIdx = names.findIndex((n) => n.includes("Scan for secrets"));
+
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(surfaceIdx).toBeGreaterThan(-1);
+    // This composite action does not own checkout and cannot set fetch-depth,
+    // so it must fetch the base itself — and before it is used.
+    expect(fetchIdx).toBeLessThan(surfaceIdx);
+    // The scan step ends with `exit $EXIT_CODE`; a composite action stops on a
+    // failing step, so a surface step placed after it would never run when the
+    // scan finds secrets.
+    expect(surfaceIdx).toBeLessThan(scanIdx);
+  });
+
+  it("keeps the surface diff opt-in so existing users are unaffected", () => {
+    const surfaceSteps = action.runs.steps.filter((s: any) =>
+      (s.name ?? "").includes("surface") || (s.name ?? "").includes("Attack-surface"),
+    );
+    expect(surfaceSteps.length).toBe(2);
+    for (const step of surfaceSteps) {
+      expect(step.if).toBe("inputs.surface-base != ''");
+    }
+    expect(action.inputs["surface-base"].default).toBe("");
+  });
+
   it("has required metadata fields", () => {
     expect(action.name).toBeTruthy();
     expect(action.description).toBeTruthy();
@@ -100,12 +128,17 @@ describe("action.yml — structure", () => {
     expect(outputNames).toContain("exit-code");
   });
 
-  it("outputs reference the scan step", () => {
+  it("outputs reference a step that actually exists", () => {
+    const stepIds = new Set(
+      action.runs.steps.map((s: any) => s.id).filter((id: string | undefined) => id),
+    );
     for (const [name, output] of Object.entries<any>(action.outputs)) {
+      const referenced = /steps\.([A-Za-z0-9_-]+)\.outputs/.exec(output.value)?.[1];
+      expect(referenced, `output '${name}' should reference a step's outputs`).toBeTruthy();
       expect(
-        output.value,
-        `output '${name}' should reference steps.scan`,
-      ).toContain("steps.scan.outputs");
+        stepIds.has(referenced),
+        `output '${name}' references steps.${referenced}, which has no such step id`,
+      ).toBe(true);
     }
   });
 
