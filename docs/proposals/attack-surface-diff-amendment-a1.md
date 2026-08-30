@@ -213,6 +213,38 @@ zero transitions. Today the differ emits four.
 
 ---
 
+## A1.2 — W3 adapter contract (corrections to §8.1)
+
+Implementing W3 exposed gaps in §8.1. Recorded here because W6 consumes the adapter.
+
+- **The adapter raises; the caller converts.** The adapter cannot construct an `Unanalyzed` — that
+  record needs `file`, `side`, and `changed`, which are the caller's context, not the parser's. It
+  raises typed `parse_error` / `unsupported_syntax` errors and **the extractor** converts them,
+  attaching context. W6/W7/W8 must do this uniformly; an extractor that swallows one of these and
+  returns `[]` violates §5 R3 and is a review reject.
+- **§8.1's "empty node is the only surviving difference" is false.** Confirmed divergence classes
+  beyond those §8.1 lists: sexagesimal (`12:34:56` → `754`-style ints in PyYAML, string in
+  js-yaml), scientific notation, timestamp coercion, huge-integer precision plus CPython's
+  4300-digit int-conversion limit, `.inf` / `.nan` / underscored floats, explicit and custom tags,
+  complex and empty mapping keys, boolean-like mapping-key collisions, empty documents, cyclic
+  aliases and alias-expansion limits, plain-scalar tabs versus tabs legally inside quoted strings /
+  comments / block scalars, compact alias mapping keys, and JS negative zero. String-only loading
+  plus one shared `parseScalar` is what makes these agree; native library configuration alone does
+  not.
+- **`parseScalar`'s domain is now defined by the implementation**, since §8.1 gave no grammar,
+  bounds, or return type: it coerces only the shared null forms, `true`/`false`, and safe decimal
+  integers. Everything else — floats, timestamps, base-prefixed and leading-zero integers,
+  separator forms, sexagesimal, oversized integers — stays a string. Widening this set is a
+  parity-relevant change and needs both runtimes plus a divergence test.
+- **"Every W3 test must fail against library defaults" was not literally achievable**, and the
+  requirement is withdrawn. A plain-string alias test passes unadapted, and js-yaml already throws
+  on duplicate keys where PyYAML silently takes the last value. The tests preserve the intent by
+  asserting adapter-specific typed errors and coercion-sensitive aliases.
+- `fixtures/surface/yaml-divergence.yml`'s `27017:27017` entries are **not** a sexagesimal probe
+  (sexagesimal components must be ≤ 59, so PyYAML leaves it a string). They are retained
+  deliberately: that is the Compose published-port shape E1 must keep as a string. Genuine
+  sexagesimal is probed in both test suites via `12:34:56`.
+
 ## Fixture blast radius
 
 Two `expected.json` keys become `iam.allow:iam-json:policy.json|nosid`:
