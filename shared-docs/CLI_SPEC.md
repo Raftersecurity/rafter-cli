@@ -1383,7 +1383,7 @@ guessed at.
     {
       "kind": "iam.allow",
       "key": "iam.allow:iam-json:infra/policy.json|nosid",
-      "subject": "statement 2",
+      "subject": "unnamed statement",
       "label": "Allow s3:GetObject on *",
       "change": "modified",
       "danger": "incomparable",
@@ -1429,7 +1429,7 @@ guessed at.
 | `base` | object | The base side of the comparison. |
 | `head` | object | The head side of the comparison. |
 | `summary` | object | Transition counts by `danger` and by `change`, plus the highest severity present. |
-| `transitions` | array | Every transition, sorted by severity (desc), then `kind`, then `key` (UTF-8 byte order). Empty when the analyzed surface is unchanged. |
+| `transitions` | array | Every transition, in a total order: severity (desc), then `kind`, `key`, `change`, a canonical signature of `label` and `attrs`, and finally head-or-base `evidence` file and line. All string comparison is UTF-8 byte order. Empty when the analyzed surface is unchanged. |
 | `coverage` | object | What was and was not analyzable. |
 
 **`base` / `head` field reference:**
@@ -1466,7 +1466,7 @@ guessed at.
 | `transitions[].label` | string | Display description of the property itself. Not stable across versions — never key on it. Delta phrasing ("widened to X") is composed by the text renderer, not carried here. |
 | `transitions[].change` | string | `"added"`, `"removed"`, or `"modified"`. **Structural only.** `added` always means absent at base and present at head; there are no exceptions. |
 | `transitions[].danger` | string | `"increased"`, `"decreased"`, `"unchanged"`, `"incomparable"`, or `"unknown"`. **Semantic.** Independent of `change`: removing a `Deny` statement is `change:"removed"`, `danger:"increased"`. |
-| `transitions[].severity` | string\|null | `"low"`, `"medium"`, `"high"`, `"critical"` when `danger` is `"increased"` or `"incomparable"`; `null` otherwise. Same four-value vocabulary used everywhere else in Rafter. |
+| `transitions[].severity` | string\|null | `"low"`, `"medium"`, `"high"`, `"critical"`. Non-null **only** when `danger` is `"increased"` or `"incomparable"` — and **may be `null` even then**, when the property arrived at a rank the kind-spec table scores as unreportable (an added `expose:`-only port, a narrow added IAM `Allow`). Same four-value vocabulary used everywhere else in Rafter. |
 | `transitions[].axes` | array | Per-axis comparison. Always present and always authoritative. |
 | `transitions[].axes[].axis` | string | Axis name, e.g. `"binding"`, `"action"`, `"resource"`, `"principal"`, `"condition"`, `"fetch"` |
 | `transitions[].axes[].from` | string\|null | Rank at base; `null` when the property was absent at base |
