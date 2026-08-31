@@ -55,8 +55,8 @@ outputs:
     description: 'Number of low/note findings'
     value: ${{ steps.results.outputs.low_count }}
   status:
-    description: 'Scan status (completed, failed, timeout)'
-    value: ${{ steps.results.outputs.status }}
+    description: 'Scan status: completed, failed, timeout, or unreadable (the scan may have finished but its report could not be read)'
+    value: ${{ steps.results.outputs.status || steps.poll.outputs.status }}
 
 runs:
   using: 'composite'
@@ -73,7 +73,8 @@ runs:
         # We capture body+status separately so future failures self-explain
         # (instead of just "curl exit 22"). API key never echoed.
         BODY_FILE="$(mktemp)"
-        HTTP_CODE=$(curl -sS -o "$BODY_FILE" -w "%{http_code}" -X POST \
+        HTTP_CODE=$(curl -sS --connect-timeout 10 --max-time 60 \
+          -o "$BODY_FILE" -w "%{http_code}" -X POST \
           -H "Content-Type: application/json" \
           -H "x-api-key: ${RAFTER_API_KEY}" \
           -d "{
@@ -92,7 +93,7 @@ runs:
         rm -f "$BODY_FILE"
 
         if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-          ERROR=$(echo "$RESPONSE" | jq -r '.error // empty' 2>/dev/null || true)
+          ERROR=$(echo "$RESPONSE" | jq -r '.error // empty' 2>/dev/null | tr -d '\r\n' | cut -c1-200 || true)
           echo "::error::Rafter scan trigger failed: HTTP ${HTTP_CODE}"
           if [ -n "$ERROR" ]; then
             echo "::error::Server: ${ERROR}"
@@ -121,13 +122,29 @@ runs:
         SCAN_ID: ${{ steps.scan.outputs.scan_id }}
         TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
       run: |
-        MAX_POLLS=$(( TIMEOUT_MINUTES * 6 ))  # Poll every 10s
+        # sable-l10k — a report is not durable the instant the scan flips to
+        # completed, so a poll can legitimately hit a 5xx (in practice
+        # "Failed to fetch report from storage: Object not found") on a scan
+        # that is perfectly healthy and readable seconds later. Retry those with
+        # backoff. Only give up once the failures stop looking transient.
+        #
+        # 404 counts as transient HERE and only here: the trigger step already
+        # handed us a scan_id, so a missing scan mid-poll is read-after-write
+        # lag rather than a wrong id.
+        MAX_TRANSIENT_FAILURES=5
+        TRANSIENT_FAILURES=0
+        LAST_ERROR=""
+
+        # Wall-clock deadline so retry backoff cannot quietly stretch the
+        # documented timeout-minutes budget.
+        DEADLINE=$(( $(date +%s) + TIMEOUT_MINUTES * 60 ))
         POLL_COUNT=0
         STATUS="pending"
 
-        while [ $POLL_COUNT -lt $MAX_POLLS ]; do
+        while [ "$(date +%s)" -lt "$DEADLINE" ]; do
           BODY_FILE="$(mktemp)"
-          HTTP_CODE=$(curl -sS -o "$BODY_FILE" -w "%{http_code}" \
+          HTTP_CODE=$(curl -sS --connect-timeout 10 --max-time 60 \
+            -o "$BODY_FILE" -w "%{http_code}" \
             -H "x-api-key: ${RAFTER_API_KEY}" \
             "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}") || {
               echo "::warning::curl transport error during poll (will retry)"
@@ -140,19 +157,42 @@ runs:
           RESPONSE=$(cat "$BODY_FILE")
           rm -f "$BODY_FILE"
 
+          if [ "$HTTP_CODE" -ge 500 ] || [ "$HTTP_CODE" -eq 408 ] || [ "$HTTP_CODE" -eq 404 ]; then
+            ERROR=$(echo "$RESPONSE" | jq -r '.error // empty' 2>/dev/null | tr -d '\r\n' | cut -c1-200 || true)
+            LAST_ERROR="HTTP ${HTTP_CODE}${ERROR:+ — $ERROR}"
+            TRANSIENT_FAILURES=$((TRANSIENT_FAILURES+1))
+
+            if [ "$TRANSIENT_FAILURES" -ge "$MAX_TRANSIENT_FAILURES" ]; then
+              echo "::error::Rafter could not read the report for scan ${SCAN_ID} after ${MAX_TRANSIENT_FAILURES} attempts."
+              echo "::error::The scan itself may have finished — check it in your dashboard at ${RAFTER_URL}/dashboard"
+              echo "::error::Last response from the server: ${LAST_ERROR}"
+              echo "status=unreadable" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+
+            BACKOFF=$(( 2 ** TRANSIENT_FAILURES ))   # 2s, 4s, 8s, 16s
+            echo "::warning::Report not readable yet (${LAST_ERROR}); retrying in ${BACKOFF}s (${TRANSIENT_FAILURES}/${MAX_TRANSIENT_FAILURES})"
+            sleep "$BACKOFF"
+            POLL_COUNT=$((POLL_COUNT+1))
+            continue
+          fi
+
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            ERROR=$(echo "$RESPONSE" | jq -r '.error // empty' 2>/dev/null || true)
+            # 4xx other than 404/408: a bad key or a malformed request. Retrying
+            # will not help and would only delay a clear answer.
+            ERROR=$(echo "$RESPONSE" | jq -r '.error // empty' 2>/dev/null | tr -d '\r\n' | cut -c1-200 || true)
             echo "::error::Rafter scan poll failed: HTTP ${HTTP_CODE}${ERROR:+ — $ERROR}"
             exit 1
           fi
 
+          TRANSIENT_FAILURES=0
           STATUS=$(echo "$RESPONSE" | jq -r '.status // "unknown"')
 
           if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
             break
           fi
 
-          echo "Scan status: ${STATUS} (poll $((POLL_COUNT+1))/${MAX_POLLS})"
+          echo "Scan status: ${STATUS} (poll $((POLL_COUNT+1)))"
           sleep 10
           POLL_COUNT=$((POLL_COUNT+1))
         done
@@ -180,23 +220,49 @@ runs:
       run: |
         # fetch_results <output-path> <url>: HTTP-status aware GET that surfaces
         # server error body on non-2xx (avoids silent curl exit 22 failures).
+        #
+        # sable-l10k — same read-after-write race as the poll loop, and worse
+        # here: this runs the instant the scan reports completed, which is the
+        # likeliest moment for the report object to not be readable yet. Retry
+        # transient failures with backoff rather than failing the build.
         fetch_results() {
           local out="$1"
           local url="$2"
-          local code
-          code=$(curl -sS -o "$out" -w "%{http_code}" \
-            -H "x-api-key: ${RAFTER_API_KEY}" "$url") || {
-              echo "::error::curl transport error fetching ${url}"
-              cat "$out" || true
+          local attempt=1
+          local max_attempts=5
+          local code body err last=""
+
+          while :; do
+            if code=$(curl -sS --connect-timeout 10 --max-time 60 \
+              -o "$out" -w "%{http_code}" \
+              -H "x-api-key: ${RAFTER_API_KEY}" "$url"); then
+              if [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
+                return 0
+              fi
+              body=$(cat "$out" || true)
+              err=$(echo "$body" | jq -r '.error // empty' 2>/dev/null | tr -d '\r\n' | cut -c1-200 || true)
+              last="HTTP ${code}${err:+ — $err}"
+              if [ "$code" -lt 500 ] && [ "$code" -ne 408 ] && [ "$code" -ne 404 ]; then
+                # Not transient — a bad key or malformed request. Say so now.
+                echo "::error::Rafter results fetch failed: ${last}"
+                return 1
+              fi
+            else
+              last="curl transport error fetching ${url}"
+            fi
+
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::Rafter could not read the report for scan ${SCAN_ID} after ${max_attempts} attempts."
+              echo "::error::The scan itself finished — check it in your dashboard at ${RAFTER_URL}/dashboard"
+              echo "::error::Last response from the server: ${last}"
               return 1
-            }
-          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
-            local body err
-            body=$(cat "$out" || true)
-            err=$(echo "$body" | jq -r '.error // empty' 2>/dev/null || true)
-            echo "::error::Rafter results fetch failed: HTTP ${code}${err:+ — $err}"
-            return 1
-          fi
+            fi
+
+            local backoff=$(( 2 ** attempt ))
+            echo "::warning::Report not readable yet (${last}); retrying in ${backoff}s (${attempt}/${max_attempts})"
+            sleep "$backoff"
+            attempt=$((attempt+1))
+          done
         }
 
         fetch_results "${{ runner.temp }}/rafter-results.json"  "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}"

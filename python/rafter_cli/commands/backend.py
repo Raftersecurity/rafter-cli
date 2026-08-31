@@ -88,6 +88,104 @@ def _confirm_plus_scan(mode: str, yes: bool) -> None:
     raise typer.Exit(code=EXIT_CONFIRMATION_REQUIRED)
 
 
+# sable-l10k — the report a scan writes is not durable the instant the scan
+# flips to completed, so a poll can legitimately hit a 5xx (commonly
+# "Failed to fetch report from storage: Object not found") on an otherwise
+# healthy scan. Retry those instead of failing the whole run; a scan that would
+# have succeeded 10 seconds later must not die on one bad read.
+MAX_TRANSIENT_POLL_FAILURES = 5
+_BASE_BACKOFF_SECONDS = 2
+
+IN_PROGRESS = ("queued", "pending", "processing")
+
+
+class PollGaveUpError(RuntimeError):
+    """Polling gave up after repeated transient failures.
+
+    Carries the customer-facing message so callers need not rebuild it.
+    """
+
+
+def _is_transient_poll_status(status_code: int) -> bool:
+    """404 is transient HERE and only here.
+
+    By the time the poll loop runs we have already been handed a ``scan_id``, so
+    a missing scan mid-poll is read-after-write lag, not a wrong id. The FIRST
+    poll still treats 404 as fatal.
+    """
+    return status_code >= 500 or status_code in (404, 408)
+
+
+def _describe_http_error(status_code: int, body: str) -> str:
+    detail = body
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict):
+            detail = parsed.get("error") or body
+    except (ValueError, TypeError):
+        pass
+    detail = (detail or "").strip()
+    return f"HTTP {status_code}" + (f" — {detail}" if detail else "")
+
+
+def unreadable_report_message(scan_id: str, last_error: str) -> str:
+    """The message a customer actually sees when the report never becomes readable.
+
+    Storage-layer wording ("Object not found") is kept as supporting detail, not
+    as the whole explanation, and the next action is spelled out.
+    """
+    return (
+        f"Rafter could not read the report for scan {scan_id} after "
+        f"{MAX_TRANSIENT_POLL_FAILURES} attempts.\n"
+        f"The scan itself may have finished — retry with: rafter get {scan_id}\n"
+        f"or open the scan in your dashboard at https://rafter.so/dashboard\n"
+        f"Last response from the server: {last_error}"
+    )
+
+
+def _poll_until_readable(scan_id: str, headers: dict, fmt: str, quiet: bool):
+    """One poll, retrying transient failures with exponential backoff.
+
+    Returns the successful response. Raises ``PollGaveUpError`` once the
+    transient failures stop looking transient, and re-raises anything else.
+    """
+    consecutive_failures = 0
+    last_error = ""
+
+    while True:
+        try:
+            resp = requests.get(
+                f"{API_BASE}/static/scan",
+                headers=headers,
+                params={"scan_id": scan_id, "format": fmt},
+                timeout=API_TIMEOUT_SHORT,
+            )
+            transient = _is_transient_poll_status(resp.status_code)
+            if resp.status_code == 200:
+                return resp
+            if not transient:
+                raise PollGaveUpError(
+                    _describe_http_error(resp.status_code, resp.text)
+                )
+            last_error = _describe_http_error(resp.status_code, resp.text)
+        except requests.RequestException as e:
+            # Transport error (DNS, reset, timeout) — as retryable as a 5xx.
+            last_error = str(e)
+
+        consecutive_failures += 1
+        if consecutive_failures >= MAX_TRANSIENT_POLL_FAILURES:
+            raise PollGaveUpError(unreadable_report_message(scan_id, last_error))
+
+        wait = _BASE_BACKOFF_SECONDS * 2 ** (consecutive_failures - 1)
+        if not quiet:
+            print(
+                f"Report not readable yet ({last_error}); retrying in {wait}s "
+                f"({consecutive_failures}/{MAX_TRANSIENT_POLL_FAILURES})",
+                file=sys.stderr,
+            )
+        time.sleep(wait)
+
+
 def _handle_scan_status_interactive(
     scan_id: str, headers: dict, fmt: str, quiet: bool
 ) -> int:
@@ -108,20 +206,19 @@ def _handle_scan_status_interactive(
     data = poll.json()
     status = data.get("status")
 
-    if status in ("queued", "pending", "processing"):
+    if status in IN_PROGRESS:
         if not quiet:
             print(
                 "Waiting for scan to complete... (this could take several minutes)",
                 file=sys.stderr,
             )
-        while status in ("queued", "pending", "processing"):
+        while status in IN_PROGRESS:
             time.sleep(10)
-            poll = requests.get(
-                f"{API_BASE}/static/scan",
-                headers=headers,
-                params={"scan_id": scan_id, "format": fmt},
-                timeout=API_TIMEOUT_SHORT,
-            )
+            try:
+                poll = _poll_until_readable(scan_id, headers, fmt, quiet)
+            except PollGaveUpError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                raise typer.Exit(code=EXIT_GENERAL_ERROR)
             data = poll.json()
             status = data.get("status")
             if status == "completed":

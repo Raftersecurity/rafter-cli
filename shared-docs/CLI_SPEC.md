@@ -126,6 +126,21 @@ Retrieve results from a scan.
 
 **Vulnerability levels (JSON output):** The `level` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
 
+#### Poll-loop retry contract
+
+Once polling has begun (`rafter run` without `--skip-interactive`, or `rafter get --interactive`), a scan_id is known to exist, and a report is not necessarily durable the instant a scan flips to `completed`. Both runtimes therefore retry transient read failures instead of aborting the run:
+
+| Condition during polling | Behavior |
+|--------------------------|----------|
+| HTTP 5xx, 408, or 404 | Transient. Retried up to **5 consecutive times** with exponential backoff (2s, 4s, 8s, 16s). The counter resets on any successful poll. |
+| Transport error (DNS, reset, timeout) | Same as above. |
+| Other 4xx (401/403/429 …) | Not retried — reported immediately. |
+| 404 on the **first** poll | Not retried — the scan genuinely does not exist. Exit code `2`. |
+
+After 5 consecutive transient failures the command exits `1` with a message naming the scan id, the `rafter get <scan_id>` retry command, and the dashboard, with the raw server response as supporting detail. Raw storage-layer wording is never the whole message.
+
+The composite GitHub Action (`github-action/action.yml`) implements the same contract in its poll loop and its results fetch.
+
 ### rafter usage [OPTIONS]
 
 Check API quota and usage statistics.
