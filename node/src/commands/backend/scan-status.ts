@@ -1,12 +1,12 @@
-import axios from "axios";
 import ora from "ora";
 import {
   API,
   API_TIMEOUT_SHORT_MS,
   writePayload,
   EXIT_GENERAL_ERROR,
-  EXIT_SCAN_NOT_FOUND
-} from "../../utils/api.js";
+  EXIT_SCAN_NOT_FOUND,
+  apiClient,
+  apiUrl} from "../../utils/api.js";
 import { fmt as output } from "../../utils/formatter.js";
 
 /**
@@ -175,7 +175,7 @@ async function pollUntilReadable(
 ): Promise<any> {
   for (;;) {
     try {
-      const res = await axios.get(`${API}/static/scan`, {
+      const res = await apiClient.get(apiUrl("static/scan"), {
         params: { scan_id, format: fmt },
         headers,
         // Without this a hung server stalls inside a single request, and the

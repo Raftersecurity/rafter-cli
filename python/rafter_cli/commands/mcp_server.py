@@ -22,7 +22,7 @@ from ..core.docs_loader import fetch_doc, list_docs, resolve_doc_selector
 from ..scanners.betterleaks import BetterleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.union import union_scan_results
-from ..utils.api import API_TIMEOUT
+from ..utils.api import API_TIMEOUT, api_get, api_post
 from .sites import SITES_API_BASE, describe_sites_error, resolve_mcp_api_key
 
 mcp_app = typer.Typer(
@@ -218,7 +218,7 @@ def _require_mcp_api_key() -> str:
 def handle_sites_create(url: str) -> dict:
     """Register a URL as a Rafter Site and kick off its first scan."""
     key = _require_mcp_api_key()
-    resp = requests.post(SITES_API_BASE, headers={"x-api-key": key}, json={"url": url}, timeout=API_TIMEOUT)
+    resp = api_post(SITES_API_BASE, headers={"x-api-key": key}, json={"url": url}, timeout=API_TIMEOUT)
     if resp.status_code != 200:
         message, _ = describe_sites_error(resp)
         raise RuntimeError(message)
@@ -241,7 +241,7 @@ def handle_sites_scan(
     if sections:
         body["sections"] = list(sections)
 
-    resp = requests.post(f"{SITES_API_BASE}/scan", headers={"x-api-key": key}, json=body, timeout=API_TIMEOUT)
+    resp = api_post(f"{SITES_API_BASE}/scan", headers={"x-api-key": key}, json=body, timeout=API_TIMEOUT)
     if resp.status_code != 200:
         message, _ = describe_sites_error(resp)
         raise RuntimeError(message)
@@ -263,7 +263,7 @@ def handle_sites_list(
     if include_archived:
         params["include_archived"] = "true"
 
-    resp = requests.get(SITES_API_BASE, headers={"x-api-key": key}, params=params, timeout=API_TIMEOUT)
+    resp = api_get(SITES_API_BASE, headers={"x-api-key": key}, params=params, timeout=API_TIMEOUT)
     if resp.status_code != 200:
         message, _ = describe_sites_error(resp)
         raise RuntimeError(message)
@@ -275,7 +275,7 @@ def handle_sites_get(id: str) -> dict:
     from urllib.parse import quote
 
     key = _require_mcp_api_key()
-    resp = requests.get(f"{SITES_API_BASE}/{quote(id, safe='')}", headers={"x-api-key": key}, timeout=API_TIMEOUT)
+    resp = api_get(f"{SITES_API_BASE}/{quote(id, safe='')}", headers={"x-api-key": key}, timeout=API_TIMEOUT)
     if resp.status_code != 200:
         message, _ = describe_sites_error(resp)
         raise RuntimeError(message)

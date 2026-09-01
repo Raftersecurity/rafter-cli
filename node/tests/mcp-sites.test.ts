@@ -9,7 +9,35 @@ import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
  * through an in-memory MCP client/server pair, with axios mocked.
  */
 
-vi.mock("axios");
+vi.mock("axios", () => {
+  // sable-2s6p — the code calls `apiClient`, an axios instance created with
+  // maxRedirects: 0. `create` must return something, and it returns the same
+  // object as the default export so `mockedAxios.get` still refers to the
+  // function under test.
+  const instance: any = {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+    patch: vi.fn(),
+    defaults: { maxRedirects: 0 },
+    interceptors: { response: { use: vi.fn() }, request: { use: vi.fn() } },
+  };
+    // The default export gets its OWN mocks, distinct from the instance's. If
+  // production code regresses to bare `axios.get`, the assertions below — which
+  // watch the instance — stop seeing calls, and the test fails. A shim where
+  // both are the same object would silently accept that regression.
+  const bare: any = {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+    patch: vi.fn(),
+    interceptors: { response: { use: vi.fn() }, request: { use: vi.fn() } },
+    create: () => instance,
+  };
+  return { default: bare };
+});
 
 vi.mock("../src/core/config-manager.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/core/config-manager.js")>()),
@@ -29,7 +57,8 @@ vi.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
 import axios from "axios";
 import { createServer } from "../src/commands/mcp/server.js";
 
-const mockedAxios = vi.mocked(axios, true);
+// The code calls `apiClient` — the instance `create()` returns.
+const mockedAxios = vi.mocked((axios as any).create(), true);
 
 let client: Client;
 let server: Server;

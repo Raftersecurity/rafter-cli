@@ -1,6 +1,5 @@
 import { Command } from "commander";
-import axios from "axios";
-import { API, resolveKey, EXIT_GENERAL_ERROR, EXIT_SCAN_NOT_FOUND } from "../utils/api.js";
+import { API, resolveKey, EXIT_GENERAL_ERROR, EXIT_SCAN_NOT_FOUND, apiClient, apiUrl} from "../utils/api.js";
 import { validateWebhookUrl } from "../core/audit-logger.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { fmt, isAgentMode } from "../utils/formatter.js";
@@ -221,7 +220,7 @@ export function createNotifyCommand(): Command {
       if (scanId) {
         const key = resolveKey(opts?.apiKey as string | undefined);
         try {
-          const { data } = await axios.get(`${API}/static/scan`, {
+          const { data } = await apiClient.get(apiUrl("static/scan"), {
             params: { scan_id: scanId, format: "json" },
             headers: { "x-api-key": key },
           });
