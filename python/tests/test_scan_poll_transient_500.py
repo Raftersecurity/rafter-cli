@@ -20,8 +20,11 @@ import requests
 import typer
 
 from rafter_cli.commands.backend import (
+    BASE_BACKOFF_SECONDS,
+    MAX_TOTAL_TRANSIENT_POLL_FAILURES,
     MAX_TRANSIENT_POLL_FAILURES,
     _handle_scan_status_interactive,
+    backoff_seconds,
     unreadable_report_message,
 )
 from rafter_cli.utils.api import EXIT_GENERAL_ERROR, EXIT_SCAN_NOT_FOUND, EXIT_SUCCESS
@@ -54,13 +57,96 @@ def _server_500() -> MagicMock:
 
 
 @pytest.fixture(autouse=True)
-def _no_sleep():
-    """Backoff is real time; tests should not pay for it."""
-    with patch("rafter_cli.commands.backend.time.sleep"):
-        yield
+def sleeps():
+    """Backoff is real time; tests should not pay for it.
+
+    Yields the mock so tests can assert the SCHEDULE, not just that sleeping
+    happened. Backoff is the fix — retrying five times inside a millisecond
+    gives an eventually-consistent store no time to converge.
+    """
+    with patch("rafter_cli.commands.backend.time.sleep") as m:
+        yield m
 
 
 class TestTransientPollFailures:
+    def test_backoff_is_exponential_not_flat(self):
+        assert BASE_BACKOFF_SECONDS > 0
+        assert [backoff_seconds(n) for n in (1, 2, 3, 4)] == [2, 4, 8, 16]
+
+    def test_actually_sleeps_the_backoff_schedule(self, sleeps):
+        with patch("rafter_cli.commands.backend.requests.get") as get:
+            get.side_effect = [_processing()] + [
+                _server_500() for _ in range(MAX_TRANSIENT_POLL_FAILURES)
+            ]
+            with pytest.raises(typer.Exit):
+                _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
+
+        # 10s poll interval, then 2/4/8/16 between the four retries that
+        # precede giving up on the fifth failure.
+        assert [c.args[0] for c in sleeps.call_args_list] == [10, 2, 4, 8, 16]
+
+    def test_caps_total_failures_so_a_flapping_server_cannot_loop_forever(self):
+        # Alternating success/failure resets the consecutive counter every
+        # time. Without a total cap, and with no wall-clock deadline in the
+        # CLI, that loop never terminates.
+        flapping = [_processing()]
+        for _ in range(MAX_TOTAL_TRANSIENT_POLL_FAILURES + 5):
+            flapping += [_server_500(), _processing()]
+
+        with patch("rafter_cli.commands.backend.requests.get") as get:
+            get.side_effect = flapping
+            with pytest.raises(typer.Exit) as exc:
+                _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
+
+        assert exc.value.exit_code == EXIT_GENERAL_ERROR
+
+    def test_consecutive_counter_resets_on_a_successful_poll(self, sleeps):
+        # Two blips far apart must NOT add up to a give-up.
+        with patch("rafter_cli.commands.backend.requests.get") as get:
+            get.side_effect = [
+                _processing(),
+                _server_500(),
+                _server_500(),
+                _processing(),
+                _server_500(),
+                _server_500(),
+                _completed(),
+            ]
+            code = _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
+
+        assert code == EXIT_SUCCESS
+        # Backoff restarts at 2s after the reset rather than continuing to 8s.
+        assert [c.args[0] for c in sleeps.call_args_list] == [10, 2, 4, 10, 2, 4]
+
+    def test_first_poll_retries_a_transient_500(self):
+        # The give-up message tells the user to run `rafter get <id>`, which
+        # re-enters at the first poll. If that path did not retry, the remedy
+        # we recommend would be defeated by one bad read.
+        with patch("rafter_cli.commands.backend.requests.get") as get:
+            get.side_effect = [_server_500(), _completed()]
+            code = _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
+
+        assert code == EXIT_SUCCESS
+        assert get.call_count == 2
+
+    def test_any_2xx_counts_as_success(self):
+        # Node's axios accepts any 2xx; Python must not diverge.
+        accepted = _resp(202, json_body={"status": "completed", "markdown": "# Done"})
+        with patch("rafter_cli.commands.backend.requests.get") as get:
+            get.side_effect = [accepted]
+            code = _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
+
+        assert code == EXIT_SUCCESS
+
+    def test_retry_notice_goes_to_stderr(self, capsys):
+        with patch("rafter_cli.commands.backend.requests.get") as get:
+            get.side_effect = [_processing(), _server_500(), _completed()]
+            _handle_scan_status_interactive("s1", HEADERS, "md", quiet=False)
+
+        err = capsys.readouterr().err
+        assert "Report not readable yet" in err
+        assert "retrying in 2s" in err
+
     def test_rides_out_a_single_500_and_completes(self, capsys):
         with patch("rafter_cli.commands.backend.requests.get") as get:
             get.side_effect = [_processing(), _server_500(), _completed()]

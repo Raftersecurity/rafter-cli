@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A transient 500 during scan polling no longer kills the run** (sable-l10k). An AppSumo customer's GitHub Actions build died on `Rafter scan poll failed: HTTP 500 — Failed to fetch report from storage: Object not found`. A report is not durable the instant a scan flips to `completed`, so a 5xx on that read is survivable — but every poll path treated any non-2xx as fatal, while the transport-error branch three lines above already retried. All three surfaces (the composite action, `rafter run`, `rafter get --interactive`) now retry transient failures with exponential backoff (2s/4s/8s/16s) before giving up, and the give-up message names the scan id, the `rafter get <id>` retry, and the dashboard instead of leaking storage-layer wording. Full contract in `shared-docs/CLI_SPEC.md`. Both runtimes; end-to-end CI coverage against a mock backend, so no API key or credits are needed to exercise it.
+- **Python: a failed poll could be written out as if it were scan results** (sable-l10k). The mid-poll loop called `.json()` on the response without checking the status code, so a 500 carrying a JSON error body parsed cleanly, yielded no `status`, fell out of the loop, and was emitted as the scan payload with exit code `0`. A non-JSON error body raised an unhandled `JSONDecodeError`. Both now fail loudly. **Behavior change:** genuine non-transient mid-poll failures that previously exited `0` with an error payload on stdout now exit `1` — check any pipeline that consumed that output.
+- **GitHub Action: a failed results fetch reported the scan as `completed`** (sable-l10k). The declared `status` output read only from the results step, which does not run when the fetch fails. Consumers gating on `status == 'completed'` saw a clean scan, and the artifact upload published the error body as `rafter-results.json`. Both give-up paths in the results fetch now record `status=unreadable`, and the artifact upload is gated on a successful results fetch.
+- **GitHub Action: server-controlled error text is sanitized before it reaches workflow commands** (sable-l10k). A response body containing a newline could forge `::error::`, `::add-mask::`, or `::stop-commands::` annotations. Error text from the API is now stripped of newlines and length-capped at every `::error::`/`::warning::` site.
+- **GitHub Action: an unreachable API is reported as unreachable** (sable-l10k). Transport errors retried on a flat 10s interval without counting toward the failure budget, so a bad `rafter-url` or a down backend burned the whole `timeout-minutes` window and then reported `Scan did not complete within N minutes` — a timeout message for a DNS failure. They now share the same retry budget and exit with `status=unreachable`.
+
+### Changed
+
+- **`timeout-minutes` on the GitHub Action is now a wall-clock deadline**, not a poll count. Previously the action ran `timeout-minutes * 6` polls, each costing 10s *plus* API latency, so a slow API pushed real elapsed time past the documented budget. It is now enforced as a real deadline. **This can fail workflows that were relying on the overrun** — if a scan sits near the boundary, raise `timeout-minutes`.
+- HTTP requests on the poll and results paths now carry connect/read timeouts (`--connect-timeout 10 --max-time 60` for curl, 30s for axios), so a hung server cannot stall inside a request that the retry loop only checks between attempts.
+
 ## [0.10.0] - 2026-07-29
 
 ### Added

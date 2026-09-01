@@ -16,17 +16,50 @@ import { fmt as output } from "../../utils/formatter.js";
  * healthy scan. Retry those instead of failing the whole run; a scan that
  * would have succeeded 10 seconds later must not die on one bad read.
  *
- * 404 is transient HERE and only here: by the time the poll loop runs we have
- * already been handed a scan_id, so a missing scan mid-poll is read-after-write
- * lag, not a wrong id. The FIRST poll still treats 404 as fatal.
+ * 404 is transient only AFTER the scan is known to exist: once the first poll
+ * has succeeded, a missing scan is read-after-write lag rather than a wrong id.
+ * On the first poll a 404 is still fatal.
  */
 export const MAX_TRANSIENT_POLL_FAILURES = 5;
 
-function isTransientPollError(e: any): boolean {
+/**
+ * Total transient failures tolerated across one `handleScanStatus` call.
+ *
+ * The consecutive counter resets on every success, which is what we want — a
+ * twenty-minute scan with one blip at minute 2 and another at minute 18 should
+ * not die. But reset-on-success alone means a backend alternating 200/500
+ * forever never exhausts the budget, and the CLI has no wall-clock deadline to
+ * stop it. This is the backstop for that.
+ */
+export const MAX_TOTAL_TRANSIENT_POLL_FAILURES = 20;
+
+/** Longest single error detail we will echo back. Servers can be verbose. */
+const MAX_ERROR_DETAIL_CHARS = 200;
+
+/**
+ * Transient = the request never got an answer, or got one the server itself
+ * describes as temporary.
+ *
+ * `scanExists` gates 404: before the first successful poll a 404 means the
+ * scan id is wrong, and retrying it just delays a clear answer.
+ */
+function isTransientPollError(e: any, scanExists: boolean): boolean {
   const status = e?.response?.status;
-  // No response at all: transport error (DNS, reset, timeout).
-  if (status === undefined) return true;
-  return status >= 500 || status === 408 || status === 404;
+  if (status === undefined) {
+    // Retry only errors that came from the HTTP layer. A TypeError thrown from
+    // our own code also has no `response`, and must not be mistaken for a flaky
+    // backend and retried five times.
+    return Boolean(e?.isAxiosError || e?.request || e?.code);
+  }
+  if (status === 404) return scanExists;
+  return status >= 500 || status === 408;
+}
+
+function truncate(s: string): string {
+  const flat = s.replace(/[\r\n]+/g, " ").trim();
+  return flat.length > MAX_ERROR_DETAIL_CHARS
+    ? `${flat.slice(0, MAX_ERROR_DETAIL_CHARS)}…`
+    : flat;
 }
 
 function describeHttpError(e: any): string {
@@ -40,6 +73,7 @@ function describeHttpError(e: any): string {
   } else if (e instanceof Error) {
     detail = e.message;
   }
+  detail = truncate(detail);
   return status ? `HTTP ${status}${detail ? ` — ${detail}` : ""}` : detail || String(e);
 }
 
@@ -58,10 +92,10 @@ export function unreadableReportMessage(scan_id: string, lastError: string): str
   );
 }
 
-const BASE_BACKOFF_MS = 2000;
+export const BASE_BACKOFF_MS = 2000;
 
-function backoffMs(consecutiveFailures: number): number {
-  // 2s, 4s, 8s, 16s, 32s
+/** 2s, 4s, 8s, 16s — the 5th failure gives up rather than sleeping again. */
+export function backoffMs(consecutiveFailures: number): number {
   return BASE_BACKOFF_MS * 2 ** (consecutiveFailures - 1);
 }
 
@@ -72,6 +106,40 @@ function backoffMs(consecutiveFailures: number): number {
 export class PollGaveUpError extends Error {}
 
 /**
+ * A failure budget shared across every poll in one `handleScanStatus` call.
+ *
+ * Counting per-request would let a backend that alternates 200/500 forever
+ * reset the counter on each success and never exhaust it — the CLI has no
+ * wall-clock deadline, so that loop would never end.
+ */
+class FailureBudget {
+  consecutive = 0;
+  total = 0;
+  last = "";
+
+  record(detail: string): number {
+    this.consecutive += 1;
+    this.total += 1;
+    this.last = detail;
+    return this.consecutive;
+  }
+
+  /** A success clears the consecutive run, but never refunds the total. */
+  reset(): void {
+    this.consecutive = 0;
+  }
+
+  get exhausted(): boolean {
+    return (
+      this.consecutive >= MAX_TRANSIENT_POLL_FAILURES ||
+      this.total >= MAX_TOTAL_TRANSIENT_POLL_FAILURES
+    );
+  }
+}
+
+type RetryNotice = (attempt: number, waitMs: number, detail: string) => void;
+
+/**
  * One poll, with retry/backoff over transient failures.
  * Non-transient errors are rethrown for the caller to classify.
  */
@@ -79,32 +147,31 @@ async function pollUntilReadable(
   scan_id: string,
   headers: any,
   fmt: string,
-  onRetry?: (attempt: number, waitMs: number, detail: string) => void
+  budget: FailureBudget,
+  scanExists: boolean,
+  onRetry?: RetryNotice
 ): Promise<any> {
-  let consecutiveFailures = 0;
-  let lastError = "";
-
   for (;;) {
     try {
-      return await axios.get(`${API}/static/scan`, {
+      const res = await axios.get(`${API}/static/scan`, {
         params: { scan_id, format: fmt },
         headers,
         // Without this a hung server stalls inside a single request, and the
         // retry loop can only notice between attempts.
         timeout: API_TIMEOUT_SHORT_MS,
       });
+      budget.reset();
+      return res;
     } catch (e: any) {
-      if (!isTransientPollError(e)) throw e;
+      if (!isTransientPollError(e, scanExists)) throw e;
 
-      consecutiveFailures += 1;
-      lastError = describeHttpError(e);
-
-      if (consecutiveFailures >= MAX_TRANSIENT_POLL_FAILURES) {
-        throw new PollGaveUpError(unreadableReportMessage(scan_id, lastError));
+      const attempt = budget.record(describeHttpError(e));
+      if (budget.exhausted) {
+        throw new PollGaveUpError(unreadableReportMessage(scan_id, budget.last));
       }
 
-      const waitMs = backoffMs(consecutiveFailures);
-      onRetry?.(consecutiveFailures, waitMs, lastError);
+      const waitMs = backoffMs(attempt);
+      onRetry?.(attempt, waitMs, budget.last);
       await new Promise((r) => setTimeout(r, waitMs));
     }
   }
@@ -113,19 +180,33 @@ async function pollUntilReadable(
 const IN_PROGRESS = ["queued", "pending", "processing"];
 
 export async function handleScanStatus(scan_id: string, headers: any, fmt: string, quiet?: boolean): Promise<number> {
+  const budget = new FailureBudget();
+
+  // Retries are printed to stderr, not just into the spinner: ora renders
+  // nothing on a non-TTY, and CI is exactly where this diagnostic matters.
+  const onRetry: RetryNotice | undefined = quiet
+    ? undefined
+    : (attempt, waitMs, detail) => {
+        console.error(
+          `Report not readable yet (${detail}); retrying in ${Math.round(waitMs / 1000)}s ` +
+            `(${attempt}/${MAX_TRANSIENT_POLL_FAILURES})`
+        );
+      };
+
   // First poll. A 404 here really does mean "no such scan" — do not retry it.
+  // Transient 5xx IS retried, so that the `rafter get <id>` this command
+  // recommends on failure is not itself defeated by one bad read.
   let poll;
   try {
-    poll = await axios.get(
-      `${API}/static/scan`,
-      { params: { scan_id, format: fmt }, headers }
-    );
+    poll = await pollUntilReadable(scan_id, headers, fmt, budget, false, onRetry);
   } catch (e: any) {
-    if (e.response?.status === 404) {
+    if (e?.response?.status === 404) {
       console.error(output.error(`Scan '${scan_id}' not found`));
       return EXIT_SCAN_NOT_FOUND;
     }
-    console.error(output.error(`${e.response?.data || e.message}`));
+    console.error(
+      output.error(e instanceof PollGaveUpError ? e.message : describeHttpError(e))
+    );
     return EXIT_GENERAL_ERROR;
   }
 
@@ -134,18 +215,11 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
     const spinner = quiet
       ? undefined
       : ora("Waiting for scan to complete... (this could take several minutes)").start();
-    const onRetry = quiet
-      ? undefined
-      : (attempt: number, waitMs: number, detail: string) => {
-          spinner!.text =
-            `Report not readable yet (${detail}); retrying in ${Math.round(waitMs / 1000)}s ` +
-            `(${attempt}/${MAX_TRANSIENT_POLL_FAILURES})`;
-        };
 
     try {
       while (IN_PROGRESS.includes(status)) {
         await new Promise((r) => setTimeout(r, 10000));
-        poll = await pollUntilReadable(scan_id, headers, fmt, onRetry);
+        poll = await pollUntilReadable(scan_id, headers, fmt, budget, true, onRetry);
         status = poll.data.status;
         if (status === "completed") {
           spinner?.succeed("Scan completed");
@@ -153,9 +227,6 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
         } else if (status === "failed") {
           spinner?.fail("Scan failed");
           return EXIT_GENERAL_ERROR;
-        }
-        if (spinner) {
-          spinner.text = "Waiting for scan to complete... (this could take several minutes)";
         }
       }
     } catch (e: any) {

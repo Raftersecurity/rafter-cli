@@ -66,6 +66,73 @@ else
   echo "PASS: 'none' branch of threshold-eval does not set FAIL=1"
 fi
 
+# ── sable-l10k: poll-path retry contract ─────────────────────────────────
+# These properties are subtle and cheap to "simplify" away. Each one, if
+# dropped, reproduces a bug a paying customer already hit.
+
+# 5. 404 must be in the poll loop's TRANSIENT condition. It is safe only
+#    because the trigger step already handed us a scan_id, so a missing scan
+#    mid-poll is read-after-write lag rather than a wrong id.
+if grep -qE '\$HTTP_CODE" -ge 500 \] \|\| \[ "\$HTTP_CODE" -eq 408 \] \|\| \[ "\$HTTP_CODE" -eq 404' "$ACTION_YML"; then
+  echo "PASS: poll loop treats 5xx/408/404 as transient"
+else
+  echo "FAIL: poll loop's transient condition changed — 404/408/5xx must all retry"
+  failures=$((failures+1))
+fi
+
+# 6. A transport error must count toward the SAME failure budget as a 5xx.
+#    When it did not, an unreachable backend reported "scan did not complete
+#    within N minutes" — a timeout message for a DNS failure.
+if awk '/curl transport error contacting/,/^          \}/' "$ACTION_YML" \
+     | grep -q 'TRANSIENT_FAILURES=\$((TRANSIENT_FAILURES+1))'; then
+  echo "PASS: transport errors count toward the transient-failure budget"
+else
+  echo "FAIL: poll loop's transport-error branch no longer counts toward the budget"
+  failures=$((failures+1))
+fi
+
+# 7. The give-up message must be actionable: name the scan, and offer a next
+#    step. Raw storage wording ("Object not found") alone is not a message a
+#    customer can act on.
+if grep -q 'could not read the report for scan \${SCAN_ID}' "$ACTION_YML" \
+   && grep -q 'check it in your dashboard at' "$ACTION_YML"; then
+  echo "PASS: give-up message names the scan and offers a next step"
+else
+  echo "FAIL: give-up message no longer names the scan id or a next step"
+  failures=$((failures+1))
+fi
+
+# 8. Both give-up paths in the results fetch must record status=unreadable.
+#    Without it the declared `status` output falls back to the poll step's
+#    `completed`, and a failed report read is reported as a clean scan.
+unreadable_writes=$(grep -c 'status=unreadable' "$ACTION_YML" || true)
+if [ "$unreadable_writes" -ge 3 ]; then
+  echo "PASS: poll and both results-fetch give-up paths record status=unreadable"
+else
+  echo "FAIL: expected >=3 status=unreadable writes, found ${unreadable_writes}"
+  failures=$((failures+1))
+fi
+
+# 9. The artifact upload must be gated on the RESULTS step, not the poll step.
+#    Gated on the poll step it published the error body as rafter-results.json.
+if grep -qE "if: steps\.results\.outputs\.status == 'completed'" "$ACTION_YML"; then
+  echo "PASS: artifact upload gated on a successful results fetch"
+else
+  echo "FAIL: artifact upload is not gated on steps.results.outputs.status"
+  failures=$((failures+1))
+fi
+
+# 10. Backoff must be exponential. A flat or zeroed backoff gives an
+#     eventually-consistent object store no time to converge.
+if grep -q 'BACKOFF=\$(( 2 \*\* TRANSIENT_FAILURES ))' "$ACTION_YML" \
+   && grep -q 'backoff=\$(( 2 \*\* attempt ))' "$ACTION_YML"; then
+  echo "PASS: both retry loops back off exponentially"
+else
+  echo "FAIL: a retry loop's backoff is no longer exponential"
+  failures=$((failures+1))
+fi
+
+
 echo ""
 echo "── results ───────────────────────────────────────────────────────────"
 echo "Failures: $failures"

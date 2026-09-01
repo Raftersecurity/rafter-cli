@@ -15,9 +15,17 @@ this from the client's side. The question the repro answers is whether the
 action survives it.
 
 Env:
-  PORT        listen port (default 8787)
-  FAIL_ON     1-based poll index that returns the 500 (default 2)
-  FAIL_FOREVER  if "1", every poll from FAIL_ON onward 500s (persistent case)
+  PORT          listen port (default 8787)
+  FAIL_ON       1-based GET index that starts failing (default 2)
+  FAIL_STATUS   status code to fail with (default 500; 404 exercises the
+                read-after-write-lag branch)
+  FAIL_FOREVER  if "1", every GET from FAIL_ON onward fails (persistent case)
+  FAIL_COUNT    how many consecutive GETs fail starting at FAIL_ON (default 1;
+                ignored when FAIL_FOREVER is set)
+  COMPLETE_AFTER  GET index from which status is "completed" (default FAIL_ON,
+                i.e. as soon as the injected failures are done). Set it higher
+                than the failure window to make the RESULTS fetch fail rather
+                than the poll.
 """
 import json
 import os
@@ -26,7 +34,10 @@ from urllib.parse import urlparse, parse_qs
 
 PORT = int(os.environ.get("PORT", "8787"))
 FAIL_ON = int(os.environ.get("FAIL_ON", "2"))
+FAIL_STATUS = int(os.environ.get("FAIL_STATUS", "500"))
 FAIL_FOREVER = os.environ.get("FAIL_FOREVER") == "1"
+FAIL_COUNT = int(os.environ.get("FAIL_COUNT", "1"))
+COMPLETE_AFTER = int(os.environ.get("COMPLETE_AFTER", str(FAIL_ON)))
 
 SCAN_ID = "repro-sable-l10k-0001"
 
@@ -60,13 +71,17 @@ class Handler(BaseHTTPRequestHandler):
         state["polls"] += 1
         n = state["polls"]
 
-        if n == FAIL_ON or (FAIL_FOREVER and n >= FAIL_ON):
+        failing = (FAIL_FOREVER and n >= FAIL_ON) or (
+            FAIL_ON <= n < FAIL_ON + FAIL_COUNT
+        )
+        if failing:
             # The verbatim customer-facing body.
             return self._send(
-                500, {"error": "Failed to fetch report from storage: Object not found"}
+                FAIL_STATUS,
+                {"error": "Failed to fetch report from storage: Object not found"},
             )
 
-        if n < FAIL_ON:
+        if n < COMPLETE_AFTER:
             return self._send(200, {"scan_id": SCAN_ID, "status": "processing"})
 
         completed = {"scan_id": SCAN_ID, "status": "completed", "vulnerabilities": []}

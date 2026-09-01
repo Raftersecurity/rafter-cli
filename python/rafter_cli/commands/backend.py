@@ -94,26 +94,65 @@ def _confirm_plus_scan(mode: str, yes: bool) -> None:
 # healthy scan. Retry those instead of failing the whole run; a scan that would
 # have succeeded 10 seconds later must not die on one bad read.
 MAX_TRANSIENT_POLL_FAILURES = 5
-_BASE_BACKOFF_SECONDS = 2
+
+#: Total transient failures tolerated across one interactive call.
+#:
+#: The consecutive counter resets on every success, which is what we want — a
+#: twenty-minute scan with one blip at minute 2 and another at minute 18 should
+#: not die. But reset-on-success alone means a backend alternating 200/500
+#: forever never exhausts the budget, and the CLI has no wall-clock deadline to
+#: stop it. This is the backstop for that.
+MAX_TOTAL_TRANSIENT_POLL_FAILURES = 20
+
+BASE_BACKOFF_SECONDS = 2
+
+#: Longest single error detail we will echo back. Servers can be verbose.
+MAX_ERROR_DETAIL_CHARS = 200
 
 IN_PROGRESS = ("queued", "pending", "processing")
 
 
 class PollGaveUpError(RuntimeError):
-    """Polling gave up after repeated transient failures.
+    """Polling gave up after exhausting its retry budget.
 
     Carries the customer-facing message so callers need not rebuild it.
     """
 
 
-def _is_transient_poll_status(status_code: int) -> bool:
-    """404 is transient HERE and only here.
+class PollFatalError(RuntimeError):
+    """A poll failed in a way retrying cannot fix (bad key, bad request).
 
-    By the time the poll loop runs we have already been handed a ``scan_id``, so
-    a missing scan mid-poll is read-after-write lag, not a wrong id. The FIRST
-    poll still treats 404 as fatal.
+    Distinct from :class:`PollGaveUpError` so that "we tried five times" is
+    never confused with "we did not try at all".
     """
-    return status_code >= 500 or status_code in (404, 408)
+
+    def __init__(self, message: str, status_code: "int | None" = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def backoff_seconds(consecutive_failures: int) -> int:
+    """2s, 4s, 8s, 16s — the 5th failure gives up rather than sleeping again."""
+    return BASE_BACKOFF_SECONDS * 2 ** (consecutive_failures - 1)
+
+
+def _is_transient_poll_status(status_code: int, scan_exists: bool) -> bool:
+    """Transient = the server itself describes the condition as temporary.
+
+    ``scan_exists`` gates 404: before the first successful poll a 404 means the
+    scan id is wrong, and retrying it just delays a clear answer. After it, a
+    missing scan is read-after-write lag.
+    """
+    if status_code == 404:
+        return scan_exists
+    return status_code >= 500 or status_code == 408
+
+
+def _truncate(text: str) -> str:
+    flat = " ".join((text or "").split())
+    if len(flat) > MAX_ERROR_DETAIL_CHARS:
+        return flat[:MAX_ERROR_DETAIL_CHARS] + "\u2026"
+    return flat
 
 
 def _describe_http_error(status_code: int, body: str) -> str:
@@ -124,8 +163,8 @@ def _describe_http_error(status_code: int, body: str) -> str:
             detail = parsed.get("error") or body
     except (ValueError, TypeError):
         pass
-    detail = (detail or "").strip()
-    return f"HTTP {status_code}" + (f" — {detail}" if detail else "")
+    detail = _truncate(detail)
+    return f"HTTP {status_code}" + (f" \u2014 {detail}" if detail else "")
 
 
 def unreadable_report_message(scan_id: str, last_error: str) -> str:
@@ -137,21 +176,56 @@ def unreadable_report_message(scan_id: str, last_error: str) -> str:
     return (
         f"Rafter could not read the report for scan {scan_id} after "
         f"{MAX_TRANSIENT_POLL_FAILURES} attempts.\n"
-        f"The scan itself may have finished — retry with: rafter get {scan_id}\n"
+        f"The scan itself may have finished \u2014 retry with: rafter get {scan_id}\n"
         f"or open the scan in your dashboard at https://rafter.so/dashboard\n"
         f"Last response from the server: {last_error}"
     )
 
 
-def _poll_until_readable(scan_id: str, headers: dict, fmt: str, quiet: bool):
+class _FailureBudget:
+    """A failure budget shared across every poll in one interactive call.
+
+    Counting per-request would let a backend that alternates 200/500 forever
+    reset the counter on each success and never exhaust it — the CLI has no
+    wall-clock deadline, so that loop would never end.
+    """
+
+    def __init__(self) -> None:
+        self.consecutive = 0
+        self.total = 0
+        self.last = ""
+
+    def record(self, detail: str) -> int:
+        self.consecutive += 1
+        self.total += 1
+        self.last = detail
+        return self.consecutive
+
+    def reset(self) -> None:
+        """A success clears the consecutive run, but never refunds the total."""
+        self.consecutive = 0
+
+    @property
+    def exhausted(self) -> bool:
+        return (
+            self.consecutive >= MAX_TRANSIENT_POLL_FAILURES
+            or self.total >= MAX_TOTAL_TRANSIENT_POLL_FAILURES
+        )
+
+
+def _poll_until_readable(
+    scan_id: str,
+    headers: dict,
+    fmt: str,
+    quiet: bool,
+    budget: "_FailureBudget",
+    scan_exists: bool,
+):
     """One poll, retrying transient failures with exponential backoff.
 
-    Returns the successful response. Raises ``PollGaveUpError`` once the
-    transient failures stop looking transient, and re-raises anything else.
+    Returns the successful response. Raises ``PollGaveUpError`` once the retry
+    budget is spent and ``PollFatalError`` for anything retrying cannot fix.
     """
-    consecutive_failures = 0
-    last_error = ""
-
     while True:
         try:
             resp = requests.get(
@@ -160,27 +234,29 @@ def _poll_until_readable(scan_id: str, headers: dict, fmt: str, quiet: bool):
                 params={"scan_id": scan_id, "format": fmt},
                 timeout=API_TIMEOUT_SHORT,
             )
-            transient = _is_transient_poll_status(resp.status_code)
-            if resp.status_code == 200:
+            # Any 2xx is a success, matching the Node runtime's axios default.
+            if 200 <= resp.status_code < 300:
+                budget.reset()
                 return resp
-            if not transient:
-                raise PollGaveUpError(
-                    _describe_http_error(resp.status_code, resp.text)
+            if not _is_transient_poll_status(resp.status_code, scan_exists):
+                raise PollFatalError(
+                    _describe_http_error(resp.status_code, resp.text),
+                    status_code=resp.status_code,
                 )
-            last_error = _describe_http_error(resp.status_code, resp.text)
+            detail = _describe_http_error(resp.status_code, resp.text)
         except requests.RequestException as e:
             # Transport error (DNS, reset, timeout) — as retryable as a 5xx.
-            last_error = str(e)
+            detail = _truncate(str(e))
 
-        consecutive_failures += 1
-        if consecutive_failures >= MAX_TRANSIENT_POLL_FAILURES:
-            raise PollGaveUpError(unreadable_report_message(scan_id, last_error))
+        attempt = budget.record(detail)
+        if budget.exhausted:
+            raise PollGaveUpError(unreadable_report_message(scan_id, budget.last))
 
-        wait = _BASE_BACKOFF_SECONDS * 2 ** (consecutive_failures - 1)
+        wait = backoff_seconds(attempt)
         if not quiet:
             print(
-                f"Report not readable yet ({last_error}); retrying in {wait}s "
-                f"({consecutive_failures}/{MAX_TRANSIENT_POLL_FAILURES})",
+                f"Report not readable yet ({budget.last}); retrying in {wait}s "
+                f"({attempt}/{MAX_TRANSIENT_POLL_FAILURES})",
                 file=sys.stderr,
             )
         time.sleep(wait)
@@ -189,18 +265,23 @@ def _poll_until_readable(scan_id: str, headers: dict, fmt: str, quiet: bool):
 def _handle_scan_status_interactive(
     scan_id: str, headers: dict, fmt: str, quiet: bool
 ) -> int:
-    poll = requests.get(
-        f"{API_BASE}/static/scan",
-        headers=headers,
-        params={"scan_id": scan_id, "format": fmt},
-        timeout=API_TIMEOUT_SHORT,
-    )
+    budget = _FailureBudget()
 
-    if poll.status_code == 404:
-        print(f"Scan '{scan_id}' not found", file=sys.stderr)
-        raise typer.Exit(code=EXIT_SCAN_NOT_FOUND)
-    elif poll.status_code != 200:
-        print(f"Error: {poll.text}", file=sys.stderr)
+    # First poll. A 404 here really does mean "no such scan" — do not retry it.
+    # Transient 5xx IS retried, so that the `rafter get <id>` this command
+    # recommends on failure is not itself defeated by one bad read.
+    try:
+        poll = _poll_until_readable(
+            scan_id, headers, fmt, quiet, budget, scan_exists=False
+        )
+    except PollFatalError as e:
+        if e.status_code == 404:
+            print(f"Scan '{scan_id}' not found", file=sys.stderr)
+            raise typer.Exit(code=EXIT_SCAN_NOT_FOUND)
+        print(f"Error: {e}", file=sys.stderr)
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
+    except PollGaveUpError as e:
+        print(f"Error: {e}", file=sys.stderr)
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     data = poll.json()
@@ -215,8 +296,10 @@ def _handle_scan_status_interactive(
         while status in IN_PROGRESS:
             time.sleep(10)
             try:
-                poll = _poll_until_readable(scan_id, headers, fmt, quiet)
-            except PollGaveUpError as e:
+                poll = _poll_until_readable(
+                    scan_id, headers, fmt, quiet, budget, scan_exists=True
+                )
+            except (PollGaveUpError, PollFatalError) as e:
                 print(f"Error: {e}", file=sys.stderr)
                 raise typer.Exit(code=EXIT_GENERAL_ERROR)
             data = poll.json()

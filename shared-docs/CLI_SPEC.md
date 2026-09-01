@@ -128,18 +128,25 @@ Retrieve results from a scan.
 
 #### Poll-loop retry contract
 
-Once polling has begun (`rafter run` without `--skip-interactive`, or `rafter get --interactive`), a scan_id is known to exist, and a report is not necessarily durable the instant a scan flips to `completed`. Both runtimes therefore retry transient read failures instead of aborting the run:
+A report is not necessarily durable the instant a scan flips to `completed`, so a poll can hit a 5xx on a scan that is readable seconds later. Both runtimes retry transient read failures instead of aborting:
 
 | Condition during polling | Behavior |
 |--------------------------|----------|
-| HTTP 5xx, 408, or 404 | Transient. Retried up to **5 consecutive times** with exponential backoff (2s, 4s, 8s, 16s). The counter resets on any successful poll. |
+| HTTP 5xx or 408 | Transient. Retried up to **5 consecutive times** with exponential backoff (2s, 4s, 8s, 16s). |
 | Transport error (DNS, reset, timeout) | Same as above. |
+| HTTP 404, **after** the scan is known to exist | Transient — read-after-write lag, not a wrong id. |
+| HTTP 404 on the **first** poll | Not retried. The scan genuinely does not exist. Exit code `2`. |
 | Other 4xx (401/403/429 …) | Not retried — reported immediately. |
-| 404 on the **first** poll | Not retried — the scan genuinely does not exist. Exit code `2`. |
 
-After 5 consecutive transient failures the command exits `1` with a message naming the scan id, the `rafter get <scan_id>` retry command, and the dashboard, with the raw server response as supporting detail. Raw storage-layer wording is never the whole message.
+Two budgets bound the retries. The **consecutive** counter (5) resets on any successful poll, so a long scan with occasional blips is not killed by unrelated failures minutes apart. A **total** counter (20 per command invocation) does *not* reset, so a backend alternating success and failure cannot keep the loop alive indefinitely — the CLI has no wall-clock deadline of its own.
 
-The composite GitHub Action (`github-action/action.yml`) implements the same contract in its poll loop and its results fetch.
+After either budget is exhausted the command exits `1` with a message naming the scan id, the `rafter get <scan_id>` retry, and the dashboard, with the raw server response as supporting detail. Raw storage-layer wording is never the whole message. The first poll retries transient 5xx precisely so that the recommended `rafter get <scan_id>` is not itself defeated by one bad read.
+
+**The composite GitHub Action** (`github-action/action.yml`) implements the same classification in both its poll loop and its results fetch, with these differences forced by the shell:
+
+- It has no "first poll" distinction: by the time it polls, the trigger step has already returned a `scan_id`, so **every** 404 there is treated as read-after-write lag. A scan id the backend accepted but never persisted therefore fails after the 5-failure budget rather than immediately.
+- Its poll loop is additionally bounded by a wall-clock deadline derived from `timeout-minutes`. Before v0.11 that input was a poll *count*, so a slow API could overrun it; it is now a real deadline.
+- Its `status` output is `completed`, `failed`, `timeout`, `unreadable` (the scan may have finished but its report could not be read), or `unreachable` (the API could not be contacted).
 
 ### rafter usage [OPTIONS]
 

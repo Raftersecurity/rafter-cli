@@ -27,7 +27,7 @@ inputs:
     required: false
     default: 'true'
   timeout-minutes:
-    description: 'Maximum time to wait for scan completion (minutes)'
+    description: 'Maximum wall-clock time to wait for scan completion (minutes). Enforced as a real deadline: before v0.11 this was a poll COUNT, so a slow API could overrun it.'
     required: false
     default: '10'
   rafter-url:
@@ -55,7 +55,7 @@ outputs:
     description: 'Number of low/note findings'
     value: ${{ steps.results.outputs.low_count }}
   status:
-    description: 'Scan status: completed, failed, timeout, or unreadable (the scan may have finished but its report could not be read)'
+    description: 'Scan status: completed, failed, timeout, unreadable (the scan may have finished but its report could not be read), or unreachable (the Rafter API could not be contacted)'
     value: ${{ steps.results.outputs.status || steps.poll.outputs.status }}
 
 runs:
@@ -98,14 +98,14 @@ runs:
           if [ -n "$ERROR" ]; then
             echo "::error::Server: ${ERROR}"
           else
-            echo "Server response: ${RESPONSE}"
+            echo "Server response: $(printf '%s' "$RESPONSE" | tr -d '\r\n' | cut -c1-500)"
           fi
           exit 1
         fi
 
         SCAN_ID=$(echo "$RESPONSE" | jq -r '.scan_id // empty')
         if [ -z "$SCAN_ID" ]; then
-          ERROR=$(echo "$RESPONSE" | jq -r '.error // "Unknown error triggering scan"')
+          ERROR=$(echo "$RESPONSE" | jq -r '.error // "Unknown error triggering scan"' | tr -d '\r\n' | cut -c1-200)
           echo "::error::Failed to trigger scan (HTTP ${HTTP_CODE}): ${ERROR}"
           exit 1
         fi
@@ -131,6 +131,13 @@ runs:
         # 404 counts as transient HERE and only here: the trigger step already
         # handed us a scan_id, so a missing scan mid-poll is read-after-write
         # lag rather than a wrong id.
+        case "$TIMEOUT_MINUTES" in
+          ''|*[!0-9]*)
+            echo "::error::timeout-minutes must be a whole number of minutes, got '${TIMEOUT_MINUTES}'"
+            exit 1
+            ;;
+        esac
+
         MAX_TRANSIENT_FAILURES=5
         TRANSIENT_FAILURES=0
         LAST_ERROR=""
@@ -147,10 +154,23 @@ runs:
             -o "$BODY_FILE" -w "%{http_code}" \
             -H "x-api-key: ${RAFTER_API_KEY}" \
             "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}") || {
-              echo "::warning::curl transport error during poll (will retry)"
-              cat "$BODY_FILE" || true
+              # A transport error is exactly as transient as a 5xx, and counts
+              # the same. Previously it retried on a flat 10s forever, which
+              # meant an unreachable backend reported "scan did not complete
+              # within N minutes" — a timeout message for a DNS failure.
               rm -f "$BODY_FILE"
-              sleep 10
+              LAST_ERROR="curl transport error contacting ${RAFTER_URL}"
+              TRANSIENT_FAILURES=$((TRANSIENT_FAILURES+1))
+              if [ "$TRANSIENT_FAILURES" -ge "$MAX_TRANSIENT_FAILURES" ]; then
+                echo "::error::Rafter could not reach the API for scan ${SCAN_ID} after ${MAX_TRANSIENT_FAILURES} attempts."
+                echo "::error::Check that ${RAFTER_URL} is reachable from this runner."
+                echo "::error::Last error: ${LAST_ERROR}"
+                echo "status=unreachable" >> "$GITHUB_OUTPUT"
+                exit 1
+              fi
+              BACKOFF=$(( 2 ** TRANSIENT_FAILURES ))
+              echo "::warning::${LAST_ERROR}; retrying in ${BACKOFF}s (${TRANSIENT_FAILURES}/${MAX_TRANSIENT_FAILURES})"
+              sleep "$BACKOFF"
               POLL_COUNT=$((POLL_COUNT+1))
               continue
             }
@@ -192,7 +212,7 @@ runs:
             break
           fi
 
-          echo "Scan status: ${STATUS} (poll $((POLL_COUNT+1)))"
+          echo "Scan status: ${STATUS} (poll $((POLL_COUNT+1)), $(( (DEADLINE - $(date +%s)) / 60 ))m of ${TIMEOUT_MINUTES}m budget left)"
           sleep 10
           POLL_COUNT=$((POLL_COUNT+1))
         done
@@ -245,6 +265,7 @@ runs:
               if [ "$code" -lt 500 ] && [ "$code" -ne 408 ] && [ "$code" -ne 404 ]; then
                 # Not transient — a bad key or malformed request. Say so now.
                 echo "::error::Rafter results fetch failed: ${last}"
+                echo "status=unreadable" >> "$GITHUB_OUTPUT"
                 return 1
               fi
             else
@@ -255,6 +276,10 @@ runs:
               echo "::error::Rafter could not read the report for scan ${SCAN_ID} after ${max_attempts} attempts."
               echo "::error::The scan itself finished — check it in your dashboard at ${RAFTER_URL}/dashboard"
               echo "::error::Last response from the server: ${last}"
+              # Without this the declared `status` output falls back to the poll
+              # step, which already said `completed` — a failed report read would
+              # be reported to consumers as a clean scan.
+              echo "status=unreadable" >> "$GITHUB_OUTPUT"
               return 1
             fi
 
@@ -363,7 +388,7 @@ runs:
         gh pr comment "${{ github.event.pull_request.number }}" --body-file "$COMMENT_FILE"
 
     - name: Upload artifacts
-      if: always() && steps.poll.outputs.status == 'completed'
+      if: steps.results.outputs.status == 'completed'
       uses: actions/upload-artifact@v4
       with:
         name: rafter-security-results
