@@ -5,8 +5,9 @@ name: Test github-action/ Composite Action
 # are pure-bash unit tests of the threshold-eval and PR-comment logic
 # plus a drift detector on action.yml's load-bearing defaults.
 #
-# An end-to-end test against the real Rafter API is a future addition
-# (would require an injectable RAFTER_API_KEY secret and a fixture repo).
+# The poll-path jobs DO drive the action end to end, against a localhost mock
+# backend (github-action/tests/mock-rafter-api.py) rather than the real API, so
+# they need no API key and spend no credits.
 on:
   push:
     branches:
@@ -47,6 +48,184 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run action.yml defaults / drift check
         run: bash github-action/tests/test-action-yml-defaults.sh
+
+  # sable-l10k — a paying customer's run died on a single transient 500 during
+  # polling ("Failed to fetch report from storage: Object not found"). The
+  # report is not durable the instant a scan flips to completed, so that 500 is
+  # survivable and must be retried. These two jobs pin both halves of the
+  # contract: ride out the transient failure, still fail on a missing report.
+  test-poll-transient-500:
+    name: "Poll: rides out a transient 500"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (500 on poll #2, then healthy)
+        env:
+          PORT: '8787'
+          FAIL_ON: '2'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8787/api/static/scan >/dev/null && break
+            sleep 1
+          done
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8787'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert the scan survived the 500
+        run: |
+          cat mock.log
+          echo "status output: '${{ steps.scan.outputs.status }}'"
+          if [ "${{ steps.scan.outputs.status }}" != "completed" ]; then
+            echo "FAIL: a single transient 500 during polling killed the run."
+            exit 1
+          fi
+          echo "PASS: the action retried the transient 500 and completed."
+
+  test-poll-report-never-readable:
+    name: "Poll: fails clearly when the report is really missing"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (every poll 500s)
+        env:
+          PORT: '8788'
+          FAIL_ON: '2'
+          FAIL_FOREVER: '1'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8788/api/static/scan >/dev/null && break
+            sleep 1
+          done
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8788'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert it failed, with the right status
+        run: |
+          cat mock.log
+          FAIL=0
+          if [ "${{ steps.scan.outputs.status }}" != "unreadable" ]; then
+            echo "FAIL: expected status=unreadable, got '${{ steps.scan.outputs.status }}'"
+            FAIL=1
+          fi
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "FAIL: an unreadable report should fail the build."
+            FAIL=1
+          fi
+          # A composite action's log is not capturable from the calling step,
+          # so the CONTENT of the give-up message is asserted by the drift
+          # detector (github-action/tests/test-action-yml-defaults.sh) instead.
+          exit $FAIL
+
+  # The 404-as-transient branch is the subtlest thing in the poll loop: it is
+  # correct only because the trigger step has already handed us a scan_id.
+  # Nothing else in CI exercises it, so a "simplification" that drops `-eq 404`
+  # from the transient condition would otherwise land green.
+  test-poll-transient-404:
+    name: "Poll: rides out a transient 404"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (404 on poll #2, then healthy)
+        env:
+          PORT: '8789'
+          FAIL_ON: '2'
+          FAIL_STATUS: '404'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8789/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8789/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8789'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert the scan survived the 404
+        run: |
+          cat mock.log
+          if [ "${{ steps.scan.outputs.status }}" != "completed" ]; then
+            echo "FAIL: a transient 404 mid-poll killed the run."
+            exit 1
+          fi
+          echo "PASS: the action treated a mid-poll 404 as read-after-write lag."
+
+  # The results fetch runs the instant the scan reports completed — the
+  # likeliest moment for the report object to be unreadable. Its retry loop had
+  # no coverage at all, and it is where a failed read used to be reported to
+  # consumers as status=completed.
+  test-results-fetch-transient-500:
+    name: "Results fetch: rides out a transient 500"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (poll succeeds, first results fetch 500s)
+        env:
+          PORT: '8790'
+          FAIL_ON: '2'
+          FAIL_COUNT: '1'
+          COMPLETE_AFTER: '1'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8790/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8790/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8790'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert the results fetch retried rather than failing the build
+        run: |
+          cat mock.log
+          if [ "${{ steps.scan.outputs.status }}" != "completed" ]; then
+            echo "FAIL: a transient 500 on the results fetch killed the run (status='${{ steps.scan.outputs.status }}')."
+            exit 1
+          fi
+          echo "PASS: the results fetch retried and completed."
 
   test-yaml-validity:
     name: action.yml is valid YAML
