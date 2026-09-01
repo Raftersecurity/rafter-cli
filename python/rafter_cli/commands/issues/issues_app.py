@@ -14,7 +14,7 @@ from pathlib import Path
 import requests
 import typer
 
-from ...utils.api import API_BASE, EXIT_GENERAL_ERROR, EXIT_SUCCESS, resolve_key
+from ...utils.api import api_url, API_BASE, api_get, EXIT_GENERAL_ERROR, EXIT_SUCCESS, resolve_key
 from ...utils.formatter import fmt, print_stderr
 from ...utils.git import detect_repo
 from .dedup import find_duplicates
@@ -213,8 +213,8 @@ def from_text(
 
 def _drafts_from_backend(scan_id: str, api_key: str | None) -> list[IssueDraft]:
     key = resolve_key(api_key)
-    resp = requests.get(
-        f"{API_BASE}/static/scan",
+    resp = api_get(
+        api_url("static/scan"),
         headers={"x-api-key": key},
         params={"scan_id": scan_id, "format": "json"},
         timeout=(10, 60),

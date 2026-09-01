@@ -1,5 +1,4 @@
 import { Command } from "commander";
-import axios from "axios";
 import {
   API,
   resolveKey,

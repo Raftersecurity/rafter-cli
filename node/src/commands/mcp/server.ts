@@ -15,9 +15,8 @@ import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager, redactConfigSecrets, isSecretConfigKey, maskSecretValue } from "../../core/config-manager.js";
 import { listDocs, resolveDocSelector, fetchDoc } from "../../core/docs-loader.js";
 import { writeSuppression } from "../../core/suppression-writer.js";
-import { apiUrl } from "../../utils/api.js";
+import { apiUrl, apiClient} from "../../utils/api.js";
 import { describeSitesError, resolveMcpApiKey } from "../sites/errors.js";
-import axios from "axios";
 import { createRequire } from "module";
 
 const _require = createRequire(import.meta.url);
@@ -361,7 +360,7 @@ export function createServer(): Server {
         const key = resolveMcpApiKey();
         if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
         try {
-          const { data } = await axios.post(apiUrl("static/sites"), { url }, { headers: { "x-api-key": key } });
+          const { data } = await apiClient.post(apiUrl("static/sites"), { url }, { headers: { "x-api-key": key } });
           return textResult(data);
         } catch (e: any) {
           return errorResult(describeSitesError(e).message);
@@ -378,7 +377,7 @@ export function createServer(): Server {
         const body: Record<string, unknown> = projectId ? { projectId } : { url };
         if (Array.isArray(args?.sections)) body.sections = (args!.sections as unknown[]).map((s) => String(s));
         try {
-          const { data } = await axios.post(apiUrl("static/sites/scan"), body, { headers: { "x-api-key": key } });
+          const { data } = await apiClient.post(apiUrl("static/sites/scan"), body, { headers: { "x-api-key": key } });
           return textResult(data);
         } catch (e: any) {
           return errorResult(describeSitesError(e).message);
@@ -393,7 +392,7 @@ export function createServer(): Server {
         if (args?.offset !== undefined) params.offset = String(args.offset);
         if (args?.include_archived) params.include_archived = "true";
         try {
-          const { data } = await axios.get(apiUrl("static/sites"), { params, headers: { "x-api-key": key } });
+          const { data } = await apiClient.get(apiUrl("static/sites"), { params, headers: { "x-api-key": key } });
           return textResult(data);
         } catch (e: any) {
           return errorResult(describeSitesError(e).message);
@@ -406,7 +405,7 @@ export function createServer(): Server {
         const key = resolveMcpApiKey();
         if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
         try {
-          const { data } = await axios.get(apiUrl(`static/sites/${encodeURIComponent(id)}`), { headers: { "x-api-key": key } });
+          const { data } = await apiClient.get(apiUrl(`static/sites/${encodeURIComponent(id)}`), { headers: { "x-api-key": key } });
           return textResult(data);
         } catch (e: any) {
           return errorResult(describeSitesError(e).message);
