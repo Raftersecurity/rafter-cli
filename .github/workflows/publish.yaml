@@ -197,10 +197,15 @@ jobs:
         run: npm publish --access public --provenance
 
   publish-python:
-    # sable-cazq. PR #221 adds `needs: [test-node, test-package]` here for a
-    # different reason — it stops a red NODE suite shipping the PyPI package.
-    # This adds test-python, which is what makes the Python tests run on the
-    # release path at all. Keep both if the two land together.
+    # needs: is the union of two fixes that landed together.
+    # sable-bm5k (#221): publish-node has needed the test jobs since it was
+    # written; this one never did, so a red suite blocked the npm release and
+    # shipped the PyPI one anyway. In a dual-implementation product that
+    # diverges the two runtimes at the registry — the one place users cannot
+    # see it.
+    # sable-cazq (#222): adds test-python, which is what makes the Python
+    # tests run on the release path at all. #221 alone only stops a red NODE
+    # suite shipping Python; it does not make Python tests run.
     needs: [test-node, test-python, test-package]
     runs-on: ubuntu-latest
     defaults:

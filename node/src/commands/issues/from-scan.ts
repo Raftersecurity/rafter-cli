@@ -7,8 +7,7 @@
  */
 import { Command } from "commander";
 import fs from "fs";
-import axios from "axios";
-import { API, resolveKey, EXIT_GENERAL_ERROR } from "../../utils/api.js";
+import { API, resolveKey, EXIT_GENERAL_ERROR, apiClient, apiUrl} from "../../utils/api.js";
 import { detectRepo } from "../../utils/git.js";
 import { fmt } from "../../utils/formatter.js";
 import { createIssue, listOpenIssues } from "./github-client.js";
@@ -170,7 +169,7 @@ async function draftsFromBackendScan(
   apiKey?: string
 ): Promise<IssueDraft[]> {
   const key = resolveKey(apiKey);
-  const { data } = await axios.get(`${API}/static/scan`, {
+  const { data } = await apiClient.get(apiUrl("static/scan"), {
     params: { scan_id: scanId, format: "json" },
     headers: { "x-api-key": key },
   });
