@@ -74,7 +74,7 @@ class TestTransientPollFailures:
         assert [backoff_seconds(n) for n in (1, 2, 3, 4)] == [2, 4, 8, 16]
 
     def test_actually_sleeps_the_backoff_schedule(self, sleeps):
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_processing()] + [
                 _server_500() for _ in range(MAX_TRANSIENT_POLL_FAILURES)
             ]
@@ -93,7 +93,7 @@ class TestTransientPollFailures:
         for _ in range(MAX_TOTAL_TRANSIENT_POLL_FAILURES + 5):
             flapping += [_server_500(), _processing()]
 
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = flapping
             with pytest.raises(typer.Exit) as exc:
                 _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
@@ -102,7 +102,7 @@ class TestTransientPollFailures:
 
     def test_consecutive_counter_resets_on_a_successful_poll(self, sleeps):
         # Two blips far apart must NOT add up to a give-up.
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [
                 _processing(),
                 _server_500(),
@@ -123,7 +123,7 @@ class TestTransientPollFailures:
         # methods on that object raised an AttributeError no caller catches,
         # surfacing as a traceback and defeating the retry entirely.
         nested = _resp(500, text=json.dumps({"error": {"message": "nested"}}))
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_processing(), nested, _completed()]
             code = _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
 
@@ -132,7 +132,7 @@ class TestTransientPollFailures:
     def test_truncates_a_very_long_server_error(self, capsys):
         huge = "x" * 5000
         big = _resp(500, text=json.dumps({"error": huge}))
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_processing()] + [
                 big for _ in range(MAX_TRANSIENT_POLL_FAILURES)
             ]
@@ -148,7 +148,7 @@ class TestTransientPollFailures:
         for _ in range(MAX_TOTAL_TRANSIENT_POLL_FAILURES + 5):
             flapping += [_server_500(), _processing()]
 
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = flapping
             with pytest.raises(typer.Exit):
                 _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
@@ -158,7 +158,7 @@ class TestTransientPollFailures:
         assert f"after {MAX_TOTAL_TRANSIENT_POLL_FAILURES} attempts" in err
 
     def test_unreachable_api_is_not_blamed_on_the_report(self, capsys):
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_processing()] + [
                 requests.ConnectionError("no route to host")
                 for _ in range(MAX_TRANSIENT_POLL_FAILURES)
@@ -174,7 +174,7 @@ class TestTransientPollFailures:
         # The give-up message tells the user to run `rafter get <id>`, which
         # re-enters at the first poll. If that path did not retry, the remedy
         # we recommend would be defeated by one bad read.
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_server_500(), _completed()]
             code = _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
 
@@ -184,14 +184,14 @@ class TestTransientPollFailures:
     def test_any_2xx_counts_as_success(self):
         # Node's axios accepts any 2xx; Python must not diverge.
         accepted = _resp(202, json_body={"status": "completed", "markdown": "# Done"})
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [accepted]
             code = _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
 
         assert code == EXIT_SUCCESS
 
     def test_retry_notice_goes_to_stderr(self, capsys):
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_processing(), _server_500(), _completed()]
             _handle_scan_status_interactive("s1", HEADERS, "md", quiet=False)
 
@@ -200,7 +200,7 @@ class TestTransientPollFailures:
         assert "retrying in 2s" in err
 
     def test_rides_out_a_single_500_and_completes(self, capsys):
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_processing(), _server_500(), _completed()]
             code = _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
 
@@ -208,7 +208,7 @@ class TestTransientPollFailures:
         assert get.call_count == 3
 
     def test_rides_out_several_consecutive_500s(self):
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [
                 _processing(),
                 _server_500(),
@@ -222,14 +222,14 @@ class TestTransientPollFailures:
         assert get.call_count == 5
 
     def test_midpoll_404_is_lag_not_a_missing_scan(self):
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_processing(), _resp(404, text="{}"), _completed()]
             code = _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
 
         assert code == EXIT_SUCCESS
 
     def test_first_poll_404_still_reports_not_found(self):
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_resp(404, text="{}")]
             with pytest.raises(typer.Exit) as exc:
                 _handle_scan_status_interactive("nope", HEADERS, "md", quiet=True)
@@ -238,7 +238,7 @@ class TestTransientPollFailures:
         assert get.call_count == 1
 
     def test_gives_up_when_report_never_becomes_readable(self, capsys):
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_processing()] + [
                 _server_500() for _ in range(MAX_TRANSIENT_POLL_FAILURES)
             ]
@@ -253,7 +253,7 @@ class TestTransientPollFailures:
         assert "Object not found" in err
 
     def test_does_not_retry_a_non_transient_error(self):
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [
                 _processing(),
                 _resp(403, text=json.dumps({"error": "Invalid API key"})),
@@ -265,7 +265,7 @@ class TestTransientPollFailures:
         assert get.call_count == 2
 
     def test_retries_transport_errors(self):
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [
                 _processing(),
                 requests.ConnectionError("ECONNRESET"),
@@ -279,7 +279,7 @@ class TestTransientPollFailures:
         """The pre-fix bug: the loop called .json() on the 500 body, got no
         status, fell out of the loop and wrote the error payload out as if it
         were results."""
-        with patch("rafter_cli.commands.backend.requests.get") as get:
+        with patch("rafter_cli.commands.backend.api_get") as get:
             get.side_effect = [_processing()] + [
                 _server_500() for _ in range(MAX_TRANSIENT_POLL_FAILURES)
             ]

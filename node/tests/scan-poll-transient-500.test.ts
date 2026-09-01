@@ -10,7 +10,35 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
  * still fail, and the failure message is one a customer can act on.
  */
 
-vi.mock("axios");
+vi.mock("axios", () => {
+  // sable-2s6p — the code calls `apiClient`, an axios instance created with
+  // maxRedirects: 0. `create` must return something, and it returns the same
+  // object as the default export so `mockedAxios.get` still refers to the
+  // function under test.
+  const instance: any = {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+    patch: vi.fn(),
+    defaults: { maxRedirects: 0 },
+    interceptors: { response: { use: vi.fn() }, request: { use: vi.fn() } },
+  };
+    // The default export gets its OWN mocks, distinct from the instance's. If
+  // production code regresses to bare `axios.get`, the assertions below — which
+  // watch the instance — stop seeing calls, and the test fails. A shim where
+  // both are the same object would silently accept that regression.
+  const bare: any = {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+    patch: vi.fn(),
+    interceptors: { response: { use: vi.fn() }, request: { use: vi.fn() } },
+    create: () => instance,
+  };
+  return { default: bare };
+});
 vi.mock("ora", () => ({
   default: () => ({
     start: vi.fn().mockReturnThis(),
@@ -32,7 +60,8 @@ import {
 } from "../src/commands/backend/scan-status.js";
 import { EXIT_SUCCESS, EXIT_GENERAL_ERROR, EXIT_SCAN_NOT_FOUND } from "../src/utils/api.js";
 
-const mockedAxios = vi.mocked(axios, true);
+// The code calls `apiClient` — the instance `create()` returns.
+const mockedAxios = vi.mocked((axios as any).create(), true);
 
 /** The verbatim body the customer saw. */
 const OBJECT_NOT_FOUND = {

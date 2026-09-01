@@ -1,5 +1,4 @@
 import { Command } from "commander";
-import axios from "axios";
 import ora from "ora";
 import { detectRepo } from "../../utils/git.js";
 import {
@@ -8,8 +7,9 @@ import {
   EXIT_GENERAL_ERROR,
   EXIT_QUOTA_EXHAUSTED,
   EXIT_CONFIRMATION_REQUIRED,
-  handle403
-} from "../../utils/api.js";
+  handle403,
+  apiClient,
+  apiUrl} from "../../utils/api.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { loadPolicy } from "../../core/policy-loader.js";
 import { askYesNo } from "../../utils/prompt.js";
@@ -133,8 +133,8 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
   if (!opts.quiet) {
     const spinner = ora("Submitting scan").start();
     try {
-      const { data } = await axios.post(
-        `${API}/static/scan`,
+      const { data } = await apiClient.post(
+        apiUrl("static/scan"),
         body,
         { headers: { "x-api-key": key } }
       );
@@ -161,8 +161,8 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
     }
   } else {
     try {
-      const { data } = await axios.post(
-        `${API}/static/scan`,
+      const { data } = await apiClient.post(
+        apiUrl("static/scan"),
         body,
         { headers: { "x-api-key": key } }
       );

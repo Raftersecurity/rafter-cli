@@ -9,6 +9,9 @@ import requests
 import typer
 
 from ..utils.api import (
+    api_url,
+    api_get,
+    api_post,
     API_BASE,
     API_TIMEOUT,
     API_TIMEOUT_SHORT,
@@ -254,8 +257,8 @@ def _poll_until_readable(
     """
     while True:
         try:
-            resp = requests.get(
-                f"{API_BASE}/static/scan",
+            resp = api_get(
+                api_url("static/scan"),
                 headers=headers,
                 params={"scan_id": scan_id, "format": fmt},
                 timeout=API_TIMEOUT_SHORT,
@@ -422,8 +425,8 @@ def _do_remote_scan(
         body["provider"] = resolved_provider
         body["repo_url"] = resolved_repo_url
 
-    resp = requests.post(
-        f"{API_BASE}/static/scan",
+    resp = api_post(
+        api_url("static/scan"),
         headers=headers,
         json=body,
         timeout=API_TIMEOUT,
@@ -508,8 +511,8 @@ def register_backend_commands(app: typer.Typer) -> None:
         """Check quota and usage."""
         key = resolve_key(api_key)
         headers = {"x-api-key": key}
-        resp = requests.get(
-            f"{API_BASE}/static/usage", headers=headers, timeout=API_TIMEOUT_SHORT
+        resp = api_get(
+            api_url("static/usage"), headers=headers, timeout=API_TIMEOUT_SHORT
         )
         if resp.status_code != 200:
             print(f"Error: {resp.text}", file=sys.stderr)

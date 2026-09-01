@@ -10,6 +10,8 @@ from typing import Optional
 import typer
 
 from ..utils.api import (
+    api_url,
+    api_get,
     API_BASE,
     API_TIMEOUT_SHORT,
     EXIT_GENERAL_ERROR,
@@ -309,8 +311,8 @@ def _fetch_scan(scan_id: str, api_key: str) -> dict:
     import requests
 
     headers = {"x-api-key": api_key}
-    resp = requests.get(
-        f"{API_BASE}/static/scan",
+    resp = api_get(
+        api_url("static/scan"),
         headers=headers,
         params={"scan_id": scan_id, "format": "json"},
         timeout=API_TIMEOUT_SHORT,

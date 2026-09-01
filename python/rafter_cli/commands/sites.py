@@ -18,6 +18,8 @@ import requests
 import typer
 
 from ..utils.api import (
+    api_get,
+    api_post,
     API_BASE,
     API_TIMEOUT,
     EXIT_GENERAL_ERROR,
@@ -135,7 +137,7 @@ def sites_create(
     if reject_unsupported_format(fmt):
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
     key = resolve_key(api_key)
-    resp = requests.post(
+    resp = api_post(
         SITES_API_BASE,
         headers={"x-api-key": key},
         json={"url": url},
@@ -174,7 +176,7 @@ def sites_scan(
         body["sections"] = section_list
 
     key = resolve_key(api_key)
-    resp = requests.post(
+    resp = api_post(
         f"{SITES_API_BASE}/scan",
         headers={"x-api-key": key},
         json=body,
@@ -209,7 +211,7 @@ def sites_list(
         params["include_archived"] = "true"
 
     key = resolve_key(api_key)
-    resp = requests.get(
+    resp = api_get(
         SITES_API_BASE,
         headers={"x-api-key": key},
         params=params,
@@ -234,7 +236,7 @@ def sites_get(
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
     key = resolve_key(api_key)
     site_id = quote(id, safe="")
-    resp = requests.get(
+    resp = api_get(
         f"{SITES_API_BASE}/{site_id}",
         headers={"x-api-key": key},
         timeout=API_TIMEOUT,

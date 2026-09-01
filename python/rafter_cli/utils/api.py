@@ -5,6 +5,7 @@ import json
 import os
 import sys
 
+import requests
 import typer
 from dotenv import load_dotenv
 
@@ -60,6 +61,72 @@ def handle_scope_error(resp: "requests.Response") -> bool:
 # Network timeouts (connect, read) in seconds
 API_TIMEOUT = (10, 300)
 API_TIMEOUT_SHORT = (10, 30)
+
+
+def _safe_for_terminal(value: "str | None") -> str:
+    """Strip non-printable bytes and cap length before echoing untrusted text.
+
+    A redirect target is attacker-controlled if the endpoint is. Header values
+    cannot contain CR/LF, but ESC is a legal byte, so an unsanitized Location
+    can emit ANSI sequences that rewrite the user's terminal.
+    """
+    if not isinstance(value, str):
+        return ""
+    printable = "".join(c for c in value if c.isprintable())
+    return printable[:200] + "\u2026" if len(printable) > 200 else printable
+
+
+def api_url(path: str) -> str:
+    """Join API_BASE with a path without producing a double slash.
+
+    Mirrors Node's ``apiUrl()``. This is not cosmetic: API_BASE ends in "/" and
+    call sites used to concatenate "/static/...", producing
+    ``https://rafter.so/api//static/scan``, which production answers with a 308
+    to the single-slash form. That worked only because the client followed the
+    redirect — so sable-2s6p's fix would have broken every core command.
+    """
+    return f"{API_BASE.rstrip('/')}/{path.lstrip('/')}"
+
+
+def api_request(method: str, url: str, **kwargs) -> "requests.Response":
+    """sable-2s6p — the HTTP entry point for every authenticated Rafter API call.
+
+    ``allow_redirects=False`` is the point of it. ``requests`` replays headers on
+    a redirect and, unlike ``Authorization``, a custom ``x-api-key`` header is
+    NOT stripped when the host changes (``SessionRedirectMixin.rebuild_auth``
+    only handles ``Authorization``). Since the API base is user-settable
+    (``--rafter-url``, self-hosted installs), a 302 from a misconfigured or
+    hostile endpoint would walk the caller's API key to another host.
+
+    Nothing in this CLI needs to follow a redirect, so none of them do. A
+    redirect now arrives at the caller as a plain 3xx response, which every
+    caller already treats as a non-200 error.
+
+    Use this for anything that sends ``x-api-key``. Plain ``requests`` is fine
+    for user-supplied webhooks and other unauthenticated calls.
+    """
+    kwargs["allow_redirects"] = False
+    resp = requests.request(method, url, **kwargs)
+    if 300 <= resp.status_code < 400:
+        # Otherwise this surfaces as a bare non-200 with an empty body, which
+        # tells the user nothing about why.
+        target = _safe_for_terminal(resp.headers.get("location")) or "another host"
+        print(
+            f"The Rafter API redirected to {target}, and Rafter does not follow "
+            "redirects on authenticated requests — your API key would be sent to "
+            "the redirect target. If you are pointing Rafter at a self-hosted "
+            "instance, use its final URL.",
+            file=sys.stderr,
+        )
+    return resp
+
+
+def api_get(url: str, **kwargs) -> "requests.Response":
+    return api_request("GET", url, **kwargs)
+
+
+def api_post(url: str, **kwargs) -> "requests.Response":
+    return api_request("POST", url, **kwargs)
 
 
 def resolve_key(cli_opt: str | None) -> str:

@@ -1,6 +1,51 @@
+import axios from "axios";
 import { ConfigManager } from "../core/config-manager.js";
 
 export const API = "https://rafter.so/api/";
+
+/**
+ * sable-2s6p — the HTTP client for every authenticated Rafter API call.
+ *
+ * `maxRedirects: 0` is the point of it. axios (via follow-redirects) replays
+ * request headers on a redirect, and unlike `Authorization` the custom
+ * `x-api-key` header is not stripped when the host changes. Since the API base
+ * is user-settable (`--rafter-url`, self-hosted installs), a 302 from a
+ * misconfigured or hostile endpoint would walk the caller's API key to another
+ * host. Nothing in this CLI needs to follow a redirect, so none of them do.
+ *
+ * Use this for anything that sends `x-api-key`. Plain `axios` is fine for
+ * user-supplied webhooks and other unauthenticated calls.
+ */
+export const apiClient = axios.create({
+  maxRedirects: 0,
+});
+
+/**
+ * A redirect target is attacker-controlled if the endpoint is. Header values
+ * cannot contain CR/LF, but ESC is a legal byte, so an unsanitized Location can
+ * emit ANSI sequences that rewrite the user's terminal. Strip anything
+ * non-printable and cap the length.
+ */
+function safeForTerminal(value: unknown): string {
+  if (typeof value !== "string") return "";
+  // eslint-disable-next-line no-control-regex
+  const printable = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+  return printable.length > 200 ? `${printable.slice(0, 200)}…` : printable;
+}
+
+// A refused redirect otherwise surfaces as a bare "Request failed with status
+// code 302", which tells the user nothing about why. Name the cause.
+apiClient.interceptors.response.use(undefined, (error: any) => {
+  const status = error?.response?.status;
+  if (status >= 300 && status < 400) {
+    const target = safeForTerminal(error?.response?.headers?.location) || "another host";
+    error.message =
+      `The Rafter API redirected to ${target}, and Rafter does not follow redirects ` +
+      `on authenticated requests — your API key would be sent to the redirect target. ` +
+      `If you are pointing Rafter at a self-hosted instance, use its final URL.`;
+  }
+  return Promise.reject(error);
+});
 
 /** Join API with a path segment without producing a double slash, regardless of leading/trailing slashes on either side. */
 export function apiUrl(path: string): string {
