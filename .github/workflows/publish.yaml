@@ -26,14 +26,63 @@ jobs:
         with:
           node-version: "20"
 
+      # sable-cazq — tests/cross-runtime-parity.test.ts gates its whole
+      # describe block on `python3 -c "import typer"` succeeding, and
+      # describe.skip is silent: with no Python here the release path ran
+      # `pnpm test`, skipped all 40 parity assertions and reported green.
+      # Those are the tests that enforce the dual-implementation contract,
+      # so they are the ones a release least wants to skip. Mirrors the
+      # setup in test-comprehensive.yml's test-node.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Python dependencies (for cross-runtime parity tests)
+        working-directory: ./python
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+
       - name: Run tests
         run: pnpm test
+
+  # sable-cazq — python/tests/ ran in exactly one place in this repo
+  # (test-comprehensive.yml) and it was not the release path. publish.yaml
+  # had no Python test job at all and validate-release.yml only built the
+  # wheel, so a Python-only regression reached PyPI green — and PyPI is not
+  # somewhere you can quietly unship from. Mirrors test-comprehensive.yml's
+  # test-python; runs in parallel with test-node, so it costs no wall clock
+  # the release was not already spending.
+  test-python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # pyproject.toml is Poetry-style: dev deps live under
+      # [tool.poetry.group.dev.dependencies], which is not a PEP 621 extra,
+      # so `.[dev]` always falls through to the bare install. The explicit
+      # pytest line is what actually provides the test deps.
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          pip install pytest pytest-mock pytest-asyncio
+
+      - name: Run all tests
+        run: python -m pytest tests/ -v
+        env:
+          RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
 
   test-package:
     runs-on: ubuntu-latest
@@ -82,7 +131,12 @@ jobs:
           echo "OK: pre-commit hook installed end-to-end"
 
   publish-node:
-    needs: [test-node, test-package]
+    # test-python is a gate on the npm release too, not only the PyPI one.
+    # The two registries are published from one push and version parity is
+    # enforced, so a Python suite that fails after npm has already published
+    # leaves the two runtimes at different versions on the two indexes —
+    # the divergence is the failure mode, whichever half breaks. (sable-cazq)
+    needs: [test-node, test-python, test-package]
     runs-on: ubuntu-latest
     # Trusted Publishing requires id-token: write in scope for THIS job (the
     # top-level grant covers it, but documented here for the job-local audit
@@ -143,12 +197,16 @@ jobs:
         run: npm publish --access public --provenance
 
   publish-python:
-    # sable-bm5k — publish-node has needed the test jobs since it was written;
-    # this one never did, so a red suite blocked the npm release and shipped
-    # the PyPI one anyway. In a dual-implementation product that means the two
-    # runtimes could diverge at the registry, which is the one place users
-    # cannot see it.
-    needs: [test-node, test-package]
+    # needs: is the union of two fixes that landed together.
+    # sable-bm5k (#221): publish-node has needed the test jobs since it was
+    # written; this one never did, so a red suite blocked the npm release and
+    # shipped the PyPI one anyway. In a dual-implementation product that
+    # diverges the two runtimes at the registry — the one place users cannot
+    # see it.
+    # sable-cazq (#222): adds test-python, which is what makes the Python
+    # tests run on the release path at all. #221 alone only stops a red NODE
+    # suite shipping Python; it does not make Python tests run.
+    needs: [test-node, test-python, test-package]
     runs-on: ubuntu-latest
     defaults:
       run:
