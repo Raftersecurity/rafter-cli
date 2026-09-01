@@ -50,6 +50,8 @@ describe("handleScanStatus — transient poll failures (sable-l10k)", () => {
   });
 
   afterEach(() => {
+    // Belt and braces: every test restores real timers itself (see above), but
+    // a failing assertion can skip that line.
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -65,6 +67,7 @@ describe("handleScanStatus — transient poll failures (sable-l10k)", () => {
     await vi.advanceTimersByTimeAsync(10000); // poll interval
     await vi.advanceTimersByTimeAsync(2000); // first backoff
     const code = await promise;
+    vi.useRealTimers();
 
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.get).toHaveBeenCalledTimes(3);
@@ -83,6 +86,7 @@ describe("handleScanStatus — transient poll failures (sable-l10k)", () => {
     await vi.advanceTimersByTimeAsync(10000);
     await vi.advanceTimersByTimeAsync(2000 + 4000 + 8000); // 3 backoffs
     const code = await promise;
+    vi.useRealTimers();
 
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.get).toHaveBeenCalledTimes(5);
@@ -99,6 +103,7 @@ describe("handleScanStatus — transient poll failures (sable-l10k)", () => {
     await vi.advanceTimersByTimeAsync(10000);
     await vi.advanceTimersByTimeAsync(2000);
     const code = await promise;
+    vi.useRealTimers();
 
     expect(code).toBe(EXIT_SUCCESS);
   });
@@ -123,6 +128,7 @@ describe("handleScanStatus — transient poll failures (sable-l10k)", () => {
     await vi.advanceTimersByTimeAsync(10000);
     await vi.advanceTimersByTimeAsync(2000 + 4000 + 8000 + 16000);
     const code = await promise;
+    vi.useRealTimers();
 
     expect(code).toBe(EXIT_GENERAL_ERROR);
     // One in-progress poll plus exactly the allowed number of retries.
@@ -138,6 +144,7 @@ describe("handleScanStatus — transient poll failures (sable-l10k)", () => {
     const promise = handleScanStatus("s1", headers, "md");
     await vi.advanceTimersByTimeAsync(10000);
     const code = await promise;
+    vi.useRealTimers();
 
     expect(code).toBe(EXIT_GENERAL_ERROR);
     expect(mockedAxios.get).toHaveBeenCalledTimes(2);
@@ -154,6 +161,7 @@ describe("handleScanStatus — transient poll failures (sable-l10k)", () => {
     await vi.advanceTimersByTimeAsync(10000);
     await vi.advanceTimersByTimeAsync(2000);
     const code = await promise;
+    vi.useRealTimers();
 
     expect(code).toBe(EXIT_SUCCESS);
   });
