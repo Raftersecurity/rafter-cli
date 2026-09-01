@@ -93,11 +93,18 @@ jobs:
           pnpm run build
           pnpm test
 
-      - name: Build Python package
+      # sable-cazq — this job ran `pnpm test` for Node and nothing but a
+      # wheel build for Python, so the pre-release gate asserted that the
+      # Python package *compiles*, never that it works. ~80s of pytest is
+      # the difference between those two claims.
+      - name: Build and test Python package
         run: |
           cd python
           python -m pip install --upgrade build
           python -m build
+          pip install -e .
+          pip install pytest pytest-mock pytest-asyncio
+          python -m pytest tests/ -q
 
       - name: Verify all artifacts
         run: |
