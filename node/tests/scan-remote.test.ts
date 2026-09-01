@@ -91,14 +91,19 @@ describe("handleScanStatus", () => {
     expect(code).toBe(EXIT_GENERAL_ERROR);
   });
 
-  it("returns EXIT_GENERAL_ERROR for non-404 network error", async () => {
+  // sable-l10k changed this: a 500 on the first poll is now RETRIED, because
+  // the give-up message tells the user to run `rafter get <id>`, which
+  // re-enters here. A non-transient status is what still fails immediately.
+  // The retry/exhaustion paths are covered in scan-poll-transient-500.test.ts.
+  it("returns EXIT_GENERAL_ERROR for a non-transient error", async () => {
     mockedAxios.get.mockRejectedValueOnce({
-      response: { status: 500, data: "Internal server error" },
+      response: { status: 403, data: "Forbidden" },
       message: "Request failed",
     });
 
     const code = await handleScanStatus("s1", headers, "md");
     expect(code).toBe(EXIT_GENERAL_ERROR);
+    expect(mockedAxios.get).toHaveBeenCalledTimes(1);
   });
 
   it("polls when status is queued, then returns on completed", async () => {

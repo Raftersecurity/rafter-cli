@@ -8,6 +8,12 @@ export function apiUrl(path: string): string {
 }
 
 // Exit codes
+/**
+ * Read timeout for short-lived API calls (status polls and the like), in ms.
+ * Mirrors the read half of Python's `API_TIMEOUT_SHORT`.
+ */
+export const API_TIMEOUT_SHORT_MS = 30_000;
+
 export const EXIT_SUCCESS = 0;
 export const EXIT_GENERAL_ERROR = 1;
 export const EXIT_SCAN_NOT_FOUND = 2;

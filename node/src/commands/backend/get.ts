@@ -7,7 +7,7 @@ import {
   EXIT_GENERAL_ERROR,
   EXIT_SCAN_NOT_FOUND
 } from "../../utils/api.js";
-import { handleScanStatus } from "./scan-status.js";
+import { handleScanStatus, fetchScanWithRetry, PollGaveUpError } from "./scan-status.js";
 
 export function createGetCommand(): Command {
   return new Command("get")
@@ -20,9 +20,14 @@ export function createGetCommand(): Command {
       const key = resolveKey(opts.apiKey);
       if (!opts.interactive) {
         try {
-          const { data } = await axios.get(
-            `${API}/static/scan`,
-            { params: { scan_id, format: opts.format }, headers: { "x-api-key": key } }
+          // sable-l10k — retried, because this is the command the poll loop's
+          // give-up message recommends. A remedy defeated by the same transient
+          // failure it is recommended for is not a remedy.
+          const { data } = await fetchScanWithRetry(
+            scan_id,
+            { "x-api-key": key },
+            opts.format,
+            opts.quiet
           );
           const exitCode = writePayload(data, opts.format, opts.quiet);
           process.exit(exitCode);
@@ -30,6 +35,8 @@ export function createGetCommand(): Command {
           if (e.response?.status === 404) {
             console.error(`Scan '${scan_id}' not found`);
             process.exit(EXIT_SCAN_NOT_FOUND);
+          } else if (e instanceof PollGaveUpError) {
+            console.error(e.message);
           } else if (e.response?.data) {
             console.error(e.response.data);
           } else if (e instanceof Error) {
