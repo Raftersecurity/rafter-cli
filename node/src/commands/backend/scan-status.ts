@@ -49,13 +49,17 @@ function isTransientPollError(e: any, scanExists: boolean): boolean {
     // Retry only errors that came from the HTTP layer. A TypeError thrown from
     // our own code also has no `response`, and must not be mistaken for a flaky
     // backend and retried five times.
-    return Boolean(e?.isAxiosError || e?.request || e?.code);
+    return Boolean(e?.isAxiosError || e?.request);
   }
   if (status === 404) return scanExists;
   return status >= 500 || status === 408;
 }
 
-function truncate(s: string): string {
+function truncate(value: unknown): string {
+  // A server is free to answer {"error": {"message": "..."}}. Coerce before
+  // touching string methods — this used to throw, which turned a retryable
+  // failure into an immediate crash with a nonsense message.
+  const s = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
   const flat = s.replace(/[\r\n]+/g, " ").trim();
   return flat.length > MAX_ERROR_DETAIL_CHARS
     ? `${flat.slice(0, MAX_ERROR_DETAIL_CHARS)}…`
@@ -65,16 +69,18 @@ function truncate(s: string): string {
 function describeHttpError(e: any): string {
   const status = e?.response?.status;
   const data = e?.response?.data;
-  let detail = "";
+  let detail: unknown = "";
   if (typeof data === "string") {
     detail = data;
   } else if (data && typeof data === "object") {
-    detail = (data as any).error ?? JSON.stringify(data);
+    detail = (data as any).error ?? data;
   } else if (e instanceof Error) {
     detail = e.message;
   }
-  detail = truncate(detail);
-  return status ? `HTTP ${status}${detail ? ` — ${detail}` : ""}` : detail || String(e);
+  const detailText = truncate(detail);
+  return status
+    ? `HTTP ${status}${detailText ? ` — ${detailText}` : ""}`
+    : detailText || String(e);
 }
 
 /**
@@ -82,10 +88,23 @@ function describeHttpError(e: any): string {
  * Storage-layer wording ("Object not found") is kept as supporting detail, not
  * as the whole explanation, and the next action is spelled out.
  */
-export function unreadableReportMessage(scan_id: string, lastError: string): string {
+export function unreadableReportMessage(
+  scan_id: string,
+  lastError: string,
+  attempts: number = MAX_TRANSIENT_POLL_FAILURES,
+  reachedServer: boolean = true
+): string {
+  if (!reachedServer) {
+    return (
+      `Rafter could not reach the API after ${attempts} attempts.\n` +
+      `Check your network and that https://rafter.so is reachable from here.\n` +
+      `Your scan id is ${scan_id} — the scan may still be running.\n` +
+      `Last error: ${lastError}`
+    );
+  }
   return (
     `Rafter could not read the report for scan ${scan_id} after ` +
-    `${MAX_TRANSIENT_POLL_FAILURES} attempts.\n` +
+    `${attempts} attempts.\n` +
     `The scan itself may have finished — retry with: rafter get ${scan_id}\n` +
     `or open the scan in your dashboard at https://rafter.so/dashboard\n` +
     `Last response from the server: ${lastError}`
@@ -116,11 +135,14 @@ class FailureBudget {
   consecutive = 0;
   total = 0;
   last = "";
+  /** False once any failure carried no HTTP response at all. */
+  lastReachedServer = true;
 
-  record(detail: string): number {
+  record(detail: string, reachedServer: boolean): number {
     this.consecutive += 1;
     this.total += 1;
     this.last = detail;
+    this.lastReachedServer = reachedServer;
     return this.consecutive;
   }
 
@@ -165,9 +187,19 @@ async function pollUntilReadable(
     } catch (e: any) {
       if (!isTransientPollError(e, scanExists)) throw e;
 
-      const attempt = budget.record(describeHttpError(e));
+      const attempt = budget.record(
+        describeHttpError(e),
+        e?.response?.status !== undefined
+      );
       if (budget.exhausted) {
-        throw new PollGaveUpError(unreadableReportMessage(scan_id, budget.last));
+        throw new PollGaveUpError(
+          unreadableReportMessage(
+            scan_id,
+            budget.last,
+            budget.total,
+            budget.lastReachedServer
+          )
+        );
       }
 
       const waitMs = backoffMs(attempt);
@@ -175,6 +207,31 @@ async function pollUntilReadable(
       await new Promise((r) => setTimeout(r, waitMs));
     }
   }
+}
+
+/**
+ * A single scan fetch with the same retry budget the poll loop uses.
+ *
+ * `rafter get <id>` is what the give-up message tells customers to run, so it
+ * must not be defeated by exactly the transient failure that produced the
+ * message. A 404 here is still fatal — that is a wrong id, not lag.
+ */
+export async function fetchScanWithRetry(
+  scan_id: string,
+  headers: any,
+  fmt: string,
+  quiet?: boolean
+): Promise<any> {
+  const budget = new FailureBudget();
+  const onRetry: RetryNotice | undefined = quiet
+    ? undefined
+    : (attempt, waitMs, detail) => {
+        console.error(
+          `Report not readable yet (${detail}); retrying in ${Math.round(waitMs / 1000)}s ` +
+            `(${attempt}/${MAX_TRANSIENT_POLL_FAILURES})`
+        );
+      };
+  return pollUntilReadable(scan_id, headers, fmt, budget, false, onRetry);
 }
 
 const IN_PROGRESS = ["queued", "pending", "processing"];

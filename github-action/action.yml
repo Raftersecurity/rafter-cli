@@ -104,6 +104,15 @@ runs:
         fi
 
         SCAN_ID=$(echo "$RESPONSE" | jq -r '.scan_id // empty')
+        # $GITHUB_OUTPUT is a key=value file: a newline in a server-controlled
+        # scan_id forges arbitrary step outputs, including status=completed.
+        # It also reaches ::error:: annotations and a request URL.
+        case "$SCAN_ID" in
+          *[!A-Za-z0-9_-]*)
+            echo "::error::Rafter returned a malformed scan id; refusing to continue"
+            exit 1
+            ;;
+        esac
         if [ -z "$SCAN_ID" ]; then
           ERROR=$(echo "$RESPONSE" | jq -r '.error // "Unknown error triggering scan"' | tr -d '\r\n' | cut -c1-200)
           echo "::error::Failed to trigger scan (HTTP ${HTTP_CODE}): ${ERROR}"

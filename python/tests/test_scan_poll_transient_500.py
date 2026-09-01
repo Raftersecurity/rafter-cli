@@ -118,6 +118,58 @@ class TestTransientPollFailures:
         # Backoff restarts at 2s after the reset rather than continuing to 8s.
         assert [c.args[0] for c in sleeps.call_args_list] == [10, 2, 4, 10, 2, 4]
 
+    def test_survives_a_nested_json_error_object(self):
+        # A server may answer {"error": {"message": "..."}}. Calling string
+        # methods on that object raised an AttributeError no caller catches,
+        # surfacing as a traceback and defeating the retry entirely.
+        nested = _resp(500, text=json.dumps({"error": {"message": "nested"}}))
+        with patch("rafter_cli.commands.backend.requests.get") as get:
+            get.side_effect = [_processing(), nested, _completed()]
+            code = _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
+
+        assert code == EXIT_SUCCESS
+
+    def test_truncates_a_very_long_server_error(self, capsys):
+        huge = "x" * 5000
+        big = _resp(500, text=json.dumps({"error": huge}))
+        with patch("rafter_cli.commands.backend.requests.get") as get:
+            get.side_effect = [_processing()] + [
+                big for _ in range(MAX_TRANSIENT_POLL_FAILURES)
+            ]
+            with pytest.raises(typer.Exit):
+                _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
+
+        err = capsys.readouterr().err
+        assert huge not in err
+        assert "\u2026" in err
+
+    def test_reports_the_real_attempt_count_not_the_consecutive_cap(self, capsys):
+        flapping = [_processing()]
+        for _ in range(MAX_TOTAL_TRANSIENT_POLL_FAILURES + 5):
+            flapping += [_server_500(), _processing()]
+
+        with patch("rafter_cli.commands.backend.requests.get") as get:
+            get.side_effect = flapping
+            with pytest.raises(typer.Exit):
+                _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
+
+        err = capsys.readouterr().err
+        # 20 failures happened; claiming "after 5 attempts" would be a lie.
+        assert f"after {MAX_TOTAL_TRANSIENT_POLL_FAILURES} attempts" in err
+
+    def test_unreachable_api_is_not_blamed_on_the_report(self, capsys):
+        with patch("rafter_cli.commands.backend.requests.get") as get:
+            get.side_effect = [_processing()] + [
+                requests.ConnectionError("no route to host")
+                for _ in range(MAX_TRANSIENT_POLL_FAILURES)
+            ]
+            with pytest.raises(typer.Exit):
+                _handle_scan_status_interactive("s1", HEADERS, "md", quiet=True)
+
+        err = capsys.readouterr().err
+        assert "could not reach the API" in err
+        assert "could not read the report" not in err
+
     def test_first_poll_retries_a_transient_500(self):
         # The give-up message tells the user to run `rafter get <id>`, which
         # re-enters at the first poll. If that path did not retry, the remedy

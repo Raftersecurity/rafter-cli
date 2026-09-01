@@ -148,8 +148,17 @@ def _is_transient_poll_status(status_code: int, scan_exists: bool) -> bool:
     return status_code >= 500 or status_code == 408
 
 
-def _truncate(text: str) -> str:
-    flat = " ".join((text or "").split())
+def _truncate(value) -> str:
+    """Coerce before truncating.
+
+    A server is free to answer ``{"error": {"message": "..."}}``. This used to
+    call ``.split()`` on a dict, raising an ``AttributeError`` that no caller
+    catches — turning a retryable failure into an unhandled traceback.
+    """
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    flat = " ".join(text.split())
     if len(flat) > MAX_ERROR_DETAIL_CHARS:
         return flat[:MAX_ERROR_DETAIL_CHARS] + "\u2026"
     return flat
@@ -167,15 +176,29 @@ def _describe_http_error(status_code: int, body: str) -> str:
     return f"HTTP {status_code}" + (f" \u2014 {detail}" if detail else "")
 
 
-def unreadable_report_message(scan_id: str, last_error: str) -> str:
+def unreadable_report_message(
+    scan_id: str,
+    last_error: str,
+    attempts: int = MAX_TRANSIENT_POLL_FAILURES,
+    reached_server: bool = True,
+) -> str:
     """The message a customer actually sees when the report never becomes readable.
 
     Storage-layer wording ("Object not found") is kept as supporting detail, not
-    as the whole explanation, and the next action is spelled out.
+    as the whole explanation, and the next action is spelled out. ``attempts`` is
+    the real count, which is not always ``MAX_TRANSIENT_POLL_FAILURES`` — the
+    total budget can trip first.
     """
+    if not reached_server:
+        return (
+            f"Rafter could not reach the API after {attempts} attempts.\n"
+            "Check your network and that https://rafter.so is reachable from here.\n"
+            f"Your scan id is {scan_id} \u2014 the scan may still be running.\n"
+            f"Last error: {last_error}"
+        )
     return (
         f"Rafter could not read the report for scan {scan_id} after "
-        f"{MAX_TRANSIENT_POLL_FAILURES} attempts.\n"
+        f"{attempts} attempts.\n"
         f"The scan itself may have finished \u2014 retry with: rafter get {scan_id}\n"
         f"or open the scan in your dashboard at https://rafter.so/dashboard\n"
         f"Last response from the server: {last_error}"
@@ -194,11 +217,14 @@ class _FailureBudget:
         self.consecutive = 0
         self.total = 0
         self.last = ""
+        #: False once any failure carried no HTTP response at all.
+        self.last_reached_server = True
 
-    def record(self, detail: str) -> int:
+    def record(self, detail: str, reached_server: bool = True) -> int:
         self.consecutive += 1
         self.total += 1
         self.last = detail
+        self.last_reached_server = reached_server
         return self.consecutive
 
     def reset(self) -> None:
@@ -244,13 +270,22 @@ def _poll_until_readable(
                     status_code=resp.status_code,
                 )
             detail = _describe_http_error(resp.status_code, resp.text)
+            reached_server = True
         except requests.RequestException as e:
             # Transport error (DNS, reset, timeout) — as retryable as a 5xx.
             detail = _truncate(str(e))
+            reached_server = False
 
-        attempt = budget.record(detail)
+        attempt = budget.record(detail, reached_server)
         if budget.exhausted:
-            raise PollGaveUpError(unreadable_report_message(scan_id, budget.last))
+            raise PollGaveUpError(
+                unreadable_report_message(
+                    scan_id,
+                    budget.last,
+                    attempts=budget.total,
+                    reached_server=budget.last_reached_server,
+                )
+            )
 
         wait = backoff_seconds(attempt)
         if not quiet:
@@ -260,6 +295,18 @@ def _poll_until_readable(
                 file=sys.stderr,
             )
         time.sleep(wait)
+
+
+def fetch_scan_with_retry(scan_id: str, headers: dict, fmt: str, quiet: bool):
+    """A single scan fetch with the same retry budget the poll loop uses.
+
+    ``rafter get <id>`` is what the give-up message tells customers to run, so
+    it must not be defeated by exactly the transient failure that produced the
+    message. A 404 here is still fatal — that is a wrong id, not lag.
+    """
+    return _poll_until_readable(
+        scan_id, headers, fmt, quiet, _FailureBudget(), scan_exists=False
+    )
 
 
 def _handle_scan_status_interactive(
@@ -435,17 +482,19 @@ def register_backend_commands(app: typer.Typer) -> None:
         headers = {"x-api-key": key}
 
         if not interactive:
-            resp = requests.get(
-                f"{API_BASE}/static/scan",
-                headers=headers,
-                params={"scan_id": scan_id, "format": fmt},
-                timeout=API_TIMEOUT,
-            )
-            if resp.status_code == 404:
-                print(f"Scan '{scan_id}' not found", file=sys.stderr)
-                raise typer.Exit(code=EXIT_SCAN_NOT_FOUND)
-            elif resp.status_code != 200:
-                print(f"Error: {resp.text}", file=sys.stderr)
+            # sable-l10k — retried, because this is the command the poll loop's
+            # give-up message recommends. A remedy defeated by the same
+            # transient failure it is recommended for is not a remedy.
+            try:
+                resp = fetch_scan_with_retry(scan_id, headers, fmt, quiet)
+            except PollFatalError as e:
+                if e.status_code == 404:
+                    print(f"Scan '{scan_id}' not found", file=sys.stderr)
+                    raise typer.Exit(code=EXIT_SCAN_NOT_FOUND)
+                print(f"Error: {e}", file=sys.stderr)
+                raise typer.Exit(code=EXIT_GENERAL_ERROR)
+            except PollGaveUpError as e:
+                print(f"Error: {e}", file=sys.stderr)
                 raise typer.Exit(code=EXIT_GENERAL_ERROR)
             data = resp.json()
             return write_payload(data, fmt, quiet)

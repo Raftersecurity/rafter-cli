@@ -128,7 +128,7 @@ Retrieve results from a scan.
 
 #### Poll-loop retry contract
 
-A report is not necessarily durable the instant a scan flips to `completed`, so a poll can hit a 5xx on a scan that is readable seconds later. Both runtimes retry transient read failures instead of aborting:
+A report is not necessarily durable the instant a scan flips to `completed`, so a poll can hit a 5xx on a scan that is readable seconds later. Both runtimes retry transient read failures instead of aborting. This applies to `rafter run`, `rafter get --interactive`, and plain `rafter get <scan_id>`:
 
 | Condition during polling | Behavior |
 |--------------------------|----------|
@@ -140,7 +140,9 @@ A report is not necessarily durable the instant a scan flips to `completed`, so 
 
 Two budgets bound the retries. The **consecutive** counter (5) resets on any successful poll, so a long scan with occasional blips is not killed by unrelated failures minutes apart. A **total** counter (20 per command invocation) does *not* reset, so a backend alternating success and failure cannot keep the loop alive indefinitely — the CLI has no wall-clock deadline of its own.
 
-After either budget is exhausted the command exits `1` with a message naming the scan id, the `rafter get <scan_id>` retry, and the dashboard, with the raw server response as supporting detail. Raw storage-layer wording is never the whole message. The first poll retries transient 5xx precisely so that the recommended `rafter get <scan_id>` is not itself defeated by one bad read.
+After either budget is exhausted the command exits `1`. If the failures reached the server, the message names the scan id, the `rafter get <scan_id>` retry, and the dashboard, with the raw server response as supporting detail — raw storage-layer wording is never the whole message. If no failure reached the server at all, the message says so and points at connectivity rather than blaming the report. Both report the **real** number of attempts, which is not always 5: the total budget can trip first.
+
+`rafter get <scan_id>` carries the same retry budget, so the remedy the give-up message recommends is not defeated by the transient failure that produced it.
 
 **The composite GitHub Action** (`github-action/action.yml`) implements the same classification in both its poll loop and its results fetch, with these differences forced by the shell:
 

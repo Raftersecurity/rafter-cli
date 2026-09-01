@@ -282,17 +282,88 @@ describe("backoff schedule (sable-l10k)", () => {
     // Alternating success/failure resets the consecutive counter every time.
     // Without a total cap, and with no wall-clock deadline in the CLI, that
     // loop never terminates.
-    mockedAxios.get.mockResolvedValueOnce({ data: { status: "processing" } });
-    for (let i = 0; i < MAX_TOTAL_TRANSIENT_POLL_FAILURES + 5; i++) {
-      mockedAxios.get
-        .mockRejectedValueOnce(OBJECT_NOT_FOUND)
-        .mockResolvedValueOnce({ data: { status: "processing" } });
-    }
+    // Endless flapping: the mock never drains, so the ONLY thing that can stop
+    // this loop is the total cap. (With the cap deleted the test hangs rather
+    // than passing on a drained-queue TypeError, which is what it used to do.)
+    // Hard stop well past the cap, so a missing cap fails loudly here instead
+    // of hanging the suite.
+    const ceiling = MAX_TOTAL_TRANSIENT_POLL_FAILURES * 4;
+    let call = 0;
+    mockedAxios.get.mockImplementation(async () => {
+      call += 1;
+      if (call > ceiling) {
+        throw new Error(`total transient-failure cap not enforced (${call} calls)`);
+      }
+      if (call === 1) return { data: { status: "processing" } };
+      if (call % 2 === 0) throw OBJECT_NOT_FOUND;
+      return { data: { status: "processing" } };
+    });
 
     recordDelays();
     const code = await handleScanStatus("s1", headers, "md", true);
 
     expect(code).toBe(EXIT_GENERAL_ERROR);
+    expect(call).toBeLessThanOrEqual(ceiling);
+    // Bounded by the TOTAL budget: one success per failure, plus the opener.
+    expect(call).toBe(MAX_TOTAL_TRANSIENT_POLL_FAILURES * 2);
+  });
+
+  it("reports the real attempt count, not the consecutive cap", async () => {
+    let call = 0;
+    mockedAxios.get.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) return { data: { status: "processing" } };
+      if (call % 2 === 0) throw OBJECT_NOT_FOUND;
+      return { data: { status: "processing" } };
+    });
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((m: any) => {
+      errors.push(String(m));
+    });
+
+    recordDelays();
+    await handleScanStatus("s1", headers, "md", true);
+
+    // 20 failures happened; claiming "after 5 attempts" would be a lie.
+    expect(errors.join("\n")).toContain(`after ${MAX_TOTAL_TRANSIENT_POLL_FAILURES} attempts`);
+  });
+
+  it("survives a nested JSON error object instead of crashing", async () => {
+    // A server may answer {"error": {"message": "..."}}. Calling string
+    // methods on that object used to throw, defeating the retry entirely.
+    const nested = { response: { status: 500, data: { error: { message: "nested" } } } };
+    mockedAxios.get
+      .mockResolvedValueOnce({ data: { status: "processing" } })
+      .mockRejectedValueOnce(nested)
+      .mockResolvedValueOnce({ data: { status: "completed", markdown: "# Done" } });
+
+    recordDelays();
+    const code = await handleScanStatus("s1", headers, "md", true);
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(mockedAxios.get).toHaveBeenCalledTimes(3);
+  });
+
+  it("truncates a very long server error instead of echoing it whole", async () => {
+    const huge = "x".repeat(5000);
+    mockedAxios.get.mockRejectedValueOnce({
+      response: { status: 500, data: { error: huge } },
+    });
+    for (let i = 0; i < MAX_TRANSIENT_POLL_FAILURES; i++) {
+      mockedAxios.get.mockRejectedValueOnce({
+        response: { status: 500, data: { error: huge } },
+      });
+    }
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((m: any) => {
+      errors.push(String(m));
+    });
+
+    recordDelays();
+    await handleScanStatus("s1", headers, "md", true);
+
+    expect(errors.join("\n")).not.toContain(huge);
+    expect(errors.join("\n")).toContain("…");
   });
 });
 

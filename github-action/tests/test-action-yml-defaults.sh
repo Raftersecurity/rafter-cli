@@ -133,6 +133,36 @@ else
 fi
 
 
+# 11. Server-controlled error text must be newline-stripped and length-capped
+#     before it reaches a workflow command. A newline forges ::add-mask:: /
+#     ::stop-commands:: / fabricated ::error:: annotations.
+sanitized=$(grep -cF 'cut -c1-' "$ACTION_YML" || true)
+stripped=$(grep -cF "tr -d " "$ACTION_YML" || true)
+if [ "$sanitized" -ge 5 ] && [ "$stripped" -ge 5 ]; then
+  echo "PASS: server-controlled text newline-stripped and capped at ${sanitized} sites"
+else
+  echo "FAIL: expected >=5 sanitized sites, found cut=${sanitized} tr=${stripped}"
+  failures=$((failures+1))
+fi
+
+# 12. TIMEOUT_MINUTES is evaluated inside bash arithmetic, where a value like
+#     'x[$(cmd)]' executes. It must be validated first.
+if grep -q 'case "\$TIMEOUT_MINUTES" in' "$ACTION_YML"; then
+  echo "PASS: timeout-minutes validated before arithmetic evaluation"
+else
+  echo "FAIL: timeout-minutes is no longer validated before arithmetic use"
+  failures=$((failures+1))
+fi
+
+# 13. The server-controlled scan id must be validated before it reaches
+#     \$GITHUB_OUTPUT, where a newline forges step outputs.
+if grep -q 'case "\$SCAN_ID" in' "$ACTION_YML"; then
+  echo "PASS: scan id validated before it reaches \$GITHUB_OUTPUT"
+else
+  echo "FAIL: scan id is no longer validated"
+  failures=$((failures+1))
+fi
+
 echo ""
 echo "── results ───────────────────────────────────────────────────────────"
 echo "Failures: $failures"
