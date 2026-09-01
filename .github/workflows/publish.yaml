@@ -143,6 +143,12 @@ jobs:
         run: npm publish --access public --provenance
 
   publish-python:
+    # sable-bm5k — publish-node has needed the test jobs since it was written;
+    # this one never did, so a red suite blocked the npm release and shipped
+    # the PyPI one anyway. In a dual-implementation product that means the two
+    # runtimes could diverge at the registry, which is the one place users
+    # cannot see it.
+    needs: [test-node, test-package]
     runs-on: ubuntu-latest
     defaults:
       run:
