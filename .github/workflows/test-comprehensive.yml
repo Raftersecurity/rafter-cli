@@ -12,11 +12,11 @@ permissions:
 
 jobs:
   # ── Who gets the suite ────────────────────────────────────────────
-  # PRs into prod are the release gate and always run.
-  # PRs into main run only for outside contributions: our own work (Rome-1's
-  # PRs, or any branch living in the Raftersecurity repo) is reviewed and
-  # tested locally before it is pushed, so running the full matrix again
-  # would just burn runner minutes.
+  # The two unit-test jobs (test-node, test-python) run on EVERY PR — see
+  # sable-bm5k. The rest of the matrix runs for PRs into prod (the release
+  # gate) and for outside contributions; for our own PRs into main it is
+  # skipped, because re-running the 6-way cross-platform grid on work that
+  # was reviewed before it was pushed mostly burns runner minutes.
   #
   # Note this is `pull_request`, not `pull_request_target` — fork PRs run with
   # a read-only token and no access to secrets. Do not "fix" that.
@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.decide.outputs.run }}
+      run_core: ${{ steps.decide.outputs.run_core }}
     steps:
       - id: decide
         # Values go through env rather than direct ${{ }} interpolation into
@@ -34,11 +35,25 @@ jobs:
           HEAD_OWNER: ${{ github.event.pull_request.head.repo.owner.login }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
+          # `run`      — the full matrix, including the 6-way cross-platform grid.
+          # `run_core` — the two unit-test jobs. These now run on EVERY PR.
+          #
+          # sable-bm5k: the original gate skipped everything on internal PRs into
+          # main, on the premise that our own work is tested locally first. On
+          # #220 — which changed both the Node and the Python client — that meant
+          # neither test-node nor test-python ran. The premise is also weaker
+          # than it looks: this repo has test files that fail locally for
+          # environmental reasons, so "green on my machine" is not a signal you
+          # can act on. test-node (234s) and test-python (100s) run in parallel,
+          # so this costs ~4 minutes of wall clock. The expensive part — the
+          # cross-platform grid, 6 jobs and 3 of them macOS — stays gated.
+          echo "run_core=true" >> "$GITHUB_OUTPUT"
+
           if [ "$EVENT" != "pull_request" ] || [ "$BASE" != "main" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           elif [ "$HEAD_OWNER" = "Raftersecurity" ] || [ "$AUTHOR" = "Rome-1" ]; then
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "Internal PR into main (author=$AUTHOR, head repo owner=$HEAD_OWNER) — suite skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "Internal PR into main (author=$AUTHOR, head repo owner=$HEAD_OWNER) — unit tests still run; extended matrix skipped." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
@@ -46,7 +61,7 @@ jobs:
   # ── Unit & integration tests (both languages) ─────────────────────
   test-node:
     needs: gate
-    if: needs.gate.outputs.run == 'true'
+    if: needs.gate.outputs.run_core == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -91,7 +106,7 @@ jobs:
 
   test-python:
     needs: gate
-    if: needs.gate.outputs.run == 'true'
+    if: needs.gate.outputs.run_core == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -227,6 +242,24 @@ jobs:
       - name: Run backend API tests
         if: ${{ env.RAFTER_API_KEY != '' }}
         run: pnpm exec vitest run tests/backend-api.test.ts
+
+      # sable-bm5k — without this the job renders identically whether it tested
+      # the backend or tested nothing. RAFTER_API_KEY has never been set on this
+      # repo, so "backend-api ✓" has always meant "checked out and built".
+      # A skipped step must not look like a passing one.
+      - name: Say so when the backend tests did not run
+        if: ${{ env.RAFTER_API_KEY == '' }}
+        run: |
+          echo "::warning::backend-api tested NOTHING — RAFTER_API_KEY is not set, so tests/backend-api.test.ts was skipped."
+          {
+            echo "### :warning: backend-api ran no tests"
+            echo ""
+            echo "\`RAFTER_API_KEY\` is unset, so \`tests/backend-api.test.ts\` was skipped."
+            echo "This job checked out and built the package and nothing else."
+            echo ""
+            echo "The remote scan path is covered without a key by the mock-backed jobs"
+            echo "in \`test-github-action.yml\`. See sable-bm5k."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Package build verification ─────────────────────────────────────
   package-integrity:
