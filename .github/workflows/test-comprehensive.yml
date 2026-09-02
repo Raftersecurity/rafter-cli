@@ -26,6 +26,14 @@ jobs:
       run: ${{ steps.decide.outputs.run }}
       run_core: ${{ steps.decide.outputs.run_core }}
     steps:
+      # Checked out only so the skip notice below can read the list of gated
+      # jobs from this file instead of carrying a copy of it. The first
+      # hand-typed copy omitted e2e-node within the hour it was written.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/workflows/test-comprehensive.yml
+          sparse-checkout-cone-mode: false
+
       - id: decide
         # Values go through env rather than direct ${{ }} interpolation into
         # the script, so nothing from the PR can be shell-injected.
@@ -56,16 +64,25 @@ jobs:
             # sable-d2x2 rule B — a skipped job renders as a grey check and
             # satisfies a required status check, so the skip has to be said
             # out loud, by name, where a reviewer looks: the checks annotation
-            # and the run summary. Keep this list in step with the jobs gated
-            # on needs.gate.outputs.run below.
-            SKIPPED="secret-detection-accuracy, sarif-validation, backend-api, package-integrity, cross-platform (6-way OS/Node grid)"
-            echo "::warning::Internal PR into main: extended matrix NOT run — ${SKIPPED}. Unit tests (test-node, test-python) still run. To run everything, push to a branch and open the PR from a fork, or use workflow_dispatch."
+            # and the run summary. The list is READ FROM THIS FILE (every job
+            # whose `if:` is gated on needs.gate.outputs.run), never typed by
+            # hand, so it cannot drift from the jobs it describes.
+            SKIPPED_JOBS=$(awk '
+              /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { job=$1; sub(":", "", job) }
+              /^[[:space:]]*if:.*needs\.gate\.outputs\.run == .true./ { if (job != "" && !seen[job]++) print job }
+            ' .github/workflows/test-comprehensive.yml)
+            SKIPPED_CSV=$(printf '%s' "$SKIPPED_JOBS" | paste -sd ',' - | sed 's/,/, /g')
+            if [ -z "$SKIPPED_JOBS" ]; then
+              echo "::error::gate: found no jobs gated on needs.gate.outputs.run — the skip notice would be empty. Either the gate is now pointless or this awk no longer matches the file."
+              exit 1
+            fi
+            echo "::warning::Internal PR into main: extended matrix NOT run — ${SKIPPED_CSV}. Unit tests (test-node, test-python) still run. To run everything, push to a branch and open the PR from a fork, or use workflow_dispatch."
             {
               echo "### Extended matrix skipped on this run"
               echo ""
               echo "Internal PR into main (author=\`$AUTHOR\`, head repo owner=\`$HEAD_OWNER\`). These jobs did **not** run and their grey checks mean *skipped*, not *passed*:"
               echo ""
-              for j in secret-detection-accuracy sarif-validation backend-api package-integrity cross-platform; do echo "- \`$j\`"; done
+              printf '%s\n' "$SKIPPED_JOBS" | sed 's/.*/- `&`/'
               echo ""
               echo "\`test-node\` and \`test-python\` ran. Trigger the full matrix with **workflow_dispatch** if this PR touches packaging, SARIF output, secret patterns, or platform-specific code."
             } >> "$GITHUB_STEP_SUMMARY"
