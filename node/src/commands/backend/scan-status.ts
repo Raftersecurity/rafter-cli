@@ -68,7 +68,14 @@ export function retryAfterMs(e: any): number | null {
       }
     }
   }
-  if (Array.isArray(raw)) raw = raw[0];
+  // Two Retry-Afters — an origin's and a proxy's, say — is not a delay we can
+  // act on, so it counts as absent like any other unusable value. Python gets
+  // this for free (requests joins duplicates as "5, 900", which fails the digit
+  // test) and bash counts the header lines; all three must answer the same.
+  if (Array.isArray(raw)) {
+    if (raw.length !== 1) return null;
+    raw = raw[0];
+  }
   if (raw === undefined || raw === null) return null;
   const text = String(raw).trim();
   if (!/^\d+$/.test(text)) return null;

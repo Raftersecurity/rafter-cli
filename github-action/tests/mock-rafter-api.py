@@ -22,7 +22,9 @@ Env:
   FAIL_RETRY_AFTER  when set, injected failures carry this literal Retry-After
                 header value. sable-96ex: a 429 is retried ONLY when one is
                 present, so setting/omitting this is what separates the two
-                halves of that contract.
+                halves of that contract. A '|' splits it into SEVERAL
+                Retry-After headers ("5|900"), which must count as no usable
+                delay in every surface.
   FAIL_FOREVER  if "1", every GET from FAIL_ON onward fails (persistent case)
   FAIL_COUNT    how many consecutive GETs fail starting at FAIL_ON (default 1;
                 ignored when FAIL_FOREVER is set)
@@ -58,7 +60,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         if retry_after is not None:
-            self.send_header("Retry-After", retry_after)
+            for value in retry_after.split("|"):
+                self.send_header("Retry-After", value)
         self.end_headers()
         self.wfile.write(body)
 

@@ -106,8 +106,16 @@ describe("retryAfterMs", () => {
     expect(retryAfterMs({ response: { status: 429, headers } })).toBe(9000);
   });
 
-  it("takes the first value when the header repeats", () => {
-    expect(retryAfterMs(throttled(["4", "900"]))).toBe(4000);
+  it("reads a single-element array (one header, array-shaped)", () => {
+    expect(retryAfterMs(throttled(["4"]))).toBe(4000);
+  });
+
+  it("refuses a repeated header rather than picking one", () => {
+    // An origin's Retry-After and a proxy's are not a delay we can act on, and
+    // the three surfaces must agree: Python sees requests' joined "4, 900" and
+    // fails the digit test, bash counts the header lines, this returns null.
+    expect(retryAfterMs(throttled(["4", "900"]))).toBeNull();
+    expect(retryAfterMs(throttled("4, 900"))).toBeNull();
   });
 
   it("honors Retry-After: 0", () => {

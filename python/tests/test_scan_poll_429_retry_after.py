@@ -100,6 +100,12 @@ class TestRetryAfterSeconds:
         # in bash on whatever `date` the runner ships. Unparseable = fail fast.
         assert retry_after_seconds(_throttled("Wed, 21 Oct 2026 07:28:00 GMT")) is None
 
+    def test_refuses_a_repeated_header(self):
+        # requests joins duplicate headers with ", ". An origin's Retry-After
+        # and a proxy's are not a delay we can act on, and all three surfaces
+        # must agree — see the Node and action.yml halves of this contract.
+        assert retry_after_seconds(_throttled("4, 900")) is None
+
     def test_returns_none_for_negative_or_non_numeric(self):
         assert retry_after_seconds(_throttled("-5")) is None
         assert retry_after_seconds(_throttled("soon")) is None
