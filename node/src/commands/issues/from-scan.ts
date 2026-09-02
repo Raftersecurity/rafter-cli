@@ -207,7 +207,7 @@ async function draftsFromBackendScan(
   return vulnerabilitiesFromPayload(data, scanId).map(buildFromBackendVulnerability);
 }
 
-function draftsFromLocalScan(filePath: string): IssueDraft[] {
+export function draftsFromLocalScan(filePath: string): IssueDraft[] {
   const raw = fs.readFileSync(filePath, "utf-8");
   const parsed = JSON.parse(raw);
   // New shape: { _note, scan_mode, triage_applied, results: [...] }

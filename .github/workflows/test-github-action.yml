@@ -346,6 +346,64 @@ jobs:
           [ "$FAIL" -eq 0 ] && echo "PASS: counts are exactly the report's (3/1/1/0/1)."
           exit $FAIL
 
+  # sable-1drb — the threshold gate is now unit-tested against the real
+  # lib/severity.sh, but a unit test cannot prove action.yml WIRES it: that
+  # the counts reach the gate and the gate's verdict reaches the job. One
+  # end-to-end run with real findings and a threshold they exceed does.
+  test-threshold-gate-end-to-end:
+    name: "Threshold gate: real findings above the threshold fail the build"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (report has 1 critical, 1 high, 1 low)
+        env:
+          PORT: '8793'
+          FAIL_COUNT: '0'
+          COMPLETE_AFTER: '1'
+          RESULTS_SHAPE: 'with-findings'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8793/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8793/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action with severity-threshold high
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8793'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+          severity-threshold: 'high'
+
+      - name: Assert the gate, not an error, failed the build
+        run: |
+          cat mock.log
+          FAIL=0
+          # status=completed AND outcome=failure is the gate's signature: the
+          # report was read and counted, then the threshold rejected it.
+          if [ "${{ steps.scan.outputs.status }}" != "completed" ]; then
+            echo "FAIL: expected status=completed (report read), got '${{ steps.scan.outputs.status }}'"
+            FAIL=1
+          fi
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "FAIL: 1 critical + 1 high with severity-threshold=high must fail the build (outcome='${{ steps.scan.outcome }}')"
+            FAIL=1
+          fi
+          if [ "${{ steps.scan.outputs.findings-count }}" != "3" ]; then
+            echo "FAIL: findings-count expected 3, got '${{ steps.scan.outputs.findings-count }}'"
+            FAIL=1
+          fi
+          [ "$FAIL" -eq 0 ] && echo "PASS: counts reached the gate and the gate failed the build."
+          exit $FAIL
+
   test-yaml-validity:
     name: action.yml is valid YAML
     runs-on: ubuntu-latest
