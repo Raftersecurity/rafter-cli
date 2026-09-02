@@ -240,6 +240,13 @@ runs:
               # The server named the delay; obey it instead of our own schedule.
               BACKOFF="$RETRY_AFTER"
               if [ "$BACKOFF" -gt "$MAX_RETRY_AFTER" ]; then BACKOFF="$MAX_RETRY_AFTER"; fi
+              # ...but never past the deadline. timeout-minutes became a real
+              # wall clock in sable-l10k, and a 60s honored delay is long enough
+              # to overrun it — the server does not get to extend a budget the
+              # workflow author set.
+              REMAINING=$(( DEADLINE - $(date +%s) ))
+              if [ "$REMAINING" -lt 0 ]; then REMAINING=0; fi
+              if [ "$BACKOFF" -gt "$REMAINING" ]; then BACKOFF="$REMAINING"; fi
               echo "::warning::Rate limited by the API (${LAST_ERROR}); retrying in ${BACKOFF}s (${TRANSIENT_FAILURES}/${MAX_TRANSIENT_FAILURES})"
             else
               echo "::warning::Report not readable yet (${LAST_ERROR}); retrying in ${BACKOFF}s (${TRANSIENT_FAILURES}/${MAX_TRANSIENT_FAILURES})"
