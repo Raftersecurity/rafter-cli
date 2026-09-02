@@ -111,6 +111,23 @@ class TestRetryAfterSeconds:
         assert retry_after_seconds(_throttled("soon")) is None
         assert retry_after_seconds(_throttled("1.5")) is None
 
+    def test_a_unicode_digit_does_not_crash_the_client(self):
+        # str.isdigit() is Unicode-aware and int() is not: '²' passes the first
+        # and raises ValueError out of the second, from a call site whose only
+        # handler is requests.RequestException. One raw \xb2 byte in the header
+        # is enough — http.client decodes headers as ISO-8859-1. Node's
+        # /^\d+$/ and the action's `case *[!0-9]*` both reject it, so accepting
+        # it here would be a divergence as well as a crash.
+        for value in ("\u00b2", "\u00b3", "\u00b9", "\uff15", "\u0665"):
+            assert retry_after_seconds(_throttled(value)) is None
+        # And the whole poll survives one, by failing fast rather than raising.
+        with patch("rafter_cli.commands.backend.api_get") as get:
+            get.side_effect = [_processing(), _throttled("\u00b2")]
+            with pytest.raises(typer.Exit) as exc:
+                _handle_scan_status_interactive("s1", HEADERS, "md", True)
+            assert exc.value.exit_code == EXIT_GENERAL_ERROR
+            assert get.call_count == 2
+
     def test_returns_none_when_absent(self):
         assert retry_after_seconds(_throttled()) is None
         assert retry_after_seconds(MagicMock(spec=[])) is None
