@@ -26,6 +26,19 @@ Env:
                 i.e. as soon as the injected failures are done). Set it higher
                 than the failure window to make the RESULTS fetch fail rather
                 than the poll.
+  RESULTS_SHAPE  what the completed JSON body looks like (sable-fgk7). Default
+                "ok": {"status":"completed","vulnerabilities":[]}. Others:
+                  with-findings  three findings: one critical, one high, one low
+                  missing-key    {"scan_id":..,"status":"completed"} — parses,
+                                 has no vulnerabilities array at all
+                  not-json       a 200 whose body is an HTML error page
+                  error-object   a 200 whose body is {"error": ...}
+                Each of the last three used to make the action report
+                "No security findings detected" and pass every threshold.
+  SHAPE_FROM     GET index from which the JSON body takes RESULTS_SHAPE
+                (default COMPLETE_AFTER + 1, so the poll loop sees one healthy
+                "completed" and the RESULTS fetch gets the shaped body).
+                md/sarif fetches are never shaped.
 """
 import json
 import os
@@ -38,20 +51,46 @@ FAIL_STATUS = int(os.environ.get("FAIL_STATUS", "500"))
 FAIL_FOREVER = os.environ.get("FAIL_FOREVER") == "1"
 FAIL_COUNT = int(os.environ.get("FAIL_COUNT", "1"))
 COMPLETE_AFTER = int(os.environ.get("COMPLETE_AFTER", str(FAIL_ON)))
+RESULTS_SHAPE = os.environ.get("RESULTS_SHAPE", "ok")
+SHAPE_FROM = int(os.environ.get("SHAPE_FROM", str(COMPLETE_AFTER + 1)))
 
 SCAN_ID = "repro-sable-l10k-0001"
+
+# Severities chosen so every count output is pinned to a distinct value:
+# findings=3, critical=1, high=1, medium=0, low=1.
+WITH_FINDINGS = [
+    {"rule_id": "sql-injection", "severity": "critical", "file_path": "db.php", "line_start": 12},
+    {"rule_id": "xss-echo", "severity": "high", "file_path": "view.php", "line_start": 40},
+    {"rule_id": "weak-hash", "severity": "low", "file_path": "auth.php", "line_start": 7},
+]
 
 state = {"polls": 0}
 
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, payload):
-        body = json.dumps(payload).encode()
+        self._send_raw(code, json.dumps(payload).encode(), "application/json")
+
+    def _send_raw(self, code, body, content_type):
         self.send_response(code)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_shaped_results(self):
+        """The completed JSON body under RESULTS_SHAPE (never for md/sarif)."""
+        if RESULTS_SHAPE == "with-findings":
+            return self._send(200, {"scan_id": SCAN_ID, "status": "completed",
+                                    "vulnerabilities": WITH_FINDINGS})
+        if RESULTS_SHAPE == "missing-key":
+            return self._send(200, {"scan_id": SCAN_ID, "status": "completed"})
+        if RESULTS_SHAPE == "not-json":
+            return self._send_raw(200, b"<html><body><h1>502 Bad Gateway</h1></body></html>",
+                                  "text/html")
+        if RESULTS_SHAPE == "error-object":
+            return self._send(200, {"error": "Failed to fetch report from storage: Object not found"})
+        raise SystemExit(f"unknown RESULTS_SHAPE {RESULTS_SHAPE!r}")
 
     def do_POST(self):
         if urlparse(self.path).path != "/api/static/scan":
@@ -83,6 +122,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if n < COMPLETE_AFTER:
             return self._send(200, {"scan_id": SCAN_ID, "status": "processing"})
+
+        if fmt == "json" and RESULTS_SHAPE != "ok" and n >= SHAPE_FROM:
+            return self._send_shaped_results()
 
         completed = {"scan_id": SCAN_ID, "status": "completed", "vulnerabilities": []}
         if fmt == "md":

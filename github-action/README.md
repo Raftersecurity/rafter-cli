@@ -53,12 +53,12 @@ jobs:
 | Output | Description |
 |--------|-------------|
 | `scan-id` | The Rafter scan ID |
-| `findings-count` | Total findings |
+| `findings-count` | Total findings. Empty, never `0`, when the report could not be read (see `status`) |
 | `critical-count` | Critical severity findings |
 | `high-count` | High severity findings |
 | `medium-count` | Medium severity findings |
 | `low-count` | Low severity findings |
-| `status` | Scan status |
+| `status` | `completed`, `failed`, `timeout`, `unreadable` (the scan may have finished but its report could not be read or parsed), or `unreachable` (the API could not be contacted). Count outputs are only written when `completed` |
 
 ## Examples
 

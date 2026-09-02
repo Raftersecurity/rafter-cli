@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import crypto from "crypto";
 import fs from "fs";
 import { execFileSync } from "child_process";
+// The real function, not a mirror: these tests exist to fail when the source
+// changes (sable-fgk7, sable-d2x2).
+import { vulnerabilitiesFromPayload } from "../src/commands/issues/from-scan.js";
 
 // ── dedup logic (mirrored from src/commands/issues/dedup.ts) ─────────
 
@@ -654,6 +657,61 @@ describe("from-scan: backend vulnerability drafts", () => {
       file: "x.ts",
     });
     expect(draft.labels).toContain("rule:my-custom-rule");
+  });
+});
+
+// ── from-scan: a payload with no findings list is an error, not zero ──
+//
+// sable-fgk7. `data.vulnerabilities || []` turned a still-running scan, a
+// failed scan, a 200 carrying an error object, and a schema-valid payload with
+// no key into "No findings to create issues for". Delete-the-subject test:
+// with the fallback restored, every case below except the first two passes
+// with [] and this suite fails.
+
+describe("from-scan: vulnerabilitiesFromPayload (sable-fgk7)", () => {
+  const SCAN = "scan-abc";
+
+  it("returns the list when present", () => {
+    const v = [{ ruleId: "r", level: "error", message: "m", file: "f" }];
+    expect(vulnerabilitiesFromPayload({ status: "completed", vulnerabilities: v }, SCAN)).toBe(v);
+  });
+
+  it("returns an empty list as a legitimate clean result", () => {
+    expect(vulnerabilitiesFromPayload({ status: "completed", vulnerabilities: [] }, SCAN)).toEqual([]);
+  });
+
+  it("refuses a completed payload with no vulnerabilities key", () => {
+    expect(() => vulnerabilitiesFromPayload({ scan_id: SCAN, status: "completed" }, SCAN))
+      .toThrow(/no 'vulnerabilities' array/);
+  });
+
+  it("names the status when the scan has not completed", () => {
+    expect(() => vulnerabilitiesFromPayload({ status: "processing" }, SCAN))
+      .toThrow(/is processing, not completed/);
+    expect(() => vulnerabilitiesFromPayload({ status: "failed" }, SCAN))
+      .toThrow(/is failed, not completed/);
+  });
+
+  it("refuses a 200 whose body is an error object", () => {
+    expect(() =>
+      vulnerabilitiesFromPayload({ error: "Failed to fetch report from storage: Object not found" }, SCAN)
+    ).toThrow(/no 'vulnerabilities' array/);
+  });
+
+  it("refuses a vulnerabilities value that is not a list", () => {
+    expect(() => vulnerabilitiesFromPayload({ vulnerabilities: "3" }, SCAN)).toThrow();
+    expect(() => vulnerabilitiesFromPayload({ vulnerabilities: null }, SCAN)).toThrow();
+  });
+
+  it("refuses non-object payloads", () => {
+    expect(() => vulnerabilitiesFromPayload(null, SCAN)).toThrow();
+    expect(() => vulnerabilitiesFromPayload("<html>502</html>", SCAN)).toThrow();
+  });
+
+  it("points at the scan id in every refusal", () => {
+    for (const bad of [{ status: "completed" }, { status: "processing" }, {}]) {
+      expect(() => vulnerabilitiesFromPayload(bad, SCAN)).toThrow(new RegExp(`rafter get ${SCAN}`));
+    }
   });
 });
 

@@ -163,6 +163,43 @@ else
   failures=$((failures+1))
 fi
 
+# ── sable-fgk7: an unreadable report is not a clean scan ─────────────────
+# The results step used to coerce every jq failure into findings_count=0,
+# which passed every threshold and rendered "No security findings detected".
+# Reproduced with a 200 whose body was not JSON, a 200 carrying an error
+# object, and a parseable payload with no vulnerabilities key.
+
+# 14. The payload shape must be validated before any count is computed.
+if grep -qF "jq -e 'type == \"object\" and (.vulnerabilities | type == \"array\") and all(.vulnerabilities[]; type == \"object\")'" "$ACTION_YML"; then
+  echo "PASS: results step validates the payload shape before counting"
+else
+  echo "FAIL: results step no longer validates that .vulnerabilities is an array of objects"
+  failures=$((failures+1))
+fi
+
+# 15. No count may fall back to 0 on a jq failure. That fallback IS the bug:
+#     the error path and the clean path produced the same number.
+zero_fallbacks=$(grep -c '|| echo "0"' "$ACTION_YML" || true)
+if [ "$zero_fallbacks" -eq 0 ]; then
+  echo "PASS: no count falls back to 0 on a parse failure"
+else
+  echo "FAIL: ${zero_fallbacks} count(s) still fall back to 0 on a jq failure — an unreadable report would render as clean"
+  failures=$((failures+1))
+fi
+
+# 16. The unreadable-payload path must record status=unreadable and exit 1,
+#     so the declared status output cannot fall back to the poll step's
+#     'completed' for a report that was never read.
+if awk '/no .vulnerabilities. array/,/^          fi$/' "$ACTION_YML" \
+     | grep -q 'status=unreadable' \
+   && awk '/no .vulnerabilities. array/,/^          fi$/' "$ACTION_YML" \
+     | grep -q 'exit 1'; then
+  echo "PASS: unreadable payload records status=unreadable and fails the step"
+else
+  echo "FAIL: unreadable-payload branch no longer records status=unreadable and exits 1"
+  failures=$((failures+1))
+fi
+
 echo ""
 echo "── results ───────────────────────────────────────────────────────────"
 echo "Failures: $failures"
