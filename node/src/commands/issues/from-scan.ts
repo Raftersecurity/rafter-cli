@@ -164,6 +164,36 @@ async function runFromScan(opts: {
   }
 }
 
+/**
+ * The findings list from a scan payload, or an error — never a silent [].
+ *
+ * A payload without a `vulnerabilities` array is not "no findings". It is a
+ * scan that has not completed, a failed scan, or a report this client cannot
+ * read; filing zero issues from it would report a clean codebase for work
+ * that was never done (sable-fgk7). An empty array IS a legitimate clean
+ * result and is returned as such.
+ */
+export function vulnerabilitiesFromPayload(
+  data: unknown,
+  scanId: string
+): BackendVulnerability[] {
+  const payload = data as { vulnerabilities?: unknown; status?: unknown } | null;
+  if (payload && Array.isArray(payload.vulnerabilities)) {
+    return payload.vulnerabilities as BackendVulnerability[];
+  }
+  const status = payload && typeof payload.status === "string" ? payload.status : undefined;
+  if (status && status !== "completed") {
+    throw new Error(
+      `Scan ${scanId} is ${status}, not completed — there are no findings to file yet. ` +
+        `Retry once it completes: rafter get ${scanId}`
+    );
+  }
+  throw new Error(
+    `Scan ${scanId} returned no 'vulnerabilities' array; refusing to treat an unreadable ` +
+      `report as zero findings. Check it with: rafter get ${scanId}`
+  );
+}
+
 async function draftsFromBackendScan(
   scanId: string,
   apiKey?: string
@@ -174,8 +204,7 @@ async function draftsFromBackendScan(
     headers: { "x-api-key": key },
   });
 
-  const vulns: BackendVulnerability[] = data.vulnerabilities || [];
-  return vulns.map(buildFromBackendVulnerability);
+  return vulnerabilitiesFromPayload(data, scanId).map(buildFromBackendVulnerability);
 }
 
 function draftsFromLocalScan(filePath: string): IssueDraft[] {

@@ -149,6 +149,7 @@ After either budget is exhausted the command exits `1`. If the failures reached 
 - It has no "first poll" distinction: by the time it polls, the trigger step has already returned a `scan_id`, so **every** 404 there is treated as read-after-write lag. A scan id the backend accepted but never persisted therefore fails after the 5-failure budget rather than immediately.
 - Its poll loop is additionally bounded by a wall-clock deadline derived from `timeout-minutes`. Before v0.11 that input was a poll *count*, so a slow API could overrun it; it is now a real deadline.
 - Its `status` output is `completed`, `failed`, `timeout`, `unreadable` (the scan may have finished but its report could not be read), or `unreachable` (the API could not be contacted).
+- Its results step validates the payload **before** counting. A body with no `vulnerabilities` array — not JSON, a `200` carrying an error object, or a parseable payload missing the key — is `status=unreadable`, the job fails, and **no count outputs are written**: a consumer reading `findings-count` sees an empty string, never a fabricated `0`. A report the action cannot read is not a clean scan. An empty array is a clean scan and counts as `0`.
 
 ### rafter usage [OPTIONS]
 
@@ -1244,6 +1245,8 @@ Create GitHub issues from scan results.
 - `--no-dedup` — skip deduplication check (create even if matching issue exists)
 - `--dry-run` — show issues that would be created without actually creating them
 - `--quiet` — suppress status messages
+
+**A scan payload without a `vulnerabilities` array is an error, not zero findings.** With `--scan-id`, a response that has no `vulnerabilities` list — the scan is still `processing`, it `failed`, the body is not JSON, or it is an error object — exits `1` with a message on stderr that names the scan id and `rafter get <scan_id>`. It never prints "No findings to create issues for". An empty list is a legitimate clean result. Both runtimes.
 
 #### rafter issues create from-text [OPTIONS]
 
