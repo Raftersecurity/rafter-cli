@@ -227,6 +227,125 @@ jobs:
           fi
           echo "PASS: the results fetch retried and completed."
 
+  # sable-fgk7 — the results step used to coerce EVERY failure to read the
+  # report into findings_count=0, which passes every severity threshold and
+  # renders ":white_check_mark: No security findings detected". A report the
+  # action cannot read is not a clean scan. Three shapes, each of which used
+  # to land as a clean green: schema-valid-but-wrong (parses, no key), not
+  # JSON at all, and a 200 whose body is an error object.
+  test-results-unreadable-is-not-clean:
+    name: "Results: an unreadable report is not a clean scan (${{ matrix.shape }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shape: [missing-key, not-json, error-object]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (poll completes; results body is ${{ matrix.shape }})
+        env:
+          PORT: '8791'
+          FAIL_COUNT: '0'
+          COMPLETE_AFTER: '1'
+          RESULTS_SHAPE: ${{ matrix.shape }}
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8791/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8791/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8791'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert the build failed and no count was fabricated
+        run: |
+          cat mock.log
+          FAIL=0
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "FAIL: an unreadable report must fail the build (outcome='${{ steps.scan.outcome }}')."
+            FAIL=1
+          fi
+          if [ "${{ steps.scan.outputs.status }}" != "unreadable" ]; then
+            echo "FAIL: expected status=unreadable, got '${{ steps.scan.outputs.status }}'."
+            FAIL=1
+          fi
+          # The floor: a count that was never computed must be ABSENT, not 0.
+          # '0' here is the bug — it is what a consumer gating on the output
+          # reads as a clean scan.
+          if [ -n "${{ steps.scan.outputs.findings-count }}" ]; then
+            echo "FAIL: findings-count was fabricated as '${{ steps.scan.outputs.findings-count }}' from an unreadable report."
+            FAIL=1
+          fi
+          [ "$FAIL" -eq 0 ] && echo "PASS: unreadable report (${{ matrix.shape }}) failed the build with status=unreadable and no counts."
+          exit $FAIL
+
+  # The other half of the floor: when the report IS readable the counts must be
+  # exactly the report's and the build must pass. Without this, a "validation"
+  # that rejected everything would also land green above.
+  test-results-counts-exact:
+    name: "Results: counts are exactly the report's"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (poll completes; report has 3 findings)
+        env:
+          PORT: '8792'
+          FAIL_COUNT: '0'
+          COMPLETE_AFTER: '1'
+          RESULTS_SHAPE: 'with-findings'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8792/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8792/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8792'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert every count is the report's, not a default
+        run: |
+          cat mock.log
+          FAIL=0
+          check() {
+            if [ "$2" != "$3" ]; then
+              echo "FAIL: $1 expected '$3', got '$2'"
+              FAIL=1
+            fi
+          }
+          check outcome         "${{ steps.scan.outcome }}"                 "success"
+          check status          "${{ steps.scan.outputs.status }}"          "completed"
+          check findings-count  "${{ steps.scan.outputs.findings-count }}"  "3"
+          check critical-count  "${{ steps.scan.outputs.critical-count }}"  "1"
+          check high-count      "${{ steps.scan.outputs.high-count }}"      "1"
+          check medium-count    "${{ steps.scan.outputs.medium-count }}"    "0"
+          check low-count       "${{ steps.scan.outputs.low-count }}"       "1"
+          [ "$FAIL" -eq 0 ] && echo "PASS: counts are exactly the report's (3/1/1/0/1)."
+          exit $FAIL
+
   test-yaml-validity:
     name: action.yml is valid YAML
     runs-on: ubuntu-latest

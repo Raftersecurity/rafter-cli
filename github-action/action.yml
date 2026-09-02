@@ -303,13 +303,28 @@ runs:
         fetch_results "${{ runner.temp }}/rafter-results.md"    "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}&format=md"
         fetch_results "${{ runner.temp }}/rafter-results.sarif" "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}&format=sarif"
 
-        # Extract counts
+        # A report this step cannot read is NOT a clean scan (sable-fgk7).
+        # Every count below used to fall back to 0 on any jq failure, so a
+        # malformed body, a truncated write, or a 200 carrying an error object
+        # rendered as ":white_check_mark: No security findings detected" and
+        # passed every severity threshold. Validate the shape first. Once it
+        # holds, the count expressions cannot fail and need no fallback; if
+        # jq itself is broken the step fails, which is the correct outcome.
         RESULTS="${{ runner.temp }}/rafter-results.json"
-        FINDINGS_COUNT=$(jq '.vulnerabilities | length' "$RESULTS" 2>/dev/null || echo "0")
-        CRITICAL_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "critical")] | length' "$RESULTS" 2>/dev/null || echo "0")
-        HIGH_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "error" or .severity == "high")] | length' "$RESULTS" 2>/dev/null || echo "0")
-        MEDIUM_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "warning" or .severity == "medium")] | length' "$RESULTS" 2>/dev/null || echo "0")
-        LOW_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "note" or .severity == "low")] | length' "$RESULTS" 2>/dev/null || echo "0")
+        if ! jq -e 'type == "object" and (.vulnerabilities | type == "array") and all(.vulnerabilities[]; type == "object")' "$RESULTS" >/dev/null 2>&1; then
+          SNIPPET=$(head -c 300 "$RESULTS" 2>/dev/null | tr -d '\r\n' | cut -c1-200 || true)
+          echo "::error::Rafter returned a report for scan ${SCAN_ID} that this action cannot read: no 'vulnerabilities' array."
+          echo "::error::A report that cannot be parsed is not a clean scan, so no counts were produced. Check the scan in your dashboard at ${RAFTER_URL}/dashboard or retry with: rafter get ${SCAN_ID}"
+          echo "::error::Body started with: ${SNIPPET}"
+          echo "status=unreadable" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+
+        FINDINGS_COUNT=$(jq '.vulnerabilities | length' "$RESULTS")
+        CRITICAL_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "critical")] | length' "$RESULTS")
+        HIGH_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "error" or .severity == "high")] | length' "$RESULTS")
+        MEDIUM_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "warning" or .severity == "medium")] | length' "$RESULTS")
+        LOW_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "note" or .severity == "low")] | length' "$RESULTS")
 
         echo "findings_count=${FINDINGS_COUNT}" >> "$GITHUB_OUTPUT"
         echo "critical_count=${CRITICAL_COUNT}" >> "$GITHUB_OUTPUT"
