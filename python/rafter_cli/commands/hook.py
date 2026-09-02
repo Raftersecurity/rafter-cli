@@ -466,6 +466,16 @@ def pretool(
 )
 def posttool(
     format: str = typer.Option("claude", "--format", help="Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf"),
+    experimental_prompt_injection: bool = typer.Option(
+        False,
+        "--experimental-prompt-injection",
+        help="(experimental) flag tool responses with prompt-injection markers (does NOT modify response)",
+    ),
+    prompt_injection_min_severity: str = typer.Option(
+        "high",
+        "--prompt-injection-min-severity",
+        help="minimum severity to flag",
+    ),
 ):
     """PostToolUse hook handler. Reads tool response JSON from stdin, redacts secrets in output, writes action to stdout."""
     try:
@@ -513,10 +523,50 @@ def posttool(
             if content_text and isinstance(content_text, str):
                 match_count += len(scanner.scan_text(content_text))
             audit.log_content_sanitized(f"{tool_name} tool response", match_count)
+
+            if experimental_prompt_injection:
+                _check_prompt_injection(tool_name, tool_response, prompt_injection_min_severity)
+
             _write_posttool_output({"action": "modify", "tool_response": redacted}, format)
             return
+
+        if experimental_prompt_injection:
+            _check_prompt_injection(tool_name, tool_response, prompt_injection_min_severity)
 
         _write_posttool_output({"action": "continue"}, format)
     except Exception:
         # Any unexpected error -> fail open
         _write_posttool_output({"action": "continue"}, format)
+
+
+def _check_prompt_injection(tool_name: str, tool_response: dict, min_severity: str) -> None:
+    """Experimental: scan tool response for prompt-injection markers; warn to stderr only.
+
+    See bead rf-bmo / docs/research/prompt-injection-detector.md.
+    Does NOT modify the response.
+    """
+    if min_severity not in ("low", "medium", "high", "critical"):
+        return
+    try:
+        from ..scanners.prompt_injection import PromptInjectionDetector
+    except ImportError:
+        return
+
+    detector = PromptInjectionDetector()
+    candidates: list[tuple[str, str]] = []
+    out = tool_response.get("output", "")
+    if out and isinstance(out, str):
+        candidates.append(("output", out))
+    content = tool_response.get("content", "")
+    if content and isinstance(content, str):
+        candidates.append(("content", content))
+
+    for field, text in candidates:
+        result = detector.scan(text, min_severity=min_severity)  # type: ignore[arg-type]
+        if not result.findings:
+            continue
+        top = ", ".join(f"{f.severity}:{f.pattern}" for f in result.findings[:3])
+        sys.stderr.write(
+            f"Rafter (experimental): possible prompt injection in {tool_name}.{field} "
+            f"[verdict={result.verdict}, score={result.score}] — {top}\n"
+        )

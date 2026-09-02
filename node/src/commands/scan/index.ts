@@ -9,6 +9,7 @@
 import { Command } from "commander";
 import { runRemoteScan } from "../backend/run.js";
 import { createScanCommand as createLocalScanCommand } from "../agent/scan.js";
+import { createScanInjectionCommand } from "./injection.js";
 
 export function createScanGroupCommand(): Command {
   // "local" subcommand — back-compat alias for `rafter secrets`. Hidden from help.
@@ -52,6 +53,8 @@ export function createScanGroupCommand(): Command {
 
   scanGroup.addCommand(localCmd, { hidden: true });
   scanGroup.addCommand(remoteCmd);
+  // EXPERIMENTAL: hidden from help while feature stabilizes (bead rf-bmo).
+  scanGroup.addCommand(createScanInjectionCommand(), { hidden: true });
 
   // When invoked with no subcommand, run remote scan
   scanGroup.action(async (opts) => {
