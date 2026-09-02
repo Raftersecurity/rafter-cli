@@ -227,6 +227,295 @@ jobs:
           fi
           echo "PASS: the results fetch retried and completed."
 
+  # sable-96ex — the day a rate limiter lands in front of the poll endpoint,
+  # polling every 10s from every customer repo is exactly the traffic it
+  # targets. A 429 is retried on one condition only: the server sent a
+  # Retry-After saying when to come back. Without it a 429 on this API means
+  # quota exhausted, and sleeping through five retries before failing anyway is
+  # worse than failing now. These three jobs pin both halves.
+  test-poll-429-with-retry-after:
+    name: "Poll: rides out a 429 that carries Retry-After"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (429 + Retry-After on poll #2, then healthy)
+        env:
+          PORT: '8791'
+          FAIL_ON: '2'
+          FAIL_STATUS: '429'
+          FAIL_RETRY_AFTER: '1'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8791/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8791/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8791'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert the scan survived the throttle
+        run: |
+          cat mock.log
+          if [ "${{ steps.scan.outputs.status }}" != "completed" ]; then
+            echo "FAIL: a 429 that told us when to come back killed the run (status='${{ steps.scan.outputs.status }}')."
+            exit 1
+          fi
+          echo "PASS: the action honored Retry-After and completed."
+
+  test-poll-429-without-retry-after:
+    name: "Poll: a 429 with no Retry-After fails fast"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (bare 429 on poll #2)
+        env:
+          PORT: '8792'
+          FAIL_ON: '2'
+          FAIL_STATUS: '429'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8792/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8792/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8792'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert it failed immediately rather than retrying
+        run: |
+          cat mock.log
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "FAIL: a bare 429 (quota exhausted) did not fail the run."
+            exit 1
+          fi
+          # The startup probe POSTs; only GETs are polls. Two of them means the
+          # opening poll and the 429 — no retry. This is the half that catches a
+          # 'simplification' making every 429 transient: that mutant retries to
+          # a completed scan, six GETs and status=completed.
+          gets=$(grep -c '"GET ' mock.log || true)
+          if [ "$gets" -ne 2 ]; then
+            echo "FAIL: expected exactly 2 polls (no retry), saw ${gets}."
+            exit 1
+          fi
+          echo "PASS: a 429 with no Retry-After failed fast, without retrying."
+
+  test-poll-429-duplicate-retry-after:
+    name: "Poll: a repeated Retry-After is not a delay"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (429 carrying TWO Retry-After headers)
+        env:
+          PORT: '8794'
+          FAIL_ON: '2'
+          FAIL_STATUS: '429'
+          FAIL_RETRY_AFTER: '5|900'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8794/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8794/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8794'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert it treated the ambiguous header as no header
+        run: |
+          cat mock.log
+          # An origin's Retry-After and a proxy's are not a delay anyone can act
+          # on. Both runtimes answer null here; the shell must not quietly pick
+          # one and sleep on it.
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "FAIL: a repeated Retry-After was acted on instead of refused."
+            exit 1
+          fi
+          gets=$(grep -c '"GET ' mock.log || true)
+          if [ "$gets" -ne 2 ]; then
+            echo "FAIL: expected exactly 2 polls (no retry), saw ${gets}."
+            exit 1
+          fi
+          echo "PASS: a repeated Retry-After counted as absent, and the run failed fast."
+
+  test-poll-429-early-hints-retry-after:
+    name: "Poll: a hinted Retry-After is not the 429's own"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (103 Early Hints carries Retry-After, the 429 does not)
+        env:
+          PORT: '8795'
+          FAIL_ON: '2'
+          FAIL_STATUS: '429'
+          EARLY_HINTS_RETRY_AFTER: '7'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8795/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8795/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8795'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert the hinted header was not read as the 429's
+        run: |
+          cat mock.log
+          # `curl -D` dumps EVERY header block it received. Reading Retry-After
+          # from the file without scoping it to the last block turns a bare 429
+          # into a retried one — the single thing this branch exists to prevent.
+          # Verified as non-vacuous: with a `grep | tail -n1` extraction this
+          # mock config sleeps 7s and completes with 6 polls.
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "FAIL: an Early Hints Retry-After was honored for a bare 429."
+            exit 1
+          fi
+          gets=$(grep -c '"GET ' mock.log || true)
+          if [ "$gets" -ne 2 ]; then
+            echo "FAIL: expected exactly 2 polls (no retry), saw ${gets}."
+            exit 1
+          fi
+          echo "PASS: only the final response's Retry-After counted."
+
+  test-poll-429-absurd-retry-after:
+    name: "Poll: an absurd Retry-After cannot hang the job"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (429 forever, Retry-After of 23 digits)
+        env:
+          PORT: '8796'
+          FAIL_ON: '2'
+          FAIL_STATUS: '429'
+          FAIL_FOREVER: '1'
+          FAIL_RETRY_AFTER: '99999999999999999999999'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8796/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8796/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8796'
+          timeout-minutes: '1'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert it ended at the deadline instead of sleeping forever
+        run: |
+          cat mock.log
+          # The value passes the digit guard, so only the LENGTH cap stands
+          # between it and `sleep 99999999999999999999999`, which does not
+          # return: `[ 1e23 -gt 60 ]` is a shell error that evaluates false, so
+          # an uncapped value reaches sleep intact. Asserting the status output
+          # is what makes this an artifact-level test rather than a grep over
+          # the file — a hung step writes no status at all.
+          if [ "${{ steps.scan.outputs.status }}" != "timeout" ]; then
+            echo "FAIL: expected status=timeout at the deadline, got '${{ steps.scan.outputs.status }}'."
+            exit 1
+          fi
+          echo "PASS: the honored delay stayed capped and the deadline held."
+
+  test-results-fetch-429-with-retry-after:
+    name: "Results fetch: rides out a 429 that carries Retry-After"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (poll succeeds, first results fetch 429s)
+        env:
+          PORT: '8793'
+          FAIL_ON: '2'
+          FAIL_COUNT: '1'
+          FAIL_STATUS: '429'
+          FAIL_RETRY_AFTER: '1'
+          COMPLETE_AFTER: '1'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8793/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8793/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8793'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert the results fetch honored Retry-After
+        run: |
+          cat mock.log
+          if [ "${{ steps.scan.outputs.status }}" != "completed" ]; then
+            echo "FAIL: a throttled results fetch killed the run (status='${{ steps.scan.outputs.status }}')."
+            exit 1
+          fi
+          echo "PASS: the results fetch honored Retry-After and completed."
+
   test-yaml-validity:
     name: action.yml is valid YAML
     runs-on: ubuntu-latest

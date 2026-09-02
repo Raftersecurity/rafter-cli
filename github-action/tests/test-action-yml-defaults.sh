@@ -163,6 +163,93 @@ else
   failures=$((failures+1))
 fi
 
+# ── sable-96ex: the 429 / Retry-After contract ───────────────────────────
+# A 429 is retried on exactly one condition — the server said when to come
+# back. Both halves are load-bearing: drop the gate and a quota rejection
+# costs every build 30 seconds before failing anyway; drop the retry and the
+# day a limiter lands in front of the poll endpoint, every customer build
+# fails instantly on a condition a sleep would have resolved.
+
+# 14. The poll loop's 429 branch must be gated on a non-empty Retry-After.
+if grep -q '\[ "\$HTTP_CODE" -eq 429 \] && \[ -n "\$RETRY_AFTER" \]' "$ACTION_YML"; then
+  echo "PASS: poll loop retries 429 only when Retry-After is present"
+else
+  echo "FAIL: poll loop's 429 branch is no longer gated on Retry-After"
+  failures=$((failures+1))
+fi
+
+# 15. Same gate in the results fetch: a 429 stays non-transient there unless
+#     Retry-After came with it.
+if grep -q '\[ "\$code" -ne 404 \] \\' "$ACTION_YML" \
+   && grep -q '&& \[ -z "\$retry_after" \]; then' "$ACTION_YML"; then
+  echo "PASS: results fetch retries 429 only when Retry-After is present"
+else
+  echo "FAIL: results fetch's 429 gate changed"
+  failures=$((failures+1))
+fi
+
+# 16. Retry-After is server-controlled and becomes a sleep duration. It must be
+#     validated as digits AND length-capped in both loops: `[ 1e23 -gt 60 ]` is
+#     an error that evaluates false, so an uncapped 23-digit value would reach
+#     `sleep` intact and hang the job until the runner times out.
+# `set -e` is on: an `x && y` list whose test fails would abort the script
+# before it could report anything, so these stay full `if` statements.
+digit_guards=0
+if grep -qF "''|*[!0-9]*) RETRY_AFTER=\"\" ;;" "$ACTION_YML"; then
+  digit_guards=$((digit_guards+1))
+fi
+if grep -qF "''|*[!0-9]*) retry_after=\"\" ;;" "$ACTION_YML"; then
+  digit_guards=$((digit_guards+1))
+fi
+len_guards=$(grep -cE '\$\{#(RETRY_AFTER|retry_after)\}" -gt 6' "$ACTION_YML" || true)
+if [ "$digit_guards" -eq 2 ] && [ "$len_guards" -eq 2 ]; then
+  echo "PASS: Retry-After validated (digits + length) in both retry loops"
+else
+  echo "FAIL: Retry-After validation missing (digit guards=${digit_guards}, length guards=${len_guards}; want 2 and 2)"
+  failures=$((failures+1))
+fi
+
+# 17. The honored wait must be capped. An unclamped Retry-After lets the server
+#     park a CI job for as long as it likes.
+if [ "$(grep -cE '(BACKOFF|backoff)" -gt "\$(MAX_RETRY_AFTER|max_retry_after)"' "$ACTION_YML" || true)" -eq 2 ]; then
+  echo "PASS: both loops cap the honored Retry-After"
+else
+  echo "FAIL: a retry loop no longer caps the Retry-After it honors"
+  failures=$((failures+1))
+fi
+
+# 18. ...and the poll loop's honored delay must also be clamped to what is left
+#     of the wall-clock deadline. timeout-minutes became a real deadline in
+#     sable-l10k; a 60s Retry-After is long enough to overrun it, and the server
+#     does not get to extend a budget the workflow author set.
+if grep -q 'REMAINING=$(( DEADLINE - $(date +%s) ))' "$ACTION_YML" \
+   && grep -q 'if \[ "$BACKOFF" -gt "$REMAINING" \]' "$ACTION_YML"; then
+  echo "PASS: the honored Retry-After cannot outlive the deadline"
+else
+  echo "FAIL: the honored Retry-After is no longer clamped to the deadline"
+  failures=$((failures+1))
+fi
+
+# 19. Retry-After must be read from the LAST header block only. `curl -D` dumps
+#     every block it received, so a `grep | tail -n1` over the whole file reads
+#     a 103 Early Hints Retry-After as if it were the 429's own — and retries a
+#     bare 429, the one thing the gate exists to prevent.
+if [ "$(grep -c 'n = 0; v = ""; next' "$ACTION_YML" || true)" -eq 2 ]; then
+  echo "PASS: both loops scope Retry-After to the final response's headers"
+else
+  echo "FAIL: a retry loop no longer scopes Retry-After to the last header block"
+  failures=$((failures+1))
+fi
+
+# 20. A throttled give-up must not be reported as an unreadable report — that
+#     sends the customer to look at their scan instead of their rate limit.
+if [ "$(grep -c 'status=rate-limited' "$ACTION_YML" || true)" -ge 2 ]; then
+  echo "PASS: both give-up paths distinguish rate-limited from unreadable"
+else
+  echo "FAIL: status=rate-limited missing from a give-up path"
+  failures=$((failures+1))
+fi
+
 echo ""
 echo "── results ───────────────────────────────────────────────────────────"
 echo "Failures: $failures"
