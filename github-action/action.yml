@@ -356,6 +356,9 @@ runs:
         LOW_COUNT: ${{ steps.results.outputs.low_count }}
         SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
       run: |
+        # Shared with the tests under tests/ — see lib/severity.sh (sable-1drb).
+        source "${{ github.action_path }}/lib/severity.sh"
+
         MD_REPORT=$(jq -r '.markdown // empty' "${{ runner.temp }}/rafter-results.md" 2>/dev/null || cat "${{ runner.temp }}/rafter-results.md")
 
         if [ "$FINDINGS_COUNT" -eq 0 ]; then
@@ -394,10 +397,7 @@ runs:
           echo ""
           echo "</details>"
           echo ""
-          if [ "$FINDINGS_COUNT" -gt 0 ] && [ "$SEVERITY_THRESHOLD" = "none" ]; then
-            echo "> :information_source: This run is report-only. To fail the build on critical/high findings, set \`severity-threshold: high\` in your workflow."
-            echo ""
-          fi
+          rafter_report_only_tip "$FINDINGS_COUNT" "$SEVERITY_THRESHOLD"
           echo "---"
           echo "<sub>Scan ID: ${SCAN_ID} | Powered by [Rafter](https://rafter.so)</sub>"
         } >> "$COMMENT_FILE"
@@ -432,31 +432,11 @@ runs:
         MEDIUM_COUNT: ${{ steps.results.outputs.medium_count }}
         LOW_COUNT: ${{ steps.results.outputs.low_count }}
       run: |
-        FAIL=0
+        # The case statement lives in lib/severity.sh so the unit tests under
+        # tests/ run the same code, not a transcription of it (sable-1drb).
+        source "${{ github.action_path }}/lib/severity.sh"
 
-        case "$SEVERITY_THRESHOLD" in
-          critical)
-            [ "$CRITICAL_COUNT" -gt 0 ] && FAIL=1
-            ;;
-          high)
-            [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ] && FAIL=1
-            ;;
-          medium)
-            [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ] || [ "$MEDIUM_COUNT" -gt 0 ] && FAIL=1
-            ;;
-          low)
-            [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ] || [ "$MEDIUM_COUNT" -gt 0 ] || [ "$LOW_COUNT" -gt 0 ] && FAIL=1
-            ;;
-          none)
-            FAIL=0
-            ;;
-          *)
-            echo "::warning::Unknown severity threshold '${SEVERITY_THRESHOLD}', defaulting to 'high'"
-            [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ] && FAIL=1
-            ;;
-        esac
-
-        if [ "$FAIL" -eq 1 ]; then
+        if rafter_threshold_fails "$SEVERITY_THRESHOLD" "$CRITICAL_COUNT" "$HIGH_COUNT" "$MEDIUM_COUNT" "$LOW_COUNT"; then
           echo "::error::Security findings exceed severity threshold '${SEVERITY_THRESHOLD}'"
           exit 1
         fi
