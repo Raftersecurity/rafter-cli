@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 
@@ -167,7 +168,13 @@ def retry_after_seconds(resp) -> "int | None":
     if not isinstance(value, str):
         return None
     text = value.strip()
-    if not text.isdigit():
+    # NOT str.isdigit(): it is Unicode-aware and int() is not, so '\xb2' — a
+    # single raw byte, which http.client decodes as ISO-8859-1 into '²' — passes
+    # isdigit() and then raises ValueError out of a call site whose only handler
+    # is requests.RequestException. That is a server-triggered client crash, and
+    # it is also a divergence: Node's /^\d+$/ and the action's `case *[!0-9]*`
+    # both reject the same byte. The accept-set must match what int() parses.
+    if not re.fullmatch(r"[0-9]+", text):
         return None
     return min(int(text), MAX_RETRY_AFTER_SECONDS)
 

@@ -230,7 +230,18 @@ else
   failures=$((failures+1))
 fi
 
-# 19. A throttled give-up must not be reported as an unreadable report — that
+# 19. Retry-After must be read from the LAST header block only. `curl -D` dumps
+#     every block it received, so a `grep | tail -n1` over the whole file reads
+#     a 103 Early Hints Retry-After as if it were the 429's own — and retries a
+#     bare 429, the one thing the gate exists to prevent.
+if [ "$(grep -c 'n = 0; v = ""; next' "$ACTION_YML" || true)" -eq 2 ]; then
+  echo "PASS: both loops scope Retry-After to the final response's headers"
+else
+  echo "FAIL: a retry loop no longer scopes Retry-After to the last header block"
+  failures=$((failures+1))
+fi
+
+# 20. A throttled give-up must not be reported as an unreadable report — that
 #     sends the customer to look at their scan instead of their rate limit.
 if [ "$(grep -c 'status=rate-limited' "$ACTION_YML" || true)" -ge 2 ]; then
   echo "PASS: both give-up paths distinguish rate-limited from unreadable"

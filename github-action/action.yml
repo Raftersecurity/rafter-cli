@@ -200,15 +200,18 @@ runs:
           # honors literally and hang the job until the runner times out.
           RETRY_AFTER=""
           if [ "$HTTP_CODE" -eq 429 ]; then
-            # Exactly one header, or none we can act on: two Retry-Afters (an
-            # origin's and a proxy's, say) is not a delay, and the two runtimes
-            # answer the same way.
-            RETRY_AFTER=$(tr -d '\r' < "$HDR_FILE" | grep -i '^retry-after:' || true)
-            if [ "$(printf '%s' "$RETRY_AFTER" | grep -c . || true)" -eq 1 ]; then
-              RETRY_AFTER=$(printf '%s' "$RETRY_AFTER" | sed 's/^[^:]*:[[:space:]]*//')
-            else
-              RETRY_AFTER=""
-            fi
+            # The LAST header block only, and only if it names Retry-After
+            # exactly once. `curl -D` dumps every block it received, so a 103
+            # Early Hints block carrying a Retry-After would otherwise be read
+            # as the 429's own — and a bare 429 would be retried, which is the
+            # one thing this branch exists to prevent. Two Retry-Afters (an
+            # origin's and a proxy's, say) is not a delay either; both runtimes
+            # answer the same way. Resetting at each status line is what makes
+            # this the final response's header, and it needs no `tac`.
+            RETRY_AFTER=$(tr -d '\r' < "$HDR_FILE" | awk '
+              /^[Hh][Tt][Tt][Pp]\// { n = 0; v = ""; next }
+              /^[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]:/ { n++; v = $0 }
+              END { if (n == 1) { sub(/^[^:]*:[ \t]*/, "", v); print v } }')
             case "$RETRY_AFTER" in
               ''|*[!0-9]*) RETRY_AFTER="" ;;
               *)
@@ -341,12 +344,11 @@ runs:
                 # Server-controlled, and becomes a sleep duration: digits only,
                 # and length-capped so a 23-digit value cannot slip past the
                 # numeric comparison below and hang the job (see the poll loop).
-                retry_after=$(tr -d '\r' < "$hdr" | grep -i '^retry-after:' || true)
-                if [ "$(printf '%s' "$retry_after" | grep -c . || true)" -eq 1 ]; then
-                  retry_after=$(printf '%s' "$retry_after" | sed 's/^[^:]*:[[:space:]]*//')
-                else
-                  retry_after=""
-                fi
+                # Last header block, named exactly once — see the poll loop.
+                retry_after=$(tr -d '\r' < "$hdr" | awk '
+                  /^[Hh][Tt][Tt][Pp]\// { n = 0; v = ""; next }
+                  /^[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]:/ { n++; v = $0 }
+                  END { if (n == 1) { sub(/^[^:]*:[ \t]*/, "", v); print v } }')
                 case "$retry_after" in
                   ''|*[!0-9]*) retry_after="" ;;
                   *)

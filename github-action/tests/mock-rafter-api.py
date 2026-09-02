@@ -19,6 +19,12 @@ Env:
   FAIL_ON       1-based GET index that starts failing (default 2)
   FAIL_STATUS   status code to fail with (default 500; 404 exercises the
                 read-after-write-lag branch, 429 the rate-limit branch)
+  EARLY_HINTS_RETRY_AFTER  when set, an injected failure is preceded by a raw
+                "103 Early Hints" block carrying this Retry-After. `curl -D`
+                dumps EVERY header block it received, so this is what proves the
+                client reads the final response's headers and not an earlier
+                block's — a bare 429 preceded by hinted Retry-After must still
+                fail fast.
   FAIL_RETRY_AFTER  when set, injected failures carry this literal Retry-After
                 header value. sable-96ex: a 429 is retried ONLY when one is
                 present, so setting/omitting this is what separates the two
@@ -46,6 +52,7 @@ FAIL_COUNT = int(os.environ.get("FAIL_COUNT", "1"))
 #: Sent verbatim, so a test can inject a malformed value ("soon", "-1") and
 #: check the client refuses to act on it.
 FAIL_RETRY_AFTER = os.environ.get("FAIL_RETRY_AFTER")
+EARLY_HINTS_RETRY_AFTER = os.environ.get("EARLY_HINTS_RETRY_AFTER")
 COMPLETE_AFTER = int(os.environ.get("COMPLETE_AFTER", str(FAIL_ON)))
 
 SCAN_ID = "repro-sable-l10k-0001"
@@ -89,6 +96,14 @@ class Handler(BaseHTTPRequestHandler):
         if failing:
             # The verbatim customer-facing body.
             if FAIL_STATUS == 429:
+                if EARLY_HINTS_RETRY_AFTER is not None:
+                    # Written raw: BaseHTTPRequestHandler has no informational
+                    # response, and the point is the wire, not the API.
+                    self.wfile.write(
+                        b"HTTP/1.1 103 Early Hints\r\nRetry-After: "
+                        + EARLY_HINTS_RETRY_AFTER.encode()
+                        + b"\r\n\r\n"
+                    )
                 return self._send(
                     FAIL_STATUS,
                     {"error": "Too many requests"},
