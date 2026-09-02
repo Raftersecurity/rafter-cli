@@ -45,25 +45,49 @@ else
   failures=$((failures+1))
 fi
 
-# 3. The report-only tip block must be present and gated on both conditions.
-if grep -qE '\[ "\$FINDINGS_COUNT" -gt 0 \] && \[ "\$SEVERITY_THRESHOLD" = "none" \]' "$ACTION_YML"; then
-  echo "PASS: report-only tip block gated on (findings > 0) AND (threshold == 'none')"
+# The threshold case statement and the report-only tip live in lib/severity.sh
+# (sable-1drb), sourced by action.yml AND by the unit tests, so checks 3, 4
+# and 17 look there. Check 17 is what stops a "simplification" from inlining
+# a copy back into action.yml, which would silently detach the tests again.
+SEVERITY_LIB="$(cd "$(dirname "$0")/.." && pwd)/lib/severity.sh"
+if [ ! -f "$SEVERITY_LIB" ]; then
+  echo "FAIL: $SEVERITY_LIB not found"
+  exit 1
+fi
+
+# 3. The report-only tip must be gated on both conditions.
+if grep -qE '\[ "\$findings" -gt 0 \] && \[ "\$threshold" = "none" \]' "$SEVERITY_LIB"; then
+  echo "PASS: report-only tip gated on (findings > 0) AND (threshold == 'none')"
 else
-  echo "FAIL: report-only tip block missing or mis-gated in $ACTION_YML"
+  echo "FAIL: report-only tip missing or mis-gated in $SEVERITY_LIB"
   failures=$((failures+1))
 fi
 
-# 4. The threshold-eval step must still handle 'none' as a no-op
-#    (no FAIL=1 in the none branch).
+# 4. The threshold-eval must still handle 'none' as a no-op
+#    (no fail=1 in the none branch).
 if awk '
   /none\)/ { in_none=1; next }
   in_none && /;;/ { in_none=0; next }
   in_none { print }
-' "$ACTION_YML" | grep -qE "FAIL *= *1"; then
-  echo "FAIL: 'none' branch of threshold-eval sets FAIL=1 — that would break the default"
+' "$SEVERITY_LIB" | grep -qE "fail *= *1"; then
+  echo "FAIL: 'none' branch of threshold-eval sets fail=1 — that would break the default"
   failures=$((failures+1))
 else
-  echo "PASS: 'none' branch of threshold-eval does not set FAIL=1"
+  echo "PASS: 'none' branch of threshold-eval does not set fail=1"
+fi
+
+# 17. action.yml must SOURCE the library in both steps that use it, and must
+#     not carry its own copy of the case statement. If either regresses, the
+#     unit tests go back to testing a transcription.
+lib_sources=$(grep -cF 'source "${{ github.action_path }}/lib/severity.sh"' "$ACTION_YML" || true)
+inline_cases=$(grep -cE '^\s*(critical|medium|low)\)\s*$' "$ACTION_YML" || true)
+if [ "$lib_sources" -ge 2 ] && [ "$inline_cases" -eq 0 ] \
+   && grep -q 'rafter_threshold_fails "\$SEVERITY_THRESHOLD"' "$ACTION_YML" \
+   && grep -q 'rafter_report_only_tip "\$FINDINGS_COUNT" "\$SEVERITY_THRESHOLD"' "$ACTION_YML"; then
+  echo "PASS: action.yml sources lib/severity.sh in both steps and carries no inline copy"
+else
+  echo "FAIL: action.yml sources=${lib_sources} (need >=2), inline case branches=${inline_cases} (need 0), or a call site is missing"
+  failures=$((failures+1))
 fi
 
 # ── sable-l10k: poll-path retry contract ─────────────────────────────────

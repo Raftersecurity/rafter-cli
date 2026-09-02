@@ -1,47 +1,29 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import crypto from "crypto";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
-import { execFileSync } from "child_process";
-// The real function, not a mirror: these tests exist to fail when the source
-// changes (sable-fgk7, sable-d2x2).
-import { vulnerabilitiesFromPayload } from "../src/commands/issues/from-scan.js";
+// The real functions, not mirrors. This file used to carry hand-copied
+// re-implementations of dedup, issue-builder, from-text and from-scan and
+// tested those; it could pass in full while the source was broken
+// (sable-1drb, specimen 11 of sable-d2x2). Every describe below now
+// exercises the code the CLI ships.
+import {
+  fingerprint,
+  embedFingerprint,
+  extractFingerprint,
+  findDuplicates,
+} from "../src/commands/issues/dedup.js";
+import type { GitHubIssue as GHIssue } from "../src/commands/issues/github-client.js";
+import {
+  severityLabel,
+  buildFromBackendVulnerability,
+  buildFromLocalMatch,
+  type IssueDraft,
+  type BackendVulnerability,
+  type LocalScanResult,
+} from "../src/commands/issues/issue-builder.js";
+import { parseNaturalText } from "../src/commands/issues/from-text.js";
+import { vulnerabilitiesFromPayload, draftsFromLocalScan } from "../src/commands/issues/from-scan.js";
 
-// ── dedup logic (mirrored from src/commands/issues/dedup.ts) ─────────
-
-const FINGERPRINT_PREFIX = "<!-- rafter-fingerprint:";
-const FINGERPRINT_SUFFIX = " -->";
-
-function fingerprint(file: string, ruleId: string): string {
-  return crypto
-    .createHash("sha256")
-    .update(`${file}:${ruleId}`)
-    .digest("hex")
-    .slice(0, 12);
-}
-
-function embedFingerprint(body: string, fp: string): string {
-  return `${body}\n\n${FINGERPRINT_PREFIX}${fp}${FINGERPRINT_SUFFIX}`;
-}
-
-function extractFingerprint(body: string): string | null {
-  const idx = body.indexOf(FINGERPRINT_PREFIX);
-  if (idx === -1) return null;
-  const start = idx + FINGERPRINT_PREFIX.length;
-  const end = body.indexOf(FINGERPRINT_SUFFIX, start);
-  if (end === -1) return null;
-  return body.slice(start, end);
-}
-
-type GHIssue = { number: number; title: string; body: string; labels: string[]; html_url: string; state: string };
-
-function findDuplicates(existingIssues: GHIssue[], newFingerprints: string[]): Set<string> {
-  const existingFps = new Set<string>();
-  for (const issue of existingIssues) {
-    const fp = extractFingerprint(issue.body);
-    if (fp) existingFps.add(fp);
-  }
-  return new Set(newFingerprints.filter((fp) => existingFps.has(fp)));
-}
+type LocalMatch = LocalScanResult["matches"][number];
 
 describe("fingerprint", () => {
   it("produces deterministic 12-char hex hash", () => {
@@ -110,91 +92,6 @@ describe("findDuplicates", () => {
     expect(dupes.size).toBe(0);
   });
 });
-
-// ── issue-builder logic (mirrored from src/commands/issues/issue-builder.ts) ──
-
-function severityLabel(level: string): string {
-  const map: Record<string, string> = {
-    error: "critical",
-    critical: "critical",
-    warning: "high",
-    high: "high",
-    note: "medium",
-    medium: "medium",
-    low: "low",
-  };
-  return map[level.toLowerCase()] || "medium";
-}
-
-function severityEmoji(level: string): string {
-  const sev = severityLabel(level);
-  const emojis: Record<string, string> = {
-    critical: "\u{1F534}",
-    high: "\u{1F7E0}",
-    medium: "\u{1F7E1}",
-    low: "\u{1F7E2}",
-  };
-  return emojis[sev] || "\u{1F7E1}";
-}
-
-interface IssueDraft {
-  title: string;
-  body: string;
-  labels: string[];
-  fingerprint: string;
-}
-
-interface BackendVulnerability {
-  ruleId: string;
-  level: string;
-  message: string;
-  file: string;
-  line?: number;
-}
-
-function buildFromBackendVulnerability(vuln: BackendVulnerability): IssueDraft {
-  const sev = severityLabel(vuln.level);
-  const emoji = severityEmoji(vuln.level);
-  const fp = fingerprint(vuln.file, vuln.ruleId);
-  const title = `${emoji} [${sev.toUpperCase()}] ${vuln.ruleId}: ${vuln.message.length > 80 ? vuln.message.slice(0, 77) + "..." : vuln.message}`;
-  let body = `## Security Finding\n\n`;
-  body += `**Rule:** \`${vuln.ruleId}\`\n`;
-  body += `**Severity:** ${sev}\n`;
-  body += `**File:** \`${vuln.file}\``;
-  if (vuln.line) body += ` (line ${vuln.line})`;
-  body += `\n\n`;
-  body += `### Description\n\n${vuln.message}\n\n`;
-  body += `### Remediation\n\nReview and fix the finding in \`${vuln.file}\`.\n`;
-  body += `\n---\n*Created by [Rafter CLI](https://rafter.so) — security for AI builders*\n`;
-  const labels = ["security", `severity:${sev}`, `rule:${vuln.ruleId}`];
-  return { title, body: embedFingerprint(body, fp), labels, fingerprint: fp };
-}
-
-type LocalMatch = { pattern: { name: string; severity: string; description?: string }; line?: number; column?: number; redacted?: string };
-
-function buildFromLocalMatch(file: string, match: LocalMatch): IssueDraft {
-  const sev = severityLabel(match.pattern.severity);
-  const emoji = severityEmoji(match.pattern.severity);
-  const fp = fingerprint(file, match.pattern.name);
-  const basename = file.split("/").pop() || file;
-  const title = `${emoji} [${sev.toUpperCase()}] Secret detected: ${match.pattern.name} in ${basename}`;
-  let body = `## Secret Detection\n\n`;
-  body += `**Pattern:** \`${match.pattern.name}\`\n`;
-  body += `**Severity:** ${sev}\n`;
-  body += `**File:** \`${file}\``;
-  if (match.line) body += ` (line ${match.line})`;
-  body += `\n`;
-  if (match.redacted) body += `**Match:** \`${match.redacted}\`\n`;
-  body += `\n`;
-  if (match.pattern.description) body += `### Description\n\n${match.pattern.description}\n\n`;
-  body += `### Remediation\n\n`;
-  body += `1. Rotate the exposed credential immediately\n`;
-  body += `2. Remove the secret from source code\n`;
-  body += `3. Use environment variables or a secrets manager instead\n`;
-  body += `\n---\n*Created by [Rafter CLI](https://rafter.so) — security for AI builders*\n`;
-  const labels = ["security", "secret-detected", `severity:${sev}`];
-  return { title, body: embedFingerprint(body, fp), labels, fingerprint: fp };
-}
 
 describe("severityLabel", () => {
   it("maps error to critical", () => expect(severityLabel("error")).toBe("critical"));
@@ -288,63 +185,6 @@ describe("buildFromLocalMatch", () => {
   });
 });
 
-// ── from-text parsing logic (mirrored from src/commands/issues/from-text.ts) ──
-
-interface ParsedIssue {
-  title: string;
-  body: string;
-  labels: string[];
-}
-
-function parseNaturalText(text: string): ParsedIssue {
-  const lines = text.trim().split("\n");
-  const labels: string[] = [];
-  let title = "";
-  let bodyStart = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (line) {
-      title = line.replace(/^#+\s*/, "").trim();
-      bodyStart = i + 1;
-      break;
-    }
-  }
-  if (!title) title = "Security issue reported via Rafter CLI";
-  if (title.length > 120) title = title.slice(0, 117) + "...";
-  const bodyLines = lines.slice(bodyStart);
-  let body = bodyLines.join("\n").trim();
-  if (!body) body = text.trim();
-  const textLower = text.toLowerCase();
-  if (textLower.includes("critical") || textLower.includes("p0")) {
-    labels.push("severity:critical");
-  } else if (textLower.includes("high severity") || textLower.includes("high risk") || textLower.includes("p1")) {
-    labels.push("severity:high");
-  } else if (textLower.includes("medium") || textLower.includes("p2")) {
-    labels.push("severity:medium");
-  } else if (textLower.includes("low") || textLower.includes("p3")) {
-    labels.push("severity:low");
-  }
-  const securityKeywords = [
-    "security", "vulnerability", "cve", "cwe", "owasp", "secret",
-    "credential", "token", "password", "injection", "xss", "csrf", "ssrf", "exploit",
-  ];
-  if (securityKeywords.some((kw) => textLower.includes(kw))) {
-    labels.push("security");
-  }
-  const fileRefs = text.match(/(?:^|\s)([a-zA-Z0-9_./-]+\.[a-zA-Z]{1,10})(?::(\d+))?/gm);
-  if (fileRefs && fileRefs.length > 0) {
-    const files = fileRefs.map((f) => f.trim()).filter((f) => f.includes("/") || f.includes("."));
-    if (files.length > 0) {
-      body += `\n\n### Referenced Files\n\n`;
-      for (const f of files.slice(0, 10)) {
-        body += `- \`${f}\`\n`;
-      }
-    }
-  }
-  body += `\n\n---\n*Created by [Rafter CLI](https://rafter.so) — security for AI builders*\n`;
-  return { title, body, labels: [...new Set(labels)] };
-}
-
 describe("parseNaturalText", () => {
   it("extracts first line as title", () => {
     const result = parseNaturalText("SQL injection in login form\nDetails here");
@@ -415,20 +255,6 @@ describe("parseNaturalText", () => {
     expect(result.labels).toEqual(uniqueLabels);
   });
 });
-
-// ── from-scan command logic (mirrored from src/commands/issues/from-scan.ts) ──
-
-function draftsFromLocalScan(filePath: string): IssueDraft[] {
-  const raw = fs.readFileSync(filePath, "utf-8");
-  const results: Array<{ file: string; matches: LocalMatch[] }> = JSON.parse(raw);
-  const drafts: IssueDraft[] = [];
-  for (const result of results) {
-    for (const match of result.matches) {
-      drafts.push(buildFromLocalMatch(result.file, match));
-    }
-  }
-  return drafts;
-}
 
 describe("from-scan: draftsFromLocalScan", () => {
   const sampleScanJson: Array<{ file: string; matches: LocalMatch[] }> = [
