@@ -323,6 +323,55 @@ jobs:
           fi
           echo "PASS: a 429 with no Retry-After failed fast, without retrying."
 
+  test-poll-429-duplicate-retry-after:
+    name: "Poll: a repeated Retry-After is not a delay"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (429 carrying TWO Retry-After headers)
+        env:
+          PORT: '8794'
+          FAIL_ON: '2'
+          FAIL_STATUS: '429'
+          FAIL_RETRY_AFTER: '5|900'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8794/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8794/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8794'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert it treated the ambiguous header as no header
+        run: |
+          cat mock.log
+          # An origin's Retry-After and a proxy's are not a delay anyone can act
+          # on. Both runtimes answer null here; the shell must not quietly pick
+          # one and sleep on it.
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "FAIL: a repeated Retry-After was acted on instead of refused."
+            exit 1
+          fi
+          gets=$(grep -c '"GET ' mock.log || true)
+          if [ "$gets" -ne 2 ]; then
+            echo "FAIL: expected exactly 2 polls (no retry), saw ${gets}."
+            exit 1
+          fi
+          echo "PASS: a repeated Retry-After counted as absent, and the run failed fast."
+
   test-results-fetch-429-with-retry-after:
     name: "Results fetch: rides out a 429 that carries Retry-After"
     runs-on: ubuntu-latest
