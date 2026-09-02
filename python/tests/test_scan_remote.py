@@ -340,6 +340,33 @@ class TestDoRemoteScan:
             )
         assert exc_info.value.exit_code == EXIT_QUOTA_EXHAUSTED
 
+    @patch("rafter_cli.commands.backend.api_get")
+    @patch("rafter_cli.commands.backend.api_post")
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
+    def test_429_with_retry_after_still_raises_quota_exhausted(
+        self, _mock_repo, mock_post, mock_get
+    ):
+        """sable-96ex — the poll loop now retries a 429 when the server says
+        when to come back. SUBMIT deliberately does not: a 429 here means the
+        account is out of credits, and no amount of waiting changes that. The
+        asymmetry is the point, so it is pinned rather than left to be "made
+        consistent"."""
+        resp = _mock_response(429, "quota exhausted")
+        resp.headers = {"Retry-After": "30"}
+        mock_post.return_value = resp
+
+        with pytest.raises(click.exceptions.Exit) as exc_info:
+            _do_remote_scan(
+                repo="owner/repo",
+                branch="main",
+                api_key="test-key",
+                fmt="json",
+                skip_interactive=True,
+                quiet=True,
+            )
+        assert exc_info.value.exit_code == EXIT_QUOTA_EXHAUSTED
+        mock_get.assert_not_called()  # no polling, no retry
+
     @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_403_scope_raises_insufficient_scope(self, _mock_repo, mock_post, capsys):

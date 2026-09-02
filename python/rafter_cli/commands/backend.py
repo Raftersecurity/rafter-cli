@@ -109,6 +109,17 @@ MAX_TOTAL_TRANSIENT_POLL_FAILURES = 20
 
 BASE_BACKOFF_SECONDS = 2
 
+# sable-96ex — a 429 during polling is ambiguous in this API: on scan SUBMIT it
+# means "you are out of credits" (exit 3), and on the poll endpoint it would
+# mean "you are going too fast". ``Retry-After`` is the disambiguator — a quota
+# rejection does not carry one, a rate limiter does — so a 429 is retried here
+# only when the server tells us how long to wait, and fails fast otherwise.
+#
+#: Longest Retry-After we honor. A limiter is free to answer "come back in an
+#: hour"; a CI job cannot sit there for it, and the failure budget still bounds
+#: the total wait either way.
+MAX_RETRY_AFTER_SECONDS = 60
+
 #: Longest single error detail we will echo back. Servers can be verbose.
 MAX_ERROR_DETAIL_CHARS = 200
 
@@ -139,15 +150,45 @@ def backoff_seconds(consecutive_failures: int) -> int:
     return BASE_BACKOFF_SECONDS * 2 ** (consecutive_failures - 1)
 
 
-def _is_transient_poll_status(status_code: int, scan_exists: bool) -> bool:
+def retry_after_seconds(resp) -> "int | None":
+    """``Retry-After`` in seconds, or ``None`` when absent or unusable.
+
+    Only the delay-seconds form is honored. The HTTP-date form is deliberately
+    not parsed: the composite action has to make the same decision in bash on
+    whatever ``date`` the runner ships, and a rule the three surfaces cannot
+    state identically is worse than a narrow one they can. An unparseable
+    header is treated as absent — which means fail fast, the conservative
+    direction.
+    """
+    headers = getattr(resp, "headers", None)
+    value = headers.get("Retry-After") if hasattr(headers, "get") else None
+    # requests always yields a str; anything else (notably a test double's
+    # auto-attribute) is not a header the server sent.
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text.isdigit():
+        return None
+    return min(int(text), MAX_RETRY_AFTER_SECONDS)
+
+
+def _is_transient_poll_status(
+    status_code: int, scan_exists: bool, retry_after: "int | None" = None
+) -> bool:
     """Transient = the server itself describes the condition as temporary.
 
     ``scan_exists`` gates 404: before the first successful poll a 404 means the
     scan id is wrong, and retrying it just delays a clear answer. After it, a
     missing scan is read-after-write lag.
+
+    ``retry_after`` gates 429: without that header a 429 here is a quota
+    rejection, and retrying one for half a minute before failing anyway is
+    worse than failing now. See ``MAX_RETRY_AFTER_SECONDS``.
     """
     if status_code == 404:
         return scan_exists
+    if status_code == 429:
+        return retry_after is not None
     return status_code >= 500 or status_code == 408
 
 
@@ -208,6 +249,26 @@ def unreadable_report_message(
     )
 
 
+def rate_limited_message(
+    scan_id: str,
+    last_error: str,
+    attempts: int = MAX_TRANSIENT_POLL_FAILURES,
+) -> str:
+    """The give-up message when polling was throttled, not blocked on a bad read.
+
+    Telling a customer their report could not be read, when what actually
+    happened is that we were rate limited, points them at the wrong thing — and
+    at a ``rafter get`` that will be throttled too.
+    """
+    return (
+        f"Rafter was rate limited by the API while polling scan {scan_id} "
+        f"({attempts} attempts).\n"
+        f"The scan itself may still be running \u2014 retry with: rafter get {scan_id}\n"
+        "or open the scan in your dashboard at https://rafter.so/dashboard\n"
+        f"Last response from the server: {last_error}"
+    )
+
+
 class _FailureBudget:
     """A failure budget shared across every poll in one interactive call.
 
@@ -222,12 +283,17 @@ class _FailureBudget:
         self.last = ""
         #: False once any failure carried no HTTP response at all.
         self.last_reached_server = True
+        #: True when the failure we gave up on was a throttled 429, not a bad read.
+        self.last_rate_limited = False
 
-    def record(self, detail: str, reached_server: bool = True) -> int:
+    def record(
+        self, detail: str, reached_server: bool = True, rate_limited: bool = False
+    ) -> int:
         self.consecutive += 1
         self.total += 1
         self.last = detail
         self.last_reached_server = reached_server
+        self.last_rate_limited = rate_limited
         return self.consecutive
 
     def reset(self) -> None:
@@ -267,7 +333,14 @@ def _poll_until_readable(
             if 200 <= resp.status_code < 300:
                 budget.reset()
                 return resp
-            if not _is_transient_poll_status(resp.status_code, scan_exists):
+            # Non-None only for a 429 that carried a usable Retry-After — the
+            # sole reason such a 429 gets past the classifier below.
+            retry_after = (
+                retry_after_seconds(resp) if resp.status_code == 429 else None
+            )
+            if not _is_transient_poll_status(
+                resp.status_code, scan_exists, retry_after
+            ):
                 raise PollFatalError(
                     _describe_http_error(resp.status_code, resp.text),
                     status_code=resp.status_code,
@@ -278,11 +351,14 @@ def _poll_until_readable(
             # Transport error (DNS, reset, timeout) — as retryable as a 5xx.
             detail = _truncate(str(e))
             reached_server = False
+            retry_after = None
 
-        attempt = budget.record(detail, reached_server)
+        attempt = budget.record(detail, reached_server, retry_after is not None)
         if budget.exhausted:
             raise PollGaveUpError(
-                unreadable_report_message(
+                rate_limited_message(scan_id, budget.last, attempts=budget.total)
+                if budget.last_rate_limited
+                else unreadable_report_message(
                     scan_id,
                     budget.last,
                     attempts=budget.total,
@@ -290,10 +366,18 @@ def _poll_until_readable(
                 )
             )
 
-        wait = backoff_seconds(attempt)
+        # The server named the delay; obey it instead of our own schedule. It
+        # still spends a failure from the budget, so an endlessly-throttling
+        # API cannot keep the loop alive.
+        wait = backoff_seconds(attempt) if retry_after is None else retry_after
         if not quiet:
+            what = (
+                f"Rate limited by the API ({budget.last})"
+                if retry_after is not None
+                else f"Report not readable yet ({budget.last})"
+            )
             print(
-                f"Report not readable yet ({budget.last}); retrying in {wait}s "
+                f"{what}; retrying in {wait}s "
                 f"({attempt}/{MAX_TRANSIENT_POLL_FAILURES})",
                 file=sys.stderr,
             )

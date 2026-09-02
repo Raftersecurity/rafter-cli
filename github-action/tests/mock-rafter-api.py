@@ -18,7 +18,11 @@ Env:
   PORT          listen port (default 8787)
   FAIL_ON       1-based GET index that starts failing (default 2)
   FAIL_STATUS   status code to fail with (default 500; 404 exercises the
-                read-after-write-lag branch)
+                read-after-write-lag branch, 429 the rate-limit branch)
+  FAIL_RETRY_AFTER  when set, injected failures carry this literal Retry-After
+                header value. sable-96ex: a 429 is retried ONLY when one is
+                present, so setting/omitting this is what separates the two
+                halves of that contract.
   FAIL_FOREVER  if "1", every GET from FAIL_ON onward fails (persistent case)
   FAIL_COUNT    how many consecutive GETs fail starting at FAIL_ON (default 1;
                 ignored when FAIL_FOREVER is set)
@@ -37,6 +41,9 @@ FAIL_ON = int(os.environ.get("FAIL_ON", "2"))
 FAIL_STATUS = int(os.environ.get("FAIL_STATUS", "500"))
 FAIL_FOREVER = os.environ.get("FAIL_FOREVER") == "1"
 FAIL_COUNT = int(os.environ.get("FAIL_COUNT", "1"))
+#: Sent verbatim, so a test can inject a malformed value ("soon", "-1") and
+#: check the client refuses to act on it.
+FAIL_RETRY_AFTER = os.environ.get("FAIL_RETRY_AFTER")
 COMPLETE_AFTER = int(os.environ.get("COMPLETE_AFTER", str(FAIL_ON)))
 
 SCAN_ID = "repro-sable-l10k-0001"
@@ -45,11 +52,13 @@ state = {"polls": 0}
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _send(self, code, payload):
+    def _send(self, code, payload, retry_after=None):
         body = json.dumps(payload).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        if retry_after is not None:
+            self.send_header("Retry-After", retry_after)
         self.end_headers()
         self.wfile.write(body)
 
@@ -76,6 +85,12 @@ class Handler(BaseHTTPRequestHandler):
         )
         if failing:
             # The verbatim customer-facing body.
+            if FAIL_STATUS == 429:
+                return self._send(
+                    FAIL_STATUS,
+                    {"error": "Too many requests"},
+                    retry_after=FAIL_RETRY_AFTER,
+                )
             return self._send(
                 FAIL_STATUS,
                 {"error": "Failed to fetch report from storage: Object not found"},
@@ -97,5 +112,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"mock rafter api on :{PORT} (500 on poll #{FAIL_ON}, forever={FAIL_FOREVER})", flush=True)
+    print(
+        f"mock rafter api on :{PORT} ({FAIL_STATUS} on poll #{FAIL_ON}, "
+        f"forever={FAIL_FOREVER}, retry-after={FAIL_RETRY_AFTER})",
+        flush=True,
+    )
     HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

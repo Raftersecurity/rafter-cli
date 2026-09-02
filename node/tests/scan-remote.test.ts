@@ -368,6 +368,34 @@ describe("runRemoteScan", () => {
     expect(exitSpy).toHaveBeenCalledWith(3); // EXIT_QUOTA_EXHAUSTED
   });
 
+  it("still exits with EXIT_QUOTA_EXHAUSTED on a 429 that carries Retry-After", async () => {
+    // sable-96ex — the poll loop now retries a 429 when the server says when to
+    // come back. SUBMIT deliberately does not: a 429 here means the account is
+    // out of credits, and no amount of waiting changes that. The asymmetry is
+    // the point, so it is pinned rather than left to be "made consistent".
+    mockedAxios.post.mockRejectedValueOnce({
+      response: {
+        status: 429,
+        data: "quota exhausted",
+        headers: { "retry-after": "30" },
+      },
+    });
+
+    const { runRemoteScan } = await import("../src/commands/backend/run.js");
+    await expect(
+      runRemoteScan({
+        apiKey: "test-key",
+        repo: "owner/repo",
+        branch: "main",
+        skipInteractive: true,
+        quiet: true,
+      })
+    ).rejects.toThrow("process.exit");
+
+    expect(exitSpy).toHaveBeenCalledWith(3); // EXIT_QUOTA_EXHAUSTED
+    expect(mockedAxios.get).not.toHaveBeenCalled(); // no polling, no retry
+  });
+
   it("exits with EXIT_INSUFFICIENT_SCOPE on 403 with scope keyword", async () => {
     mockedAxios.post.mockRejectedValueOnce({
       response: {

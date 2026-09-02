@@ -24,7 +24,7 @@ The CLI follows UNIX principles:
 | 0 | Success |
 | 1 | General error |
 | 2 | Scan not found (HTTP 404) |
-| 3 | Quota exhausted (HTTP 429 or 403 scan-mode limit) |
+| 3 | Quota exhausted (HTTP 429 **on scan submit**, or 403 scan-mode limit) |
 | 4 | Insufficient scope / forbidden (HTTP 403) |
 | 5 | Paid Plus scan refused — approval required (`scan.plus_requires_approval` on) and no `--yes`/`RAFTER_CONFIRM=1`/interactive confirmation |
 
@@ -136,7 +136,9 @@ A report is not necessarily durable the instant a scan flips to `completed`, so 
 | Transport error (DNS, reset, timeout) | Same as above. |
 | HTTP 404, **after** the scan is known to exist | Transient — read-after-write lag, not a wrong id. |
 | HTTP 404 on the **first** poll | Not retried. The scan genuinely does not exist. Exit code `2`. |
-| Other 4xx (401/403/429 …) | Not retried — reported immediately. |
+| HTTP 429 **with** a usable `Retry-After` | Transient. Retried after sleeping `min(Retry-After, 60s)` instead of the exponential schedule. |
+| HTTP 429 **without** one | Not retried — on this API a bare 429 means quota exhausted, and waiting does not earn credits. |
+| Other 4xx (401/403 …) | Not retried — reported immediately. |
 
 Two budgets bound the retries. The **consecutive** counter (5) resets on any successful poll, so a long scan with occasional blips is not killed by unrelated failures minutes apart. A **total** counter (20 per command invocation) does *not* reset, so a backend alternating success and failure cannot keep the loop alive indefinitely — the CLI has no wall-clock deadline of its own.
 
@@ -144,11 +146,18 @@ After either budget is exhausted the command exits `1`. If the failures reached 
 
 `rafter get <scan_id>` carries the same retry budget, so the remedy the give-up message recommends is not defeated by the transient failure that produced it.
 
+**The 429 rule, in full.** A 429 is ambiguous in this API: on scan *submit* it means the account is out of credits (exit `3`), and on the poll endpoint it would mean the client is going too fast. `Retry-After` is the only thing that tells the two apart — a rate limiter sends one, a quota rejection does not — so it decides whether the poll retries. Submit is unchanged either way: a 429 there is exit `3` even when it carries a `Retry-After`.
+
+- Only the **delay-seconds** form is honored (`Retry-After: 30`). The HTTP-date form is not parsed, in any of the three surfaces, because the composite action has to reach the same verdict in shell on whatever `date` the runner ships — a rule the surfaces cannot state identically is worse than a narrow one they can. A header that cannot be parsed counts as absent, which means fail fast.
+- The honored wait is capped at **60 seconds**, so a limiter cannot park a CI job for an hour. A 429 retry still spends a failure from the same budget as any other transient failure, so an endlessly-throttling API cannot keep the loop alive.
+- Giving up on repeated 429s produces a **rate-limited** message, not the unreadable-report one: it says the API throttled us, names the scan, and points at `rafter get` and the dashboard. Telling a throttled customer their report could not be read sends them to look at the wrong thing.
+
 **The composite GitHub Action** (`github-action/action.yml`) implements the same classification in both its poll loop and its results fetch, with these differences forced by the shell:
 
 - It has no "first poll" distinction: by the time it polls, the trigger step has already returned a `scan_id`, so **every** 404 there is treated as read-after-write lag. A scan id the backend accepted but never persisted therefore fails after the 5-failure budget rather than immediately.
 - Its poll loop is additionally bounded by a wall-clock deadline derived from `timeout-minutes`. Before v0.11 that input was a poll *count*, so a slow API could overrun it; it is now a real deadline.
-- Its `status` output is `completed`, `failed`, `timeout`, `unreadable` (the scan may have finished but its report could not be read), or `unreachable` (the API could not be contacted).
+- Its `status` output is `completed`, `failed`, `timeout`, `unreadable` (the scan may have finished but its report could not be read), `rate-limited` (the API throttled us until the retry budget ran out), or `unreachable` (the API could not be contacted).
+- It validates `Retry-After` as digits and caps its **length** as well as its value: `[ 1e23 -gt 60 ]` is a shell error that evaluates false, so an uncapped 23-digit header would reach `sleep` intact and hang the job until the runner times out.
 
 ### rafter usage [OPTIONS]
 
