@@ -218,7 +218,19 @@ else
   failures=$((failures+1))
 fi
 
-# 18. A throttled give-up must not be reported as an unreadable report — that
+# 18. ...and the poll loop's honored delay must also be clamped to what is left
+#     of the wall-clock deadline. timeout-minutes became a real deadline in
+#     sable-l10k; a 60s Retry-After is long enough to overrun it, and the server
+#     does not get to extend a budget the workflow author set.
+if grep -q 'REMAINING=$(( DEADLINE - $(date +%s) ))' "$ACTION_YML" \
+   && grep -q 'if \[ "$BACKOFF" -gt "$REMAINING" \]' "$ACTION_YML"; then
+  echo "PASS: the honored Retry-After cannot outlive the deadline"
+else
+  echo "FAIL: the honored Retry-After is no longer clamped to the deadline"
+  failures=$((failures+1))
+fi
+
+# 19. A throttled give-up must not be reported as an unreadable report — that
 #     sends the customer to look at their scan instead of their rate limit.
 if [ "$(grep -c 'status=rate-limited' "$ACTION_YML" || true)" -ge 2 ]; then
   echo "PASS: both give-up paths distinguish rate-limited from unreadable"
