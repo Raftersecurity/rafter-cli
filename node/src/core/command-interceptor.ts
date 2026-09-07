@@ -5,6 +5,7 @@ import {
   matchedCriticalPattern,
   sanitizeCommandForMatching,
   CommandRiskLevel,
+  CHAIN_OPERATORS,
 } from "./risk-rules.js";
 
 export type { CommandRiskLevel } from "./risk-rules.js";
@@ -91,6 +92,38 @@ export class CommandInterceptor {
           matchedPattern: pattern
         };
       }
+    }
+
+    // Check the positive allowlist. Deliberately AFTER blockedPatterns and
+    // BEFORE requireApproval: a deny rule always wins, and an allow rule's
+    // whole job is to suppress the approval prompt for a known-safe command.
+    //
+    // Two guards keep an allowlist from becoming a hole in the guard rail:
+    //
+    //   - A `critical` command is never allowlistable. `rm -rf /`, a DB drop
+    //     and wiping .git stay blocked whatever the config says.
+    //   - A match does not apply when the command contains a chain operator.
+    //     Patterns are unanchored by request, so without this "^git push"
+    //     would wave through `rm -rf / && git push`. This mirrors the same
+    //     disqualification SAFE_PREFIX already carries in risk-rules.ts.
+    for (const pattern of policy.allowedPatterns ?? []) {
+      if (!this.matchesPattern(command, pattern)) continue;
+
+      if (CHAIN_OPERATORS.test(command)) {
+        // Fall through to normal classification rather than allowing.
+        break;
+      }
+      if (this.assessRisk(command) === "critical") {
+        break;
+      }
+      return {
+        command,
+        riskLevel: "low",
+        allowed: true,
+        requiresApproval: false,
+        reason: `Matches allowed pattern: ${pattern}`,
+        matchedPattern: pattern
+      };
     }
 
     // Check approval patterns

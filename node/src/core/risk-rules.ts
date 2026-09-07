@@ -707,6 +707,9 @@ export function sanitizeCommandForMatching(command: string): string {
   return sanitize(stripHeredocBodies(command), 0);
 }
 
+/** Shell operators that chain independent commands. */
+export const CHAIN_OPERATORS = /[;|&]|&&|\|\|/;
+
 /**
  * Assess risk level of a command string.
  */

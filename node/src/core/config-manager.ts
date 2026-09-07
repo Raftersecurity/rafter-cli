@@ -83,6 +83,10 @@ function validateConfig(raw: any): RafterConfig {
         console.error('Warning: config "agent.commandPolicy.blockedPatterns" must be an array of strings — using default.');
         cp.blockedPatterns = [...defaults.agent!.commandPolicy.blockedPatterns];
       }
+      if (cp.allowedPatterns !== undefined && (!Array.isArray(cp.allowedPatterns) || !cp.allowedPatterns.every((v: any) => typeof v === "string"))) {
+        console.error('Warning: config "agent.commandPolicy.allowedPatterns" must be an array of strings — using default.');
+        cp.allowedPatterns = [...(defaults.agent!.commandPolicy.allowedPatterns ?? [])];
+      }
       if (cp.requireApproval !== undefined && (!Array.isArray(cp.requireApproval) || !cp.requireApproval.every((v: any) => typeof v === "string"))) {
         console.error('Warning: config "agent.commandPolicy.requireApproval" must be an array of strings — using default.');
         cp.requireApproval = [...defaults.agent!.commandPolicy.requireApproval];
