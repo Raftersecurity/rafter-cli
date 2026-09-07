@@ -1295,6 +1295,13 @@ command_policy:
   mode: approve-dangerous
   blocked_patterns: ["rm -rf /"]
   require_approval: ["npm publish"]
+  # Positive allowlist: force a known-safe command to `low` and skip the
+  # approval prompt, without lowering the global risk level. Unanchored
+  # regex. blocked_patterns always wins; a `critical` command is never
+  # allowlistable; and a match does not apply when the command contains a
+  # chain operator (`&&`, `;`, `|`), so "git push" cannot wave through
+  # `rm -rf / && git push`.
+  allowed_patterns: ["git push --force-with-lease"]
 scan:
   exclude_paths: ["vendor/", "third_party/"]
   custom_patterns:

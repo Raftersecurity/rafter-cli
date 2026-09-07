@@ -59,6 +59,8 @@ export function getDefaultConfig(): RafterConfig {
         mode: "approve-dangerous",
         blockedPatterns: [...DEFAULT_BLOCKED_PATTERNS],
         requireApproval: [...DEFAULT_REQUIRE_APPROVAL],
+        // Empty by default: an allowlist is opt-in, per project.
+        allowedPatterns: [],
       },
       outputFiltering: {
         redactSecrets: true,
