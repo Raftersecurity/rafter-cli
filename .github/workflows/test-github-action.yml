@@ -227,24 +227,28 @@ jobs:
           fi
           echo "PASS: the results fetch retried and completed."
 
-  # sable-96ex — the day a rate limiter lands in front of the poll endpoint,
-  # polling every 10s from every customer repo is exactly the traffic it
-  # targets. A 429 is retried on one condition only: the server sent a
-  # Retry-After saying when to come back. Without it a 429 on this API means
-  # quota exhausted, and sleeping through five retries before failing anyway is
-  # worse than failing now. These three jobs pin both halves.
-  test-poll-429-with-retry-after:
-    name: "Poll: rides out a 429 that carries Retry-After"
+  # sable-fgk7 — the results step used to coerce EVERY failure to read the
+  # report into findings_count=0, which passes every severity threshold and
+  # renders ":white_check_mark: No security findings detected". A report the
+  # action cannot read is not a clean scan. Three shapes, each of which used
+  # to land as a clean green: schema-valid-but-wrong (parses, no key), not
+  # JSON at all, and a 200 whose body is an error object.
+  test-results-unreadable-is-not-clean:
+    name: "Results: an unreadable report is not a clean scan (${{ matrix.shape }})"
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shape: [missing-key, not-json, error-object]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start mock backend (429 + Retry-After on poll #2, then healthy)
+      - name: Start mock backend (poll completes; results body is ${{ matrix.shape }})
         env:
           PORT: '8791'
-          FAIL_ON: '2'
-          FAIL_STATUS: '429'
-          FAIL_RETRY_AFTER: '1'
+          FAIL_COUNT: '0'
+          COMPLETE_AFTER: '1'
+          RESULTS_SHAPE: ${{ matrix.shape }}
         run: |
           nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
           for _ in $(seq 1 30); do
@@ -261,6 +265,179 @@ jobs:
         with:
           api-key: 'not-a-real-key'
           rafter-url: 'http://127.0.0.1:8791'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert the build failed and no count was fabricated
+        run: |
+          cat mock.log
+          FAIL=0
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "FAIL: an unreadable report must fail the build (outcome='${{ steps.scan.outcome }}')."
+            FAIL=1
+          fi
+          if [ "${{ steps.scan.outputs.status }}" != "unreadable" ]; then
+            echo "FAIL: expected status=unreadable, got '${{ steps.scan.outputs.status }}'."
+            FAIL=1
+          fi
+          # The floor: a count that was never computed must be ABSENT, not 0.
+          # '0' here is the bug — it is what a consumer gating on the output
+          # reads as a clean scan.
+          if [ -n "${{ steps.scan.outputs.findings-count }}" ]; then
+            echo "FAIL: findings-count was fabricated as '${{ steps.scan.outputs.findings-count }}' from an unreadable report."
+            FAIL=1
+          fi
+          [ "$FAIL" -eq 0 ] && echo "PASS: unreadable report (${{ matrix.shape }}) failed the build with status=unreadable and no counts."
+          exit $FAIL
+
+  # The other half of the floor: when the report IS readable the counts must be
+  # exactly the report's and the build must pass. Without this, a "validation"
+  # that rejected everything would also land green above.
+  test-results-counts-exact:
+    name: "Results: counts are exactly the report's"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (poll completes; report has 3 findings)
+        env:
+          PORT: '8792'
+          FAIL_COUNT: '0'
+          COMPLETE_AFTER: '1'
+          RESULTS_SHAPE: 'with-findings'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8792/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8792/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8792'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+
+      - name: Assert every count is the report's, not a default
+        run: |
+          cat mock.log
+          FAIL=0
+          check() {
+            if [ "$2" != "$3" ]; then
+              echo "FAIL: $1 expected '$3', got '$2'"
+              FAIL=1
+            fi
+          }
+          check outcome         "${{ steps.scan.outcome }}"                 "success"
+          check status          "${{ steps.scan.outputs.status }}"          "completed"
+          check findings-count  "${{ steps.scan.outputs.findings-count }}"  "3"
+          check critical-count  "${{ steps.scan.outputs.critical-count }}"  "1"
+          check high-count      "${{ steps.scan.outputs.high-count }}"      "1"
+          check medium-count    "${{ steps.scan.outputs.medium-count }}"    "0"
+          check low-count       "${{ steps.scan.outputs.low-count }}"       "1"
+          [ "$FAIL" -eq 0 ] && echo "PASS: counts are exactly the report's (3/1/1/0/1)."
+          exit $FAIL
+
+  # sable-1drb — the threshold gate is now unit-tested against the real
+  # lib/severity.sh, but a unit test cannot prove action.yml WIRES it: that
+  # the counts reach the gate and the gate's verdict reaches the job. One
+  # end-to-end run with real findings and a threshold they exceed does.
+  test-threshold-gate-end-to-end:
+    name: "Threshold gate: real findings above the threshold fail the build"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (report has 1 critical, 1 high, 1 low)
+        env:
+          PORT: '8793'
+          FAIL_COUNT: '0'
+          COMPLETE_AFTER: '1'
+          RESULTS_SHAPE: 'with-findings'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8793/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8793/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action with severity-threshold high
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8793'
+          timeout-minutes: '2'
+          upload-sarif: 'false'
+          comment-on-pr: 'false'
+          severity-threshold: 'high'
+
+      - name: Assert the gate, not an error, failed the build
+        run: |
+          cat mock.log
+          FAIL=0
+          # status=completed AND outcome=failure is the gate's signature: the
+          # report was read and counted, then the threshold rejected it.
+          if [ "${{ steps.scan.outputs.status }}" != "completed" ]; then
+            echo "FAIL: expected status=completed (report read), got '${{ steps.scan.outputs.status }}'"
+            FAIL=1
+          fi
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "FAIL: 1 critical + 1 high with severity-threshold=high must fail the build (outcome='${{ steps.scan.outcome }}')"
+            FAIL=1
+          fi
+          if [ "${{ steps.scan.outputs.findings-count }}" != "3" ]; then
+            echo "FAIL: findings-count expected 3, got '${{ steps.scan.outputs.findings-count }}'"
+            FAIL=1
+          fi
+          [ "$FAIL" -eq 0 ] && echo "PASS: counts reached the gate and the gate failed the build."
+          exit $FAIL
+
+  # sable-96ex — the day a rate limiter lands in front of the poll endpoint,
+  # polling every 10s from every customer repo is exactly the traffic it
+  # targets. A 429 is retried on one condition only: the server sent a
+  # Retry-After saying when to come back. Without it a 429 on this API means
+  # quota exhausted, and sleeping through five retries before failing anyway is
+  # worse than failing now. These three jobs pin both halves.
+  test-poll-429-with-retry-after:
+    name: "Poll: rides out a 429 that carries Retry-After"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock backend (429 + Retry-After on poll #2, then healthy)
+        env:
+          PORT: '8801'
+          FAIL_ON: '2'
+          FAIL_STATUS: '429'
+          FAIL_RETRY_AFTER: '1'
+        run: |
+          nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -X POST -d '{}' http://127.0.0.1:8801/api/static/scan >/dev/null && break
+            sleep 1
+          done
+          curl -sf -X POST -d '{}' http://127.0.0.1:8801/api/static/scan >/dev/null || {
+            echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
+
+      - name: Run the action against the mock
+        id: scan
+        continue-on-error: true
+        uses: ./github-action
+        with:
+          api-key: 'not-a-real-key'
+          rafter-url: 'http://127.0.0.1:8801'
           timeout-minutes: '2'
           upload-sarif: 'false'
           comment-on-pr: 'false'
@@ -282,16 +459,16 @@ jobs:
 
       - name: Start mock backend (bare 429 on poll #2)
         env:
-          PORT: '8792'
+          PORT: '8802'
           FAIL_ON: '2'
           FAIL_STATUS: '429'
         run: |
           nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
           for _ in $(seq 1 30); do
-            curl -sf -X POST -d '{}' http://127.0.0.1:8792/api/static/scan >/dev/null && break
+            curl -sf -X POST -d '{}' http://127.0.0.1:8802/api/static/scan >/dev/null && break
             sleep 1
           done
-          curl -sf -X POST -d '{}' http://127.0.0.1:8792/api/static/scan >/dev/null || {
+          curl -sf -X POST -d '{}' http://127.0.0.1:8802/api/static/scan >/dev/null || {
             echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
 
       - name: Run the action against the mock
@@ -300,7 +477,7 @@ jobs:
         uses: ./github-action
         with:
           api-key: 'not-a-real-key'
-          rafter-url: 'http://127.0.0.1:8792'
+          rafter-url: 'http://127.0.0.1:8802'
           timeout-minutes: '2'
           upload-sarif: 'false'
           comment-on-pr: 'false'
@@ -331,17 +508,17 @@ jobs:
 
       - name: Start mock backend (429 carrying TWO Retry-After headers)
         env:
-          PORT: '8794'
+          PORT: '8804'
           FAIL_ON: '2'
           FAIL_STATUS: '429'
           FAIL_RETRY_AFTER: '5|900'
         run: |
           nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
           for _ in $(seq 1 30); do
-            curl -sf -X POST -d '{}' http://127.0.0.1:8794/api/static/scan >/dev/null && break
+            curl -sf -X POST -d '{}' http://127.0.0.1:8804/api/static/scan >/dev/null && break
             sleep 1
           done
-          curl -sf -X POST -d '{}' http://127.0.0.1:8794/api/static/scan >/dev/null || {
+          curl -sf -X POST -d '{}' http://127.0.0.1:8804/api/static/scan >/dev/null || {
             echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
 
       - name: Run the action against the mock
@@ -350,7 +527,7 @@ jobs:
         uses: ./github-action
         with:
           api-key: 'not-a-real-key'
-          rafter-url: 'http://127.0.0.1:8794'
+          rafter-url: 'http://127.0.0.1:8804'
           timeout-minutes: '2'
           upload-sarif: 'false'
           comment-on-pr: 'false'
@@ -380,17 +557,17 @@ jobs:
 
       - name: Start mock backend (103 Early Hints carries Retry-After, the 429 does not)
         env:
-          PORT: '8795'
+          PORT: '8805'
           FAIL_ON: '2'
           FAIL_STATUS: '429'
           EARLY_HINTS_RETRY_AFTER: '7'
         run: |
           nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
           for _ in $(seq 1 30); do
-            curl -sf -X POST -d '{}' http://127.0.0.1:8795/api/static/scan >/dev/null && break
+            curl -sf -X POST -d '{}' http://127.0.0.1:8805/api/static/scan >/dev/null && break
             sleep 1
           done
-          curl -sf -X POST -d '{}' http://127.0.0.1:8795/api/static/scan >/dev/null || {
+          curl -sf -X POST -d '{}' http://127.0.0.1:8805/api/static/scan >/dev/null || {
             echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
 
       - name: Run the action against the mock
@@ -399,7 +576,7 @@ jobs:
         uses: ./github-action
         with:
           api-key: 'not-a-real-key'
-          rafter-url: 'http://127.0.0.1:8795'
+          rafter-url: 'http://127.0.0.1:8805'
           timeout-minutes: '2'
           upload-sarif: 'false'
           comment-on-pr: 'false'
@@ -432,7 +609,7 @@ jobs:
 
       - name: Start mock backend (429 forever, Retry-After of 23 digits)
         env:
-          PORT: '8796'
+          PORT: '8806'
           FAIL_ON: '2'
           FAIL_STATUS: '429'
           FAIL_FOREVER: '1'
@@ -440,10 +617,10 @@ jobs:
         run: |
           nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
           for _ in $(seq 1 30); do
-            curl -sf -X POST -d '{}' http://127.0.0.1:8796/api/static/scan >/dev/null && break
+            curl -sf -X POST -d '{}' http://127.0.0.1:8806/api/static/scan >/dev/null && break
             sleep 1
           done
-          curl -sf -X POST -d '{}' http://127.0.0.1:8796/api/static/scan >/dev/null || {
+          curl -sf -X POST -d '{}' http://127.0.0.1:8806/api/static/scan >/dev/null || {
             echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
 
       - name: Run the action against the mock
@@ -453,7 +630,7 @@ jobs:
         uses: ./github-action
         with:
           api-key: 'not-a-real-key'
-          rafter-url: 'http://127.0.0.1:8796'
+          rafter-url: 'http://127.0.0.1:8806'
           timeout-minutes: '1'
           upload-sarif: 'false'
           comment-on-pr: 'false'
@@ -481,7 +658,7 @@ jobs:
 
       - name: Start mock backend (poll succeeds, first results fetch 429s)
         env:
-          PORT: '8793'
+          PORT: '8803'
           FAIL_ON: '2'
           FAIL_COUNT: '1'
           FAIL_STATUS: '429'
@@ -490,10 +667,10 @@ jobs:
         run: |
           nohup python3 github-action/tests/mock-rafter-api.py > mock.log 2>&1 &
           for _ in $(seq 1 30); do
-            curl -sf -X POST -d '{}' http://127.0.0.1:8793/api/static/scan >/dev/null && break
+            curl -sf -X POST -d '{}' http://127.0.0.1:8803/api/static/scan >/dev/null && break
             sleep 1
           done
-          curl -sf -X POST -d '{}' http://127.0.0.1:8793/api/static/scan >/dev/null || {
+          curl -sf -X POST -d '{}' http://127.0.0.1:8803/api/static/scan >/dev/null || {
             echo "FAIL: mock backend never started"; cat mock.log; exit 1; }
 
       - name: Run the action against the mock
@@ -502,7 +679,7 @@ jobs:
         uses: ./github-action
         with:
           api-key: 'not-a-real-key'
-          rafter-url: 'http://127.0.0.1:8793'
+          rafter-url: 'http://127.0.0.1:8803'
           timeout-minutes: '2'
           upload-sarif: 'false'
           comment-on-pr: 'false'

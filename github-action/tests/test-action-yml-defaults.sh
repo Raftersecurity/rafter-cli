@@ -45,25 +45,49 @@ else
   failures=$((failures+1))
 fi
 
-# 3. The report-only tip block must be present and gated on both conditions.
-if grep -qE '\[ "\$FINDINGS_COUNT" -gt 0 \] && \[ "\$SEVERITY_THRESHOLD" = "none" \]' "$ACTION_YML"; then
-  echo "PASS: report-only tip block gated on (findings > 0) AND (threshold == 'none')"
+# The threshold case statement and the report-only tip live in lib/severity.sh
+# (sable-1drb), sourced by action.yml AND by the unit tests, so checks 3, 4
+# and 17 look there. Check 17 is what stops a "simplification" from inlining
+# a copy back into action.yml, which would silently detach the tests again.
+SEVERITY_LIB="$(cd "$(dirname "$0")/.." && pwd)/lib/severity.sh"
+if [ ! -f "$SEVERITY_LIB" ]; then
+  echo "FAIL: $SEVERITY_LIB not found"
+  exit 1
+fi
+
+# 3. The report-only tip must be gated on both conditions.
+if grep -qE '\[ "\$findings" -gt 0 \] && \[ "\$threshold" = "none" \]' "$SEVERITY_LIB"; then
+  echo "PASS: report-only tip gated on (findings > 0) AND (threshold == 'none')"
 else
-  echo "FAIL: report-only tip block missing or mis-gated in $ACTION_YML"
+  echo "FAIL: report-only tip missing or mis-gated in $SEVERITY_LIB"
   failures=$((failures+1))
 fi
 
-# 4. The threshold-eval step must still handle 'none' as a no-op
-#    (no FAIL=1 in the none branch).
+# 4. The threshold-eval must still handle 'none' as a no-op
+#    (no fail=1 in the none branch).
 if awk '
   /none\)/ { in_none=1; next }
   in_none && /;;/ { in_none=0; next }
   in_none { print }
-' "$ACTION_YML" | grep -qE "FAIL *= *1"; then
-  echo "FAIL: 'none' branch of threshold-eval sets FAIL=1 — that would break the default"
+' "$SEVERITY_LIB" | grep -qE "fail *= *1"; then
+  echo "FAIL: 'none' branch of threshold-eval sets fail=1 — that would break the default"
   failures=$((failures+1))
 else
-  echo "PASS: 'none' branch of threshold-eval does not set FAIL=1"
+  echo "PASS: 'none' branch of threshold-eval does not set fail=1"
+fi
+
+# 17. action.yml must SOURCE the library in both steps that use it, and must
+#     not carry its own copy of the case statement. If either regresses, the
+#     unit tests go back to testing a transcription.
+lib_sources=$(grep -cF 'source "${{ github.action_path }}/lib/severity.sh"' "$ACTION_YML" || true)
+inline_cases=$(grep -cE '^\s*(critical|medium|low)\)\s*$' "$ACTION_YML" || true)
+if [ "$lib_sources" -ge 2 ] && [ "$inline_cases" -eq 0 ] \
+   && grep -q 'rafter_threshold_fails "\$SEVERITY_THRESHOLD"' "$ACTION_YML" \
+   && grep -q 'rafter_report_only_tip "\$FINDINGS_COUNT" "\$SEVERITY_THRESHOLD"' "$ACTION_YML"; then
+  echo "PASS: action.yml sources lib/severity.sh in both steps and carries no inline copy"
+else
+  echo "FAIL: action.yml sources=${lib_sources} (need >=2), inline case branches=${inline_cases} (need 0), or a call site is missing"
+  failures=$((failures+1))
 fi
 
 # ── sable-l10k: poll-path retry contract ─────────────────────────────────
@@ -163,6 +187,43 @@ else
   failures=$((failures+1))
 fi
 
+# ── sable-fgk7: an unreadable report is not a clean scan ─────────────────
+# The results step used to coerce every jq failure into findings_count=0,
+# which passed every threshold and rendered "No security findings detected".
+# Reproduced with a 200 whose body was not JSON, a 200 carrying an error
+# object, and a parseable payload with no vulnerabilities key.
+
+# 14. The payload shape must be validated before any count is computed.
+if grep -qF "jq -e 'type == \"object\" and (.vulnerabilities | type == \"array\") and all(.vulnerabilities[]; type == \"object\")'" "$ACTION_YML"; then
+  echo "PASS: results step validates the payload shape before counting"
+else
+  echo "FAIL: results step no longer validates that .vulnerabilities is an array of objects"
+  failures=$((failures+1))
+fi
+
+# 15. No count may fall back to 0 on a jq failure. That fallback IS the bug:
+#     the error path and the clean path produced the same number.
+zero_fallbacks=$(grep -c '|| echo "0"' "$ACTION_YML" || true)
+if [ "$zero_fallbacks" -eq 0 ]; then
+  echo "PASS: no count falls back to 0 on a parse failure"
+else
+  echo "FAIL: ${zero_fallbacks} count(s) still fall back to 0 on a jq failure — an unreadable report would render as clean"
+  failures=$((failures+1))
+fi
+
+# 16. The unreadable-payload path must record status=unreadable and exit 1,
+#     so the declared status output cannot fall back to the poll step's
+#     'completed' for a report that was never read.
+if awk '/no .vulnerabilities. array/,/^          fi$/' "$ACTION_YML" \
+     | grep -q 'status=unreadable' \
+   && awk '/no .vulnerabilities. array/,/^          fi$/' "$ACTION_YML" \
+     | grep -q 'exit 1'; then
+  echo "PASS: unreadable payload records status=unreadable and fails the step"
+else
+  echo "FAIL: unreadable-payload branch no longer records status=unreadable and exits 1"
+  failures=$((failures+1))
+fi
+
 # ── sable-96ex: the 429 / Retry-After contract ───────────────────────────
 # A 429 is retried on exactly one condition — the server said when to come
 # back. Both halves are load-bearing: drop the gate and a quota rejection
@@ -170,7 +231,7 @@ fi
 # day a limiter lands in front of the poll endpoint, every customer build
 # fails instantly on a condition a sleep would have resolved.
 
-# 14. The poll loop's 429 branch must be gated on a non-empty Retry-After.
+# 18. The poll loop's 429 branch must be gated on a non-empty Retry-After.
 if grep -q '\[ "\$HTTP_CODE" -eq 429 \] && \[ -n "\$RETRY_AFTER" \]' "$ACTION_YML"; then
   echo "PASS: poll loop retries 429 only when Retry-After is present"
 else
@@ -178,7 +239,7 @@ else
   failures=$((failures+1))
 fi
 
-# 15. Same gate in the results fetch: a 429 stays non-transient there unless
+# 19. Same gate in the results fetch: a 429 stays non-transient there unless
 #     Retry-After came with it.
 if grep -q '\[ "\$code" -ne 404 \] \\' "$ACTION_YML" \
    && grep -q '&& \[ -z "\$retry_after" \]; then' "$ACTION_YML"; then
@@ -188,7 +249,7 @@ else
   failures=$((failures+1))
 fi
 
-# 16. Retry-After is server-controlled and becomes a sleep duration. It must be
+# 20. Retry-After is server-controlled and becomes a sleep duration. It must be
 #     validated as digits AND length-capped in both loops: `[ 1e23 -gt 60 ]` is
 #     an error that evaluates false, so an uncapped 23-digit value would reach
 #     `sleep` intact and hang the job until the runner times out.
@@ -209,7 +270,7 @@ else
   failures=$((failures+1))
 fi
 
-# 17. The honored wait must be capped. An unclamped Retry-After lets the server
+# 21. The honored wait must be capped. An unclamped Retry-After lets the server
 #     park a CI job for as long as it likes.
 if [ "$(grep -cE '(BACKOFF|backoff)" -gt "\$(MAX_RETRY_AFTER|max_retry_after)"' "$ACTION_YML" || true)" -eq 2 ]; then
   echo "PASS: both loops cap the honored Retry-After"
@@ -218,7 +279,7 @@ else
   failures=$((failures+1))
 fi
 
-# 18. ...and the poll loop's honored delay must also be clamped to what is left
+# 22. ...and the poll loop's honored delay must also be clamped to what is left
 #     of the wall-clock deadline. timeout-minutes became a real deadline in
 #     sable-l10k; a 60s Retry-After is long enough to overrun it, and the server
 #     does not get to extend a budget the workflow author set.
@@ -230,7 +291,7 @@ else
   failures=$((failures+1))
 fi
 
-# 19. Retry-After must be read from the LAST header block only. `curl -D` dumps
+# 23. Retry-After must be read from the LAST header block only. `curl -D` dumps
 #     every block it received, so a `grep | tail -n1` over the whole file reads
 #     a 103 Early Hints Retry-After as if it were the 429's own — and retries a
 #     bare 429, the one thing the gate exists to prevent.
@@ -241,7 +302,7 @@ else
   failures=$((failures+1))
 fi
 
-# 20. A throttled give-up must not be reported as an unreadable report — that
+# 24. A throttled give-up must not be reported as an unreadable report — that
 #     sends the customer to look at their scan instead of their rate limit.
 if [ "$(grep -c 'status=rate-limited' "$ACTION_YML" || true)" -ge 2 ]; then
   echo "PASS: both give-up paths distinguish rate-limited from unreadable"
