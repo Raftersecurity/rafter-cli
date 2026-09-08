@@ -544,6 +544,23 @@ Execute shell command with risk assessment and approval workflow.
 
 Risk tiers: critical (blocked), high (approval required), medium (approval on moderate+), low (allowed).
 
+#### What the classifier reads, and what it treats as data
+
+Risk patterns describe *shell commands*, and they are matched against a **sanitized** view of the command line, not the raw string. Text the command consumes as data is redacted first; text a shell or eval wrapper would execute is preserved and scanned recursively. Both implementations share this contract.
+
+| Construct | Treated as | Why |
+|---|---|---|
+| A quoted, multi-word argument to an ordinary command (`git commit -m "…"`, `--body "…"`) | Data | Prose. Flagging it made `git commit -m "don't git push --force"` a force-push. |
+| Operands of a text command (`echo`, `printf`, `grep`, `rg`, …) | Data | Printing or searching is not executing. |
+| A **heredoc body** (`cat > notes.md <<'EOF' … EOF`) | Data | The body is written to a file, not run. Documentation that quotes `rm -rf /` is documentation. |
+| A shell's `-c` argument, `$(…)`, backticks, an eval-style exec's payload | Code — scanned recursively | A wrapper executes them. |
+| A heredoc a shell or eval-style exec consumes (`bash <<EOF`, `ssh host <<EOF`) | Code | It is run. |
+| A segment whose **output** is executed (`… \| bash`, or a substitution used as a `-c` script) | Code, including its text-command operands | `echo "rm -rf /" \| bash` runs it; `bash -c "echo 'rm -rf /'"` only prints it. |
+
+Heredoc specifics: the delimiter may be quoted (`<<'EOF'`, `<<"EOF"`) — quoting changes expansion inside the body, not where the body ends; `<<-` strips leading **tabs** (not spaces) from the terminator; several heredocs on one line are consumed in order; an unterminated heredoc is data to end of input; a command after the terminator is classified normally; and `<<<` is a here-string, not a heredoc.
+
+Known limitation: an *unrecognized* evaluator taking a bare quoted command string with no `-c`/`-e`-style flag (a bespoke `myrunner "rm -rf /"`) has its argument treated as data.
+
 ### rafter skill review [PATH_OR_URL] [OPTIONS]
 
 Security review of a third-party skill, plugin, or agent extension before installing it — **or** (`--installed`) an audit of every skill already on disk across detected agent directories. Operates on a local file, a local directory, a git URL (https / ssh / `.git`), or (in `--installed` mode) the whole machine. Emits a structured deterministic report: secrets, external URLs, high-risk shell patterns, obfuscation signals, binary/suspicious file inventory, and `SKILL.md` frontmatter (`name`, `version`, `allowed-tools`).
