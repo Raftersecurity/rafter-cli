@@ -109,10 +109,29 @@ export const DEFAULT_REQUIRE_APPROVAL: string[] = [
 //     `--body`, …) and prose-shaped quoted arguments are DATA → redacted;
 //   * everything else is preserved byte for byte.
 //
+// HEREDOC (sable-5ogx / issue #230). `cat > notes.md <<'EOF' … EOF` WRITES its
+// body to a file; it does not run it. Without heredoc handling the body reaches
+// the matcher as bare words, so documentation that quotes a dangerous command
+// scored identically to running it — a prose line mentioning `rm -rf /` in a
+// markdown file classified CRITICAL, the tier no policy, mode or deny-list can
+// override. So a heredoc body is DATA, with one exception below.
+//
+// The exception is the case where the body really is executed: a shell or
+// eval-style exec consuming it (`bash <<EOF`, `ssh host <<EOF`), or a segment
+// whose output is piped into a shell (`cat <<EOF | bash`). Those reuse the same
+// SHELL_EXECS / EVAL_EXECS machinery that already governs quoted arguments,
+// rather than adding a second rule beside it.
+//
+// This has to happen in the TOKENIZER, not as a filter afterward: once the
+// input has been split into statements, the fact that a line was heredoc body
+// is gone. rf-6pqx splits statements on newlines, and a body line promoted to
+// its own statement is exactly the #230 regression.
+//
 // Known limitation: an *unrecognized* evaluator that takes a bare quoted command
 // string with no `-c`/`-e`-style flag (e.g. a bespoke `myrunner "rm -rf /"`) has
 // its argument treated as data. Anything reached through a real shell, an eval
-// flag, a substitution, or an unquoted argument is still scanned.
+// flag, a substitution, or an unquoted argument is still scanned. The same gap
+// applies to a heredoc fed to such an evaluator.
 
 /** Shells whose `-c` argument is a command string to execute. */
 const SHELL_EXECS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash", "fish", "su"]);
@@ -142,7 +161,7 @@ const TEXT_FLAGS = new Set([
 const CHAIN_OPS = new Set([";", "&&", "||", "|", "&"]);
 
 /** Operators whose following token is a redirect target (a path — never data). */
-const REDIRECT_OPS = new Set([">", ">>", "<", "<<"]);
+const REDIRECT_OPS = new Set([">", ">>", "<", "<<", "<<-", "<<<"]);
 
 /** Bound on recursion through nested shell wrappers / substitutions. */
 const MAX_SANITIZE_DEPTH = 8;
@@ -159,6 +178,10 @@ interface Piece {
   quoted: boolean;
   /** Contents of any command substitutions that the shell would execute. */
   substs: string[];
+  /** True for the body of a heredoc — see HEREDOC below. */
+  heredocBody?: boolean;
+  /** True for the word naming a heredoc's terminator (`<<EOF` → `EOF`). */
+  heredocDelim?: boolean;
 }
 
 function isOpChar(c: string): boolean {
@@ -191,22 +214,84 @@ function readBacktick(s: string, i: number): { inner: string; next: number } {
   return { inner, next: Math.min(j + 1, s.length) };
 }
 
+interface PendingHeredoc { delim: string; stripTabs: boolean; }
+
+/**
+ * Consume heredoc bodies queued on this line, starting at the newline index
+ * `i`. Returns the index just past the last terminator consumed.
+ *
+ * An UNTERMINATED heredoc runs to end of input. That is the fail-safe
+ * direction: the alternative is scanning documentation as commands, which is
+ * the bug this exists to fix.
+ */
+function readHeredocBodies(s: string, i: number, queued: PendingHeredoc[]): number {
+  let j = i + 1;
+  for (const h of queued) {
+    for (;;) {
+      if (j >= s.length) { j = s.length; break; }
+      const nl = s.indexOf("\n", j);
+      const lineEnd = nl === -1 ? s.length : nl;
+      // `<<-` strips leading TABS from the terminator — tabs only, not spaces.
+      const line = h.stripTabs ? s.slice(j, lineEnd).replace(/^\t+/, "") : s.slice(j, lineEnd);
+      if (line === h.delim) { j = nl === -1 ? s.length : nl + 1; break; }
+      if (nl === -1) { j = s.length; break; }
+      j = nl + 1;
+    }
+  }
+  return j;
+}
+
 /** Split a command line into words and operators, respecting quotes and substitutions. */
 function tokenize(s: string): Piece[] {
   const pieces: Piece[] = [];
   let i = 0;
+  /** Heredocs introduced on the current line, in the order the shell reads them. */
+  let queued: PendingHeredoc[] = [];
+  /** Set after `<<`/`<<-`: the next word names the terminator, it is not a path. */
+  let expectDelim: { stripTabs: boolean } | null = null;
 
   while (i < s.length) {
     const c = s[i];
+
+    // A newline with heredocs queued: everything through the terminators is
+    // body text, and body text is data. This must precede the whitespace skip
+    // below, which would otherwise step over the newline and let the body
+    // tokenize as ordinary words.
+    if (c === "\n" && queued.length > 0) {
+      const bodyStart = i + 1;
+      const end = readHeredocBodies(s, i, queued);
+      queued = [];
+      if (end > bodyStart) {
+        pieces.push({
+          start: bodyStart, end, op: null, text: s.slice(bodyStart, end),
+          quoted: true, substs: [], heredocBody: true,
+        });
+      }
+      i = end;
+      continue;
+    }
 
     if (/\s/.test(c)) { i++; continue; }
 
     if (isOpChar(c)) {
       const start = i;
+      const three = s.slice(i, i + 3);
       const two = s.slice(i, i + 2);
-      const op = (two === "&&" || two === "||" || two === ">>" || two === "<<") ? two : c;
+      let op: string;
+      if (three === "<<<") {
+        // A here-STRING, not a heredoc: its operand is one word, there is no
+        // body, and mistaking it for `<<` would swallow the rest of the input.
+        op = three;
+      } else if (three === "<<-") {
+        op = three;
+      } else if (two === "&&" || two === "||" || two === ">>" || two === "<<") {
+        op = two;
+      } else {
+        op = c;
+      }
       i += op.length;
       pieces.push({ start, end: i, op, text: op, quoted: false, substs: [] });
+      if (op === "<<" || op === "<<-") expectDelim = { stripTabs: op === "<<-" };
       continue;
     }
 
@@ -268,9 +353,19 @@ function tokenize(s: string): Piece[] {
       i++;
     }
 
+    if (expectDelim) {
+      // `<<'EOF'` / `<<"EOF"` — quoting changes expansion inside the body, not
+      // where the body ends, so both forms terminate identically.
+      queued.push({ delim: text, stripTabs: expectDelim.stripTabs });
+      expectDelim = null;
+      pieces.push({ start, end: i, op: null, text, quoted, substs, heredocDelim: true });
+      continue;
+    }
+
     pieces.push({ start, end: i, op: null, text, quoted, substs });
   }
 
+  // Input that ends while a heredoc is still open: the body never arrived.
   return pieces;
 }
 
@@ -290,22 +385,27 @@ interface Replacement { start: number; end: number; with: string; }
  * Decide, for one segment (a single command in a chain), which spans are DATA
  * and which are code, appending the resulting replacements.
  */
-function processSegment(pieces: Piece[], depth: number, out: Replacement[]): void {
-  // A word is a redirect target when the piece before it is `>`/`>>`/`<`.
+function redirectTargets(pieces: Piece[]): boolean[] {
+  // A word is a redirect target when the piece before it is `>`/`>>`/`<`/`<<`.
   const isRedirectTarget = new Array<boolean>(pieces.length).fill(false);
   for (let i = 1; i < pieces.length; i++) {
     const prev = pieces[i - 1];
     if (prev.op && REDIRECT_OPS.has(prev.op) && !pieces[i].op) isRedirectTarget[i] = true;
   }
+  return isRedirectTarget;
+}
 
-  // Effective executable: skip env assignments and prefix wrappers (`sudo`,
-  // `env`, `timeout 5`, `nice -n 15`, …) to reach the command they delegate to.
-  let execIdx = -1;
+/**
+ * Index of the word that actually runs: env assignments and prefix wrappers
+ * (`sudo`, `env`, `timeout 5`, `nice -n 15`, …) are skipped to reach the
+ * command they delegate to. -1 when the segment runs nothing.
+ */
+function findExecIdx(pieces: Piece[], isRedirectTarget: boolean[]): number {
   for (let i = 0; i < pieces.length; i++) {
     const p = pieces[i];
-    if (p.op || isRedirectTarget[i]) continue;
+    if (p.op || isRedirectTarget[i] || p.heredocBody) continue;
     if (!p.quoted && ENV_ASSIGNMENT.test(p.text)) continue;
-    if (execIdx === -1 && !p.quoted && TAIL_WRAPPERS.has(execName(p.text))) {
+    if (!p.quoted && TAIL_WRAPPERS.has(execName(p.text))) {
       // Skip the wrapper's own flags and their numeric/duration values.
       let j = i + 1;
       while (j < pieces.length) {
@@ -317,10 +417,27 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
       i = j - 1;
       continue;
     }
-    execIdx = i;
-    break;
+    return i;
   }
+  return -1;
+}
 
+/** The effective executable of a segment (`sudo rm -rf /` → `rm`). */
+function segmentExec(pieces: Piece[]): string {
+  const idx = findExecIdx(pieces, redirectTargets(pieces));
+  return idx === -1 ? "" : execName(pieces[idx].text);
+}
+
+function processSegment(
+  pieces: Piece[],
+  depth: number,
+  out: Replacement[],
+  pipedIntoShell = false,
+  outputExecuted = false
+): void {
+  const isRedirectTarget = redirectTargets(pieces);
+
+  const execIdx = findExecIdx(pieces, isRedirectTarget);
   const exec = execIdx === -1 ? "" : execName(pieces[execIdx].text);
   const isTextExec = TEXT_EXECS.has(exec);
 
@@ -337,6 +454,24 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
   }
   const codeCarrying = hasShellExec || hasEvalFlag || EVAL_EXECS.has(exec);
 
+  // A heredoc body is executed when a shell or eval-style exec consumes it
+  // (`bash <<EOF`, `ssh host <<EOF`) or when this segment's output is piped
+  // into a shell (`cat <<EOF | bash`). Otherwise the body is written, printed
+  // or searched — data. Same question the quoted-argument rules already ask,
+  // asked of the body.
+  // Two different questions, and conflating them gets one of them wrong.
+  //
+  //   codeCarrying   — this segment RUNS a command string it was handed
+  //                    (`bash -c …`, `ssh host …`).
+  //   outputExecuted — this segment's STDOUT becomes code somewhere else
+  //                    (`… | bash`, or a substitution whose result is a script).
+  //
+  // `bash -c "echo 'rm -rf /'"` is codeCarrying but its echo merely prints, so
+  // the operand stays data. `bash -c "$(echo rm -rf /)"` is the same words with
+  // the echo's OUTPUT as the script, so there the operand is code.
+  const executesOutput = pipedIntoShell || outputExecuted;
+  const heredocExecuted = codeCarrying || executesOutput;
+
   let seenShell = false;
   let pendingScript = false;
   let prevTextFlag = false;
@@ -345,6 +480,18 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
     const p = pieces[i];
     if (p.op) { prevTextFlag = false; continue; }
 
+    if (p.heredocBody) {
+      // Recursing on an executed body keeps `bash <<EOF … rm -rf / … EOF`
+      // hard-blocking; redacting an unexecuted one is issue #230's fix.
+      out.push({
+        start: p.start, end: p.end,
+        with: heredocExecuted ? sanitize(p.text, depth + 1) : " ",
+      });
+      prevTextFlag = false;
+      continue;
+    }
+    if (p.heredocDelim) { prevTextFlag = false; continue; }
+
     const isExecTok = i === execIdx;
     const flagName = p.text.toLowerCase();
 
@@ -352,7 +499,16 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
 
     // `bash -c <script>` — the next word is a command string, not data.
     if (pendingScript && !p.text.startsWith("-")) {
-      out.push({ start: p.start, end: p.end, with: sanitize(p.text, depth + 1) });
+      // The script can be entirely a substitution — `bash -c "$(…)"` — where
+      // `text` is empty and the substitution IS the script. Reading only `text`
+      // dropped it, so every `bash -c "$(echo rm -rf /)"` classified low: a
+      // silent bypass of the hard block (sable-c6an). The substitution's OUTPUT
+      // is the script, so it is sanitized as output-executed; the literal part
+      // of the script is not.
+      const parts: string[] = [];
+      if (p.text !== "") parts.push(sanitize(p.text, depth + 1));
+      for (const sub of p.substs) parts.push(sanitize(sub, depth + 1, true));
+      out.push({ start: p.start, end: p.end, with: parts.join(" ") });
       pendingScript = false;
       prevTextFlag = false;
       continue;
@@ -366,7 +522,9 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
 
     // `$(…)` / backticks execute — scan their contents, drop the literal wrapper.
     if (p.substs.length > 0) {
-      const inner = p.substs.map((s) => sanitize(s, depth + 1)).join(" ");
+      const inner = p.substs
+        .map((s) => sanitize(s, depth + 1, codeCarrying || executesOutput))
+        .join(" ");
       out.push({ start: p.start, end: p.end, with: inner });
       prevTextFlag = false;
       continue;
@@ -399,8 +557,11 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
     if (TEXT_FLAGS.has(flagName)) { prevTextFlag = true; continue; }
     prevTextFlag = false;
 
-    // Operands of a text command (`echo`, `grep`, `printf`) are never executed.
-    if (isTextExec && i > execIdx) {
+    // Operands of a text command (`echo`, `grep`, `printf`) are never executed
+    // — unless this segment's OUTPUT is what gets executed, in which case they
+    // are the script. `bash -c "$(echo rm -rf /)"` and `echo "rm -rf /" | bash`
+    // both run it; redacting the operand there hid a hard-block bypass.
+    if (isTextExec && i > execIdx && !executesOutput) {
       out.push({ start: p.start, end: p.end, with: " " });
       continue;
     }
@@ -411,9 +572,10 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
         // Single-word quoted operand: unquote it so quoting cannot be used to
         // hide a flag or a path from the patterns (`rm "-rf" "/"`).
         out.push({ start: p.start, end: p.end, with: p.text });
-      } else if (codeCarrying) {
-        // This segment executes a command string (`ssh host "…"`, `mysql -e "…"`).
-        // The quoted argument is code — unquote and scan it, recursively.
+      } else if (codeCarrying || executesOutput) {
+        // This segment executes a command string (`ssh host "…"`, `mysql -e "…"`),
+        // or its output is executed by whoever asked for it. Either way the
+        // quoted argument is code — unquote and scan it, recursively.
         out.push({ start: p.start, end: p.end, with: sanitize(p.text, depth + 1) });
       } else {
         // A quoted, multi-word argument to an ordinary command is prose data.
@@ -423,22 +585,36 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
   }
 }
 
-function sanitize(command: string, depth: number): string {
+function sanitize(command: string, depth: number, outputExecuted = false): string {
   if (!command || depth > MAX_SANITIZE_DEPTH) return command;
 
   const pieces = tokenize(command);
   const replacements: Replacement[] = [];
 
+  // Collect segments with the operator that ends each, so a segment can be
+  // asked whether its output feeds a shell.
+  const segments: { pieces: Piece[]; endOp: string | null }[] = [];
   let segment: Piece[] = [];
   for (const p of pieces) {
     if (p.op && CHAIN_OPS.has(p.op)) {
-      processSegment(segment, depth, replacements);
+      segments.push({ pieces: segment, endOp: p.op });
       segment = [];
       continue;
     }
     segment.push(p);
   }
-  processSegment(segment, depth, replacements);
+  segments.push({ pieces: segment, endOp: null });
+
+  for (let k = 0; k < segments.length; k++) {
+    const next = segments[k + 1];
+    const pipedIntoShell =
+      segments[k].endOp === "|" &&
+      next !== undefined &&
+      SHELL_EXECS.has(segmentExec(next.pieces));
+    processSegment(
+      segments[k].pieces, depth, replacements, pipedIntoShell, outputExecuted
+    );
+  }
 
   if (replacements.length === 0) return command;
 
