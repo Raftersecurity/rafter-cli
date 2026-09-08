@@ -162,7 +162,9 @@ interface Piece {
 }
 
 function isOpChar(c: string): boolean {
-  return c === ";" || c === "&" || c === "|" || c === ">" || c === "<";
+  // \n and \r are statement separators (rf-6pqx): a newline ends a command
+  // exactly as ";" does, so a payload on a later line is classified on its own.
+  return c === ";" || c === "&" || c === "|" || c === ">" || c === "<" || c === "\n" || c === "\r";
 }
 
 /** Read a `$(…)` substitution starting at `i`; returns its contents and the next index. */
@@ -191,18 +193,32 @@ function readBacktick(s: string, i: number): { inner: string; next: number } {
   return { inner, next: Math.min(j + 1, s.length) };
 }
 
-/** Split a command line into words and operators, respecting quotes and substitutions. */
-function tokenize(s: string): Piece[] {
+/**
+ * Split a command line into words and operators, respecting quotes and substitutions.
+ * `unterminated` is set when a quote is never closed — the parse is then unreliable
+ * and the caller must FAIL CLOSED (match the raw string) rather than trust a
+ * desynchronized sanitization (se-y6vo: `$'a\'b'` swallows a trailing payload).
+ */
+function tokenize(s: string): { pieces: Piece[]; unterminated: boolean } {
   const pieces: Piece[] = [];
+  let unterminated = false;
   let i = 0;
 
   while (i < s.length) {
     const c = s[i];
 
-    if (/\s/.test(c)) { i++; continue; }
+    // Whitespace EXCEPT newlines is skipped; a newline falls through to the
+    // operator branch below so it becomes a statement separator (rf-6pqx).
+    if (/\s/.test(c) && c !== "\n" && c !== "\r") { i++; continue; }
 
     if (isOpChar(c)) {
       const start = i;
+      if (c === "\n" || c === "\r") {
+        // Normalize a line break (incl. CRLF) to a ";" separator piece.
+        i += 1;
+        pieces.push({ start, end: i, op: ";", text: ";", quoted: false, substs: [] });
+        continue;
+      }
       const two = s.slice(i, i + 2);
       const op = (two === "&&" || two === "||" || two === ">>" || two === "<<") ? two : c;
       i += op.length;
@@ -220,6 +236,12 @@ function tokenize(s: string): Piece[] {
       if (/\s/.test(ch) || isOpChar(ch)) break;
 
       if (ch === "\\") {
+        // Line continuation: `\` immediately before a newline (incl. CRLF) is
+        // deleted by the shell — `r\<NL>m` is `rm`, so the newline must not be
+        // absorbed into the word (rf-6pqx/se-y6vo).
+        const nxt = s[i + 1] ?? "";
+        if (nxt === "\n") { i += 2; continue; }
+        if (nxt === "\r") { i += 2; if (s[i] === "\n") i++; continue; }
         i++;
         if (i < s.length) { text += s[i]; i++; }
         continue;
@@ -229,8 +251,12 @@ function tokenize(s: string): Piece[] {
       if (ch === "'") {
         i++;
         quoted = true;
-        while (i < s.length && s[i] !== "'") { text += s[i]; i++; }
-        i++;
+        let closed = false;
+        while (i < s.length) {
+          if (s[i] === "'") { closed = true; i++; break; }
+          text += s[i]; i++;
+        }
+        if (!closed) unterminated = true;
         continue;
       }
 
@@ -238,8 +264,13 @@ function tokenize(s: string): Piece[] {
       if (ch === '"') {
         i++;
         quoted = true;
-        while (i < s.length && s[i] !== '"') {
+        let closed = false;
+        while (i < s.length) {
+          if (s[i] === '"') { closed = true; i++; break; }
           if (s[i] === "\\") {
+            const nxt = s[i + 1] ?? "";
+            if (nxt === "\n") { i += 2; continue; }
+            if (nxt === "\r") { i += 2; if (s[i] === "\n") i++; continue; }
             i++;
             if (i < s.length) { text += s[i]; i++; }
             continue;
@@ -253,7 +284,7 @@ function tokenize(s: string): Piece[] {
           text += s[i];
           i++;
         }
-        i++;
+        if (!closed) unterminated = true;
         continue;
       }
 
@@ -271,7 +302,7 @@ function tokenize(s: string): Piece[] {
     pieces.push({ start, end: i, op: null, text, quoted, substs });
   }
 
-  return pieces;
+  return { pieces, unterminated };
 }
 
 /** `/usr/bin/rm` → `rm`; used to classify the executable of a segment. */
@@ -283,6 +314,16 @@ function execName(text: string): string {
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const SHELL_C_FLAG = /^-[a-z]*c$/;
 const LONG_FLAG_WITH_VALUE = /^(--[a-z][a-z-]*)=/;
+const NUMERIC_ARG = /^\d+[a-z]*$/i;
+
+/**
+ * A heredoc introducer: `<<`, optional `-`/`~` (indented-terminator forms), an
+ * optional quote around the delimiter, and the delimiter word. Group 1 is the
+ * dash/tilde, group 3 is the delimiter name. `g` so we can find all on a line.
+ */
+const HEREDOC_START = /<<([-~]?)\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/g;
+/** Chain/pipe operators, used to find the statement that owns a heredoc. */
+const CHAIN_SPLIT = /\|\||&&|[;|&]/;
 
 interface Replacement { start: number; end: number; with: string; }
 
@@ -423,10 +464,47 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
   }
 }
 
+/**
+ * Remove `\<newline>` line continuations the way a shell does BEFORE parsing.
+ * `r\<NL>m -rf /` is `rm -rf /` to bash, so the backslash-newline must be deleted
+ * or the token `rm` never forms and the pattern misses it (se-y6vo). Removed when
+ * unquoted or inside double quotes; PRESERVED inside single quotes.
+ */
+function stripLineContinuations(s: string): string {
+  if (!s.includes("\\")) return s;
+  let out = "";
+  let i = 0;
+  let inSingle = false;
+  let inDouble = false;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "'" && !inDouble) { inSingle = !inSingle; out += c; i++; continue; }
+    if (c === '"' && !inSingle) { inDouble = !inDouble; out += c; i++; continue; }
+    if (c === "\\" && !inSingle) {
+      const nxt = s[i + 1] ?? "";
+      if (nxt === "\n") { i += 2; continue; }
+      if (nxt === "\r") { i += 2; if (s[i] === "\n") i++; continue; }
+      // Normal escape (`\"`, `\$`, …): keep both chars so an escaped quote does
+      // not flip the quote state above.
+      out += c;
+      if (i + 1 < s.length) { out += s[i + 1]; i += 2; } else { i++; }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 function sanitize(command: string, depth: number): string {
   if (!command || depth > MAX_SANITIZE_DEPTH) return command;
 
-  const pieces = tokenize(command);
+  command = stripLineContinuations(command);
+  const { pieces, unterminated } = tokenize(command);
+  // Fail closed: an unterminated quote means the parse desynchronized from the
+  // shell, so a sanitized view could hide an executable payload. Match the raw
+  // command instead (se-y6vo).
+  if (unterminated) return command;
   const replacements: Replacement[] = [];
 
   let segment: Piece[] = [];
@@ -459,8 +537,74 @@ function sanitize(command: string, depth: number): string {
  * command consumes as DATA is redacted; text a shell or eval wrapper EXECUTES
  * is preserved (and recursively sanitized). Everything else is untouched.
  */
+/**
+ * Does the command that owns a heredoc EXECUTE its body? `cat > f <<EOF` /
+ * `grep -q x <<EOF` consume the body as DATA; `bash <<EOF` / `sh <<'EOF'` /
+ * `ssh host <<EOF` EXECUTE it. Only a data body may be stripped; an executed
+ * body must stay visible to the patterns (else the newline fix opens a fresh
+ * bypass — se-y6vo).
+ */
+function heredocOwnerExecutes(line: string, ltPos: number): boolean {
+  const head = line.slice(0, ltPos);
+  const segments = head.split(CHAIN_SPLIT);
+  const seg = segments.length ? segments[segments.length - 1] : head;
+  const tokens = seg.split(/\s+/).filter((t) => t.length > 0);
+  let idx = 0;
+  while (idx < tokens.length) {
+    const tok = tokens[idx];
+    if (ENV_ASSIGNMENT.test(tok)) { idx++; continue; }
+    const name = execName(tok);
+    if (TAIL_WRAPPERS.has(name)) {
+      idx++;
+      while (idx < tokens.length && (tokens[idx].startsWith("-") || NUMERIC_ARG.test(tokens[idx]))) idx++;
+      continue;
+    }
+    return SHELL_EXECS.has(name) || EVAL_EXECS.has(name);
+  }
+  return false;
+}
+
+/**
+ * Blank heredoc BODIES that a command consumes as DATA, before tokenizing.
+ * A body written to a file (`cat > doc.md <<EOF … EOF`) or searched
+ * (`grep <<EOF … EOF`) is data, never executed. Leaving it in place makes the
+ * newline-as-separator fix (rf-6pqx) classify ordinary documentation writes as
+ * CRITICAL (rf-3rsj) — the same over-block public #230 reported. Stripping it
+ * fixes both. A body EXECUTED by a shell/eval owner is KEPT so it is still
+ * scanned. Co-designed with kerckhoffs (se-ijzs) and achebe (#230).
+ */
+function stripHeredocBodies(command: string): string {
+  if (!command.includes("<<")) return command;
+  const lines = command.split("\n");
+  const out: string[] = [];
+  let k = 0;
+  while (k < lines.length) {
+    const line = lines[k];
+    out.push(line);
+    HEREDOC_START.lastIndex = 0;
+    const matches = [...line.matchAll(HEREDOC_START)];
+    k += 1;
+    if (matches.length === 0) continue;
+    const keep = heredocOwnerExecutes(line, matches[0].index ?? 0);
+    for (const m of matches) {
+      const delim = m[3];
+      const dash = m[1]; // '-'/'~': a tab-indented terminator is allowed
+      while (k < lines.length) {
+        // bash terminates only on a line EXACTLY equal to the delimiter — for
+        // plain `<<` an indented delimiter is body; `<<-` strips leading TABS.
+        let cand = lines[k].replace(/\r$/, "");
+        if (dash) cand = cand.replace(/^\t+/, "");
+        if (cand === delim) { k += 1; break; }
+        if (keep) out.push(lines[k]);
+        k += 1;
+      }
+    }
+  }
+  return out.join("\n");
+}
+
 export function sanitizeCommandForMatching(command: string): string {
-  return sanitize(command, 0);
+  return sanitize(stripHeredocBodies(command), 0);
 }
 
 /**
