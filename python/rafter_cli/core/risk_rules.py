@@ -97,6 +97,24 @@ DEFAULT_REQUIRE_APPROVAL: list[str] = [
 #     `--body`, …) and prose-shaped quoted arguments are DATA -> redacted;
 #   * everything else is preserved byte for byte.
 #
+# HEREDOC (sable-5ogx / issue #230). `cat > notes.md <<'EOF' … EOF` WRITES its
+# body to a file; it does not run it. Without heredoc handling the body reached
+# the matcher as bare words, so documentation that quotes a dangerous command
+# scored identically to running it -- a prose line mentioning `rm -rf /` in a
+# markdown file classified CRITICAL, the tier no policy, mode or deny-list can
+# override. So a heredoc body is DATA, with one exception.
+#
+# The exception is the case where the body really is executed: a shell or
+# eval-style exec consuming it (`bash <<EOF`, `ssh host <<EOF`), or a segment
+# whose output is piped into a shell (`cat <<EOF | bash`). Those reuse the same
+# _SHELL_EXECS / _EVAL_EXECS machinery that already governs quoted arguments,
+# rather than adding a second rule beside it.
+#
+# This has to happen in the TOKENIZER, not as a filter afterward: once the input
+# has been split into statements, the fact that a line was heredoc body is gone.
+# rf-6pqx splits statements on newlines, and a body line promoted to its own
+# statement is exactly the #230 regression.
+#
 # Known limitation: an *unrecognized* evaluator that takes a bare quoted command
 # string with no `-c`/`-e`-style flag (e.g. a bespoke `myrunner "rm -rf /"`) has
 # its argument treated as data. Anything reached through a real shell, an eval
@@ -130,7 +148,7 @@ _TEXT_FLAGS = {
 _CHAIN_OPS = {";", "&&", "||", "|", "&"}
 
 # Operators whose following token is a redirect target (a path — never data).
-_REDIRECT_OPS = {">", ">>", "<", "<<"}
+_REDIRECT_OPS = {">", ">>", "<", "<<", "<<-", "<<<"}
 
 # Bound on recursion through nested shell wrappers / substitutions.
 _MAX_SANITIZE_DEPTH = 8
@@ -145,7 +163,10 @@ _WHITESPACE = re.compile(r"\s")
 class _Piece:
     """A word or an operator, with its span in the source string."""
 
-    __slots__ = ("start", "end", "op", "text", "quoted", "substs")
+    __slots__ = (
+        "start", "end", "op", "text", "quoted", "substs",
+        "heredoc_body", "heredoc_delim",
+    )
 
     def __init__(
         self,
@@ -155,6 +176,8 @@ class _Piece:
         text: str,
         quoted: bool,
         substs: list[str],
+        heredoc_body: bool = False,
+        heredoc_delim: bool = False,
     ) -> None:
         self.start = start
         self.end = end
@@ -162,6 +185,10 @@ class _Piece:
         self.text = text
         self.quoted = quoted
         self.substs = substs
+        #: True for the body of a heredoc — see HEREDOC in the module notes.
+        self.heredoc_body = heredoc_body
+        #: True for the word naming a heredoc's terminator (`<<EOF` -> `EOF`).
+        self.heredoc_delim = heredoc_delim
 
 
 def _is_op_char(c: str) -> bool:
@@ -196,14 +223,66 @@ def _read_backtick(s: str, i: int) -> tuple[str, int]:
     return "".join(inner), min(j + 1, len(s))
 
 
+def _read_heredoc_bodies(s: str, i: int, queued: list[tuple[str, bool]]) -> int:
+    """Consume the heredoc bodies queued on this line, starting at newline ``i``.
+
+    Returns the index just past the last terminator consumed. An UNTERMINATED
+    heredoc runs to end of input: that is the fail-safe direction, because the
+    alternative is scanning documentation as commands.
+    """
+    j = i + 1
+    n = len(s)
+    for delim, strip_tabs in queued:
+        while True:
+            if j >= n:
+                j = n
+                break
+            nl = s.find("\n", j)
+            line_end = n if nl == -1 else nl
+            line = s[j:line_end]
+            if strip_tabs:
+                # `<<-` strips leading TABS from the terminator — tabs only.
+                line = line.lstrip("\t")
+            if line == delim:
+                j = n if nl == -1 else nl + 1
+                break
+            if nl == -1:
+                j = n
+                break
+            j = nl + 1
+    return j
+
+
 def _tokenize(s: str) -> list[_Piece]:
     """Split a command line into words and operators, respecting quotes/substitutions."""
     pieces: list[_Piece] = []
     i = 0
     n = len(s)
+    #: Heredocs introduced on the current line, in the order the shell reads them.
+    queued: list[tuple[str, bool]] = []
+    #: Set after `<<`/`<<-`: the next word names the terminator, not a path.
+    expect_delim: bool | None = None
 
     while i < n:
         c = s[i]
+
+        # A newline with heredocs queued: everything through the terminators is
+        # body text, and body text is data. This must precede the whitespace
+        # skip below, which would otherwise step over the newline and let the
+        # body tokenize as ordinary words.
+        if c == "\n" and queued:
+            body_start = i + 1
+            end = _read_heredoc_bodies(s, i, queued)
+            queued = []
+            if end > body_start:
+                pieces.append(
+                    _Piece(
+                        body_start, end, None, s[body_start:end], True, [],
+                        heredoc_body=True,
+                    )
+                )
+            i = end
+            continue
 
         if c.isspace():
             i += 1
@@ -211,10 +290,22 @@ def _tokenize(s: str) -> list[_Piece]:
 
         if _is_op_char(c):
             start = i
+            three = s[i:i + 3]
             two = s[i:i + 2]
-            op = two if two in ("&&", "||", ">>", "<<") else c
+            if three == "<<<":
+                # A here-STRING, not a heredoc: one word operand, no body.
+                # Mistaking it for `<<` would swallow the rest of the input.
+                op = three
+            elif three == "<<-":
+                op = three
+            elif two in ("&&", "||", ">>", "<<"):
+                op = two
+            else:
+                op = c
             i += len(op)
             pieces.append(_Piece(start, i, op, op, False, []))
+            if op in ("<<", "<<-"):
+                expect_delim = op == "<<-"
             continue
 
         start = i
@@ -280,7 +371,18 @@ def _tokenize(s: str) -> list[_Piece]:
             text.append(ch)
             i += 1
 
-        pieces.append(_Piece(start, i, None, "".join(text), quoted, substs))
+        word = "".join(text)
+        if expect_delim is not None:
+            # `<<'EOF'` / `<<"EOF"` — quoting changes expansion inside the body,
+            # not where the body ends, so both forms terminate identically.
+            queued.append((word, expect_delim))
+            expect_delim = None
+            pieces.append(
+                _Piece(start, i, None, word, quoted, substs, heredoc_delim=True)
+            )
+            continue
+
+        pieces.append(_Piece(start, i, None, word, quoted, substs))
 
     return pieces
 
@@ -290,32 +392,33 @@ def _exec_name(text: str) -> str:
     return text[text.rfind("/") + 1:].lower()
 
 
-def _process_segment(
-    pieces: list[_Piece],
-    depth: int,
-    out: list[tuple[int, int, str]],
-) -> None:
-    """Decide which spans of one segment are DATA and which are code."""
-    # A word is a redirect target when the piece before it is `>`/`>>`/`<`.
+def _redirect_targets(pieces: list[_Piece]) -> list[bool]:
+    """A word is a redirect target when the piece before it is `>`/`>>`/`<`/`<<`."""
     is_redirect_target = [False] * len(pieces)
     for i in range(1, len(pieces)):
         prev = pieces[i - 1]
         if prev.op in _REDIRECT_OPS and pieces[i].op is None:
             is_redirect_target[i] = True
+    return is_redirect_target
 
-    # Effective executable: skip env assignments and prefix wrappers (`sudo`,
-    # `env`, `timeout 5`, `nice -n 15`, …) to reach the command they delegate to.
-    exec_idx = -1
+
+def _find_exec_idx(pieces: list[_Piece], is_redirect_target: list[bool]) -> int:
+    """Index of the word that actually runs.
+
+    Env assignments and prefix wrappers (`sudo`, `env`, `timeout 5`,
+    `nice -n 15`, …) are skipped to reach the command they delegate to.
+    -1 when the segment runs nothing.
+    """
     i = 0
     while i < len(pieces):
         p = pieces[i]
-        if p.op is not None or is_redirect_target[i]:
+        if p.op is not None or is_redirect_target[i] or p.heredoc_body:
             i += 1
             continue
         if not p.quoted and _ENV_ASSIGNMENT.match(p.text):
             i += 1
             continue
-        if exec_idx == -1 and not p.quoted and _exec_name(p.text) in _TAIL_WRAPPERS:
+        if not p.quoted and _exec_name(p.text) in _TAIL_WRAPPERS:
             # Skip the wrapper's own flags and their numeric/duration values.
             j = i + 1
             while j < len(pieces):
@@ -329,9 +432,26 @@ def _process_segment(
                 break
             i = j
             continue
-        exec_idx = i
-        break
+        return i
+    return -1
 
+
+def _segment_exec(pieces: list[_Piece]) -> str:
+    """The effective executable of a segment (`sudo rm -rf /` -> `rm`)."""
+    idx = _find_exec_idx(pieces, _redirect_targets(pieces))
+    return "" if idx == -1 else _exec_name(pieces[idx].text)
+
+
+def _process_segment(
+    pieces: list[_Piece],
+    depth: int,
+    out: list[tuple[int, int, str]],
+    piped_into_shell: bool = False,
+    output_executed: bool = False,
+) -> None:
+    """Decide which spans of one segment are DATA and which are code."""
+    is_redirect_target = _redirect_targets(pieces)
+    exec_idx = _find_exec_idx(pieces, is_redirect_target)
     exec_ = "" if exec_idx == -1 else _exec_name(pieces[exec_idx].text)
     is_text_exec = exec_ in _TEXT_EXECS
 
@@ -349,12 +469,42 @@ def _process_segment(
             has_eval_flag = True
     code_carrying = has_shell_exec or has_eval_flag or exec_ in _EVAL_EXECS
 
+    # Two different questions, and conflating them gets one of them wrong.
+    #
+    #   code_carrying   -- this segment RUNS a command string it was handed
+    #                      (`bash -c …`, `ssh host …`).
+    #   executes_output -- this segment's STDOUT becomes code somewhere else
+    #                      (`… | bash`, or a substitution whose result is a
+    #                      script).
+    #
+    # `bash -c "echo 'rm -rf /'"` is code-carrying but its echo merely prints,
+    # so the operand stays data. `bash -c "$(echo rm -rf /)"` is the same words
+    # with the echo's OUTPUT as the script, so there the operand is code.
+    executes_output = piped_into_shell or output_executed
+    heredoc_executed = code_carrying or executes_output
+
     seen_shell = False
     pending_script = False
     prev_text_flag = False
 
     for i, p in enumerate(pieces):
         if p.op is not None:
+            prev_text_flag = False
+            continue
+
+        if p.heredoc_body:
+            # Recursing on an executed body keeps `bash <<EOF … rm -rf / … EOF`
+            # hard-blocking; redacting an unexecuted one is issue #230's fix.
+            out.append(
+                (
+                    p.start,
+                    p.end,
+                    _sanitize(p.text, depth + 1) if heredoc_executed else " ",
+                )
+            )
+            prev_text_flag = False
+            continue
+        if p.heredoc_delim:
             prev_text_flag = False
             continue
 
@@ -366,7 +516,18 @@ def _process_segment(
 
         # `bash -c <script>` — the next word is a command string, not data.
         if pending_script and not p.text.startswith("-"):
-            out.append((p.start, p.end, _sanitize(p.text, depth + 1)))
+            # The script can be entirely a substitution -- `bash -c "$(…)"` --
+            # where `text` is empty and the substitution IS the script. Reading
+            # only `text` dropped it, so every `bash -c "$(echo rm -rf /)"`
+            # classified low: a silent bypass of the hard block (sable-c6an).
+            # The substitution's OUTPUT is the script, so it is sanitized as
+            # output-executed; the literal part of the script is not.
+            parts: list[str] = []
+            if p.text != "":
+                parts.append(_sanitize(p.text, depth + 1))
+            for sub in p.substs:
+                parts.append(_sanitize(sub, depth + 1, True))
+            out.append((p.start, p.end, " ".join(parts)))
             pending_script = False
             prev_text_flag = False
             continue
@@ -378,7 +539,10 @@ def _process_segment(
 
         # `$(…)` / backticks execute — scan their contents, drop the literal wrapper.
         if p.substs:
-            inner = " ".join(_sanitize(s, depth + 1) for s in p.substs)
+            inner = " ".join(
+                _sanitize(s, depth + 1, code_carrying or executes_output)
+                for s in p.substs
+            )
             out.append((p.start, p.end, inner))
             prev_text_flag = False
             continue
@@ -413,7 +577,7 @@ def _process_segment(
         prev_text_flag = False
 
         # Operands of a text command (`echo`, `grep`, `printf`) are never executed.
-        if is_text_exec and i > exec_idx:
+        if is_text_exec and i > exec_idx and not executes_output:
             out.append((p.start, p.end, " "))
             continue
 
@@ -423,7 +587,7 @@ def _process_segment(
                 # Single-word quoted operand: unquote it so quoting cannot hide a
                 # flag or a path from the patterns (`rm "-rf" "/"`).
                 out.append((p.start, p.end, p.text))
-            elif code_carrying:
+            elif code_carrying or executes_output:
                 # This segment executes a command string (`ssh host "…"`,
                 # `mysql -e "…"`). The quoted argument is code — unquote and scan
                 # it, recursively.
@@ -433,21 +597,34 @@ def _process_segment(
                 out.append((p.start, p.end, " "))
 
 
-def _sanitize(command: str, depth: int) -> str:
+def _sanitize(command: str, depth: int, output_executed: bool = False) -> str:
     if not command or depth > _MAX_SANITIZE_DEPTH:
         return command
 
     pieces = _tokenize(command)
     replacements: list[tuple[int, int, str]] = []
 
+    # Collect segments with the operator that ends each, so a segment can be
+    # asked whether its output feeds a shell.
+    segments: list[tuple[list[_Piece], str | None]] = []
     segment: list[_Piece] = []
     for p in pieces:
         if p.op is not None and p.op in _CHAIN_OPS:
-            _process_segment(segment, depth, replacements)
+            segments.append((segment, p.op))
             segment = []
             continue
         segment.append(p)
-    _process_segment(segment, depth, replacements)
+    segments.append((segment, None))
+
+    for k, (seg, end_op) in enumerate(segments):
+        piped_into_shell = (
+            end_op == "|"
+            and k + 1 < len(segments)
+            and _segment_exec(segments[k + 1][0]) in _SHELL_EXECS
+        )
+        _process_segment(
+            seg, depth, replacements, piped_into_shell, output_executed
+        )
 
     if not replacements:
         return command
