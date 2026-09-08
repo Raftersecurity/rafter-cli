@@ -120,6 +120,15 @@ jobs:
         run: |
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
 
+      # The rf-6pqx differential compares this branch's classifier against
+      # main's, and it FAILS rather than skips when the baseline is missing —
+      # correctly, since a differential that silently skips is a vacuous gate.
+      # actions/checkout fetches only the PR ref, so `origin/main` is not in the
+      # clone and the gate cannot run at all. A depth-1 fetch is enough: the
+      # gate reads one blob, not the history.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
       - name: Build
         run: pnpm run build
 
@@ -172,6 +181,12 @@ jobs:
         run: |
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
           pip install pytest pytest-mock pytest-asyncio
+
+      # Same reason as test-node: the differential FAILS rather than skips
+      # when main's classifier is unobtainable, and actions/checkout fetches
+      # only the PR ref. One blob is all the gate needs.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
 
       - name: Run all tests
         # xunit1 is the JUnit family that records `file` per test case, which
