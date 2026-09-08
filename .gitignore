@@ -9,6 +9,11 @@ venv/
 uv.lock
 
 # Node
+# Both forms on purpose: the trailing slash matches DIRECTORIES ONLY, so a
+# stray `node_modules` SYMLINK slips past it and `git add -A` commits it. That
+# happened (a self-referential link committed in 9263608), and on checkout it
+# leaves a broken link where the install should go.
+node_modules
 node_modules/
 dist/
 *.tgz
