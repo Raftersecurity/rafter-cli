@@ -396,10 +396,13 @@ class TestAgentExecApproval:
         f = tmp_path / "forced.txt"
         f.write_text("x")
         f.chmod(0o600)
-        out, _, rc = _exec([f"chmod 777 {f}", "--force"], home=tmp_path)
+        out, err, rc = _exec([f"chmod 777 {f}", "--force"], home=tmp_path)
         assert rc == 1
         assert "--force no longer skips approval" in out
-        assert "interactive terminal" in out
+        # The denial line itself — not the notice, which also mentions a
+        # terminal — and a clean exit, not an EOFError from input().
+        assert "Command denied: approval needs an interactive terminal" in out
+        assert "Traceback" not in err
         assert "Forcing execution" not in out
         assert (f.stat().st_mode & 0o777) == 0o600
 
@@ -411,10 +414,11 @@ class TestAgentExecApproval:
         f = tmp_path / "piped.txt"
         f.write_text("x")
         f.chmod(0o600)
-        out, _, rc = _exec([f"chmod 777 {f}"], stdin_text="yes\n", home=tmp_path)
+        out, err, rc = _exec([f"chmod 777 {f}"], stdin_text="yes\n", home=tmp_path)
         assert rc == 1
-        assert "interactive terminal" in out
+        assert "Command denied: approval needs an interactive terminal" in out
         assert "approved by user" not in out
+        assert "Traceback" not in err
         assert (f.stat().st_mode & 0o777) == 0o600
 
     def test_dry_run_allowed_exits_0_and_runs_nothing(self, tmp_path):

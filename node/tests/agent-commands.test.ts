@@ -497,8 +497,10 @@ describe("agent exec", () => {
     const r = runCli(`agent exec "chmod 777 ${f}" --force`, home);
     expect(r.exitCode).toBe(1);
     expect(r.stdout).toContain("--force no longer skips approval");
-    expect(r.stdout).toContain("interactive terminal");
+    // The denial line itself — not the notice, which also mentions a terminal.
+    expect(r.stdout).toContain("Command denied: approval needs an interactive terminal");
     expect(r.stdout).not.toContain("Forcing execution");
+    expect(r.stdout).not.toContain("Command cancelled");
     expect(fs.statSync(f).mode & 0o777).toBe(0o600);
   });
 
@@ -519,7 +521,7 @@ describe("agent exec", () => {
       env: { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), CI: "1" },
     });
     expect(r.status).toBe(1);
-    expect(r.stdout).toContain("interactive terminal");
+    expect(r.stdout).toContain("Command denied: approval needs an interactive terminal");
     expect(r.stdout).not.toContain("approved by user");
     expect(fs.statSync(f).mode & 0o777).toBe(0o600);
   });
