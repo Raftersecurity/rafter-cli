@@ -321,7 +321,7 @@ const NUMERIC_ARG = /^\d+[a-z]*$/i;
  * optional quote around the delimiter, and the delimiter word. Group 1 is the
  * dash/tilde, group 3 is the delimiter name. `g` so we can find all on a line.
  */
-const HEREDOC_START = /<<([-~]?)\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/g;
+const HEREDOC_START = /(?<!<)<<(?!<)([-~]?)\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/g;
 /** Chain/pipe operators, used to find the statement that owns a heredoc. */
 const CHAIN_SPLIT = /\|\||&&|[;|&]/;
 
@@ -573,6 +573,35 @@ function heredocOwnerExecutes(line: string, ltPos: number): boolean {
  * fixes both. A body EXECUTED by a shell/eval owner is KEPT so it is still
  * scanned. Co-designed with kerckhoffs (se-ijzs) and achebe (#230).
  */
+/**
+ * `cat <<EOF | bash` — the body is data to `cat`, but `cat`'s OUTPUT is the
+ * script, so the body is executed after all. The owner check above only reads
+ * the text BEFORE the introducer and never sees the pipe, so without this a
+ * heredoc piped into a shell is stripped and the hard block is silently lost.
+ * Keeping a body is the safe direction: it can only over-block, and only for a
+ * shape that should block anyway.
+ */
+function heredocOutputPipedToShell(line: string, ltPos: number): boolean {
+  const stages = line.slice(ltPos).split("|").slice(1);
+  for (const stage of stages) {
+    const tokens = stage.trim().split(/\s+/).filter((t) => t.length > 0);
+    let idx = 0;
+    while (idx < tokens.length) {
+      const tok = tokens[idx];
+      if (ENV_ASSIGNMENT.test(tok)) { idx++; continue; }
+      const name = execName(tok);
+      if (TAIL_WRAPPERS.has(name)) {
+        idx++;
+        while (idx < tokens.length && (tokens[idx].startsWith("-") || NUMERIC_ARG.test(tokens[idx]))) idx++;
+        continue;
+      }
+      if (SHELL_EXECS.has(name) || EVAL_EXECS.has(name)) return true;
+      break;
+    }
+  }
+  return false;
+}
+
 function stripHeredocBodies(command: string): string {
   if (!command.includes("<<")) return command;
   const lines = command.split("\n");
@@ -585,7 +614,9 @@ function stripHeredocBodies(command: string): string {
     const matches = [...line.matchAll(HEREDOC_START)];
     k += 1;
     if (matches.length === 0) continue;
-    const keep = heredocOwnerExecutes(line, matches[0].index ?? 0);
+    const ltPos = matches[0].index ?? 0;
+    const keep =
+      heredocOwnerExecutes(line, ltPos) || heredocOutputPipedToShell(line, ltPos);
     for (const m of matches) {
       const delim = m[3];
       const dash = m[1]; // '-'/'~': a tab-indented terminator is allowed
