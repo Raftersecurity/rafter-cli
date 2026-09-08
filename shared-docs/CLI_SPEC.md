@@ -532,7 +532,13 @@ When `.rafter.yml` `ignore:` rules (or `.rafterignore`) hide one or more finding
 
 Exit code is unaffected by suppression — exit `1` is returned only when at least one *non-suppressed* finding remains.
 
-Remote `rafter run` emits the same suppression data as a separate `suppressed.json` artifact (alongside `findings.json`, which is unaffected), using this identical per-entry shape; its `source` is `".rafter/config.yml"` (the backend's config filename). So a finding hidden by an `ignore` rule is recoverable whether the scan ran locally or remotely.
+Remote `rafter run` (the hosted scanner) writes the same data as a separate `suppressed.json` artifact beside `findings.json` (`scan-results/{org}/{scan}/{mode}/suppressed.json`, written whenever a config file was present), with this per-entry shape under `_suppressed`; `source` is the repo-relative config file it actually read (`.rafter.yml`, `.rafter/config.yml`, …). It carries three things a local scan does not need:
+
+- `blocked` — findings an ignore rule matched but the hosted scanner kept anyway, each with `blocked_by`: `must-fix`, `secret-scanner`, or `unclassified-high`. The hosted scanner never lets repo config hide those (see *Hosted-scanner invariant* under `ignore:` below).
+- `unmatched` — every `paths`/`rules` selector that matched no finding. This is the usual answer to "my config is ignored": a hashed id from a different scan, a typo, or a glob that does not reach the file.
+- `applied` / `error` — `applied: false` with the parser's message when the file was rejected; findings are then reported unfiltered.
+
+So a finding hidden by an `ignore` rule is recoverable whether the scan ran locally or remotely, and a rule that hid nothing says why.
 
 ### rafter agent exec COMMAND [OPTIONS]
 
@@ -1354,7 +1360,11 @@ These rules are honored identically by the **local** CLI engines (Node and Pytho
 - A relative glob (no leading `/`, not starting with `**`) is auto-anchored to match **anywhere** along the absolute scan path, so `tests/fixtures/**` matches `/abs/project/tests/fixtures/foo`.
 - Path matching is case-sensitive.
 
-*Rule selectors (`rules:`)* — each entry matches a finding when it equals (case-insensitively) **either** the finding's rule **name/title** (e.g. `AWS Access Key`) **or** its **rule id** (e.g. `R-6D5E2` / `rules.autogrep.json.vuln-…`). Use the name for local pattern findings and the id for remote SAST/SCA findings. Non-existent selectors are harmless (they just never match).
+*Rule selectors (`rules:`)* — each entry matches a finding when it equals (case-insensitively) **either** the finding's rule **name/title** (e.g. `AWS Access Key`) **or** its **rule id** — the hashed `R-XXXXX` id the hosted report and PR comment show (e.g. `R-6D5E2`) or the scanner-native id (`rules.autogrep.json.vuln-…`); the hosted scanner accepts all three. Use the name for local pattern findings and either id for remote SAST/SCA findings. Non-existent selectors are harmless (they just never match); on a remote scan they are listed in `suppressed.json` under `unmatched`.
+
+*Key spelling* — every engine accepts the camelCase keys shown here and the hosted scanner's snake_case (`exclude_paths`) alike; if a file carries both, snake_case wins on the hosted scanner.
+
+*Hosted-scanner invariant* — the remote backend never suppresses a **must-fix**, **secret-scanner**, or unclassified **critical/high** finding, whatever `ignore:` says: the match is recorded in `suppressed.json` under `blocked` with `blocked_by`, and the finding stays in the report. Local engines apply no such floor. Suppression is the project's decision on both sides; it is a separate surface from `commandPolicy`, which the global config may bound.
 
 ---
 
