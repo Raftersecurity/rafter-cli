@@ -2,12 +2,59 @@ import { Command } from "commander";
 import { ConfigManager } from "../../core/config-manager.js";
 import { BinaryManager } from "../../utils/binary-manager.js";
 import { SkillManager } from "../../utils/skill-manager.js";
+import { resolveHookControl } from "../../core/hook-control.js";
 import { spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
 import yaml from "js-yaml";
 import { fmt } from "../../utils/formatter.js";
+
+/**
+ * Run a configured PreToolUse hook command EXACTLY as Claude Code would — through
+ * `sh -c "<command as written in settings.json>"`, with a synthetic payload on
+ * stdin — and return its exit status and the permissionDecision it emitted.
+ *
+ * This is the whole point of rf-fuwy: `agent verify` used to confirm only that
+ * the hook was CONFIGURED (a substring match) and reported a completely inert
+ * gate as healthy, byte-identical to a working one. A command that does not
+ * resolve exits 127; Claude Code blocks only on exit 2, so 127 is a silent
+ * allow. Executing the command is the only check that cannot be fooled by that.
+ */
+export function runConfiguredHook(
+  command: string,
+  toolCommand: string,
+): { status: number | null; decision: string | null; error?: string; stdout: string } {
+  const payload = JSON.stringify({
+    session_id: `rafter-verify-${process.pid}-${Date.now()}`,
+    transcript_path: "",
+    cwd: process.cwd(),
+    permission_mode: "default",
+    hook_event_name: "PreToolUse",
+    tool_name: "Bash",
+    tool_input: { command: toolCommand },
+  });
+  // `sh -c` reproduces exactly how Claude Code invokes a shell-form hook, so a
+  // command that resolves in this terminal but not in the editor (or vice versa)
+  // is exercised the same way the editor would exercise it.
+  const result = spawnSync("sh", ["-c", command], {
+    input: payload,
+    encoding: "utf-8",
+    timeout: 10_000,
+  });
+  if (result.error) {
+    return { status: null, decision: null, error: result.error.message, stdout: "" };
+  }
+  const stdout = result.stdout ?? "";
+  let decision: string | null = null;
+  try {
+    const parsed = JSON.parse(stdout);
+    decision = parsed?.hookSpecificOutput?.permissionDecision ?? null;
+  } catch {
+    decision = null;
+  }
+  return { status: result.status, decision, stdout };
+}
 
 interface CheckResult {
   name: string;
@@ -86,13 +133,67 @@ function checkClaudeCode(): CheckResult {
     // Substring match — Python install writes an absolute path
     // (/home/foo/bin/rafter hook pretool), Node writes the bare command.
     const hooks = settings?.hooks?.PreToolUse || [];
-    const hasRafterHook = hooks.some((entry: any) =>
-      (entry.hooks || []).some((h: any) => String(h?.command ?? "").includes("rafter hook pretool"))
-    );
-    if (!hasRafterHook) {
+    const commands: string[] = [];
+    for (const entry of hooks) {
+      for (const h of entry.hooks || []) {
+        const cmd = String(h?.command ?? "");
+        if (cmd.includes("hook pretool")) commands.push(cmd);
+      }
+    }
+    if (commands.length === 0) {
       return { name, passed: false, optional: true, detail: "Rafter hooks not installed — run 'rafter agent init --with-claude-code'" };
     }
-    return { name, passed: true, detail: "Hooks installed" };
+
+    // A configured hook that has been deliberately switched off is a valid
+    // state, not a failure: expecting a "deny" from a disabled hook would fail a
+    // machine whose owner turned it off on purpose (rf-fuwy amendment).
+    const control = resolveHookControl();
+    if (!control.commandPolicyEnabled) {
+      return {
+        name,
+        passed: false,
+        optional: true,
+        detail: `Hook installed but command interception is DISABLED (${control.source.commandPolicy}) — no command is blocked. Re-enable to enforce.`,
+      };
+    }
+
+    // rf-fuwy: EXECUTE the configured command, do not just read it. A gate that
+    // cannot run (exit 127) is inert but was reported "installed"; a gate that
+    // runs but does not block a CRITICAL command is misconfigured. Assert both
+    // directions with synthetic payloads.
+    const hookCmd = commands[0];
+    const danger = runConfiguredHook(hookCmd, "rm -rf / --no-preserve-root");
+    if (danger.error || danger.status === 127) {
+      return {
+        name,
+        passed: false,
+        detail:
+          `Hook is CONFIGURED but NOT EXECUTABLE (${danger.error ? danger.error : "exit 127"}): "${hookCmd}" does not resolve, so the gate is INERT ` +
+          `(Claude Code blocks only on exit 2; anything else is allowed). Reinstall with 'rafter agent init --with-claude-code', which writes an absolute path.`,
+      };
+    }
+    if (danger.decision !== "deny") {
+      return {
+        name,
+        passed: false,
+        detail:
+          `Hook executes (exit ${danger.status}) but did NOT block a synthetic CRITICAL command (decision=${danger.decision ?? "none/unparseable"}). ` +
+          `The gate is not enforcing.`,
+      };
+    }
+    const benign = runConfiguredHook(hookCmd, "echo hello");
+    if (benign.decision === "deny") {
+      return {
+        name,
+        passed: false,
+        detail: `Hook blocks even a benign command (echo) — over-blocking; check policy/config.`,
+      };
+    }
+    // Note the caveat honestly: verify runs in the terminal's environment, which
+    // may differ from the editor's — a pass proves the command runs and enforces
+    // HERE, and a failure proves it is broken; it is not proof the editor's PATH
+    // resolves it too.
+    return { name, passed: true, detail: `Hooks installed and enforcing (blocked a synthetic 'rm -rf /'; verify runs in this shell's env)` };
   } catch (e) {
     return { name, passed: false, optional: true, detail: `Cannot read settings: ${e}` };
   }
@@ -401,9 +502,24 @@ function probeClaudeCode(): CheckResult {
   const auditPath = path.join(home, ".rafter", "audit.jsonl");
   const sizeBefore = fs.existsSync(auditPath) ? fs.statSync(auditPath).size : 0;
 
-  // Resolve the rafter binary the same way Claude Code would: `rafter hook
-  // pretool` on PATH. Fall back to argv[0] if PATH lookup fails.
-  const result = spawnSync(process.execPath, [process.argv[1], "hook", "pretool"], {
+  // Run the command EXACTLY as configured in settings.json, through `sh -c`, the
+  // way Claude Code would. (Earlier this spawned verify's own node + argv[1],
+  // which always resolves and therefore passed even when the CONFIGURED command
+  // did not exist — the rf-fuwy defect. Reading and running the real command is
+  // the only faithful probe.)
+  let configuredCmd = "rafter hook pretool";
+  try {
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    for (const entry of settings?.hooks?.PreToolUse || []) {
+      for (const h of entry.hooks || []) {
+        const cmd = String(h?.command ?? "");
+        if (cmd.includes("hook pretool")) { configuredCmd = cmd; break; }
+      }
+    }
+  } catch {
+    // fall back to the bare command below
+  }
+  const result = spawnSync("sh", ["-c", configuredCmd], {
     input: stdinPayload,
     encoding: "utf-8",
     timeout: 10_000,
