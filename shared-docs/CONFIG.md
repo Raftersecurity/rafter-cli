@@ -60,8 +60,12 @@ docs: [ ... ]                     # repo security docs (see CLI_SPEC)
 ```
 
 Backend-compatibility: top-level `exclude_paths:` / `custom_patterns:` (the flat
-shape the cloud scanner reads from `.rafter/config.yml`) are also accepted; nested
-`scan.*` wins on collision. Keys accept either `camelCase` or `snake_case`.
+snake_case shape the hosted scanner also reads — it looks for `.rafter.yml` first,
+then `.rafter/config.yml`) are also accepted; nested `scan.*` wins on collision.
+Keys accept either `camelCase` or `snake_case` on every engine. The hosted scanner
+honours `scan.excludePaths` and `ignore:` but never suppresses a must-fix or
+secret-scanner finding; what it hid, kept, or could not match is written to
+`suppressed.json` beside the scan's `findings.json` (see CLI_SPEC, *Ignore rules*).
 
 > `.rafter.yml` does **not** contain `environments`, `components`, `outputFiltering`,
 > `skills`, `notifications`, or `hooks` — those are global-only (by design for `hooks`).
