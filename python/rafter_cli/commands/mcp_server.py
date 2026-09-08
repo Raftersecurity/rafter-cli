@@ -378,9 +378,9 @@ def create_mcp_server():
                 both local scans and remote `rafter run`. With a reason, the hosted
                 scanner will hide even a must-fix or secret-scanner finding and lists
                 it prominently in suppressed.json under `protected_suppressions`.
-            reason: Why this is a false positive — persisted with the rule. REQUIRED by
-                the hosted scanner: a rule without one rejects the whole .rafter.yml
-                on remote scans, so always give one.
+            reason: Why this is a false positive — persisted with the rule. Required
+                for the hosted scanner to hide a must-fix or secret-scanner finding
+                (a rule without one is held at the floor for those), so always give one.
         """
         return json.dumps(handle_suppress_finding(path, rules, reason))
 
