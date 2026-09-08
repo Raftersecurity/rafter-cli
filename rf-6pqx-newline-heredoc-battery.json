@@ -311,5 +311,40 @@
     "want": [
       "low"
     ]
+  },
+  {
+    "label": "sable-4nt2: a shell EXECUTES its here-string",
+    "cmd": "bash <<< \"rm -rf /\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-4nt2: sh here-string is executed too",
+    "cmd": "sh <<< \"rm -rf /\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-4nt2 GUARD: cat WRITES its here-string (data)",
+    "cmd": "cat <<< \"rm -rf / in docs\" > notes.md",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "sable-4nt2 GUARD: grep SEARCHES its here-string (data)",
+    "cmd": "grep <<< \"rm -rf /\"",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "sable-4nt2: here-string piped into a shell is executed",
+    "cmd": "cat <<< \"rm -rf /\" | bash",
+    "want": [
+      "critical"
+    ]
   }
 ]

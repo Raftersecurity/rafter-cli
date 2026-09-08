@@ -142,6 +142,13 @@ const TEXT_FLAGS = new Set([
 const CHAIN_OPS = new Set([";", "&&", "||", "|", "&"]);
 
 /** Operators whose following token is a redirect target (a path — never data). */
+// `<<<` is deliberately ABSENT: it is a here-STRING, and its operand is stdin
+// CONTENT, not a path. Treating it as a redirect target left the text
+// untouched, which over-blocked a data owner (`cat <<< "…rm -rf /…" > notes.md`
+// classified critical — #230's shape, one operator over) and under-blocked a
+// shell one (`bash <<< "rm -rf /"` classified high, though the shell runs it).
+// Falling through to the ordinary operand path asks the question the heredoc
+// work already answers: does this command execute what it reads? (sable-4nt2)
 const REDIRECT_OPS = new Set([">", ">>", "<", "<<"]);
 
 /** Bound on recursion through nested shell wrappers / substitutions. */
@@ -220,7 +227,16 @@ function tokenize(s: string): { pieces: Piece[]; unterminated: boolean } {
         continue;
       }
       const two = s.slice(i, i + 2);
-      const op = (two === "&&" || two === "||" || two === ">>" || two === "<<") ? two : c;
+      // `<<<` before `<<`, or it tokenizes as `<<` + `<` and the here-string
+      // operand becomes a redirect target — left untouched, which is how it
+      // ended up both over- and under-blocked (sable-4nt2).
+      const three = s.slice(i, i + 3);
+      const op =
+        three === "<<<"
+          ? three
+          : (two === "&&" || two === "||" || two === ">>" || two === "<<")
+            ? two
+            : c;
       i += op.length;
       pieces.push({ start, end: i, op, text: op, quoted: false, substs: [] });
       continue;

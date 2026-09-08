@@ -130,6 +130,13 @@ _TEXT_FLAGS = {
 _CHAIN_OPS = {";", "&&", "||", "|", "&"}
 
 # Operators whose following token is a redirect target (a path — never data).
+# `<<<` is deliberately ABSENT: it is a here-STRING, and its operand is stdin
+# CONTENT, not a path. Treating it as a redirect target left the text untouched,
+# which over-blocked a data owner (`cat <<< "…rm -rf /…" > notes.md` classified
+# critical -- #230's shape, one operator over) and under-blocked a shell one
+# (`bash <<< "rm -rf /"` classified high, though the shell runs it). Falling
+# through to the ordinary operand path asks the question the heredoc work
+# already answers: does this command execute what it reads? (sable-4nt2)
 _REDIRECT_OPS = {">", ">>", "<", "<<"}
 
 # Bound on recursion through nested shell wrappers / substitutions.
@@ -242,7 +249,17 @@ def _tokenize(s: str) -> tuple[list[_Piece], bool]:
                 pieces.append(_Piece(start, i, ";", ";", False, []))
                 continue
             two = s[i:i + 2]
-            op = two if two in ("&&", "||", ">>", "<<") else c
+            # `<<<` before `<<`, or it tokenizes as `<<` + `<` and the
+            # here-string operand becomes a redirect target -- left untouched,
+            # which is how it ended up both over- and under-blocked
+            # (sable-4nt2).
+            three = s[i:i + 3]
+            if three == "<<<":
+                op = three
+            elif two in ("&&", "||", ">>", "<<"):
+                op = two
+            else:
+                op = c
             i += len(op)
             pieces.append(_Piece(start, i, op, op, False, []))
             continue
