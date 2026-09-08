@@ -232,5 +232,33 @@
     "want": [
       "critical"
     ]
+  },
+  {
+    "label": "sable-c6an: command substitution used as the -c script",
+    "cmd": "bash -c \"$(echo rm -rf /)\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an: backtick substitution used as the -c script",
+    "cmd": "sh -c \"`echo rm -rf /`\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an: text piped into a shell",
+    "cmd": "echo \"rm -rf /\" | bash",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an guard: a -c script that merely PRINTS stays data",
+    "cmd": "bash -c \"echo 'rm -rf /'\"",
+    "want": [
+      "low"
+    ]
   }
 ]

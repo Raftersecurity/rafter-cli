@@ -353,10 +353,48 @@ def _exec_name(text: str) -> str:
     return text[text.rfind("/") + 1:].lower()
 
 
+def _segment_exec(pieces: list[_Piece]) -> str:
+    """The effective executable of a segment (`sudo rm -rf /` -> `rm`).
+
+    Used to ask what the NEXT stage of a pipeline does with this stage's output.
+    """
+    is_redirect_target = [False] * len(pieces)
+    for i in range(1, len(pieces)):
+        prev = pieces[i - 1]
+        if prev.op in _REDIRECT_OPS and pieces[i].op is None:
+            is_redirect_target[i] = True
+    i = 0
+    while i < len(pieces):
+        p = pieces[i]
+        if p.op is not None or is_redirect_target[i]:
+            i += 1
+            continue
+        if not p.quoted and _ENV_ASSIGNMENT.match(p.text):
+            i += 1
+            continue
+        if not p.quoted and _exec_name(p.text) in _TAIL_WRAPPERS:
+            j = i + 1
+            while j < len(pieces):
+                q = pieces[j]
+                if q.op is not None or is_redirect_target[j]:
+                    j += 1
+                    continue
+                if q.text.startswith("-") or _NUMERIC_ARG.match(q.text):
+                    j += 1
+                    continue
+                break
+            i = j
+            continue
+        return _exec_name(p.text)
+    return ""
+
+
 def _process_segment(
     pieces: list[_Piece],
     depth: int,
     out: list[tuple[int, int, str]],
+    piped_into_shell: bool = False,
+    output_executed: bool = False,
 ) -> None:
     """Decide which spans of one segment are DATA and which are code."""
     # A word is a redirect target when the piece before it is `>`/`>>`/`<`.
@@ -412,6 +450,14 @@ def _process_segment(
             has_eval_flag = True
     code_carrying = has_shell_exec or has_eval_flag or exec_ in _EVAL_EXECS
 
+    # sable-c6an. Two questions the code conflated:
+    #   code_carrying   -- this segment RUNS a command string it was handed
+    #   executes_output -- this segment's STDOUT becomes code somewhere else
+    #                      (`… | bash`, or a substitution used as a -c script)
+    # `bash -c "echo 'rm -rf /'"` is the first and not the second, so its
+    # operand stays data; `bash -c "$(echo rm -rf /)"` is the second.
+    executes_output = piped_into_shell or output_executed
+
     seen_shell = False
     pending_script = False
     prev_text_flag = False
@@ -429,7 +475,15 @@ def _process_segment(
 
         # `bash -c <script>` — the next word is a command string, not data.
         if pending_script and not p.text.startswith("-"):
-            out.append((p.start, p.end, _sanitize(p.text, depth + 1)))
+            # The script can be entirely a substitution -- `bash -c "$(…)"` --
+            # where `text` is EMPTY and the substitution IS the script. Reading
+            # only `text` dropped it (sable-c6an).
+            parts: list[str] = []
+            if p.text != "":
+                parts.append(_sanitize(p.text, depth + 1))
+            for sub in p.substs:
+                parts.append(_sanitize(sub, depth + 1, True))
+            out.append((p.start, p.end, " ".join(parts)))
             pending_script = False
             prev_text_flag = False
             continue
@@ -441,7 +495,10 @@ def _process_segment(
 
         # `$(…)` / backticks execute — scan their contents, drop the literal wrapper.
         if p.substs:
-            inner = " ".join(_sanitize(s, depth + 1) for s in p.substs)
+            inner = " ".join(
+                _sanitize(s, depth + 1, code_carrying or executes_output)
+                for s in p.substs
+            )
             out.append((p.start, p.end, inner))
             prev_text_flag = False
             continue
@@ -476,7 +533,7 @@ def _process_segment(
         prev_text_flag = False
 
         # Operands of a text command (`echo`, `grep`, `printf`) are never executed.
-        if is_text_exec and i > exec_idx:
+        if is_text_exec and i > exec_idx and not executes_output:
             out.append((p.start, p.end, " "))
             continue
 
@@ -486,7 +543,7 @@ def _process_segment(
                 # Single-word quoted operand: unquote it so quoting cannot hide a
                 # flag or a path from the patterns (`rm "-rf" "/"`).
                 out.append((p.start, p.end, p.text))
-            elif code_carrying:
+            elif code_carrying or executes_output:
                 # This segment executes a command string (`ssh host "…"`,
                 # `mysql -e "…"`). The quoted argument is code — unquote and scan
                 # it, recursively.
@@ -547,7 +604,7 @@ def _strip_line_continuations(s: str) -> str:
     return "".join(out)
 
 
-def _sanitize(command: str, depth: int) -> str:
+def _sanitize(command: str, depth: int, output_executed: bool = False) -> str:
     if not command or depth > _MAX_SANITIZE_DEPTH:
         return command
 
@@ -560,14 +617,27 @@ def _sanitize(command: str, depth: int) -> str:
         return command
     replacements: list[tuple[int, int, str]] = []
 
+    # Segments keep the operator that ends them, so a segment can be asked
+    # whether its output feeds a shell (`echo "rm -rf /" | bash`).
+    segments: list[tuple[list[_Piece], str | None]] = []
     segment: list[_Piece] = []
     for p in pieces:
         if p.op is not None and p.op in _CHAIN_OPS:
-            _process_segment(segment, depth, replacements)
+            segments.append((segment, p.op))
             segment = []
             continue
         segment.append(p)
-    _process_segment(segment, depth, replacements)
+    segments.append((segment, None))
+
+    for k, (seg, end_op) in enumerate(segments):
+        piped_into_shell = (
+            end_op == "|"
+            and k + 1 < len(segments)
+            and _segment_exec(segments[k + 1][0]) in _SHELL_EXECS
+        )
+        _process_segment(
+            seg, depth, replacements, piped_into_shell, output_executed
+        )
 
     if not replacements:
         return command
