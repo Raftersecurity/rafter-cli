@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import * as dotenv from "dotenv";
+import { guardSecurityEnvFromDotenv } from "./utils/env-guard.js";
 import { createRunCommand } from "./commands/backend/run.js";
 import { createGetCommand } from "./commands/backend/get.js";
 import { createUsageCommand } from "./commands/backend/usage.js";
@@ -23,7 +24,8 @@ import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 import { createRequire } from "module";
 
-dotenv.config();
+// rf-7dda: a repo `.env` must not be able to disable the hook or its timeouts.
+guardSecurityEnvFromDotenv(() => dotenv.config());
 
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require("../package.json");
