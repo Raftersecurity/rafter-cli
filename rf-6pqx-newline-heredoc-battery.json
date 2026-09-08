@@ -260,5 +260,56 @@
     "want": [
       "low"
     ]
+  },
+  {
+    "label": "REGRESSION heredoc piped to sudo sh",
+    "cmd": "cat <<DATA | sudo sh\nrm -rf /\nDATA",
+    "want": [
+      "critical",
+      "high"
+    ]
+  },
+  {
+    "label": "REGRESSION here-string multi unquoted word",
+    "cmd": "grep <<< marker\nsudo rm -rf /etc",
+    "want": [
+      "critical",
+      "high"
+    ]
+  },
+  {
+    "label": "sable-c6an bash -c backtick",
+    "cmd": "bash -c \"`echo rm -rf /`\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an echo piped to bash",
+    "cmd": "echo 'rm -rf /' | bash",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an eval command-substitution",
+    "cmd": "eval \"$(echo rm -rf /)\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "GUARD redirect target named bin/bash stays low (data heredoc)",
+    "cmd": "cat > bin/bash <<'EOF'\nrm -rf /\nEOF",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "GUARD redirect target /usr/local/bin/sh stays low",
+    "cmd": "tee /usr/local/bin/sh <<'EOF'\nrm -rf /\nEOF",
+    "want": [
+      "low"
+    ]
   }
 ]
