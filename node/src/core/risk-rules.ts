@@ -331,7 +331,43 @@ interface Replacement { start: number; end: number; with: string; }
  * Decide, for one segment (a single command in a chain), which spans are DATA
  * and which are code, appending the resulting replacements.
  */
-function processSegment(pieces: Piece[], depth: number, out: Replacement[]): void {
+/**
+ * The effective executable of a segment (`sudo rm -rf /` -> `rm`), used to ask
+ * what the NEXT stage of a pipeline does with this stage's output.
+ */
+function segmentExec(pieces: Piece[]): string {
+  const isRedirectTarget = new Array<boolean>(pieces.length).fill(false);
+  for (let i = 1; i < pieces.length; i++) {
+    const prev = pieces[i - 1];
+    if (prev.op && REDIRECT_OPS.has(prev.op) && !pieces[i].op) isRedirectTarget[i] = true;
+  }
+  for (let i = 0; i < pieces.length; i++) {
+    const p = pieces[i];
+    if (p.op || isRedirectTarget[i]) continue;
+    if (!p.quoted && ENV_ASSIGNMENT.test(p.text)) continue;
+    if (!p.quoted && TAIL_WRAPPERS.has(execName(p.text))) {
+      let j = i + 1;
+      while (j < pieces.length) {
+        const q = pieces[j];
+        if (q.op || isRedirectTarget[j]) { j++; continue; }
+        if (q.text.startsWith("-") || /^\d+[a-z]*$/i.test(q.text)) { j++; continue; }
+        break;
+      }
+      i = j - 1;
+      continue;
+    }
+    return execName(p.text);
+  }
+  return "";
+}
+
+function processSegment(
+  pieces: Piece[],
+  depth: number,
+  out: Replacement[],
+  pipedIntoShell = false,
+  outputExecuted = false
+): void {
   // A word is a redirect target when the piece before it is `>`/`>>`/`<`.
   const isRedirectTarget = new Array<boolean>(pieces.length).fill(false);
   for (let i = 1; i < pieces.length; i++) {
@@ -378,6 +414,15 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
   }
   const codeCarrying = hasShellExec || hasEvalFlag || EVAL_EXECS.has(exec);
 
+  // sable-c6an. Two questions the code conflated, and conflating them gets one
+  // of them wrong:
+  //   codeCarrying   — this segment RUNS a command string it was handed
+  //   executesOutput — this segment's STDOUT becomes code somewhere else
+  //                    (`… | bash`, or a substitution used as a -c script)
+  // `bash -c "echo 'rm -rf /'"` is the first and not the second, so its operand
+  // stays data; `bash -c "$(echo rm -rf /)"` is the second, so it is code.
+  const executesOutput = pipedIntoShell || outputExecuted;
+
   let seenShell = false;
   let pendingScript = false;
   let prevTextFlag = false;
@@ -393,7 +438,15 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
 
     // `bash -c <script>` — the next word is a command string, not data.
     if (pendingScript && !p.text.startsWith("-")) {
-      out.push({ start: p.start, end: p.end, with: sanitize(p.text, depth + 1) });
+      // The script can be entirely a substitution — `bash -c "$(…)"` — where
+      // `text` is EMPTY and the substitution IS the script. Reading only `text`
+      // dropped it, so `bash -c "$(echo rm -rf /)"` classified low: a bypass of
+      // the hard block needing no policy file (sable-c6an). The substitution's
+      // OUTPUT is the script, so it sanitizes as output-executed.
+      const parts: string[] = [];
+      if (p.text !== "") parts.push(sanitize(p.text, depth + 1));
+      for (const sub of p.substs) parts.push(sanitize(sub, depth + 1, true));
+      out.push({ start: p.start, end: p.end, with: parts.join(" ") });
       pendingScript = false;
       prevTextFlag = false;
       continue;
@@ -407,7 +460,9 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
 
     // `$(…)` / backticks execute — scan their contents, drop the literal wrapper.
     if (p.substs.length > 0) {
-      const inner = p.substs.map((s) => sanitize(s, depth + 1)).join(" ");
+      const inner = p.substs
+        .map((s) => sanitize(s, depth + 1, codeCarrying || executesOutput))
+        .join(" ");
       out.push({ start: p.start, end: p.end, with: inner });
       prevTextFlag = false;
       continue;
@@ -441,7 +496,7 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
     prevTextFlag = false;
 
     // Operands of a text command (`echo`, `grep`, `printf`) are never executed.
-    if (isTextExec && i > execIdx) {
+    if (isTextExec && i > execIdx && !executesOutput) {
       out.push({ start: p.start, end: p.end, with: " " });
       continue;
     }
@@ -452,7 +507,7 @@ function processSegment(pieces: Piece[], depth: number, out: Replacement[]): voi
         // Single-word quoted operand: unquote it so quoting cannot be used to
         // hide a flag or a path from the patterns (`rm "-rf" "/"`).
         out.push({ start: p.start, end: p.end, with: p.text });
-      } else if (codeCarrying) {
+      } else if (codeCarrying || executesOutput) {
         // This segment executes a command string (`ssh host "…"`, `mysql -e "…"`).
         // The quoted argument is code — unquote and scan it, recursively.
         out.push({ start: p.start, end: p.end, with: sanitize(p.text, depth + 1) });
@@ -496,7 +551,7 @@ function stripLineContinuations(s: string): string {
   return out;
 }
 
-function sanitize(command: string, depth: number): string {
+function sanitize(command: string, depth: number, outputExecuted = false): string {
   if (!command || depth > MAX_SANITIZE_DEPTH) return command;
 
   command = stripLineContinuations(command);
@@ -507,16 +562,30 @@ function sanitize(command: string, depth: number): string {
   if (unterminated) return command;
   const replacements: Replacement[] = [];
 
+  // Segments keep the operator that ends them, so a segment can be asked
+  // whether its output feeds a shell (`echo "rm -rf /" | bash`).
+  const segments: { pieces: Piece[]; endOp: string | null }[] = [];
   let segment: Piece[] = [];
   for (const p of pieces) {
     if (p.op && CHAIN_OPS.has(p.op)) {
-      processSegment(segment, depth, replacements);
+      segments.push({ pieces: segment, endOp: p.op });
       segment = [];
       continue;
     }
     segment.push(p);
   }
-  processSegment(segment, depth, replacements);
+  segments.push({ pieces: segment, endOp: null });
+
+  for (let k = 0; k < segments.length; k++) {
+    const next = segments[k + 1];
+    const pipedIntoShell =
+      segments[k].endOp === "|" &&
+      next !== undefined &&
+      SHELL_EXECS.has(segmentExec(next.pieces));
+    processSegment(
+      segments[k].pieces, depth, replacements, pipedIntoShell, outputExecuted
+    );
+  }
 
   if (replacements.length === 0) return command;
 
