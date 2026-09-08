@@ -36,12 +36,13 @@ export function runConfiguredHook(
   });
   // `sh -c` reproduces exactly how Claude Code invokes a shell-form hook, so a
   // command that resolves in this terminal but not in the editor (or vice versa)
-  // is exercised the same way the editor would exercise it.
-  const result = spawnSync("sh", ["-c", command], {
-    input: payload,
-    encoding: "utf-8",
-    timeout: 10_000,
-  });
+  // is exercised the same way the editor would exercise it. Retry a transient
+  // spawn failure (e.g. EAGAIN under process pressure) so a resource hiccup does
+  // not get reported as an inert gate — a false alarm is worse than a slow check.
+  let result = spawnSync("sh", ["-c", command], { input: payload, encoding: "utf-8", timeout: 10_000 });
+  for (let attempt = 0; attempt < 2 && result.error; attempt++) {
+    result = spawnSync("sh", ["-c", command], { input: payload, encoding: "utf-8", timeout: 10_000 });
+  }
   if (result.error) {
     return { status: null, decision: null, error: result.error.message, stdout: "" };
   }
