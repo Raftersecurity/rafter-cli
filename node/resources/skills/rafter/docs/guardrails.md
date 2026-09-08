@@ -10,7 +10,7 @@ Rafter exposes two hook handlers over stdio:
 - `rafter hook posttool` — read a JSON event after a tool ran; log to audit trail, optionally rescan written files for secrets.
 
 For platforms without hooks, the same classifier is reachable as:
-- `rafter agent exec --dry-run -- <command>` (returns risk, exits 0/1)
+- `rafter agent exec --dry-run -- <command>` (prints the risk tier and runs nothing; exits 0 allowed, 1 blocked, 2 needs a person's approval)
 - `rafter mcp serve` → MCP tool `evaluate_command`
 
 ## Risk Tiers
@@ -66,7 +66,7 @@ If the block is a false positive **for this specific context**, the right path i
      allow:
        - "^terraform destroy -target=module\\.sandbox"
    ```
-2. Or run once with an explicit ack flag: `rafter agent exec --force -- <command>` (logged to audit trail; still shows up in `rafter agent audit` history).
+2. Or have a person run it: `rafter agent exec -- <command>` prompts for approval only at an interactive terminal and logs the override to the audit trail. There is no acknowledgement flag — `--force` no longer skips the prompt and a piped `yes` is not an approval — because any flag or input an agent can supply is not a person's decision.
 3. Never disable the hook globally to get past one command — that silently drops protection for every future call.
 
 ## Audit Trail
