@@ -10,11 +10,13 @@ import { runConfiguredHook } from "../src/commands/agent/verify.js";
  * Code invokes a shell-form hook) with a synthetic payload and reports the
  * permissionDecision it emitted.
  */
-// These tests spawn real subprocesses, which is inherently environment-sensitive
-// under process pressure (the very condition the product-level retry addresses).
-// A per-test retry keeps a transient spawn hiccup from flaking the gate's own
-// tests red — it does not mask a real failure, which reproduces on every attempt.
-describe("runConfiguredHook (rf-fuwy liveness executor)", { retry: 3 }, () => {
+// No test-level retry here on purpose: runConfiguredHook itself now retries a
+// transient spawn error/signal, so the production code carries the process-
+// pressure case. A retry on the gate's OWN liveness test would only be able to
+// hide a FUTURE intermittent failure (a race in the hook path) — a vacuous pass
+// on the test whose job is to assert the gate is alive. If this flakes after the
+// production retry, that is signal about runConfiguredHook, not CI noise.
+describe("runConfiguredHook (rf-fuwy liveness executor)", () => {
   // The decision is what carries the meaning — assert that, not the exact exit
   // code. `runConfiguredHook` retries a transient spawn failure, so a working
   // hook returns its decision reliably; asserting `status === 0` is fragile under
