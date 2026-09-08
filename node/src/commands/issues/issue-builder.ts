@@ -35,7 +35,7 @@ export interface LocalScanResult {
   }>;
 }
 
-function severityLabel(level: string): string {
+export function severityLabel(level: string): string {
   const map: Record<string, string> = {
     error: "critical",
     critical: "critical",

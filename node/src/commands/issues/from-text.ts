@@ -130,7 +130,7 @@ async function readInput(opts: {
  * - File paths → mentioned in body
  * - Security keywords → security label
  */
-function parseNaturalText(text: string): ParsedIssue {
+export function parseNaturalText(text: string): ParsedIssue {
   const lines = text.trim().split("\n");
   const labels: string[] = [];
 

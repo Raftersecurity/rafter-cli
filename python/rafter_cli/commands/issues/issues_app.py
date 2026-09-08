@@ -14,7 +14,7 @@ from pathlib import Path
 import requests
 import typer
 
-from ...utils.api import api_url, API_BASE, api_get, EXIT_GENERAL_ERROR, EXIT_SUCCESS, resolve_key
+from ...utils.api import api_url, api_get, EXIT_GENERAL_ERROR, resolve_key
 from ...utils.formatter import fmt, print_stderr
 from ...utils.git import detect_repo
 from .dedup import find_duplicates
@@ -74,7 +74,13 @@ def from_scan(
 
     # Build drafts
     if scan_id:
-        drafts = _drafts_from_backend(scan_id, api_key)
+        try:
+            drafts = _drafts_from_backend(scan_id, api_key)
+        except (UnreadableScanPayload, requests.RequestException, ValueError) as e:
+            # ValueError covers a non-JSON body from resp.json(). None of these
+            # is "no findings"; each is a scan whose report could not be read.
+            print_stderr(fmt.error(str(e)))
+            raise typer.Exit(code=EXIT_GENERAL_ERROR)
     else:
         drafts = _drafts_from_local(from_local)  # type: ignore[arg-type]
 
@@ -211,6 +217,33 @@ def from_text(
 # ── Internal helpers ──────────────────────────────────────────────────
 
 
+class UnreadableScanPayload(ValueError):
+    """The scan payload carries no findings list this command can file from."""
+
+
+def vulnerabilities_from_payload(data: object, scan_id: str) -> list[dict]:
+    """The findings list from a scan payload, or an error — never a silent [].
+
+    A payload without a ``vulnerabilities`` list is not "no findings". It is a
+    scan that has not completed, a failed scan, or a report this client cannot
+    read; filing zero issues from it would report a clean codebase for work
+    that was never done (sable-fgk7). An empty list IS a legitimate clean
+    result and is returned as such.
+    """
+    if isinstance(data, dict) and isinstance(data.get("vulnerabilities"), list):
+        return data["vulnerabilities"]
+    status = data.get("status") if isinstance(data, dict) else None
+    if isinstance(status, str) and status != "completed":
+        raise UnreadableScanPayload(
+            f"Scan {scan_id} is {status}, not completed — there are no findings to "
+            f"file yet. Retry once it completes: rafter get {scan_id}"
+        )
+    raise UnreadableScanPayload(
+        f"Scan {scan_id} returned no 'vulnerabilities' array; refusing to treat an "
+        f"unreadable report as zero findings. Check it with: rafter get {scan_id}"
+    )
+
+
 def _drafts_from_backend(scan_id: str, api_key: str | None) -> list[IssueDraft]:
     key = resolve_key(api_key)
     resp = api_get(
@@ -222,7 +255,7 @@ def _drafts_from_backend(scan_id: str, api_key: str | None) -> list[IssueDraft]:
     resp.raise_for_status()
     data = resp.json()
 
-    vulns = data.get("vulnerabilities", [])
+    vulns = vulnerabilities_from_payload(data, scan_id)
     return [
         build_from_backend_vulnerability(
             BackendVulnerability(

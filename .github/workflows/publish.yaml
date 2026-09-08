@@ -49,7 +49,13 @@ jobs:
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
 
       - name: Run tests
-        run: pnpm test
+        run: pnpm exec vitest run --reporter=default --reporter=json --outputFile.json=vitest-report.json
+
+      # sable-d2x2 rule C — the release path is exactly where sable-cazq's 40
+      # silently-skipped tests reported green. Same floor as
+      # test-comprehensive.yml; keep the two in step.
+      - name: Assert the suite actually ran
+        run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "release test-node (vitest)"
 
   # sable-cazq — python/tests/ ran in exactly one place in this repo
   # (test-comprehensive.yml) and it was not the release path. publish.yaml
@@ -80,9 +86,13 @@ jobs:
           pip install pytest pytest-mock pytest-asyncio
 
       - name: Run all tests
-        run: python -m pytest tests/ -v
+        run: python -m pytest tests/ -v -o junit_family=xunit1 --junitxml=pytest-report.xml
         env:
           RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
+
+      # sable-d2x2 rule C — same floor as test-comprehensive.yml; keep in step.
+      - name: Assert the suite actually ran
+        run: python3 ../.github/scripts/test_floor.py --junit pytest-report.xml --min-executed 1530 --label "release test-python (pytest)"
 
   test-package:
     runs-on: ubuntu-latest

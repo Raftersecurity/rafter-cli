@@ -683,3 +683,122 @@ class TestFromTextLabelDedup:
     def test_labels_are_unique(self):
         result = self._parse("Critical security vulnerability with credentials and tokens")
         assert len(result["labels"]) == len(set(result["labels"]))
+
+
+# ── from-scan: a payload with no findings list is an error, not zero ──
+#
+# sable-fgk7. `data.get("vulnerabilities", [])` turned a still-running scan, a
+# failed scan, a 200 carrying an error object, and a schema-valid payload with
+# no key into "No findings to create issues for". Delete-the-subject test:
+# with the fallback restored, every case below except the first two passes
+# with [] and this class fails. Mirrors the Node suite of the same name.
+
+
+class TestVulnerabilitiesFromPayload:
+    SCAN = "scan-abc"
+
+    def _call(self, data):
+        from rafter_cli.commands.issues.issues_app import vulnerabilities_from_payload
+
+        return vulnerabilities_from_payload(data, self.SCAN)
+
+    def test_returns_the_list_when_present(self):
+        v = [{"ruleId": "r", "level": "error", "message": "m", "file": "f"}]
+        assert self._call({"status": "completed", "vulnerabilities": v}) is v
+
+    def test_empty_list_is_a_legitimate_clean_result(self):
+        assert self._call({"status": "completed", "vulnerabilities": []}) == []
+
+    def test_refuses_completed_payload_with_no_key(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        with pytest.raises(UnreadableScanPayload, match="no 'vulnerabilities' array"):
+            self._call({"scan_id": self.SCAN, "status": "completed"})
+
+    def test_names_the_status_when_not_completed(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        with pytest.raises(UnreadableScanPayload, match="is processing, not completed"):
+            self._call({"status": "processing"})
+        with pytest.raises(UnreadableScanPayload, match="is failed, not completed"):
+            self._call({"status": "failed"})
+
+    def test_refuses_error_object(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        with pytest.raises(UnreadableScanPayload, match="no 'vulnerabilities' array"):
+            self._call({"error": "Failed to fetch report from storage: Object not found"})
+
+    def test_refuses_vulnerabilities_that_is_not_a_list(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        with pytest.raises(UnreadableScanPayload):
+            self._call({"vulnerabilities": "3"})
+        with pytest.raises(UnreadableScanPayload):
+            self._call({"vulnerabilities": None})
+
+    def test_refuses_non_dict_payloads(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        with pytest.raises(UnreadableScanPayload):
+            self._call(None)
+        with pytest.raises(UnreadableScanPayload):
+            self._call("<html>502</html>")
+
+    def test_points_at_the_scan_id_in_every_refusal(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        for bad in ({"status": "completed"}, {"status": "processing"}, {}):
+            with pytest.raises(UnreadableScanPayload, match=f"rafter get {self.SCAN}"):
+                self._call(bad)
+
+
+class TestFromScanCommandRefusesUnreadablePayload:
+    """The command surface: an unreadable payload exits 1 with the message on
+    stderr, and never reaches the "No findings to create issues for" path."""
+
+    def test_unreadable_payload_exits_1(self, monkeypatch, capsys):
+        from unittest.mock import MagicMock
+
+        import typer
+
+        from rafter_cli.commands.issues import issues_app as mod
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"scan_id": "scan-abc", "status": "completed"}
+        resp.raise_for_status.return_value = None
+        monkeypatch.setattr(mod, "api_get", lambda *a, **k: resp)
+        monkeypatch.setattr(mod, "resolve_key", lambda _k: "key")
+
+        with pytest.raises(typer.Exit) as exc:
+            mod.from_scan(
+                scan_id="scan-abc", from_local=None, repo="org/repo", api_key="k",
+                no_dedup=True, dry_run=True, quiet=False,
+            )
+        assert exc.value.exit_code == 1
+        err = capsys.readouterr().err
+        assert "no 'vulnerabilities' array" in err
+        assert "No findings to create issues for" not in err
+
+    def test_non_json_body_exits_1(self, monkeypatch, capsys):
+        from unittest.mock import MagicMock
+
+        import typer
+
+        from rafter_cli.commands.issues import issues_app as mod
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
+        resp.raise_for_status.return_value = None
+        monkeypatch.setattr(mod, "api_get", lambda *a, **k: resp)
+        monkeypatch.setattr(mod, "resolve_key", lambda _k: "key")
+
+        with pytest.raises(typer.Exit) as exc:
+            mod.from_scan(
+                scan_id="scan-abc", from_local=None, repo="org/repo", api_key="k",
+                no_dedup=True, dry_run=True, quiet=False,
+            )
+        assert exc.value.exit_code == 1
+        assert "No findings to create issues for" not in capsys.readouterr().err
