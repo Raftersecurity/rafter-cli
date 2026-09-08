@@ -152,7 +152,7 @@ export function createServer(): Server {
             rules: {
               type: "array",
               items: { type: "string" },
-              description: "Specific rules to suppress, matched case-insensitively against a finding's rule name OR rule id — e.g. 'AWS Access Key' (local pattern name) or 'R-6D5E2' (the hashed id the hosted report shows; the native rule id works too). Omit to suppress all rules for the path. Honored by both local scans and remote `rafter run`. With a reason, the hosted scanner will hide even a must-fix or secret-scanner finding and lists it prominently in suppressed.json under `protected_suppressions`. A reason is REQUIRED by the hosted scanner: a rule without one rejects the whole .rafter.yml on remote scans.",
+              description: "Specific rules to suppress, matched case-insensitively against a finding's rule name OR rule id — e.g. 'AWS Access Key' (local pattern name) or 'R-6D5E2' (the hashed id the hosted report shows; the native rule id works too). Omit to suppress all rules for the path. Honored by both local scans and remote `rafter run`. With a reason, the hosted scanner will hide even a must-fix or secret-scanner finding and lists it prominently in suppressed.json under `protected_suppressions`. Without a reason the rule still hides ordinary findings but is held at the floor for must-fix and secret-scanner ones, so always give one.",
             },
             reason: { type: "string", description: "Why this is a false positive — persisted with the rule. Strongly recommended." },
           },
