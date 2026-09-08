@@ -534,9 +534,10 @@ Exit code is unaffected by suppression — exit `1` is returned only when at lea
 
 Remote `rafter run` (the hosted scanner) writes the same data as a separate `suppressed.json` artifact beside `findings.json` (`scan-results/{org}/{scan}/{mode}/suppressed.json`, written whenever a config file was present), with this per-entry shape under `_suppressed`; `source` is the repo-relative config file it actually read (`.rafter.yml`, `.rafter/config.yml`, …). It carries three things a local scan does not need:
 
-- `blocked` — findings an ignore rule matched but the hosted scanner kept anyway, each with `blocked_by`: `must-fix`, `secret-scanner`, or `unclassified-high`. The hosted scanner never lets repo config hide those (see *Hosted-scanner invariant* under `ignore:` below).
+- `protected_suppressions` (and `protected_suppressed`, its count) — every must-fix, secret-scanner or unclassified critical/high finding an `ignore:` rule hid, with its `reason`. Each also appears in `_suppressed` with `protected` set. Read this list first (see *Protected findings* under `ignore:` below).
+- `blocked` — findings `excludePaths` matched but the hosted scanner kept, each with `blocked_by` (`must-fix`, `secret-scanner`, `unclassified-high`) and a `hint`: a path exclusion carries no reason, so it cannot hide a protected finding; an ignore rule can.
 - `unmatched` — every `paths`/`rules` selector that matched no finding. This is the usual answer to "my config is ignored": a hashed id from a different scan, a typo, or a glob that does not reach the file.
-- `applied` / `error` — `applied: false` with the parser's message when the file was rejected; findings are then reported unfiltered.
+- `applied` / `error` — `applied: false` with the parser's message when the file was rejected (a missing `reason:` is one such error); findings are then reported unfiltered.
 
 So a finding hidden by an `ignore` rule is recoverable whether the scan ran locally or remotely, and a rule that hid nothing says why.
 
@@ -1126,7 +1127,7 @@ Start MCP server over stdio transport. Exposes 11 tools and 3 resources.
   "allowed": true,
   "risk_level": "low",
   "requires_approval": false,
-  "reason": "optional explanation string"
+  "reason": "why this is a false positive — required by the hosted scanner"
 }
 ```
 
@@ -1145,7 +1146,7 @@ Start MCP server over stdio transport. Exposes 11 tools and 3 resources.
 **`suppress_finding` inputs:**
 - `path` (required, string) — file path or glob to suppress findings in (e.g. `test/fixtures/**`)
 - `rules` (optional, string[]) — specific rule/pattern names to suppress (e.g. `["AWS Access Key"]`); omit to suppress all rules for the path
-- `reason` (optional, string) — why this is a false positive; persisted with the rule and surfaced in `_suppressed` output
+- `reason` (string; **required by the hosted scanner**, optional locally) — why this is a false positive; persisted with the rule and surfaced in `_suppressed` output. A rule written without one is rejected, with the whole `.rafter.yml`, on the next remote scan — always give one.
 
 **`suppress_finding` output schema:** `{ ok, file, action, entry, suppression_count }` where `action` is `"created"` (new `.rafter.yml` written), `"appended"` (rule added to an existing file), or `"updated"` (an existing rule with the same path+rules scope had its reason refreshed). `entry` is the persisted ignore rule `{ paths, rules?, reason? }`. The tool resolves the existing policy file via the loader's precedence; if none exists it creates a canonical `.rafter.yml` at the git root. It never appends a duplicate rule for the same path+rules scope.
 
@@ -1348,7 +1349,7 @@ Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not a
 
 **URL caching:** URL-backed docs are cached at `~/.rafter/docs-cache/` keyed by `sha256(url)[:32]`. Default TTL is 86400 seconds. On network failure, a stale cached copy is served and a warning is printed. `docs list` never fetches; `docs show` fetches on miss/expired or when `--refresh` is set.
 
-**Ignore rules (`ignore:`):** suppress findings without removing them from the audit trail. Each entry needs `paths:` (a non-empty list of globs); `rules:` is optional (omitting it suppresses every rule on the matched paths) and `reason:` is surfaced verbatim in the JSON `_suppressed` output. First entry that matches wins, so put more specific entries earlier.
+**Ignore rules (`ignore:`):** suppress findings without removing them from the audit trail. Each entry needs `paths:` (a non-empty list of globs) and, on the hosted scanner, a non-empty `reason:` (local engines accept a rule without one; write one anyway — the same file is read by both); `rules:` is optional (omitting it suppresses every rule on the matched paths) and `reason:` is surfaced verbatim in the JSON `_suppressed` output. First entry that matches wins, so put more specific entries earlier.
 
 These rules are honored identically by the **local** CLI engines (Node and Python) and by the **remote `rafter run`** backend — they read the same `.rafter.yml` (and `.rafter/config.yml`) `ignore:` block. The matching contract is fixed and the same on every engine:
 
@@ -1364,7 +1365,9 @@ These rules are honored identically by the **local** CLI engines (Node and Pytho
 
 *Key spelling* — every engine accepts the camelCase keys shown here and the hosted scanner's snake_case (`exclude_paths`) alike; if a file carries both, snake_case wins on the hosted scanner.
 
-*Hosted-scanner invariant* — the remote backend never suppresses a **must-fix**, **secret-scanner**, or unclassified **critical/high** finding, whatever `ignore:` says: the match is recorded in `suppressed.json` under `blocked` with `blocked_by`, and the finding stays in the report. Local engines apply no such floor. Suppression is the project's decision on both sides; it is a separate surface from `commandPolicy`, which the global config may bound.
+*`reason:` is required on the hosted scanner* — every `ignore:` entry must carry a non-empty `reason`. A missing, null or blank reason is a **schema error**: the whole `.rafter.yml` is rejected, the scan reports every finding unfiltered, and `suppressed.json` says so (`applied: false`, `error` names the entry, e.g. `ignore.1.reason`). Local engines accept a rule without a reason, so write one always.
+
+*Protected findings* — an `ignore:` rule may hide a **must-fix**, **secret-scanner**, or unclassified **critical/high** finding on any scan (default branch or PR head alike); the reason is the price. Every such suppression is written to `suppressed.json` twice — in `_suppressed` with `protected` set to `must-fix`, `secret-scanner` or `unclassified-high`, and in the top-level `protected_suppressions` list with a count — so it cannot go unnoticed. The accepted trade (decision sb-d5ld, 2026-09-08): a committer can hide a planted secret in the same PR that suppresses it; it is visible in the diff and in the audit trail. `scan.excludePaths` cannot hide a protected finding, because it carries no reason: such matches are listed under `blocked` with a hint to use an ignore rule. Suppression is the project's decision on both sides; it is a separate surface from `commandPolicy`, which the global config may bound.
 
 ---
 

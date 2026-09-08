@@ -375,10 +375,12 @@ def create_mcp_server():
                 finding's rule name OR rule id — e.g. 'AWS Access Key' (local pattern
                 name) or 'R-6D5E2' (the hashed id the hosted report shows; the native
                 rule id works too). Omit to suppress all rules for the path. Honored by
-                both local scans and remote `rafter run`; the hosted scanner never
-                suppresses must-fix or secret-scanner findings and lists such matches
-                in suppressed.json under `blocked`.
-            reason: Why this is a false positive — persisted with the rule. Strongly recommended.
+                both local scans and remote `rafter run`. With a reason, the hosted
+                scanner will hide even a must-fix or secret-scanner finding and lists
+                it prominently in suppressed.json under `protected_suppressions`.
+            reason: Why this is a false positive — persisted with the rule. REQUIRED by
+                the hosted scanner: a rule without one rejects the whole .rafter.yml
+                on remote scans, so always give one.
         """
         return json.dumps(handle_suppress_finding(path, rules, reason))
 
