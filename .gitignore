@@ -9,6 +9,12 @@ venv/
 uv.lock
 
 # Node
+# Both forms on purpose: a trailing slash matches DIRECTORIES ONLY, so a stray
+# `node_modules` SYMLINK slips past it and `git add -A` commits it. That
+# happened (removed in f1132ad); on checkout it leaves a broken self-
+# referential link where the install belongs, and pnpm/tsc/vitest all fail
+# there — tsc exits 216 with no output, which is an unhelpful way to find out.
+node_modules
 node_modules/
 dist/
 *.tgz

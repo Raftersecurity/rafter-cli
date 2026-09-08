@@ -146,6 +146,14 @@ jobs:
       - name: Assert the suite actually ran
         run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "test-node (vitest)"
 
+      # The battery is the gate that catches a MISSING fix; the differential
+      # cannot, because a fix absent on both sides is not a permissive move.
+      # That makes the battery's CONTENTS load-bearing, so they get a floor of
+      # their own — in both directions, since a fix bought with an over-block
+      # is how #230 happened.
+      - name: Assert the classifier battery still gates both directions
+        run: python3 ../.github/scripts/classifier_battery_floor.py --min-cases 44
+
   test-python:
     needs: gate
     if: needs.gate.outputs.run_core == 'true'
