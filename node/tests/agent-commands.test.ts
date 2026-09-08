@@ -300,8 +300,13 @@ describe("agent init", () => {
     expect(settings.hooks.PreToolUse).toBeDefined();
     expect(settings.hooks.PostToolUse).toBeDefined();
 
+    // rf-er8a: init writes a RESOLVABLE ABSOLUTE command (`<node> <entrypoint>
+    // hook pretool`), not the bare `rafter hook pretool` that exits 127 off PATH.
     const hasPreHook = settings.hooks.PreToolUse.some((entry: any) =>
-      (entry.hooks || []).some((h: any) => h.command === "rafter hook pretool")
+      (entry.hooks || []).some((h: any) => {
+        const cmd = String(h.command ?? "");
+        return cmd.endsWith("hook pretool") && path.isAbsolute(cmd.split(" ")[0]);
+      })
     );
     expect(hasPreHook).toBe(true);
   });
