@@ -2424,15 +2424,64 @@ def _audit_share() -> None:
 # ── exec ─────────────────────────────────────────────────────────────
 
 
+# Approval model (rf-ss67): the only party who can approve a command that the
+# policy says needs approval is a person at an interactive terminal. No flag,
+# env var or stdin trick stands in for that, because every one of those can be
+# produced by the agent whose command is being gated:
+#   * `--force` used to skip the prompt. Combined with the PreToolUse hook
+#     treating a quoted argument as prose, `rafter agent exec --force "<cmd>"`
+#     ran any HIGH-tier command unprompted with the hook blind. The flag is
+#     kept only so old invocations parse; it changes nothing.
+#   * A piped "yes" is not a person. Approval is offered only when stdin is a
+#     TTY; otherwise the command is denied and says why.
+# The machine owner widens policy in ~/.rafter/config.json, not per call.
+
+_DRY_RUN_EXIT = {"allowed": 0, "blocked": 1, "approval": 2}
+
+
+def _join_command_parts(parts: list[str]) -> str:
+    """One quoted argument is the command verbatim; several (the `-- rm -rf x`
+    form the docs show) are re-joined with shell quoting so the classifier sees
+    what will run — `-- echo "a b"` becomes `echo 'a b'`, not `echo a b`."""
+    import shlex
+
+    if len(parts) == 1:
+        return parts[0]
+    return shlex.join(parts)
+
+
 @agent_app.command("exec")
 def exec_cmd(
-    command: str = typer.Argument(..., help="Command to execute"),
+    command: list[str] = typer.Argument(..., help="Command to execute (quote it, or pass it after --)"),
     skip_scan: bool = typer.Option(False, "--skip-scan", help="Skip pre-execution file scanning"),
-    force: bool = typer.Option(False, "--force", help="Skip approval prompts"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Classify the command and exit without running it (exit 0 allowed, 1 blocked, 2 needs approval)",
+    ),
+    force: bool = typer.Option(False, "--force", hidden=True, help="Deprecated: no longer skips approval (rf-ss67)"),
 ):
     """Execute command with security validation."""
+    command = _join_command_parts(command)
     interceptor = CommandInterceptor()
     evaluation = interceptor.evaluate(command)
+
+    # --dry-run reports the classification and stops. Nothing runs, nothing is
+    # scanned, nothing is logged as executed.
+    if dry_run:
+        blocked = not evaluation.allowed and not evaluation.requires_approval
+        verdict = "BLOCKED" if blocked else ("REQUIRES APPROVAL" if evaluation.requires_approval else "ALLOWED")
+        print(f"Dry run: {verdict}")
+        print(f"Risk Level: {evaluation.risk_level.upper()}")
+        print(f"Requires approval: {'yes' if evaluation.requires_approval else 'no'}")
+        if evaluation.reason:
+            print(f"Reason: {evaluation.reason}")
+        print(f"Command: {command}")
+        print("Not executed (--dry-run).")
+        raise typer.Exit(
+            code=_DRY_RUN_EXIT["blocked"] if blocked
+            else _DRY_RUN_EXIT["approval"] if evaluation.requires_approval
+            else _DRY_RUN_EXIT["allowed"]
+        )
 
     # Blocked
     if not evaluation.allowed and not evaluation.requires_approval:
@@ -2473,14 +2522,25 @@ def exec_cmd(
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
 
-    # Requires approval
-    if evaluation.requires_approval and not force:
+    # Requires approval — only a person at a terminal can give it.
+    if evaluation.requires_approval:
+        if force:
+            rprint(f"\n{fmt.warning('--force no longer skips approval (rf-ss67); approval needs a person at an interactive terminal')}\n")
         rprint(f"\n{fmt.warning('Command requires approval')}\n")
         print(f"Risk Level: {evaluation.risk_level.upper()}")
         print(f"Command: {command}")
         if evaluation.reason:
             print(f"Reason: {evaluation.reason}")
         print()
+
+        if not sys.stdin.isatty():
+            rprint(fmt.error("Command denied: approval needs an interactive terminal, and stdin is not one"))
+            print(
+                "Run the command yourself at a terminal, or have the machine owner adjust "
+                "commandPolicy in ~/.rafter/config.json.\n"
+            )
+            interceptor.log_evaluation(evaluation, "blocked")
+            raise typer.Exit(code=1)
 
         answer = input("Approve this command? (yes/no): ").strip().lower()
         if answer not in ("yes", "y"):
@@ -2489,9 +2549,6 @@ def exec_cmd(
             raise typer.Exit(code=1)
 
         rprint(f"\n{fmt.success('Command approved by user')}\n")
-        interceptor.log_evaluation(evaluation, "overridden")
-    elif force and evaluation.requires_approval:
-        rprint(f"\n{fmt.warning('Forcing execution (--force flag)')}\n")
         interceptor.log_evaluation(evaluation, "overridden")
     else:
         interceptor.log_evaluation(evaluation, "allowed")
