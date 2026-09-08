@@ -144,7 +144,14 @@ _WHITESPACE = re.compile(r"\s")
 # A heredoc introducer: `<<`, optional `-`/`~` (indented-terminator forms), an
 # optional quote around the delimiter, and the delimiter word. Group 1 is the
 # dash/tilde, group 3 is the delimiter name.
-_HEREDOC_START = re.compile(r"<<([-~]?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+_HEREDOC_START = re.compile(
+    # The `(?<!<)` / `(?!<)` guards are load-bearing: without them `<<<`
+    # matches starting at its SECOND `<`, so `cat <<< "hello"` is read as a
+    # heredoc with delimiter `hello`, no terminator is ever found, and every
+    # line after it is stripped — silently hiding whatever came next from the
+    # classifier, hard block included.
+    r"(?<!<)<<(?!<)([-~]?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2"
+)
 # Chain/pipe operators, used to find the statement that owns a heredoc.
 _CHAIN_SPLIT = re.compile(r"\|\||&&|[;|&]")
 
@@ -608,6 +615,35 @@ def _heredoc_owner_executes(line: str, lt_pos: int) -> bool:
     return False
 
 
+def _heredoc_output_piped_to_shell(line: str, lt_pos: int) -> bool:
+    """`cat <<EOF | bash` — the body is data to `cat`, but `cat`'s OUTPUT is the
+    script, so the body is executed after all.
+
+    The owner check above only reads the text BEFORE the introducer and never
+    sees the pipe, so without this a heredoc piped into a shell is stripped and
+    the hard block is silently lost. Keeping a body is the safe direction: it
+    can only over-block, and only for a shape that should block anyway.
+    """
+    for stage in line[lt_pos:].split("|")[1:]:
+        tokens = [t for t in stage.strip().split() if t]
+        idx = 0
+        while idx < len(tokens):
+            tok = tokens[idx]
+            if _ENV_ASSIGNMENT.match(tok):
+                idx += 1
+                continue
+            name = _exec_name(tok)
+            if name in _TAIL_WRAPPERS:
+                idx += 1
+                while idx < len(tokens) and (
+                    tokens[idx].startswith("-") or _NUMERIC_ARG.match(tokens[idx])
+                ):
+                    idx += 1
+                continue
+            return name in _SHELL_EXECS or name in _EVAL_EXECS
+    return False
+
+
 def _strip_heredoc_bodies(command: str) -> str:
     """Blank heredoc BODIES that a command consumes as DATA, before tokenizing.
 
@@ -634,7 +670,10 @@ def _strip_heredoc_bodies(command: str) -> str:
         k += 1
         if not matches:
             continue
-        keep = _heredoc_owner_executes(line, matches[0].start())
+        lt_pos = matches[0].start()
+        keep = _heredoc_owner_executes(line, lt_pos) or (
+            _heredoc_output_piped_to_shell(line, lt_pos)
+        )
         for m in matches:
             delim = m.group(3)
             dash = m.group(1)  # '-'/'~': a tab-indented terminator is allowed

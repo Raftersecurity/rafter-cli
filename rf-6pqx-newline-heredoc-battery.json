@@ -204,5 +204,33 @@
     "want": [
       "low"
     ]
+  },
+  {
+    "label": "here-string is not a heredoc: <<< must not suppress the next line",
+    "cmd": "cat <<< \"hello\" > a.txt\nrm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "here-string, indented terminator form: <<<- is still not a heredoc",
+    "cmd": "grep <<< \"needle\" > out.txt\nrm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "heredoc piped into a shell is executed",
+    "cmd": "cat <<EOF | bash\nrm -rf /\nEOF",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "heredoc piped into a wrapped shell is executed",
+    "cmd": "cat <<EOF | sudo bash\nrm -rf /\nEOF",
+    "want": [
+      "critical"
+    ]
   }
 ]
