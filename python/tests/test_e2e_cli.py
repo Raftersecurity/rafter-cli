@@ -364,3 +364,88 @@ class TestBackendWithoutApiKey:
     def test_usage_exits_1_without_api_key(self):
         _, _, rc = rafter("usage", env_override={"RAFTER_API_KEY": ""})
         assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# agent exec: approval needs a person at a terminal (rf-ss67)
+# ---------------------------------------------------------------------------
+
+
+def _exec(args, *, stdin_text="", home=None):
+    """Run `rafter agent exec ...` with stdin as a PIPE (never a TTY), which is
+    what an agent's shell looks like. Returns (stdout, stderr, exitcode)."""
+    env = os.environ.copy()
+    env["PYTHONUSERBASE"] = _USER_BASE
+    if home:
+        env["HOME"] = str(home)
+    result = subprocess.run(
+        [sys.executable, "-m", "rafter_cli", "agent", "exec", *args],
+        capture_output=True,
+        text=True,
+        input=stdin_text,
+        env=env,
+        timeout=30,
+    )
+    return result.stdout, result.stderr, result.returncode
+
+
+class TestAgentExecApproval:
+    """Every test proves the command did NOT run: the file mode is the witness."""
+
+    def test_force_no_longer_skips_approval(self, tmp_path):
+        f = tmp_path / "forced.txt"
+        f.write_text("x")
+        f.chmod(0o600)
+        out, err, rc = _exec([f"chmod 777 {f}", "--force"], home=tmp_path)
+        assert rc == 1
+        assert "--force no longer skips approval" in out
+        # The denial line itself — not the notice, which also mentions a
+        # terminal — and a clean exit, not an EOFError from input().
+        assert "Command denied: approval needs an interactive terminal" in out
+        assert "Traceback" not in err
+        assert "Forcing execution" not in out
+        assert (f.stat().st_mode & 0o777) == 0o600
+
+    def test_force_still_parses_for_safe_commands(self, tmp_path):
+        out, _, rc = _exec(["echo safe", "--force"], home=tmp_path)
+        assert rc == 0 and "safe" in out
+
+    def test_piped_yes_is_not_an_approval(self, tmp_path):
+        f = tmp_path / "piped.txt"
+        f.write_text("x")
+        f.chmod(0o600)
+        out, err, rc = _exec([f"chmod 777 {f}"], stdin_text="yes\n", home=tmp_path)
+        assert rc == 1
+        assert "Command denied: approval needs an interactive terminal" in out
+        assert "approved by user" not in out
+        assert "Traceback" not in err
+        assert (f.stat().st_mode & 0o777) == 0o600
+
+    def test_dry_run_allowed_exits_0_and_runs_nothing(self, tmp_path):
+        f = tmp_path / "dry.txt"
+        out, _, rc = _exec(["--dry-run", f"touch {f}"], home=tmp_path)
+        assert rc == 0
+        assert "Dry run: ALLOWED" in out and "Not executed" in out
+        assert not f.exists()
+
+    def test_dry_run_approval_exits_2_blocked_exits_1(self, tmp_path):
+        f = tmp_path / "dry2.txt"
+        f.write_text("x")
+        f.chmod(0o600)
+        out, _, rc = _exec(["--dry-run", f"chmod 777 {f}"], home=tmp_path)
+        assert rc == 2 and "REQUIRES APPROVAL" in out and "HIGH" in out
+        assert (f.stat().st_mode & 0o777) == 0o600
+        out, _, rc = _exec(["--dry-run", "rm -rf /"], home=tmp_path)
+        assert rc == 1 and "Dry run: BLOCKED" in out
+
+    def test_documented_double_dash_form(self, tmp_path):
+        out, _, rc = _exec(["--", "echo", "hello", "world"], home=tmp_path)
+        assert rc == 0 and "hello world" in out
+
+    def test_multi_word_parts_are_requoted(self):
+        from rafter_cli.commands.agent import _join_command_parts
+
+        assert _join_command_parts(['echo "a b"']) == 'echo "a b"'
+        assert _join_command_parts(["echo", "hello", "world"]) == "echo hello world"
+        assert _join_command_parts(["echo", "a b"]) == "echo 'a b'"
+        assert _join_command_parts(["sh", "-c", "rm -rf /"]) == "sh -c 'rm -rf /'"

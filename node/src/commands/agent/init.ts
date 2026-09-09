@@ -7,7 +7,7 @@ import { SkillManager } from "../../utils/skill-manager.js";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import { askYesNo } from "../../utils/prompt.js";
@@ -17,6 +17,65 @@ import yaml from "js-yaml";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/**
+ * Resolve an ABSOLUTE, self-contained hook command (rf-er8a). Agents run a hook
+ * through `sh -c "<command>"` in a minimal environment that need not have
+ * `rafter` — or even `node` — on PATH; a bare `rafter hook pretool` then exits
+ * 127, which those tools treat as a silent allow, so the gate is inert while
+ * settings.json says it is installed. Pinning BOTH the node interpreter and the
+ * CLI entrypoint makes the command resolvable regardless of PATH. (dist/index.js
+ * carries `#!/usr/bin/env node`, so an absolute entrypoint ALONE still fails
+ * where node is off PATH — the interpreter must be pinned too.)
+ */
+function hookEntrypoint(): string {
+  let entrypoint = process.argv[1] || "";
+  try { entrypoint = fs.realpathSync(entrypoint); } catch { /* keep as-is */ }
+  return entrypoint;
+}
+
+export function absoluteHookCommand(args: string): string {
+  return `${process.execPath} ${hookEntrypoint()} hook ${args}`;
+}
+
+/**
+ * After writing the hooks, confirm the exact command we wrote actually runs and
+ * enforces — and refuse to report a clean success if it does not (rf-er8a /
+ * rf-fuwy). Returns human-readable warnings; empty means the gate is live.
+ */
+function installedHookWarnings(): string[] {
+  const warnings: string[] = [];
+  const entrypoint = hookEntrypoint();
+  if (entrypoint.includes("/_npx/") || entrypoint.includes("\\_npx\\")) {
+    warnings.push(
+      `The rafter entrypoint is inside an npx cache (${entrypoint}), which is ephemeral: the ` +
+      `installed hook will stop resolving when the cache is cleared. Install globally ` +
+      `(npm install -g @rafter-security/cli) and re-run 'rafter agent init'.`,
+    );
+  }
+  try {
+    const cmd = absoluteHookCommand("pretool");
+    const res = spawnSync("sh", ["-c", cmd], {
+      input: JSON.stringify({
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command: "rm -rf / --no-preserve-root" },
+        permission_mode: "default",
+        cwd: process.cwd(),
+      }),
+      encoding: "utf-8",
+      timeout: 10_000,
+    });
+    let decision: string | null = null;
+    try { decision = JSON.parse(res.stdout || "")?.hookSpecificOutput?.permissionDecision ?? null; } catch { decision = null; }
+    if (res.error || res.status === 127) {
+      warnings.push(`The installed PreToolUse hook did not execute (exit ${res.status ?? "spawn error"}) — the gate is inert. Command: ${cmd}`);
+    } else if (decision !== "deny") {
+      warnings.push(`The installed PreToolUse hook ran but did not block a synthetic critical command (decision=${decision ?? "none"}).`);
+    }
+  } catch { /* best-effort confirmation */ }
+  return warnings;
+}
 
 /**
  * Skills installed by `rafter agent init` for Claude Code / Codex.
@@ -297,20 +356,20 @@ function installClaudeCodeHooks(root: string): void {
   if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
   if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
 
-  const preHook = { type: "command", command: "rafter hook pretool" };
-  const postHook = { type: "command", command: "rafter hook posttool" };
+  const preHook = { type: "command", command: absoluteHookCommand("pretool") };
+  const postHook = { type: "command", command: absoluteHookCommand("posttool") };
 
   // Remove any existing Rafter hooks to avoid duplicates
   settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
     (entry: any) => {
       const hooks = entry.hooks || [];
-      return !hooks.some((h: any) => h.command === "rafter hook pretool");
+      return !hooks.some((h: any) => String(h.command ?? "").includes("hook pretool"));
     }
   );
   settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
     (entry: any) => {
       const hooks = entry.hooks || [];
-      return !hooks.some((h: any) => h.command === "rafter hook posttool");
+      return !hooks.some((h: any) => String(h.command ?? "").includes("hook posttool"));
     }
   );
   // Strip legacy SessionStart entry left over from <=0.7.4 installs.
@@ -318,7 +377,7 @@ function installClaudeCodeHooks(root: string): void {
     settings.hooks.SessionStart = settings.hooks.SessionStart.filter(
       (entry: any) => {
         const hooks = entry.hooks || [];
-        return !hooks.some((h: any) => h.command === "rafter hook session-start");
+        return !hooks.some((h: any) => String(h.command ?? "").includes("hook session-start"));
       }
     );
     if (settings.hooks.SessionStart.length === 0) delete settings.hooks.SessionStart;
@@ -364,15 +423,15 @@ function installCodexHooks(root: string): void {
   if (!config.hooks.PostToolUse) config.hooks.PostToolUse = [];
 
   // Codex uses the same hookSpecificOutput protocol as Claude Code (format=claude)
-  const preHook = { type: "command", command: "rafter hook pretool" };
-  const postHook = { type: "command", command: "rafter hook posttool" };
+  const preHook = { type: "command", command: absoluteHookCommand("pretool") };
+  const postHook = { type: "command", command: absoluteHookCommand("posttool") };
 
   // Remove existing rafter hooks
   config.hooks.PreToolUse = config.hooks.PreToolUse.filter(
-    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
+    (entry: any) => !(entry.hooks || []).some((h: any) => String(h.command ?? "").includes("hook pretool"))
   );
   config.hooks.PostToolUse = config.hooks.PostToolUse.filter(
-    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.startsWith("rafter hook posttool"))
+    (entry: any) => !(entry.hooks || []).some((h: any) => String(h.command ?? "").includes("hook posttool"))
   );
 
   // PreToolUse intercepts the tools Codex documents support for: Bash and
@@ -428,15 +487,15 @@ function installCursorHooks(root: string): void {
   if (!config.hooks) config.hooks = {};
 
   const events: { event: string; command: string }[] = [
-    { event: "preToolUse", command: "rafter hook pretool --format cursor" },
-    { event: "postToolUse", command: "rafter hook posttool --format cursor" },
-    { event: "beforeShellExecution", command: "rafter hook pretool --format cursor" },
+    { event: "preToolUse", command: absoluteHookCommand("pretool --format cursor") },
+    { event: "postToolUse", command: absoluteHookCommand("posttool --format cursor") },
+    { event: "beforeShellExecution", command: absoluteHookCommand("pretool --format cursor") },
   ];
 
   for (const { event, command } of events) {
     if (!Array.isArray(config.hooks[event])) config.hooks[event] = [];
     config.hooks[event] = config.hooks[event].filter(
-      (entry: any) => !entry?.command?.includes("rafter hook"),
+      (entry: any) => !(String(entry?.command ?? "").includes("hook pretool") || String(entry?.command ?? "").includes("hook posttool")),
     );
     config.hooks[event].push({ command, type: "command", timeout: 5000 });
   }
@@ -572,10 +631,10 @@ function installGeminiHooks(root: string): void {
 
   // Remove existing rafter hooks
   settings.hooks.BeforeTool = settings.hooks.BeforeTool.filter(
-    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.includes("rafter hook pretool"))
+    (entry: any) => !(entry.hooks || []).some((h: any) => String(h.command ?? "").includes("hook pretool"))
   );
   settings.hooks.AfterTool = settings.hooks.AfterTool.filter(
-    (entry: any) => !(entry.hooks || []).some((h: any) => h.command?.includes("rafter hook posttool"))
+    (entry: any) => !(entry.hooks || []).some((h: any) => String(h.command ?? "").includes("hook posttool"))
   );
 
   // Gemini matchers are regexes against built-in tool names per
@@ -584,11 +643,11 @@ function installGeminiHooks(root: string): void {
   // verification 2026-05-03 — schema confirmed against current Gemini docs.)
   settings.hooks.BeforeTool.push({
     matcher: "run_shell_command|write_file|replace|edit",
-    hooks: [{ type: "command", command: "rafter hook pretool --format gemini", timeout: 5000 }],
+    hooks: [{ type: "command", command: absoluteHookCommand("pretool --format gemini"), timeout: 5000 }],
   });
   settings.hooks.AfterTool.push({
     matcher: ".*",
-    hooks: [{ type: "command", command: "rafter hook posttool --format gemini", timeout: 5000 }],
+    hooks: [{ type: "command", command: absoluteHookCommand("posttool --format gemini"), timeout: 5000 }],
   });
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
@@ -1619,7 +1678,16 @@ export function createInitCommand(): Command {
       }, root, scope);
 
       console.log();
-      console.log(fmt.success("Agent security initialized!"));
+      // rf-er8a: do not report a clean success if the hook we just wrote cannot
+      // execute and enforce. A silent 127 (or an npx-cache entrypoint) means the
+      // gate is inert even though settings.json looks configured.
+      const hookWarnings = claudeCodeOk ? installedHookWarnings() : [];
+      if (hookWarnings.length > 0) {
+        for (const w of hookWarnings) console.log(fmt.warning(w));
+        console.log(fmt.warning("Agent security initialized WITH WARNINGS — the command gate may NOT be active (see above). Run 'rafter agent verify' to confirm."));
+      } else {
+        console.log(fmt.success("Agent security initialized!"));
+      }
       console.log();
 
       const anyIntegration = openclawOk || claudeCodeOk || codexOk || geminiOk || cursorOk || windsurfOk || continueOk || aiderOk || hermesOk || openCodeOk;
