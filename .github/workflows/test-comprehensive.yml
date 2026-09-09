@@ -389,7 +389,15 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: ["18", "20", "22"]
+        # Node 18 is deliberately absent: vitest 4.1.0 declares
+        # engines.node ^20 || ^22 || >=24, so an 18 leg runs the suite on a
+        # runner that does not support it. It does not refuse outright — it
+        # runs, reports, and the report means nothing about the shipped code.
+        # engines in package.json stays >=18 because the BUILT ARTIFACT does
+        # work on 18 (measured 200/200 on dist). If we want real Node 18
+        # signal, smoke-test the built artifact under 18 — that is what users
+        # run — rather than the test runner.
+        node: ["20", "22"]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
