@@ -538,11 +538,14 @@ Remote `rafter run` emits the same suppression data as a separate `suppressed.js
 
 Execute shell command with risk assessment and approval workflow.
 
-- `COMMAND` — shell command string
+- `COMMAND` — the shell command, as one quoted string or as the words after `--` (several words are re-quoted before evaluation, so what the classifier sees is what the shell runs)
+- `--dry-run` — classify and print the verdict without running anything; exit `0` allowed, `1` blocked, `2` requires approval
 - `--skip-scan` — skip pre-execution file scanning
-- `--force` — skip approval prompts (logged as override)
+- `--force` — deprecated, no effect: it no longer skips approval (rf-ss67). Still parsed so old invocations do not fail.
 
 Risk tiers: critical (blocked), high (approval required), medium (approval on moderate+), low (allowed).
+
+**Approval model.** A command that requires approval is approved only by a person at an interactive terminal: the prompt is offered only when stdin is a TTY, and otherwise the command is denied with exit `1` and a message saying so. A piped `yes` is not an approval and no flag stands in for one, because anything an agent can pass, the agent can pass on its own. The machine owner widens policy in `~/.rafter/config.json` (`commandPolicy`), not per call. Both runtimes.
 
 ### rafter skill review [PATH_OR_URL] [OPTIONS]
 

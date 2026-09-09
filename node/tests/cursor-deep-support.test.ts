@@ -70,21 +70,27 @@ describe("Cursor deep support — rf-cia (rf-svn3)", () => {
       expect(Array.isArray(config.hooks.postToolUse)).toBe(true);
       expect(Array.isArray(config.hooks.beforeShellExecution)).toBe(true);
 
-      const pre = config.hooks.preToolUse.find((e: any) => e.command?.includes("rafter"));
+      // rf-er8a: init writes a RESOLVABLE ABSOLUTE command (`<node> <entrypoint>
+      // hook pretool --format cursor`), not the bare form that exits 127 off PATH.
+      const isAbs = (c: string) => path.isAbsolute(String(c ?? "").split(" ")[0]);
+      const pre = config.hooks.preToolUse.find((e: any) => e.command?.includes("hook pretool"));
       expect(pre).toBeDefined();
-      expect(pre.command).toBe("rafter hook pretool --format cursor");
+      expect(pre.command.endsWith("hook pretool --format cursor")).toBe(true);
+      expect(isAbs(pre.command)).toBe(true);
       expect(pre.type).toBe("command");
 
-      const post = config.hooks.postToolUse.find((e: any) => e.command?.includes("rafter"));
+      const post = config.hooks.postToolUse.find((e: any) => e.command?.includes("hook posttool"));
       expect(post).toBeDefined();
-      expect(post.command).toBe("rafter hook posttool --format cursor");
+      expect(post.command.endsWith("hook posttool --format cursor")).toBe(true);
+      expect(isAbs(post.command)).toBe(true);
       expect(post.type).toBe("command");
 
       const shell = config.hooks.beforeShellExecution.find((e: any) =>
-        e.command?.includes("rafter"),
+        e.command?.includes("hook pretool"),
       );
       expect(shell).toBeDefined();
-      expect(shell.command).toBe("rafter hook pretool --format cursor");
+      expect(shell.command.endsWith("hook pretool --format cursor")).toBe(true);
+      expect(isAbs(shell.command)).toBe(true);
     });
 
     it("is idempotent — repeated install yields exactly one rafter entry per event", () => {

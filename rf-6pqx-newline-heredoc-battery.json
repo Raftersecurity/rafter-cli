@@ -1,0 +1,315 @@
+[
+  {
+    "label": "nl: echo then rm -rf /",
+    "cmd": "echo start\nrm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "nl: grep then rm -rf /",
+    "cmd": "grep -r x .\nrm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "nl: printf then sudo rm",
+    "cmd": "printf a\nsudo rm -rf /etc",
+    "want": [
+      "critical",
+      "high"
+    ]
+  },
+  {
+    "label": "nl: CRLF variant",
+    "cmd": "echo x\r\nrm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "hd: doc 'Never run rm -rf / on prod'",
+    "cmd": "cat > README.md <<'EOF'\nNever run rm -rf / on prod.\nEOF",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "hd: body rm -rf /",
+    "cmd": "cat > a.md <<'EOF'\nrm -rf /\nEOF",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "hd: grep -q heredoc body",
+    "cmd": "grep -q foo <<'EOF'\nrm -rf /\nEOF",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "hd: <<- tab-strip delim + tab-indented terminator",
+    "cmd": "cat <<-END > d.md\n\trm -rf /\n\tEND",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "hd: two heredocs one line, both bodies dangerous",
+    "cmd": "cat <<A <<B\nrm -rf /\nA\nchmod -R 777 /\nB",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "NESTED: body contains a fake <<FAKE opener + rm -rf /",
+    "cmd": "cat <<OUTER > f.sh\nexample: cat <<FAKE\nrm -rf /\nFAKE stuff\nOUTER",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "RECURS: delimiter word appears mid-line in body, real term later",
+    "cmd": "cat <<EOF > note.md\nThe EOF marker ends a heredoc.\nrm -rf /\nEOF",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "RECURS: body line has 'EOF;' not standalone",
+    "cmd": "cat <<EOF > n.md\nEOF; is not a terminator\nsudo rm -rf /etc\nEOF",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "PLAIN <<: indented EOF is NOT a terminator (body continues)",
+    "cmd": "cat <<EOF > n.md\n  EOF\nrm -rf /\nEOF",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "INVARIANT: real cmd AFTER standalone terminator -> critical",
+    "cmd": "cat <<EOF\nhi\nEOF\nrm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "INVARIANT: <<- real cmd after tab-indented terminator -> critical",
+    "cmd": "cat <<-EOF\n\tdata\n\tEOF\nrm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "INVARIANT: bare rm -rf /",
+    "cmd": "rm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "INVARIANT: semicolon chain",
+    "cmd": "echo x; rm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "INVARIANT: benign multiline echo",
+    "cmd": "echo one\necho two",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "INVARIANT: prose FP commit body",
+    "cmd": "git commit -m 'do not git push --force'",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "INVARIANT: benign heredoc",
+    "cmd": "cat <<EOF > out.txt\nhello world\nEOF",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "SHELL-HD (se-y6vo): bash <<EOF body IS executed",
+    "cmd": "bash <<EOF\nrm -rf /\nEOF",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "SHELL-HD: sudo bash <<EOF (tail-wrapper + shell)",
+    "cmd": "sudo bash <<EOF\nrm -rf /\nEOF",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "SHELL-HD: sh <<'X' quoted delim, executed",
+    "cmd": "sh <<'X'\nrm -rf /\nX",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "SHELL-HD: echo hi; bash <<EOF (owner is bash, not echo)",
+    "cmd": "echo hi; bash <<EOF\nrm -rf /\nEOF",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "MIXED: cat <<A then EOF; still strip cat body",
+    "cmd": "cat <<DATA > f\nrm -rf /\nDATA",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "BACKSLASH-NL (goldwasser): r\\<NL>m -rf / must not sidestep",
+    "cmd": "r\\\nm -rf /",
+    "want": [
+      "critical",
+      "high",
+      "medium"
+    ]
+  },
+  {
+    "label": "se-y6vo: unterminated ANSI-C quote fails closed",
+    "cmd": "echo $'a\\'b'\nrm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "se-y6vo: backslash-nl splits rm -rf (must not downgrade)",
+    "cmd": "rm -r\\\nf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "invariant: backslash-nl joining echo args stays low",
+    "cmd": "echo hi \\\nrm -rf /",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "here-string is not a heredoc: <<< must not suppress the next line",
+    "cmd": "cat <<< \"hello\" > a.txt\nrm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "here-string, indented terminator form: <<<- is still not a heredoc",
+    "cmd": "grep <<< \"needle\" > out.txt\nrm -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "heredoc piped into a shell is executed",
+    "cmd": "cat <<EOF | bash\nrm -rf /\nEOF",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "heredoc piped into a wrapped shell is executed",
+    "cmd": "cat <<EOF | sudo bash\nrm -rf /\nEOF",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an: command substitution used as the -c script",
+    "cmd": "bash -c \"$(echo rm -rf /)\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an: backtick substitution used as the -c script",
+    "cmd": "sh -c \"`echo rm -rf /`\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an: text piped into a shell",
+    "cmd": "echo \"rm -rf /\" | bash",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an guard: a -c script that merely PRINTS stays data",
+    "cmd": "bash -c \"echo 'rm -rf /'\"",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "REGRESSION heredoc piped to sudo sh",
+    "cmd": "cat <<DATA | sudo sh\nrm -rf /\nDATA",
+    "want": [
+      "critical",
+      "high"
+    ]
+  },
+  {
+    "label": "REGRESSION here-string multi unquoted word",
+    "cmd": "grep <<< marker\nsudo rm -rf /etc",
+    "want": [
+      "critical",
+      "high"
+    ]
+  },
+  {
+    "label": "sable-c6an bash -c backtick",
+    "cmd": "bash -c \"`echo rm -rf /`\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an echo piped to bash",
+    "cmd": "echo 'rm -rf /' | bash",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-c6an eval command-substitution",
+    "cmd": "eval \"$(echo rm -rf /)\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "GUARD redirect target named bin/bash stays low (data heredoc)",
+    "cmd": "cat > bin/bash <<'EOF'\nrm -rf /\nEOF",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "GUARD redirect target /usr/local/bin/sh stays low",
+    "cmd": "tee /usr/local/bin/sh <<'EOF'\nrm -rf /\nEOF",
+    "want": [
+      "low"
+    ]
+  }
+]

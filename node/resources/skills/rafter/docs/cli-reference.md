@@ -64,7 +64,7 @@ When: before firing multiple remote scans, or when the user asks about limits.
 
 Classify and optionally run a shell command through Rafter's risk tiers (critical / high / medium / low).
 
-When: any time a destructive-looking command is about to be executed by an agent. Use `--dry-run` to classify without running.
+When: any time a destructive-looking command is about to be executed by an agent. Use `--dry-run` to classify without running: exit 0 = allowed, 1 = blocked, 2 = needs a person's approval. Without `--dry-run`, a command that needs approval is only ever approved by a person at an interactive terminal; from an agent's shell it is denied.
 
 Example: `rafter agent exec --dry-run -- rm -rf $WORK_DIR`
 
