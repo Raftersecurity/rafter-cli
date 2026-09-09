@@ -48,6 +48,12 @@ jobs:
         run: |
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
 
+      # The rf-6pqx differential FAILS rather than skips when main's classifier is
+      # unobtainable, and this job runs the FULL suite — so the publish path needs
+      # the baseline too, or the release breaks at the moment it fires.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
       - name: Run tests
         run: pnpm exec vitest run --reporter=default --reporter=json --outputFile.json=vitest-report.json
 
@@ -84,6 +90,12 @@ jobs:
         run: |
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
           pip install pytest pytest-mock pytest-asyncio
+
+      # The rf-6pqx differential FAILS rather than skips when main's classifier is
+      # unobtainable, and this job runs the FULL suite — so the publish path needs
+      # the baseline too, or the release breaks at the moment it fires.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
 
       - name: Run all tests
         run: python -m pytest tests/ -v -o junit_family=xunit1 --junitxml=pytest-report.xml
