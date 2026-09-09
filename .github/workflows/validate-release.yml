@@ -84,6 +84,13 @@ jobs:
         with:
           python-version: "3.11"
 
+      # The rf-6pqx differential compares this branch's classifier against main's
+      # and FAILS rather than skips when the baseline is missing — correctly, but
+      # that means EVERY job running the suite has to supply it. actions/checkout
+      # fetches only the PR ref. A depth-1 fetch is enough: one blob, not history.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
       - name: Build Node package
         run: |
           cd node
