@@ -476,17 +476,46 @@ describe("ConfigManager", () => {
       expect(merged.agent?.riskLevel).toBe("aggressive");
     });
 
-    it("should let policy override commandPolicy.mode", () => {
-      manager.save(manager.load());
+    // sable-nz4y — command policy no longer replaces wholesale. The project
+    // `.rafter.yml` lives in the repo being worked on, so on an untrusted repo
+    // it is attacker-controlled; the global config is now a floor a project may
+    // raise but never lower. These three tests previously asserted the replace
+    // semantics; they assert the floor now, plus the owner's opt-out that still
+    // gives the old behavior to anyone who deliberately delegates policy.
+    it("should refuse a policy mode looser than the global one", () => {
+      manager.save(manager.load());   // global default mode: approve-dangerous
       mockPolicy({ commandPolicy: { mode: "deny-list" } });
 
       const merged = manager.loadWithPolicy();
-      expect(merged.agent?.commandPolicy.mode).toBe("deny-list");
+      expect(merged.agent?.commandPolicy.mode).toBe("approve-dangerous");
     });
 
-    it("should replace arrays from policy, not append", () => {
+    it("should accept a policy mode stricter than the global one", () => {
+      const config = manager.load();
+      config.agent!.commandPolicy.mode = "allow-all";
+      manager.save(config);
+      mockPolicy({ commandPolicy: { mode: "approve-dangerous" } });
+
+      const merged = manager.loadWithPolicy();
+      expect(merged.agent?.commandPolicy.mode).toBe("approve-dangerous");
+    });
+
+    it("should union arrays from policy, keeping the global entries", () => {
       const config = manager.load();
       config.agent!.commandPolicy.blockedPatterns = ["rm -rf /", "dd if="];
+      manager.save(config);
+      mockPolicy({ commandPolicy: { blockedPatterns: ["policy-pattern-only"] } });
+
+      const merged = manager.loadWithPolicy();
+      expect(merged.agent?.commandPolicy.blockedPatterns).toEqual([
+        "rm -rf /", "dd if=", "policy-pattern-only",
+      ]);
+    });
+
+    it("should replace arrays when the owner sets allowProjectOverride", () => {
+      const config = manager.load();
+      config.agent!.commandPolicy.blockedPatterns = ["rm -rf /", "dd if="];
+      config.agent!.commandPolicy.allowProjectOverride = true;
       manager.save(config);
       mockPolicy({ commandPolicy: { blockedPatterns: ["policy-pattern-only"] } });
 
@@ -547,14 +576,19 @@ describe("ConfigManager", () => {
       expect(merged.agent?.riskLevel).toBe("aggressive");
     });
 
-    it("should let policy override requireApproval array", () => {
+    // sable-nz4y — was "should let policy override requireApproval array".
+    // A project may add approval rules; dropping one the owner set is no longer
+    // expressible, because the project file is untrusted repo content.
+    it("should union requireApproval, keeping the owner's entries", () => {
       const config = manager.load();
       config.agent!.commandPolicy.requireApproval = ["sudo", "rm -rf"];
       manager.save(config);
       mockPolicy({ commandPolicy: { requireApproval: ["policy-only-pattern"] } });
 
       const merged = manager.loadWithPolicy();
-      expect(merged.agent?.commandPolicy.requireApproval).toEqual(["policy-only-pattern"]);
+      expect(merged.agent?.commandPolicy.requireApproval).toEqual([
+        "sudo", "rm -rf", "policy-only-pattern",
+      ]);
     });
 
     it("should partially override commandPolicy — mode only, keep arrays", () => {

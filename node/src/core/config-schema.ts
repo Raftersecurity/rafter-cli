@@ -72,6 +72,15 @@ export interface RafterConfig {
       mode: CommandPolicyMode;
       blockedPatterns: string[];
       requireApproval: string[];
+      /**
+       * Opt out of the project-policy floor (sable-nz4y).
+       *
+       * Read ONLY from the machine owner's global config — never from a
+       * project `.rafter.yml`, or a repo could grant itself the permission and
+       * the floor would be no floor at all. Default (absent/false) keeps the
+       * floor: a project policy may tighten command policy, never loosen it.
+       */
+      allowProjectOverride?: boolean;
     };
     outputFiltering: {
       redactSecrets: boolean;
