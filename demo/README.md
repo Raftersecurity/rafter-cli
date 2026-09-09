@@ -18,7 +18,7 @@ The `/rafter-showcase` skill walks through all 9 core features with live command
 4. Audit logging (JSONL trail)
 5. Pre-commit hooks
 6. CI/CD integration (GitHub Actions)
-7. MCP server (4 tools, 2 resources)
+7. MCP server (4 tools, 3 resources)
 8. Skill auditing
 9. Remote SAST/SCA (requires API key)
 

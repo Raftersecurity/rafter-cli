@@ -76,6 +76,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The rf-6pqx differential FAILS LOUDLY when main's classifier is
+      # unobtainable — correctly, since a differential that silently skips is a
+      # vacuous gate. actions/checkout fetches only the PR ref, so origin/main
+      # is absent and the gate cannot run at all. This job only fires on PRs
+      # into prod, which is why nothing before #237 caught it: the same fetch
+      # was added to test-comprehensive.yml and not here. One blob is all the
+      # gate needs.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -83,6 +93,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      # The rf-6pqx differential compares this branch's classifier against main's
+      # and FAILS rather than skips when the baseline is missing — correctly, but
+      # that means EVERY job running the suite has to supply it. actions/checkout
+      # fetches only the PR ref. A depth-1 fetch is enough: one blob, not history.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
 
       - name: Build Node package
         run: |
@@ -93,11 +110,18 @@ jobs:
           pnpm run build
           pnpm test
 
-      - name: Build Python package
+      # sable-cazq — this job ran `pnpm test` for Node and nothing but a
+      # wheel build for Python, so the pre-release gate asserted that the
+      # Python package *compiles*, never that it works. ~80s of pytest is
+      # the difference between those two claims.
+      - name: Build and test Python package
         run: |
           cd python
           python -m pip install --upgrade build
           python -m build
+          pip install -e .
+          pip install pytest pytest-mock pytest-asyncio
+          python -m pytest tests/ -q
 
       - name: Verify all artifacts
         run: |

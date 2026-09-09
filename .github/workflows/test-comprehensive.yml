@@ -4,14 +4,96 @@ on:
   pull_request:
     branches:
       - prod
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # ── Who gets the suite ────────────────────────────────────────────
+  # The two unit-test jobs (test-node, test-python) run on EVERY PR — see
+  # sable-bm5k. The rest of the matrix runs for PRs into prod (the release
+  # gate) and for outside contributions; for our own PRs into main it is
+  # skipped, because re-running the 6-way cross-platform grid on work that
+  # was reviewed before it was pushed mostly burns runner minutes.
+  #
+  # Note this is `pull_request`, not `pull_request_target` — fork PRs run with
+  # a read-only token and no access to secrets. Do not "fix" that.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      run_core: ${{ steps.decide.outputs.run_core }}
+    steps:
+      # Checked out only so the skip notice below can read the list of gated
+      # jobs from this file instead of carrying a copy of it. The first
+      # hand-typed copy omitted e2e-node within the hour it was written.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/workflows/test-comprehensive.yml
+          sparse-checkout-cone-mode: false
+
+      - id: decide
+        # Values go through env rather than direct ${{ }} interpolation into
+        # the script, so nothing from the PR can be shell-injected.
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD_OWNER: ${{ github.event.pull_request.head.repo.owner.login }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          # `run`      — the full matrix, including the 6-way cross-platform grid.
+          # `run_core` — the two unit-test jobs. These now run on EVERY PR.
+          #
+          # sable-bm5k: the original gate skipped everything on internal PRs into
+          # main, on the premise that our own work is tested locally first. On
+          # #220 — which changed both the Node and the Python client — that meant
+          # neither test-node nor test-python ran. The premise is also weaker
+          # than it looks: this repo has test files that fail locally for
+          # environmental reasons, so "green on my machine" is not a signal you
+          # can act on. test-node (234s) and test-python (100s) run in parallel,
+          # so this costs ~4 minutes of wall clock. The expensive part — the
+          # cross-platform grid, 6 jobs and 3 of them macOS — stays gated.
+          echo "run_core=true" >> "$GITHUB_OUTPUT"
+
+          if [ "$EVENT" != "pull_request" ] || [ "$BASE" != "main" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$HEAD_OWNER" = "Raftersecurity" ] || [ "$AUTHOR" = "Rome-1" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            # sable-d2x2 rule B — a skipped job renders as a grey check and
+            # satisfies a required status check, so the skip has to be said
+            # out loud, by name, where a reviewer looks: the checks annotation
+            # and the run summary. The list is READ FROM THIS FILE (every job
+            # whose `if:` is gated on needs.gate.outputs.run), never typed by
+            # hand, so it cannot drift from the jobs it describes.
+            SKIPPED_JOBS=$(awk '
+              /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { job=$1; sub(":", "", job) }
+              /^[[:space:]]*if:.*needs\.gate\.outputs\.run == .true./ { if (job != "" && !seen[job]++) print job }
+            ' .github/workflows/test-comprehensive.yml)
+            SKIPPED_CSV=$(printf '%s' "$SKIPPED_JOBS" | paste -sd ',' - | sed 's/,/, /g')
+            if [ -z "$SKIPPED_JOBS" ]; then
+              echo "::error::gate: found no jobs gated on needs.gate.outputs.run — the skip notice would be empty. Either the gate is now pointless or this awk no longer matches the file."
+              exit 1
+            fi
+            echo "::warning::Internal PR into main: extended matrix NOT run — ${SKIPPED_CSV}. Unit tests (test-node, test-python) still run. To run everything, push to a branch and open the PR from a fork, or use workflow_dispatch."
+            {
+              echo "### Extended matrix skipped on this run"
+              echo ""
+              echo "Internal PR into main (author=\`$AUTHOR\`, head repo owner=\`$HEAD_OWNER\`). These jobs did **not** run and their grey checks mean *skipped*, not *passed*:"
+              echo ""
+              printf '%s\n' "$SKIPPED_JOBS" | sed 's/.*/- `&`/'
+              echo ""
+              echo "\`test-node\` and \`test-python\` ran. Trigger the full matrix with **workflow_dispatch** if this PR touches packaging, SARIF output, secret patterns, or platform-specific code."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   # ── Unit & integration tests (both languages) ─────────────────────
   test-node:
+    needs: gate
+    if: needs.gate.outputs.run_core == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -38,6 +120,15 @@ jobs:
         run: |
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
 
+      # The rf-6pqx differential compares this branch's classifier against
+      # main's, and it FAILS rather than skips when the baseline is missing —
+      # correctly, since a differential that silently skips is a vacuous gate.
+      # actions/checkout fetches only the PR ref, so `origin/main` is not in the
+      # clone and the gate cannot run at all. A depth-1 fetch is enough: the
+      # gate reads one blob, not the history.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
       - name: Build
         run: pnpm run build
 
@@ -50,11 +141,31 @@ jobs:
         run: node ./dist/index.js --version
 
       - name: Run all tests
-        run: pnpm test
+        # The JSON report feeds the floor check below; the default reporter
+        # keeps the log readable.
+        run: pnpm exec vitest run --reporter=default --reporter=json --outputFile.json=vitest-report.json
         env:
           RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
 
+      # sable-d2x2 rule C — a green run must have RUN something. Fails if the
+      # executed count falls below the floor or any file's tests all skipped
+      # (sable-cazq: 40 parity tests describe.skip'd, exit 0). The floor is
+      # ~95% of the count on 2026-09-02 (2099 executed); lower it in the same
+      # PR that removes tests, so a shrink is a reviewed decision.
+      - name: Assert the suite actually ran
+        run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "test-node (vitest)"
+
+      # The battery is the gate that catches a MISSING fix; the differential
+      # cannot, because a fix absent on both sides is not a permissive move.
+      # That makes the battery's CONTENTS load-bearing, so they get a floor of
+      # their own — in both directions, since a fix bought with an over-block
+      # is how #230 happened.
+      - name: Assert the classifier battery still gates both directions
+        run: python3 ../.github/scripts/classifier_battery_floor.py --min-cases 44
+
   test-python:
+    needs: gate
+    if: needs.gate.outputs.run_core == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -71,13 +182,28 @@ jobs:
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
           pip install pytest pytest-mock pytest-asyncio
 
+      # Same reason as test-node: the differential FAILS rather than skips
+      # when main's classifier is unobtainable, and actions/checkout fetches
+      # only the PR ref. One blob is all the gate needs.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
       - name: Run all tests
-        run: python -m pytest tests/ -v
+        # xunit1 is the JUnit family that records `file` per test case, which
+        # the floor check below groups by.
+        run: python -m pytest tests/ -v -o junit_family=xunit1 --junitxml=pytest-report.xml
         env:
           RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
 
+      # sable-d2x2 rule C — see test-node. Floor is ~95% of 1614 executed on
+      # 2026-09-02.
+      - name: Assert the suite actually ran
+        run: python3 ../.github/scripts/test_floor.py --junit pytest-report.xml --min-executed 1530 --label "test-python (pytest)"
+
   # ── E2E CLI tests ─────────────────────────────────────────────────
   e2e-node:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -102,6 +228,8 @@ jobs:
 
   # ── Secret detection accuracy ──────────────────────────────────────
   secret-detection-accuracy:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -124,6 +252,8 @@ jobs:
 
   # ── SARIF output validation ────────────────────────────────────────
   sarif-validation:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -160,6 +290,8 @@ jobs:
 
   # ── Remote API integration (only when key available) ───────────────
   backend-api:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     env:
       RAFTER_API_KEY: ${{ secrets.RAFTER_API_KEY }}
@@ -183,8 +315,28 @@ jobs:
         if: ${{ env.RAFTER_API_KEY != '' }}
         run: pnpm exec vitest run tests/backend-api.test.ts
 
+      # sable-bm5k — without this the job renders identically whether it tested
+      # the backend or tested nothing. RAFTER_API_KEY has never been set on this
+      # repo, so "backend-api ✓" has always meant "checked out and built".
+      # A skipped step must not look like a passing one.
+      - name: Say so when the backend tests did not run
+        if: ${{ env.RAFTER_API_KEY == '' }}
+        run: |
+          echo "::warning::backend-api tested NOTHING — RAFTER_API_KEY is not set, so tests/backend-api.test.ts was skipped."
+          {
+            echo "### :warning: backend-api ran no tests"
+            echo ""
+            echo "\`RAFTER_API_KEY\` is unset, so \`tests/backend-api.test.ts\` was skipped."
+            echo "This job checked out and built the package and nothing else."
+            echo ""
+            echo "The remote scan path is covered without a key by the mock-backed jobs"
+            echo "in \`test-github-action.yml\`. See sable-bm5k."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # ── Package build verification ─────────────────────────────────────
   package-integrity:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -231,11 +383,21 @@ jobs:
 
   # ── Cross-platform smoke test ──────────────────────────────────────
   cross-platform:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: ["18", "20", "22"]
+        # Node 18 is deliberately absent: vitest 4.1.0 declares
+        # engines.node ^20 || ^22 || >=24, so an 18 leg runs the suite on a
+        # runner that does not support it. It does not refuse outright — it
+        # runs, reports, and the report means nothing about the shipped code.
+        # engines in package.json stays >=18 because the BUILT ARTIFACT does
+        # work on 18 (measured 200/200 on dist). If we want real Node 18
+        # signal, smoke-test the built artifact under 18 — that is what users
+        # run — rather than the test runner.
+        node: ["20", "22"]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -249,6 +411,13 @@ jobs:
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
+
+      # The rf-6pqx differential compares this branch's classifier against main's
+      # and FAILS rather than skips when the baseline is missing — correctly, but
+      # that means EVERY job running the suite has to supply it. actions/checkout
+      # fetches only the PR ref. A depth-1 fetch is enough: one blob, not history.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
 
       - name: Install and build
         run: |

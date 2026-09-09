@@ -1,6 +1,5 @@
 import { Command } from "commander";
-import axios from "axios";
-import { apiUrl, resolveKey, writePayload, EXIT_GENERAL_ERROR } from "../../utils/api.js";
+import { apiUrl, resolveKey, writePayload, EXIT_GENERAL_ERROR, apiClient} from "../../utils/api.js";
 import { describeSitesError, rejectUnsupportedFormat } from "./errors.js";
 
 const VALID_SECTIONS = new Set(["flight", "security", "dns"]);
@@ -42,7 +41,7 @@ export async function runSitesScan(projectIdOrUrl: string, opts: SitesScanOpts):
   }
 
   try {
-    const { data } = await axios.post(
+    const { data } = await apiClient.post(
       apiUrl("static/sites/scan"),
       body,
       { headers: { "x-api-key": key } }

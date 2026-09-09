@@ -41,7 +41,7 @@ def _mock_response(status_code: int, json_body: dict | None = None) -> MagicMock
 
 
 class TestSitesCreateCli:
-    @patch("rafter_cli.commands.sites.requests.post")
+    @patch("rafter_cli.commands.sites.api_post")
     def test_success(self, mock_post):
         mock_post.return_value = _mock_response(
             200, {"site": {"id": "p1"}, "run": {"id": "r1"}, "created": True}
@@ -56,7 +56,7 @@ class TestSitesCreateCli:
         assert kwargs["json"] == {"url": "https://example.com"}
         assert kwargs["headers"] == {"x-api-key": "test-key"}
 
-    @patch("rafter_cli.commands.sites.requests.post")
+    @patch("rafter_cli.commands.sites.api_post")
     def test_401(self, mock_post):
         mock_post.return_value = _mock_response(401, {"error": "bad key"})
         result = runner.invoke(
@@ -64,7 +64,7 @@ class TestSitesCreateCli:
         )
         assert result.exit_code == EXIT_GENERAL_ERROR
 
-    @patch("rafter_cli.commands.sites.requests.post")
+    @patch("rafter_cli.commands.sites.api_post")
     def test_403_wrong_scope(self, mock_post):
         mock_post.return_value = _mock_response(
             403, {"error": "insufficient scope: requires read-and-scan"}
@@ -74,7 +74,7 @@ class TestSitesCreateCli:
         )
         assert result.exit_code == EXIT_INSUFFICIENT_SCOPE
 
-    @patch("rafter_cli.commands.sites.requests.post")
+    @patch("rafter_cli.commands.sites.api_post")
     def test_429(self, mock_post):
         mock_post.return_value = _mock_response(429, {"error": "Rate limit exceeded"})
         result = runner.invoke(
@@ -95,7 +95,7 @@ class TestSitesCreateCli:
 
 
 class TestSitesScanCli:
-    @patch("rafter_cli.commands.sites.requests.post")
+    @patch("rafter_cli.commands.sites.api_post")
     def test_sends_project_id_for_bare_id(self, mock_post):
         mock_post.return_value = _mock_response(200, {"run": {"id": "r1"}})
         result = runner.invoke(sites_app, ["scan", "proj-123", "-k", "test-key"])
@@ -103,7 +103,7 @@ class TestSitesScanCli:
         _, kwargs = mock_post.call_args
         assert kwargs["json"] == {"projectId": "proj-123"}
 
-    @patch("rafter_cli.commands.sites.requests.post")
+    @patch("rafter_cli.commands.sites.api_post")
     def test_sends_url_for_url(self, mock_post):
         mock_post.return_value = _mock_response(200, {"run": {"id": "r1"}})
         result = runner.invoke(
@@ -113,7 +113,7 @@ class TestSitesScanCli:
         _, kwargs = mock_post.call_args
         assert kwargs["json"] == {"url": "https://example.com"}
 
-    @patch("rafter_cli.commands.sites.requests.post")
+    @patch("rafter_cli.commands.sites.api_post")
     def test_includes_sections(self, mock_post):
         mock_post.return_value = _mock_response(200, {"run": {"id": "r1"}})
         result = runner.invoke(
@@ -124,7 +124,7 @@ class TestSitesScanCli:
         _, kwargs = mock_post.call_args
         assert kwargs["json"] == {"projectId": "proj-123", "sections": ["security", "dns"]}
 
-    @patch("rafter_cli.commands.sites.requests.post")
+    @patch("rafter_cli.commands.sites.api_post")
     def test_rejects_invalid_section(self, mock_post):
         result = runner.invoke(
             sites_app,
@@ -133,13 +133,13 @@ class TestSitesScanCli:
         assert result.exit_code == EXIT_GENERAL_ERROR
         mock_post.assert_not_called()
 
-    @patch("rafter_cli.commands.sites.requests.post")
+    @patch("rafter_cli.commands.sites.api_post")
     def test_404_not_owned(self, mock_post):
         mock_post.return_value = _mock_response(404, {"error": "not found"})
         result = runner.invoke(sites_app, ["scan", "proj-123", "-k", "test-key"])
         assert result.exit_code == EXIT_SCAN_NOT_FOUND
 
-    @patch("rafter_cli.commands.sites.requests.post")
+    @patch("rafter_cli.commands.sites.api_post")
     def test_403_run_limit(self, mock_post):
         mock_post.return_value = _mock_response(403, {"error": "run limit reached"})
         result = runner.invoke(sites_app, ["scan", "proj-123", "-k", "test-key"])
@@ -150,7 +150,7 @@ class TestSitesScanCli:
 
 
 class TestSitesListCli:
-    @patch("rafter_cli.commands.sites.requests.get")
+    @patch("rafter_cli.commands.sites.api_get")
     def test_passes_pagination_params(self, mock_get):
         mock_get.return_value = _mock_response(
             200, {"sites": [], "limit": 10, "offset": 5, "has_more": False}
@@ -173,7 +173,7 @@ class TestSitesListCli:
             "include_archived": "true",
         }
 
-    @patch("rafter_cli.commands.sites.requests.get")
+    @patch("rafter_cli.commands.sites.api_get")
     def test_401(self, mock_get):
         mock_get.return_value = _mock_response(401, {"error": "invalid key"})
         result = runner.invoke(sites_app, ["list", "-k", "test-key"])
@@ -184,7 +184,7 @@ class TestSitesListCli:
 
 
 class TestSitesGetCli:
-    @patch("rafter_cli.commands.sites.requests.get")
+    @patch("rafter_cli.commands.sites.api_get")
     def test_success(self, mock_get):
         mock_get.return_value = _mock_response(
             200,
@@ -199,13 +199,13 @@ class TestSitesGetCli:
         args, _ = mock_get.call_args
         assert args[0].endswith("/static/sites/p1")
 
-    @patch("rafter_cli.commands.sites.requests.get")
+    @patch("rafter_cli.commands.sites.api_get")
     def test_404(self, mock_get):
         mock_get.return_value = _mock_response(404, {"error": "not found"})
         result = runner.invoke(sites_app, ["get", "nonexistent", "-k", "test-key"])
         assert result.exit_code == EXIT_SCAN_NOT_FOUND
 
-    @patch("rafter_cli.commands.sites.requests.get")
+    @patch("rafter_cli.commands.sites.api_get")
     def test_429(self, mock_get):
         mock_get.return_value = _mock_response(
             429, {"error": "Rate limit exceeded", "retryAfter": 30}
@@ -218,7 +218,7 @@ class TestSitesGetCli:
 
 
 class TestMcpSitesCreate:
-    @patch("rafter_cli.commands.mcp_server.requests.post")
+    @patch("rafter_cli.commands.mcp_server.api_post")
     @patch("rafter_cli.commands.mcp_server.resolve_mcp_api_key", return_value="test-key")
     def test_success(self, _mock_key, mock_post):
         mock_post.return_value = _mock_response(
@@ -229,7 +229,7 @@ class TestMcpSitesCreate:
         _, kwargs = mock_post.call_args
         assert kwargs["json"] == {"url": "https://example.com"}
 
-    @patch("rafter_cli.commands.mcp_server.requests.post")
+    @patch("rafter_cli.commands.mcp_server.api_post")
     @patch("rafter_cli.commands.mcp_server.resolve_mcp_api_key", return_value="test-key")
     def test_401_raises(self, _mock_key, mock_post):
         mock_post.return_value = _mock_response(401, {"error": "invalid key"})
@@ -243,7 +243,7 @@ class TestMcpSitesCreate:
 
 
 class TestMcpSitesScan:
-    @patch("rafter_cli.commands.mcp_server.requests.post")
+    @patch("rafter_cli.commands.mcp_server.api_post")
     @patch("rafter_cli.commands.mcp_server.resolve_mcp_api_key", return_value="test-key")
     def test_by_project_id(self, _mock_key, mock_post):
         mock_post.return_value = _mock_response(200, {"run": {"id": "r1"}})
@@ -262,7 +262,7 @@ class TestMcpSitesScan:
         with pytest.raises(RuntimeError, match="not both"):
             handle_sites_scan(project_id="proj-1", url="https://example.com")
 
-    @patch("rafter_cli.commands.mcp_server.requests.post")
+    @patch("rafter_cli.commands.mcp_server.api_post")
     @patch("rafter_cli.commands.mcp_server.resolve_mcp_api_key", return_value="test-key")
     def test_404_not_owned(self, _mock_key, mock_post):
         mock_post.return_value = _mock_response(404, {"error": "not found"})
@@ -271,7 +271,7 @@ class TestMcpSitesScan:
 
 
 class TestMcpSitesList:
-    @patch("rafter_cli.commands.mcp_server.requests.get")
+    @patch("rafter_cli.commands.mcp_server.api_get")
     @patch("rafter_cli.commands.mcp_server.resolve_mcp_api_key", return_value="test-key")
     def test_success_with_params(self, _mock_key, mock_get):
         mock_get.return_value = _mock_response(
@@ -281,7 +281,7 @@ class TestMcpSitesList:
         _, kwargs = mock_get.call_args
         assert kwargs["params"] == {"limit": "5", "include_archived": "true"}
 
-    @patch("rafter_cli.commands.mcp_server.requests.get")
+    @patch("rafter_cli.commands.mcp_server.api_get")
     @patch("rafter_cli.commands.mcp_server.resolve_mcp_api_key", return_value="test-key")
     def test_429_raises(self, _mock_key, mock_get):
         mock_get.return_value = _mock_response(429, {"error": "Rate limit exceeded"})
@@ -290,7 +290,7 @@ class TestMcpSitesList:
 
 
 class TestMcpSitesGet:
-    @patch("rafter_cli.commands.mcp_server.requests.get")
+    @patch("rafter_cli.commands.mcp_server.api_get")
     @patch("rafter_cli.commands.mcp_server.resolve_mcp_api_key", return_value="test-key")
     def test_success(self, _mock_key, mock_get):
         mock_get.return_value = _mock_response(
@@ -304,7 +304,7 @@ class TestMcpSitesGet:
         result = handle_sites_get("p1")
         assert result["site"]["id"] == "p1"
 
-    @patch("rafter_cli.commands.mcp_server.requests.get")
+    @patch("rafter_cli.commands.mcp_server.api_get")
     @patch("rafter_cli.commands.mcp_server.resolve_mcp_api_key", return_value="test-key")
     def test_404_raises(self, _mock_key, mock_get):
         mock_get.return_value = _mock_response(404, {"error": "not found"})

@@ -126,6 +126,31 @@ Retrieve results from a scan.
 
 **Vulnerability levels (JSON output):** The `level` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
 
+#### Poll-loop retry contract
+
+A report is not necessarily durable the instant a scan flips to `completed`, so a poll can hit a 5xx on a scan that is readable seconds later. Both runtimes retry transient read failures instead of aborting. This applies to `rafter run`, `rafter get --interactive`, and plain `rafter get <scan_id>`:
+
+| Condition during polling | Behavior |
+|--------------------------|----------|
+| HTTP 5xx or 408 | Transient. Retried up to **5 consecutive times** with exponential backoff (2s, 4s, 8s, 16s). |
+| Transport error (DNS, reset, timeout) | Same as above. |
+| HTTP 404, **after** the scan is known to exist | Transient — read-after-write lag, not a wrong id. |
+| HTTP 404 on the **first** poll | Not retried. The scan genuinely does not exist. Exit code `2`. |
+| Other 4xx (401/403/429 …) | Not retried — reported immediately. |
+
+Two budgets bound the retries. The **consecutive** counter (5) resets on any successful poll, so a long scan with occasional blips is not killed by unrelated failures minutes apart. A **total** counter (20 per command invocation) does *not* reset, so a backend alternating success and failure cannot keep the loop alive indefinitely — the CLI has no wall-clock deadline of its own.
+
+After either budget is exhausted the command exits `1`. If the failures reached the server, the message names the scan id, the `rafter get <scan_id>` retry, and the dashboard, with the raw server response as supporting detail — raw storage-layer wording is never the whole message. If no failure reached the server at all, the message says so and points at connectivity rather than blaming the report. Both report the **real** number of attempts, which is not always 5: the total budget can trip first.
+
+`rafter get <scan_id>` carries the same retry budget, so the remedy the give-up message recommends is not defeated by the transient failure that produced it.
+
+**The composite GitHub Action** (`github-action/action.yml`) implements the same classification in both its poll loop and its results fetch, with these differences forced by the shell:
+
+- It has no "first poll" distinction: by the time it polls, the trigger step has already returned a `scan_id`, so **every** 404 there is treated as read-after-write lag. A scan id the backend accepted but never persisted therefore fails after the 5-failure budget rather than immediately.
+- Its poll loop is additionally bounded by a wall-clock deadline derived from `timeout-minutes`. Before v0.11 that input was a poll *count*, so a slow API could overrun it; it is now a real deadline.
+- Its `status` output is `completed`, `failed`, `timeout`, `unreadable` (the scan may have finished but its report could not be read), or `unreachable` (the API could not be contacted).
+- Its results step validates the payload **before** counting. A body with no `vulnerabilities` array — not JSON, a `200` carrying an error object, or a parseable payload missing the key — is `status=unreadable`, the job fails, and **no count outputs are written**: a consumer reading `findings-count` sees an empty string, never a fabricated `0`. A report the action cannot read is not a clean scan. An empty array is a clean scan and counts as `0`.
+
 ### rafter usage [OPTIONS]
 
 Check API quota and usage statistics.
@@ -513,11 +538,14 @@ Remote `rafter run` emits the same suppression data as a separate `suppressed.js
 
 Execute shell command with risk assessment and approval workflow.
 
-- `COMMAND` — shell command string
+- `COMMAND` — the shell command, as one quoted string or as the words after `--` (several words are re-quoted before evaluation, so what the classifier sees is what the shell runs)
+- `--dry-run` — classify and print the verdict without running anything; exit `0` allowed, `1` blocked, `2` requires approval
 - `--skip-scan` — skip pre-execution file scanning
-- `--force` — skip approval prompts (logged as override)
+- `--force` — deprecated, no effect: it no longer skips approval (rf-ss67). Still parsed so old invocations do not fail.
 
 Risk tiers: critical (blocked), high (approval required), medium (approval on moderate+), low (allowed).
+
+**Approval model.** A command that requires approval is approved only by a person at an interactive terminal: the prompt is offered only when stdin is a TTY, and otherwise the command is denied with exit `1` and a message saying so. A piped `yes` is not an approval and no flag stands in for one, because anything an agent can pass, the agent can pass on its own. The machine owner widens policy in `~/.rafter/config.json` (`commandPolicy`), not per call. Both runtimes.
 
 ### rafter skill review [PATH_OR_URL] [OPTIONS]
 
@@ -1220,6 +1248,8 @@ Create GitHub issues from scan results.
 - `--no-dedup` — skip deduplication check (create even if matching issue exists)
 - `--dry-run` — show issues that would be created without actually creating them
 - `--quiet` — suppress status messages
+
+**A scan payload without a `vulnerabilities` array is an error, not zero findings.** With `--scan-id`, a response that has no `vulnerabilities` list — the scan is still `processing`, it `failed`, the body is not JSON, or it is an error object — exits `1` with a message on stderr that names the scan id and `rafter get <scan_id>`. It never prints "No findings to create issues for". An empty list is a legitimate clean result. Both runtimes.
 
 #### rafter issues create from-text [OPTIONS]
 

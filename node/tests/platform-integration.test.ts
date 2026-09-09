@@ -1161,15 +1161,18 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(preMatchers).toContain("Write|Edit");
 
       // Verify hook commands
+      // rf-er8a: a RESOLVABLE ABSOLUTE command (`<node> <entrypoint> hook …`),
+      // not the bare `rafter hook …` that exits 127 off PATH.
+      const isAbs = (c: string) => path.isAbsolute(String(c ?? "").split(" ")[0]);
       const preCommands = settings.hooks.PreToolUse.flatMap(
         (e: any) => (e.hooks || []).map((h: any) => h.command)
       );
-      expect(preCommands).toContain("rafter hook pretool");
+      expect(preCommands.some((c: string) => c.endsWith("hook pretool") && isAbs(c))).toBe(true);
 
       const postCommands = settings.hooks.PostToolUse.flatMap(
         (e: any) => (e.hooks || []).map((h: any) => h.command)
       );
-      expect(postCommands).toContain("rafter hook posttool");
+      expect(postCommands.some((c: string) => c.endsWith("hook posttool") && isAbs(c))).toBe(true);
 
       // PostToolUse matcher is scoped to tools that produce scannable output
       // (shell output + file writes) rather than firing on every tool call.
@@ -1239,15 +1242,17 @@ describe("Platform Integration — MCP Installs via CLI", () => {
         fs.readFileSync(path.join(testHomeDir, ".claude", "settings.json"), "utf-8")
       );
 
-      // Should have exactly 2 PreToolUse entries (Bash + Write|Edit), not 4
+      // Should have exactly 2 PreToolUse entries (Bash + Write|Edit), not 4.
+      // rf-er8a writes an absolute command, so match the `hook pretool` tail
+      // (the dedup removal filter keys on the same substring).
       const rafterPreHooks = settings.hooks.PreToolUse.filter(
-        (e: any) => (e.hooks || []).some((h: any) => h.command === "rafter hook pretool")
+        (e: any) => (e.hooks || []).some((h: any) => String(h.command ?? "").endsWith("hook pretool"))
       );
       expect(rafterPreHooks).toHaveLength(2);
 
       // Exactly 1 PostToolUse entry
       const rafterPostHooks = settings.hooks.PostToolUse.filter(
-        (e: any) => (e.hooks || []).some((h: any) => h.command === "rafter hook posttool")
+        (e: any) => (e.hooks || []).some((h: any) => String(h.command ?? "").endsWith("hook posttool"))
       );
       expect(rafterPostHooks).toHaveLength(1);
     });
@@ -1386,7 +1391,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
         fs.readFileSync(path.join(testHomeDir, ".codex", "hooks.json"), "utf-8")
       );
       const rafterPre = config.hooks.PreToolUse.filter(
-        (e: any) => (e.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
+        (e: any) => (e.hooks || []).some((h: any) => String(h.command ?? "").includes("hook pretool"))
       );
       expect(rafterPre).toHaveLength(1);
     });

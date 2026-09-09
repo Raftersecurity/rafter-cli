@@ -1,6 +1,5 @@
 import { Command } from "commander";
-import axios from "axios";
-import { apiUrl, resolveKey, writePayload, EXIT_GENERAL_ERROR } from "../../utils/api.js";
+import { apiUrl, resolveKey, writePayload, EXIT_GENERAL_ERROR, apiClient} from "../../utils/api.js";
 import { describeSitesError, rejectUnsupportedFormat } from "./errors.js";
 
 export interface SitesListOpts {
@@ -22,7 +21,7 @@ export async function runSitesList(opts: SitesListOpts): Promise<number> {
   if (opts.includeArchived) params.include_archived = "true";
 
   try {
-    const { data } = await axios.get(
+    const { data } = await apiClient.get(
       apiUrl("static/sites"),
       { params, headers: { "x-api-key": key } }
     );

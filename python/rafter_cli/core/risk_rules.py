@@ -141,6 +141,20 @@ _LONG_FLAG_WITH_VALUE = re.compile(r"^(--[a-z][a-z-]*)=")
 _NUMERIC_ARG = re.compile(r"^\d+[a-z]*$", re.IGNORECASE)
 _WHITESPACE = re.compile(r"\s")
 
+# A heredoc introducer: `<<`, optional `-`/`~` (indented-terminator forms), an
+# optional quote around the delimiter, and the delimiter word. Group 1 is the
+# dash/tilde, group 3 is the delimiter name.
+_HEREDOC_START = re.compile(
+    # The `(?<!<)` / `(?!<)` guards are load-bearing: without them `<<<`
+    # matches starting at its SECOND `<`, so `cat <<< "hello"` is read as a
+    # heredoc with delimiter `hello`, no terminator is ever found, and every
+    # line after it is stripped — silently hiding whatever came next from the
+    # classifier, hard block included.
+    r"(?<!<)<<(?!<)([-~]?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2"
+)
+# Chain/pipe operators, used to find the statement that owns a heredoc.
+_CHAIN_SPLIT = re.compile(r"\|\||&&|[;|&]")
+
 
 class _Piece:
     """A word or an operator, with its span in the source string."""
@@ -165,7 +179,9 @@ class _Piece:
 
 
 def _is_op_char(c: str) -> bool:
-    return c in (";", "&", "|", ">", "<")
+    # \n and \r are statement separators (rf-6pqx): a newline ends a command
+    # exactly as ";" does, so a payload on a later line is classified on its own.
+    return c in (";", "&", "|", ">", "<", "\n", "\r")
 
 
 def _read_subst(s: str, i: int) -> tuple[str, int]:
@@ -196,21 +212,35 @@ def _read_backtick(s: str, i: int) -> tuple[str, int]:
     return "".join(inner), min(j + 1, len(s))
 
 
-def _tokenize(s: str) -> list[_Piece]:
-    """Split a command line into words and operators, respecting quotes/substitutions."""
+def _tokenize(s: str) -> tuple[list[_Piece], bool]:
+    """Split a command line into words and operators, respecting quotes/substitutions.
+
+    Returns (pieces, unterminated). `unterminated` is True when a quote was never
+    closed — the parse is then unreliable and the caller must FAIL CLOSED
+    (match the raw string) rather than trust a desynchronized sanitization
+    (se-y6vo: `$'a\\'b'` desyncs quote state and swallows a trailing payload).
+    """
     pieces: list[_Piece] = []
     i = 0
     n = len(s)
+    unterminated = False
 
     while i < n:
         c = s[i]
 
-        if c.isspace():
+        # Whitespace EXCEPT newlines is skipped; a newline falls through to the
+        # operator branch below so it becomes a statement separator (rf-6pqx).
+        if c.isspace() and c not in ("\n", "\r"):
             i += 1
             continue
 
         if _is_op_char(c):
             start = i
+            if c in ("\n", "\r"):
+                # Normalize a line break (incl. CRLF) to a ";" separator piece.
+                i += 1
+                pieces.append(_Piece(start, i, ";", ";", False, []))
+                continue
             two = s[i:i + 2]
             op = two if two in ("&&", "||", ">>", "<<") else c
             i += len(op)
@@ -228,6 +258,18 @@ def _tokenize(s: str) -> list[_Piece]:
                 break
 
             if ch == "\\":
+                # Line continuation: a backslash immediately before a newline
+                # (incl. CRLF) is DELETED by the shell — `r\<NL>m` is `rm`, so
+                # the newline must not be absorbed into the word (rf-6pqx/se-y6vo).
+                nxt = s[i + 1] if i + 1 < n else ""
+                if nxt == "\n":
+                    i += 2
+                    continue
+                if nxt == "\r":
+                    i += 2
+                    if i < n and s[i] == "\n":
+                        i += 1
+                    continue
                 i += 1
                 if i < n:
                     text.append(s[i])
@@ -238,18 +280,38 @@ def _tokenize(s: str) -> list[_Piece]:
             if ch == "'":
                 i += 1
                 quoted = True
-                while i < n and s[i] != "'":
+                closed = False
+                while i < n:
+                    if s[i] == "'":
+                        closed = True
+                        i += 1
+                        break
                     text.append(s[i])
                     i += 1
-                i += 1
+                if not closed:
+                    unterminated = True
                 continue
 
             # Double quotes are data, but `$( )` / backticks inside them DO execute.
             if ch == '"':
                 i += 1
                 quoted = True
-                while i < n and s[i] != '"':
+                closed = False
+                while i < n:
+                    if s[i] == '"':
+                        closed = True
+                        i += 1
+                        break
                     if s[i] == "\\":
+                        nxt = s[i + 1] if i + 1 < n else ""
+                        if nxt == "\n":
+                            i += 2
+                            continue
+                        if nxt == "\r":
+                            i += 2
+                            if i < n and s[i] == "\n":
+                                i += 1
+                            continue
                         i += 1
                         if i < n:
                             text.append(s[i])
@@ -265,7 +327,8 @@ def _tokenize(s: str) -> list[_Piece]:
                         continue
                     text.append(s[i])
                     i += 1
-                i += 1
+                if not closed:
+                    unterminated = True
                 continue
 
             if ch == "$" and i + 1 < n and s[i + 1] == "(":
@@ -282,7 +345,7 @@ def _tokenize(s: str) -> list[_Piece]:
 
         pieces.append(_Piece(start, i, None, "".join(text), quoted, substs))
 
-    return pieces
+    return pieces, unterminated
 
 
 def _exec_name(text: str) -> str:
@@ -290,10 +353,48 @@ def _exec_name(text: str) -> str:
     return text[text.rfind("/") + 1:].lower()
 
 
+def _segment_exec(pieces: list[_Piece]) -> str:
+    """The effective executable of a segment (`sudo rm -rf /` -> `rm`).
+
+    Used to ask what the NEXT stage of a pipeline does with this stage's output.
+    """
+    is_redirect_target = [False] * len(pieces)
+    for i in range(1, len(pieces)):
+        prev = pieces[i - 1]
+        if prev.op in _REDIRECT_OPS and pieces[i].op is None:
+            is_redirect_target[i] = True
+    i = 0
+    while i < len(pieces):
+        p = pieces[i]
+        if p.op is not None or is_redirect_target[i]:
+            i += 1
+            continue
+        if not p.quoted and _ENV_ASSIGNMENT.match(p.text):
+            i += 1
+            continue
+        if not p.quoted and _exec_name(p.text) in _TAIL_WRAPPERS:
+            j = i + 1
+            while j < len(pieces):
+                q = pieces[j]
+                if q.op is not None or is_redirect_target[j]:
+                    j += 1
+                    continue
+                if q.text.startswith("-") or _NUMERIC_ARG.match(q.text):
+                    j += 1
+                    continue
+                break
+            i = j
+            continue
+        return _exec_name(p.text)
+    return ""
+
+
 def _process_segment(
     pieces: list[_Piece],
     depth: int,
     out: list[tuple[int, int, str]],
+    piped_into_shell: bool = False,
+    output_executed: bool = False,
 ) -> None:
     """Decide which spans of one segment are DATA and which are code."""
     # A word is a redirect target when the piece before it is `>`/`>>`/`<`.
@@ -349,6 +450,14 @@ def _process_segment(
             has_eval_flag = True
     code_carrying = has_shell_exec or has_eval_flag or exec_ in _EVAL_EXECS
 
+    # sable-c6an. Two questions the code conflated:
+    #   code_carrying   -- this segment RUNS a command string it was handed
+    #   executes_output -- this segment's STDOUT becomes code somewhere else
+    #                      (`… | bash`, or a substitution used as a -c script)
+    # `bash -c "echo 'rm -rf /'"` is the first and not the second, so its
+    # operand stays data; `bash -c "$(echo rm -rf /)"` is the second.
+    executes_output = piped_into_shell or output_executed
+
     seen_shell = False
     pending_script = False
     prev_text_flag = False
@@ -366,7 +475,15 @@ def _process_segment(
 
         # `bash -c <script>` — the next word is a command string, not data.
         if pending_script and not p.text.startswith("-"):
-            out.append((p.start, p.end, _sanitize(p.text, depth + 1)))
+            # The script can be entirely a substitution -- `bash -c "$(…)"` --
+            # where `text` is EMPTY and the substitution IS the script. Reading
+            # only `text` dropped it (sable-c6an).
+            parts: list[str] = []
+            if p.text != "":
+                parts.append(_sanitize(p.text, depth + 1))
+            for sub in p.substs:
+                parts.append(_sanitize(sub, depth + 1, True))
+            out.append((p.start, p.end, " ".join(parts)))
             pending_script = False
             prev_text_flag = False
             continue
@@ -378,7 +495,10 @@ def _process_segment(
 
         # `$(…)` / backticks execute — scan their contents, drop the literal wrapper.
         if p.substs:
-            inner = " ".join(_sanitize(s, depth + 1) for s in p.substs)
+            inner = " ".join(
+                _sanitize(s, depth + 1, code_carrying or executes_output)
+                for s in p.substs
+            )
             out.append((p.start, p.end, inner))
             prev_text_flag = False
             continue
@@ -413,7 +533,7 @@ def _process_segment(
         prev_text_flag = False
 
         # Operands of a text command (`echo`, `grep`, `printf`) are never executed.
-        if is_text_exec and i > exec_idx:
+        if is_text_exec and i > exec_idx and not executes_output:
             out.append((p.start, p.end, " "))
             continue
 
@@ -423,7 +543,7 @@ def _process_segment(
                 # Single-word quoted operand: unquote it so quoting cannot hide a
                 # flag or a path from the patterns (`rm "-rf" "/"`).
                 out.append((p.start, p.end, p.text))
-            elif code_carrying:
+            elif code_carrying or executes_output:
                 # This segment executes a command string (`ssh host "…"`,
                 # `mysql -e "…"`). The quoted argument is code — unquote and scan
                 # it, recursively.
@@ -433,21 +553,91 @@ def _process_segment(
                 out.append((p.start, p.end, " "))
 
 
-def _sanitize(command: str, depth: int) -> str:
+def _strip_line_continuations(s: str) -> str:
+    """Remove `\\<newline>` line continuations the way a shell does BEFORE parsing.
+
+    `r\\<NL>m -rf /` is `rm -rf /` to bash, so the backslash-newline must be
+    deleted or the token `rm` never forms and the pattern misses it (se-y6vo).
+    Removed when unquoted or inside double quotes; PRESERVED inside single quotes
+    (where bash keeps it literal). A normal escape (`\\x`) is left untouched.
+    """
+    if "\\" not in s:
+        return s
+    out: list[str] = []
+    i = 0
+    n = len(s)
+    in_single = False
+    in_double = False
+    while i < n:
+        c = s[i]
+        if c == "'" and not in_double:
+            in_single = not in_single
+            out.append(c)
+            i += 1
+            continue
+        if c == '"' and not in_single:
+            in_double = not in_double
+            out.append(c)
+            i += 1
+            continue
+        if c == "\\" and not in_single:
+            nxt = s[i + 1] if i + 1 < n else ""
+            if nxt == "\n":
+                i += 2
+                continue
+            if nxt == "\r":
+                i += 2
+                if i < n and s[i] == "\n":
+                    i += 1
+                continue
+            # A normal escape (`\"`, `\$`, …): keep both chars verbatim so an
+            # escaped quote does not flip the quote state above.
+            out.append(c)
+            if i + 1 < n:
+                out.append(s[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _sanitize(command: str, depth: int, output_executed: bool = False) -> str:
     if not command or depth > _MAX_SANITIZE_DEPTH:
         return command
 
-    pieces = _tokenize(command)
+    command = _strip_line_continuations(command)
+    pieces, unterminated = _tokenize(command)
+    # Fail closed: an unterminated quote means the parse desynchronized from the
+    # shell, so a sanitized view could hide an executable payload. Match the raw
+    # command instead (se-y6vo).
+    if unterminated:
+        return command
     replacements: list[tuple[int, int, str]] = []
 
+    # Segments keep the operator that ends them, so a segment can be asked
+    # whether its output feeds a shell (`echo "rm -rf /" | bash`).
+    segments: list[tuple[list[_Piece], str | None]] = []
     segment: list[_Piece] = []
     for p in pieces:
         if p.op is not None and p.op in _CHAIN_OPS:
-            _process_segment(segment, depth, replacements)
+            segments.append((segment, p.op))
             segment = []
             continue
         segment.append(p)
-    _process_segment(segment, depth, replacements)
+    segments.append((segment, None))
+
+    for k, (seg, end_op) in enumerate(segments):
+        piped_into_shell = (
+            end_op == "|"
+            and k + 1 < len(segments)
+            and _segment_exec(segments[k + 1][0]) in _SHELL_EXECS
+        )
+        _process_segment(
+            seg, depth, replacements, piped_into_shell, output_executed
+        )
 
     if not replacements:
         return command
@@ -465,13 +655,122 @@ def _sanitize(command: str, depth: int) -> str:
     return "".join(out)
 
 
+def _heredoc_owner_executes(line: str, lt_pos: int) -> bool:
+    """Does the command that owns the heredoc EXECUTE its body?
+
+    `cat > f <<EOF` / `grep -q x <<EOF` consume the body as DATA (write it,
+    search it). `bash <<EOF` / `sh <<'EOF'` / `ssh host <<EOF` EXECUTE it. Only
+    the data case may be stripped; an executed body must stay visible to the
+    patterns (else the newline fix would open a fresh bypass — se-y6vo).
+    """
+    head = line[:lt_pos]
+    segments = _CHAIN_SPLIT.split(head)
+    seg = segments[-1] if segments else head
+    tokens = seg.split()
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if _ENV_ASSIGNMENT.match(tok):
+            idx += 1
+            continue
+        name = _exec_name(tok)
+        if name in _TAIL_WRAPPERS:
+            idx += 1
+            while idx < len(tokens) and (
+                tokens[idx].startswith("-") or _NUMERIC_ARG.match(tokens[idx])
+            ):
+                idx += 1
+            continue
+        return name in _SHELL_EXECS or name in _EVAL_EXECS
+    return False
+
+
+def _heredoc_output_piped_to_shell(line: str, lt_pos: int) -> bool:
+    """`cat <<EOF | bash` — the body is data to `cat`, but `cat`'s OUTPUT is the
+    script, so the body is executed after all.
+
+    The owner check above only reads the text BEFORE the introducer and never
+    sees the pipe, so without this a heredoc piped into a shell is stripped and
+    the hard block is silently lost. Keeping a body is the safe direction: it
+    can only over-block, and only for a shape that should block anyway.
+    """
+    for stage in line[lt_pos:].split("|")[1:]:
+        tokens = [t for t in stage.strip().split() if t]
+        idx = 0
+        while idx < len(tokens):
+            tok = tokens[idx]
+            if _ENV_ASSIGNMENT.match(tok):
+                idx += 1
+                continue
+            name = _exec_name(tok)
+            if name in _TAIL_WRAPPERS:
+                idx += 1
+                while idx < len(tokens) and (
+                    tokens[idx].startswith("-") or _NUMERIC_ARG.match(tokens[idx])
+                ):
+                    idx += 1
+                continue
+            return name in _SHELL_EXECS or name in _EVAL_EXECS
+    return False
+
+
+def _strip_heredoc_bodies(command: str) -> str:
+    """Blank heredoc BODIES that a command consumes as DATA, before tokenizing.
+
+    A heredoc body written to a file (`cat > doc.md <<EOF … EOF`) or searched
+    (`grep <<EOF … EOF`) is data, never executed. Leaving it in place makes the
+    newline-as-separator fix (rf-6pqx) classify ordinary documentation writes as
+    CRITICAL (rf-3rsj), and is the same over-block the public #230 reporter hit.
+    Stripping it fixes both. A body EXECUTED by a shell/eval owner is KEPT so it
+    is still scanned. Co-designed with kerckhoffs (se-ijzs) and achebe (#230).
+
+    Known limits: a literal `<<WORD` inside a quoted string is still treated as an
+    introducer, and delimiters are matched by `.strip() == DELIM` (looser than
+    bash, erring toward scanning more, which is the safe direction).
+    """
+    if "<<" not in command:
+        return command
+    lines = command.split("\n")
+    out: list[str] = []
+    k = 0
+    while k < len(lines):
+        line = lines[k]
+        out.append(line)
+        matches = list(_HEREDOC_START.finditer(line))
+        k += 1
+        if not matches:
+            continue
+        lt_pos = matches[0].start()
+        keep = _heredoc_owner_executes(line, lt_pos) or (
+            _heredoc_output_piped_to_shell(line, lt_pos)
+        )
+        for m in matches:
+            delim = m.group(3)
+            dash = m.group(1)  # '-'/'~': a tab-indented terminator is allowed
+            while k < len(lines):
+                # bash terminates a heredoc only on a line EXACTLY equal to the
+                # delimiter — for plain `<<` an indented delimiter is body, not a
+                # terminator; `<<-` strips leading TABS first. (rstrip \r for CRLF.)
+                cand = lines[k].rstrip("\r")
+                if dash:
+                    cand = cand.lstrip("\t")
+                if cand == delim:
+                    k += 1  # drop the terminator line
+                    break
+                if keep:
+                    out.append(lines[k])
+                k += 1
+    return "\n".join(out)
+
+
 def sanitize_command_for_matching(command: str) -> str:
     """Normalize a command line for risk/policy pattern matching.
 
     Quoted text the command consumes as DATA is redacted; text a shell or eval
-    wrapper EXECUTES is preserved (and recursively sanitized). Everything else is
-    untouched.
+    wrapper EXECUTES is preserved (and recursively sanitized). Heredoc bodies
+    consumed as data are stripped first. Everything else is untouched.
     """
+    command = _strip_heredoc_bodies(command)
     return _sanitize(command, 0)
 
 

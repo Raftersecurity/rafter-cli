@@ -149,7 +149,7 @@ class TestConfirmPlusScan:
 
 
 class TestGateIntegration:
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     def test_refuses_gated_plus_without_calling_backend(self, mock_post, monkeypatch):
         monkeypatch.delenv("RAFTER_CONFIRM", raising=False)
         with patch(
@@ -168,7 +168,7 @@ class TestGateIntegration:
             assert exc.value.exit_code == EXIT_CONFIRMATION_REQUIRED
         mock_post.assert_not_called()
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch(
         "rafter_cli.commands.backend.detect_repo",
         return_value=("owner/repo", "main", "github", None),

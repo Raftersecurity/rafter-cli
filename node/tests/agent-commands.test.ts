@@ -300,8 +300,13 @@ describe("agent init", () => {
     expect(settings.hooks.PreToolUse).toBeDefined();
     expect(settings.hooks.PostToolUse).toBeDefined();
 
+    // rf-er8a: init writes a RESOLVABLE ABSOLUTE command (`<node> <entrypoint>
+    // hook pretool`), not the bare `rafter hook pretool` that exits 127 off PATH.
     const hasPreHook = settings.hooks.PreToolUse.some((entry: any) =>
-      (entry.hooks || []).some((h: any) => h.command === "rafter hook pretool")
+      (entry.hooks || []).some((h: any) => {
+        const cmd = String(h.command ?? "");
+        return cmd.endsWith("hook pretool") && path.isAbsolute(cmd.split(" ")[0]);
+      })
     );
     expect(hasPreHook).toBe(true);
   });
@@ -487,11 +492,72 @@ describe("agent exec", () => {
     expect(r.stdout).toContain("chmod 777");
   });
 
-  it("--force allows commands that need approval", () => {
-    // With default approve-dangerous policy, high-risk commands need approval
-    // --force skips the prompt
+  // ── approval needs a person at a terminal (rf-ss67) ──────────────────
+  // Every test here proves the command did NOT run: the file's mode is the
+  // witness, not the exit code alone.
+
+  it("--force no longer skips approval: denied without a terminal, not executed (rf-ss67)", () => {
+    const f = path.join(home, "forced.txt");
+    fs.writeFileSync(f, "x", { mode: 0o600 });
+    const r = runCli(`agent exec "chmod 777 ${f}" --force`, home);
+    expect(r.exitCode).toBe(1);
+    expect(r.stdout).toContain("--force no longer skips approval");
+    // The denial line itself — not the notice, which also mentions a terminal.
+    expect(r.stdout).toContain("Command denied: approval needs an interactive terminal");
+    expect(r.stdout).not.toContain("Forcing execution");
+    expect(r.stdout).not.toContain("Command cancelled");
+    expect(fs.statSync(f).mode & 0o777).toBe(0o600);
+  });
+
+  it("--force is still accepted (hidden) so old invocations parse", () => {
     const r = runCli('agent exec "echo safe" --force', home);
     expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("safe");
+  });
+
+  it("a piped 'yes' is not an approval (rf-ss67)", () => {
+    const f = path.join(home, "piped.txt");
+    fs.writeFileSync(f, "x", { mode: 0o600 });
+    const r = spawnSync(process.execPath, [CLI_DIST, "agent", "exec", `chmod 777 ${f}`], {
+      cwd: PROJECT_ROOT,
+      encoding: "utf-8",
+      timeout: 60_000,
+      input: "yes\n",
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), CI: "1" },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("Command denied: approval needs an interactive terminal");
+    expect(r.stdout).not.toContain("approved by user");
+    expect(fs.statSync(f).mode & 0o777).toBe(0o600);
+  });
+
+  it("--dry-run classifies without executing: allowed exits 0", () => {
+    const f = path.join(home, "dry.txt");
+    const r = runCli(`agent exec --dry-run "touch ${f}"`, home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Dry run: ALLOWED");
+    expect(r.stdout).toContain("Not executed");
+    expect(fs.existsSync(f)).toBe(false);
+  });
+
+  it("--dry-run: needs-approval exits 2, blocked exits 1, nothing runs", () => {
+    const f = path.join(home, "dry2.txt");
+    fs.writeFileSync(f, "x", { mode: 0o600 });
+    const hi = runCli(`agent exec --dry-run "chmod 777 ${f}"`, home);
+    expect(hi.exitCode).toBe(2);
+    expect(hi.stdout).toContain("REQUIRES APPROVAL");
+    expect(hi.stdout).toContain("HIGH");
+    expect(fs.statSync(f).mode & 0o777).toBe(0o600);
+
+    const crit = runCli('agent exec --dry-run "rm -rf /"', home);
+    expect(crit.exitCode).toBe(1);
+    expect(crit.stdout).toContain("Dry run: BLOCKED");
+  });
+
+  it("accepts the documented `-- <command>` form", () => {
+    const r = runCli("agent exec -- echo hello world", home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("hello world");
   });
 
   it("--skip-scan skips pre-execution scanning", () => {
@@ -707,7 +773,12 @@ describe("agent status", () => {
     const binDir = path.join(home, ".rafter", "bin");
     fs.mkdirSync(binDir, { recursive: true });
     fs.writeFileSync(path.join(binDir, "gitleaks"), "#!/bin/sh\necho fake\n", { mode: 0o755 });
-    const r = runCli("agent status", home);
+    // `agent status` probes `betterleaks` on PATH first and only falls through
+    // to the legacy-gitleaks hint when that fails — so the assertion below is
+    // only meaningful with an empty PATH. Otherwise this passes on CI and fails
+    // on any dev box that has betterleaks installed.
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-empty-path-"));
+    const r = runCli("agent status", home, { PATH: emptyDir });
     expect(r.stdout).toMatch(/legacy gitleaks/i);
     expect(r.stdout).toMatch(/update-betterleaks/i);
   });

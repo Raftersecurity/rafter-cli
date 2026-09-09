@@ -45,25 +45,183 @@ else
   failures=$((failures+1))
 fi
 
-# 3. The report-only tip block must be present and gated on both conditions.
-if grep -qE '\[ "\$FINDINGS_COUNT" -gt 0 \] && \[ "\$SEVERITY_THRESHOLD" = "none" \]' "$ACTION_YML"; then
-  echo "PASS: report-only tip block gated on (findings > 0) AND (threshold == 'none')"
+# The threshold case statement and the report-only tip live in lib/severity.sh
+# (sable-1drb), sourced by action.yml AND by the unit tests, so checks 3, 4
+# and 17 look there. Check 17 is what stops a "simplification" from inlining
+# a copy back into action.yml, which would silently detach the tests again.
+SEVERITY_LIB="$(cd "$(dirname "$0")/.." && pwd)/lib/severity.sh"
+if [ ! -f "$SEVERITY_LIB" ]; then
+  echo "FAIL: $SEVERITY_LIB not found"
+  exit 1
+fi
+
+# 3. The report-only tip must be gated on both conditions.
+if grep -qE '\[ "\$findings" -gt 0 \] && \[ "\$threshold" = "none" \]' "$SEVERITY_LIB"; then
+  echo "PASS: report-only tip gated on (findings > 0) AND (threshold == 'none')"
 else
-  echo "FAIL: report-only tip block missing or mis-gated in $ACTION_YML"
+  echo "FAIL: report-only tip missing or mis-gated in $SEVERITY_LIB"
   failures=$((failures+1))
 fi
 
-# 4. The threshold-eval step must still handle 'none' as a no-op
-#    (no FAIL=1 in the none branch).
+# 4. The threshold-eval must still handle 'none' as a no-op
+#    (no fail=1 in the none branch).
 if awk '
   /none\)/ { in_none=1; next }
   in_none && /;;/ { in_none=0; next }
   in_none { print }
-' "$ACTION_YML" | grep -qE "FAIL *= *1"; then
-  echo "FAIL: 'none' branch of threshold-eval sets FAIL=1 — that would break the default"
+' "$SEVERITY_LIB" | grep -qE "fail *= *1"; then
+  echo "FAIL: 'none' branch of threshold-eval sets fail=1 — that would break the default"
   failures=$((failures+1))
 else
-  echo "PASS: 'none' branch of threshold-eval does not set FAIL=1"
+  echo "PASS: 'none' branch of threshold-eval does not set fail=1"
+fi
+
+# 17. action.yml must SOURCE the library in both steps that use it, and must
+#     not carry its own copy of the case statement. If either regresses, the
+#     unit tests go back to testing a transcription.
+lib_sources=$(grep -cF 'source "${{ github.action_path }}/lib/severity.sh"' "$ACTION_YML" || true)
+inline_cases=$(grep -cE '^\s*(critical|medium|low)\)\s*$' "$ACTION_YML" || true)
+if [ "$lib_sources" -ge 2 ] && [ "$inline_cases" -eq 0 ] \
+   && grep -q 'rafter_threshold_fails "\$SEVERITY_THRESHOLD"' "$ACTION_YML" \
+   && grep -q 'rafter_report_only_tip "\$FINDINGS_COUNT" "\$SEVERITY_THRESHOLD"' "$ACTION_YML"; then
+  echo "PASS: action.yml sources lib/severity.sh in both steps and carries no inline copy"
+else
+  echo "FAIL: action.yml sources=${lib_sources} (need >=2), inline case branches=${inline_cases} (need 0), or a call site is missing"
+  failures=$((failures+1))
+fi
+
+# ── sable-l10k: poll-path retry contract ─────────────────────────────────
+# These properties are subtle and cheap to "simplify" away. Each one, if
+# dropped, reproduces a bug a paying customer already hit.
+
+# 5. 404 must be in the poll loop's TRANSIENT condition. It is safe only
+#    because the trigger step already handed us a scan_id, so a missing scan
+#    mid-poll is read-after-write lag rather than a wrong id.
+if grep -qE '\$HTTP_CODE" -ge 500 \] \|\| \[ "\$HTTP_CODE" -eq 408 \] \|\| \[ "\$HTTP_CODE" -eq 404' "$ACTION_YML"; then
+  echo "PASS: poll loop treats 5xx/408/404 as transient"
+else
+  echo "FAIL: poll loop's transient condition changed — 404/408/5xx must all retry"
+  failures=$((failures+1))
+fi
+
+# 6. A transport error must count toward the SAME failure budget as a 5xx.
+#    When it did not, an unreachable backend reported "scan did not complete
+#    within N minutes" — a timeout message for a DNS failure.
+if awk '/curl transport error contacting/,/^          \}/' "$ACTION_YML" \
+     | grep -q 'TRANSIENT_FAILURES=\$((TRANSIENT_FAILURES+1))'; then
+  echo "PASS: transport errors count toward the transient-failure budget"
+else
+  echo "FAIL: poll loop's transport-error branch no longer counts toward the budget"
+  failures=$((failures+1))
+fi
+
+# 7. The give-up message must be actionable: name the scan, and offer a next
+#    step. Raw storage wording ("Object not found") alone is not a message a
+#    customer can act on.
+if grep -q 'could not read the report for scan \${SCAN_ID}' "$ACTION_YML" \
+   && grep -q 'check it in your dashboard at' "$ACTION_YML"; then
+  echo "PASS: give-up message names the scan and offers a next step"
+else
+  echo "FAIL: give-up message no longer names the scan id or a next step"
+  failures=$((failures+1))
+fi
+
+# 8. Both give-up paths in the results fetch must record status=unreadable.
+#    Without it the declared `status` output falls back to the poll step's
+#    `completed`, and a failed report read is reported as a clean scan.
+unreadable_writes=$(grep -c 'status=unreadable' "$ACTION_YML" || true)
+if [ "$unreadable_writes" -ge 3 ]; then
+  echo "PASS: poll and both results-fetch give-up paths record status=unreadable"
+else
+  echo "FAIL: expected >=3 status=unreadable writes, found ${unreadable_writes}"
+  failures=$((failures+1))
+fi
+
+# 9. The artifact upload must be gated on the RESULTS step, not the poll step.
+#    Gated on the poll step it published the error body as rafter-results.json.
+if grep -qE "if: steps\.results\.outputs\.status == 'completed'" "$ACTION_YML"; then
+  echo "PASS: artifact upload gated on a successful results fetch"
+else
+  echo "FAIL: artifact upload is not gated on steps.results.outputs.status"
+  failures=$((failures+1))
+fi
+
+# 10. Backoff must be exponential. A flat or zeroed backoff gives an
+#     eventually-consistent object store no time to converge.
+if grep -q 'BACKOFF=\$(( 2 \*\* TRANSIENT_FAILURES ))' "$ACTION_YML" \
+   && grep -q 'backoff=\$(( 2 \*\* attempt ))' "$ACTION_YML"; then
+  echo "PASS: both retry loops back off exponentially"
+else
+  echo "FAIL: a retry loop's backoff is no longer exponential"
+  failures=$((failures+1))
+fi
+
+
+# 11. Server-controlled error text must be newline-stripped and length-capped
+#     before it reaches a workflow command. A newline forges ::add-mask:: /
+#     ::stop-commands:: / fabricated ::error:: annotations.
+sanitized=$(grep -cF 'cut -c1-' "$ACTION_YML" || true)
+stripped=$(grep -cF "tr -d " "$ACTION_YML" || true)
+if [ "$sanitized" -ge 5 ] && [ "$stripped" -ge 5 ]; then
+  echo "PASS: server-controlled text newline-stripped and capped at ${sanitized} sites"
+else
+  echo "FAIL: expected >=5 sanitized sites, found cut=${sanitized} tr=${stripped}"
+  failures=$((failures+1))
+fi
+
+# 12. TIMEOUT_MINUTES is evaluated inside bash arithmetic, where a value like
+#     'x[$(cmd)]' executes. It must be validated first.
+if grep -q 'case "\$TIMEOUT_MINUTES" in' "$ACTION_YML"; then
+  echo "PASS: timeout-minutes validated before arithmetic evaluation"
+else
+  echo "FAIL: timeout-minutes is no longer validated before arithmetic use"
+  failures=$((failures+1))
+fi
+
+# 13. The server-controlled scan id must be validated before it reaches
+#     \$GITHUB_OUTPUT, where a newline forges step outputs.
+if grep -q 'case "\$SCAN_ID" in' "$ACTION_YML"; then
+  echo "PASS: scan id validated before it reaches \$GITHUB_OUTPUT"
+else
+  echo "FAIL: scan id is no longer validated"
+  failures=$((failures+1))
+fi
+
+# ── sable-fgk7: an unreadable report is not a clean scan ─────────────────
+# The results step used to coerce every jq failure into findings_count=0,
+# which passed every threshold and rendered "No security findings detected".
+# Reproduced with a 200 whose body was not JSON, a 200 carrying an error
+# object, and a parseable payload with no vulnerabilities key.
+
+# 14. The payload shape must be validated before any count is computed.
+if grep -qF "jq -e 'type == \"object\" and (.vulnerabilities | type == \"array\") and all(.vulnerabilities[]; type == \"object\")'" "$ACTION_YML"; then
+  echo "PASS: results step validates the payload shape before counting"
+else
+  echo "FAIL: results step no longer validates that .vulnerabilities is an array of objects"
+  failures=$((failures+1))
+fi
+
+# 15. No count may fall back to 0 on a jq failure. That fallback IS the bug:
+#     the error path and the clean path produced the same number.
+zero_fallbacks=$(grep -c '|| echo "0"' "$ACTION_YML" || true)
+if [ "$zero_fallbacks" -eq 0 ]; then
+  echo "PASS: no count falls back to 0 on a parse failure"
+else
+  echo "FAIL: ${zero_fallbacks} count(s) still fall back to 0 on a jq failure — an unreadable report would render as clean"
+  failures=$((failures+1))
+fi
+
+# 16. The unreadable-payload path must record status=unreadable and exit 1,
+#     so the declared status output cannot fall back to the poll step's
+#     'completed' for a report that was never read.
+if awk '/no .vulnerabilities. array/,/^          fi$/' "$ACTION_YML" \
+     | grep -q 'status=unreadable' \
+   && awk '/no .vulnerabilities. array/,/^          fi$/' "$ACTION_YML" \
+     | grep -q 'exit 1'; then
+  echo "PASS: unreadable payload records status=unreadable and fails the step"
+else
+  echo "FAIL: unreadable-payload branch no longer records status=unreadable and exits 1"
+  failures=$((failures+1))
 fi
 
 echo ""

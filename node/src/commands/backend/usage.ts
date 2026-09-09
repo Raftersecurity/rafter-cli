@@ -1,6 +1,5 @@
 import { Command } from "commander";
-import axios from "axios";
-import { API, resolveKey, EXIT_GENERAL_ERROR } from "../../utils/api.js";
+import { API, resolveKey, EXIT_GENERAL_ERROR, apiClient, apiUrl} from "../../utils/api.js";
 
 export function createUsageCommand(): Command {
   return new Command("usage")
@@ -8,7 +7,7 @@ export function createUsageCommand(): Command {
     .action(async (opts) => {
       const key = resolveKey(opts.apiKey);
       try {
-        const { data } = await axios.get(`${API}/static/usage`, { headers: { "x-api-key": key } });
+        const { data } = await apiClient.get(apiUrl("static/usage"), { headers: { "x-api-key": key } });
         console.log(JSON.stringify(data, null, 2));
       } catch (e: any) {
         if (e.response?.data) {

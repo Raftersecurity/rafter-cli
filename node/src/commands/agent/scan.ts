@@ -16,7 +16,7 @@ import {
   policyIgnoreToSuppressions,
 } from "../../core/custom-patterns.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
-import { execSync, execFileSync } from "child_process";
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -492,7 +492,9 @@ async function runGitAddedLineScan(
 
     if (!patch.trim()) {
       if (!opts.quiet) {
-        console.log(`\n${fmt.success(emptyMessage)}\n`);
+        // Status line, so stderr — stdout must stay parseable as JSON under
+        // --json, and outputScanResults owns the single stdout success line.
+        console.error(fmt.success(emptyMessage));
       }
       outputScanResults([], opts, contextLabel, true, suppressions);
       return;
@@ -501,7 +503,9 @@ async function runGitAddedLineScan(
     const addedLines = parseUnifiedDiffAddedLines(patch);
     if (addedLines.length === 0) {
       if (!opts.quiet) {
-        console.log(`\n${fmt.success(emptyMessage)}\n`);
+        // Status line, so stderr — stdout must stay parseable as JSON under
+        // --json, and outputScanResults owns the single stdout success line.
+        console.error(fmt.success(emptyMessage));
       }
       outputScanResults([], opts, contextLabel, true, suppressions);
       return;
