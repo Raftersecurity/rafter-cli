@@ -76,6 +76,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The rf-6pqx differential FAILS LOUDLY when main's classifier is
+      # unobtainable — correctly, since a differential that silently skips is a
+      # vacuous gate. actions/checkout fetches only the PR ref, so origin/main
+      # is absent and the gate cannot run at all. This job only fires on PRs
+      # into prod, which is why nothing before #237 caught it: the same fetch
+      # was added to test-comprehensive.yml and not here. One blob is all the
+      # gate needs.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
