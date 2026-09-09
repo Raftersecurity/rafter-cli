@@ -382,6 +382,60 @@ jobs:
           echo "Hook installation verified"
 
   # ── Cross-platform smoke test ──────────────────────────────────────
+  # Node 18 coverage that means something. package.json declares engines >=18
+  # and the shipped code genuinely works there — measured 200/200 on the built
+  # dist — but vitest 4 cannot run on Node 18 (engines ^20 || ^22 || >=24), so
+  # the matrix leg that used to sit here tested the RUNNER's unsupported path
+  # and reported on neither. 5409a84 removed it; without this job the release
+  # would ship with NO Node 18 signal at all.
+  #
+  # This runs what a Node 18 USER runs: built on 20, RUN on 18, no test
+  # framework in the way — their situation exactly, since they install a
+  # prebuilt package rather than compiling one.
+  #
+  # Gated on `run_core`, not the `run` that gates cross-platform: run_core is
+  # true on every PR, and a skipped job satisfies a required check, so coverage
+  # that only sometimes runs can be absent exactly when it matters.
+  node18-smoke:
+    needs: gate
+    if: needs.gate.outputs.run_core == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: Install and build on a supported Node
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      # Switch the runtime only — the artifact under test is the one built above.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: The CLI runs on Node 18
+        run: |
+          node --version
+          node ./dist/index.js --version
+
+      # Asserts the rf-fuwy liveness probe BOTH ways: a live gate yields its
+      # decision, an inert one yields none with a non-zero status. The second
+      # assertion IS rf-fuwy. Both directions mutation-checked — blanking the
+      # live fixture or making the inert one work fails the script with its own
+      # message, not an import error.
+      - name: The rf-fuwy liveness probe works on Node 18
+        run: node scripts/node18-smoke.mjs
+
   cross-platform:
     needs: gate
     if: needs.gate.outputs.run == 'true'
