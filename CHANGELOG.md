@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-09-09
+
+### Security
+
+- **A repo's `.rafter.yml` can no longer lower the machine owner's global command policy** (rf-adth, sable-nz4y). Policy discovery walks up from cwd to the git root, so on a repository the agent didn't write, `.rafter.yml` is attacker-controlled — and it previously replaced the owner's command policy wholesale. Nine lines of repo content (`mode: allow-all`, `blocked_patterns: []`, `require_approval: []`) could turn an explicitly deny-listed `curl | bash` from blocked into allowed, and demote `rm -rf`, `sudo rm`, and `git push --force` from approval to allowed. The always-on critical hard-block was never affected — this is about everything below it. The global config is now a floor: `blockedPatterns`/`requireApproval` union rather than replace, and `mode` is accepted from a project only when at least as strict. Delegating policy to a project is still possible via the owner-only `agent.commandPolicy.allowProjectOverride` flag in the *global* config, which a project cannot express.
+
+## [0.10.1] - 2026-09-09
+
 ### Fixed
 
 - **`rafter agent exec --force` no longer skips approval, and approval needs a person at a terminal** (rf-ss67, reported in the secbolt audit se-ezvc). `--force "<quoted command>"` ran any HIGH-tier command unprompted: the PreToolUse hook classified the quoted argument as prose, and `exec` then skipped its own prompt. `--force` is now a hidden no-op kept only so old invocations parse; a command that needs approval is prompted only when stdin is an interactive TTY and is otherwise denied, so a piped `yes` is not an approval either. `--dry-run`, which three shipped docs already advertised, now exists: it prints the verdict and runs nothing (exit 0 allowed, 1 blocked, 2 needs approval). The documented `-- <command>` form is accepted, with the words re-quoted so the classifier evaluates exactly what the shell would run. Both runtimes.
