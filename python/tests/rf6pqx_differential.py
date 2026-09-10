@@ -5,7 +5,9 @@ case never exercised the multi-line path where <<< is misread as << and the next
 line is swallowed. So this gate does NOT trust hand-picked expectations alone: it
 runs a GENERATED corpus of shell-argument constructs on BOTH main and the
 candidate and asserts the candidate is NEVER more permissive than main — except a
-pure data-heredoc body, the one construct #230 intentionally strips.
+construct whose owner does not execute it (a pure data-heredoc body, #230; a here-
+string with a non-executing owner, rf-gn0h). Both exemptions are keyed on the exec
+name computed in THIS file, never on an answer from the code under test.
 
 Usage: rf-6pqx-differential.py <main risk_rules.py> <candidate risk_rules.py>
 Exit 0 iff no non-allowlisted row moved toward permissive AND every explicit
@@ -24,8 +26,15 @@ for E in DATA_EXECS + SHELL_EXECS:
     is_shell = any(E == s or E.endswith(" bash") or E.split()[-1] in ("bash","sh","zsh") for s in SHELL_EXECS)
     # pure data-heredoc: intentional strip ONLY when the owner does not execute
     add(f"heredoc-data [{E}]", f"{E} <<EOF\n{P}\nEOF", perm_ok=not is_shell)
-    # here-string, single line
-    add(f"herestring-1 [{E}]", f'{E} <<< "{P}"', perm_ok=False)
+    # here-string, single line. A here-string whose owner does NOT execute it is data,
+    # exactly as a data-heredoc body is (#230) — same construct, same rule, other syntax.
+    # The exemption is keyed on the EXEC NAME, computed here and not by the classifier
+    # under test, so a broken candidate cannot grant itself this row. (rf-gn0h)
+    add(f"herestring-1 [{E}]", f'{E} <<< "{P}"', perm_ok=not is_shell)
+    # ...and the composition that exemption must never mask: the owner is data, but its
+    # OUTPUT is executed. Stays perm_ok=False for EVERY exec, shell or not.
+    add(f"herestring-pipe-bash [{E}]", f'{E} <<< "{P}" | bash', perm_ok=False)
+    add(f"herestring-pipe-sh [{E}]", f'{E} <<< "{P}" | sudo sh', perm_ok=False)
     # here-string, MULTI-LINE (the regression: <<< misread as << swallows next line)
     add(f"herestring-multi [{E}]", f'{E} <<< "marker" > /tmp/x\n{P}', perm_ok=False)
     # heredoc piped to a shell (the other regression: owner is data but output is executed)
