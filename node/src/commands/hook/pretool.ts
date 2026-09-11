@@ -2,7 +2,10 @@ import { Command } from "commander";
 import { CommandInterceptor, CommandEvaluation } from "../../core/command-interceptor.js";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
+import os from "node:os";
+import { modifiesRafterSecurityConfig } from "../../core/risk-rules.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { getRafterDir } from "../../core/config-defaults.js";
 import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
 import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
@@ -78,6 +81,18 @@ const RISK_DESCRIPTIONS: Record<string, string> = {
 
 function formatBlockedMessage(command: string, evaluation: CommandEvaluation): string {
   const cmdDisplay = command.length > 60 ? command.slice(0, 60) + "..." : command;
+  // rf-vnxs: say what actually happened. "irreversible system damage" is the
+  // wrong sentence for a config write, and a wrong reason teaches the agent to
+  // hunt for a way around a rule whose shape it was never told.
+  if (modifiesRafterSecurityConfig(command)) {
+    return (
+      `\u2717 Rafter blocked: ${cmdDisplay}\n` +
+      `  Rule: rafter security configuration is protected (rf-vnxs)\n` +
+      `  Risk: CRITICAL\u2014this command reconfigures or removes rafter's own\n` +
+      `        guardrail. The gate cannot approve its own disarming. A person\n` +
+      `        must make this change outside an agent session.`
+    );
+  }
   const rule = evaluation.matchedPattern ?? "policy violation";
   const label = RISK_LABELS[evaluation.riskLevel] ?? evaluation.riskLevel.toUpperCase();
   const desc = RISK_DESCRIPTIONS[evaluation.riskLevel] ?? "";
@@ -89,7 +104,7 @@ function formatApprovalMessage(command: string, evaluation: CommandEvaluation): 
   const rule = evaluation.matchedPattern ?? "policy match";
   const label = RISK_LABELS[evaluation.riskLevel] ?? evaluation.riskLevel.toUpperCase();
   const desc = RISK_DESCRIPTIONS[evaluation.riskLevel] ?? "";
-  return `\u26a0 Rafter: approval required\n  Command: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}\n\nTo approve: rafter agent exec --approve "${command}"\nTo configure: rafter agent config set agent.riskLevel minimal`;
+  return `\u26a0 Rafter: approval required\n  Command: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}\n\nTo approve: a person must run \`rafter agent exec "${command}"\` at an\n            interactive terminal and confirm. There is no flag that\n            skips the prompt.`;
 }
 
 export function createHookPretoolCommand(): Command {
@@ -253,7 +268,45 @@ function evaluateBash(command: string, control: HookControl): HookDecision {
   return { decision: "allow" };
 }
 
+/**
+ * True if this write targets rafter's own configuration directory.
+ *
+ * rf-vnxs, fourth route. Blocking the CLI invocation is not enough: the config
+ * is a FILE, and an agent holding a Write/Edit tool does not need the CLI to
+ * disable the hook — it can write `~/.rafter/config.json` directly. Three
+ * independent routes to the unblockable tier had already been found one at a
+ * time in this codebase; this is the one that would have been the fourth.
+ */
+function writesRafterSecurityConfig(filePath: string): boolean {
+  if (!filePath) return false;
+  try {
+    const expanded = filePath.startsWith("~")
+      ? path.join(os.homedir(), filePath.slice(1))
+      : filePath;
+    const target = path.resolve(expanded);
+    const rafterDir = path.resolve(getRafterDir());
+    return target === rafterDir || target.startsWith(rafterDir + path.sep);
+  } catch {
+    return false;
+  }
+}
+
 function evaluateWrite(toolInput: Record<string, any>): HookDecision {
+  // rf-vnxs: checked FIRST, and before the no-content early return, because a
+  // truncating write with empty content disables the hook just as well as one
+  // carrying JSON.
+  if (writesRafterSecurityConfig(toolInput.file_path ?? "")) {
+    return {
+      decision: "deny",
+      reason:
+        "\u2717 Rafter blocked: write to rafter's own configuration\n" +
+        "  Rule: rafter security configuration is protected (rf-vnxs)\n" +
+        "  Risk: CRITICAL\u2014editing this file reconfigures or removes the\n" +
+        "        guardrail. The gate cannot approve its own disarming. A\n" +
+        "        person must make this change outside an agent session.",
+    };
+  }
+
   // Write uses "content", Edit uses "new_string"
   const content = toolInput.content || toolInput.new_string || "";
   if (!content) {

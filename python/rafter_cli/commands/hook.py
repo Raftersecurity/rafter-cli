@@ -6,10 +6,12 @@ import math
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import typer
 
 from ..core.audit_logger import AuditLogger
+from ..core.risk_rules import modifies_rafter_security_config
 from ..core.command_interceptor import CommandInterceptor
 from ..scanners.regex_scanner import RegexScanner
 
@@ -37,6 +39,17 @@ _RISK_DESCRIPTIONS = {
 
 def _format_blocked_message(command: str, evaluation) -> str:
     cmd_display = command[:60] + "..." if len(command) > 60 else command
+    # rf-vnxs: say what actually happened. "irreversible system damage" is the
+    # wrong sentence for a config write, and a wrong reason teaches the agent to
+    # go looking for a way around a rule it was never told the shape of.
+    if modifies_rafter_security_config(command):
+        return (
+            f"\u2717 Rafter blocked: {cmd_display}\n"
+            f"  Rule: rafter security configuration is protected (rf-vnxs)\n"
+            f"  Risk: CRITICAL\u2014this command reconfigures or removes rafter's own\n"
+            f"        guardrail. The gate cannot approve its own disarming. A person\n"
+            f"        must make this change outside an agent session."
+        )
     rule = evaluation.matched_pattern or "policy violation"
     label = _RISK_LABELS.get(evaluation.risk_level, evaluation.risk_level.upper())
     desc = _RISK_DESCRIPTIONS.get(evaluation.risk_level, "")
@@ -54,8 +67,9 @@ def _format_approval_message(command: str, evaluation) -> str:
         f"  Rule: {rule}\n"
         f"  Risk: {label}\u2014{desc}\n"
         f"\n"
-        f'To approve: rafter agent exec --approve "{command}"\n'
-        f"To configure: rafter agent config set agent.riskLevel minimal"
+        f'To approve: a person must run `rafter agent exec "{command}"` at an\n'
+        f"            interactive terminal and confirm. There is no flag that\n"
+        f"            skips the prompt."
     )
 
 
@@ -376,7 +390,43 @@ def _evaluate_bash(command: str, control=None) -> dict:
     return {"decision": "allow"}
 
 
+def _writes_rafter_security_config(file_path: str) -> bool:
+    """True if this write targets rafter's own configuration directory.
+
+    rf-vnxs, fourth route. Blocking the CLI invocation is not enough: the config
+    is a FILE, and an agent with a Write/Edit tool does not need the CLI to
+    disable the hook — it can write ``~/.rafter/config.json`` directly. Three
+    independent routes to the unblockable tier had already been found one at a
+    time in this codebase; this is the one that would have been the fourth.
+    """
+    if not file_path:
+        return False
+    try:
+        from ..core.config_schema import get_rafter_dir
+
+        target = Path(file_path).expanduser().resolve()
+        rafter_dir = get_rafter_dir().expanduser().resolve()
+    except Exception:
+        return False
+    return target == rafter_dir or rafter_dir in target.parents
+
+
 def _evaluate_write(tool_input: dict) -> dict:
+    # rf-vnxs: checked FIRST, and before the no-content early return, because a
+    # truncating write with empty content disables the hook just as well as one
+    # carrying JSON.
+    if _writes_rafter_security_config(tool_input.get("file_path", "")):
+        return {
+            "decision": "deny",
+            "reason": (
+                "\u2717 Rafter blocked: write to rafter's own configuration\n"
+                "  Rule: rafter security configuration is protected (rf-vnxs)\n"
+                "  Risk: CRITICAL\u2014editing this file reconfigures or removes the\n"
+                "        guardrail. The gate cannot approve its own disarming. A\n"
+                "        person must make this change outside an agent session."
+            ),
+        }
+
     content = tool_input.get("content", "") or tool_input.get("new_string", "")
     if not content:
         return {"decision": "allow"}
