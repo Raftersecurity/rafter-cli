@@ -55,7 +55,12 @@ describe("ConfigManager.loadWithPolicy()", () => {
     expect(config.agent?.riskLevel).toBe("aggressive");
   });
 
-  it("policy command_policy REPLACES config (not merges arrays)", async () => {
+  // sable-nz4y — was "policy command_policy REPLACES config (not merges arrays)".
+  // The policy file is discovered by walking up from cwd to the git root, so it
+  // is a file in the repo being worked on and is untrusted on a repo the agent
+  // did not write. The global config is now a floor: a project may add rules and
+  // tighten the mode, but cannot drop a rule or loosen the mode.
+  it("policy command_policy raises the config floor (never lowers it)", async () => {
     const yml = `
 command_policy:
   mode: deny-list
@@ -68,10 +73,13 @@ command_policy:
     const manager = await getManager();
     const config = manager.loadWithPolicy();
 
-    expect(config.agent?.commandPolicy.mode).toBe("deny-list");
-    // Policy arrays REPLACE — should only contain policy values, not defaults
-    expect(config.agent?.commandPolicy.blockedPatterns).toEqual(["custom-block"]);
-    expect(config.agent?.commandPolicy.requireApproval).toEqual(["custom-approve"]);
+    // deny-list is looser than the default approve-dangerous — refused.
+    expect(config.agent?.commandPolicy.mode).toBe("approve-dangerous");
+    // The project's entries are added; the defaults it omitted are kept.
+    expect(config.agent?.commandPolicy.blockedPatterns).toContain("custom-block");
+    expect(config.agent?.commandPolicy.requireApproval).toContain("custom-approve");
+    expect(config.agent?.commandPolicy.requireApproval).toContain("rm -rf");
+    expect(config.agent?.commandPolicy.blockedPatterns.length).toBeGreaterThan(1);
   });
 
   it("policy scan.excludePaths overrides config", async () => {
