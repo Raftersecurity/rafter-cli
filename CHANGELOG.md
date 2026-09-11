@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-09-11
+
+### Security
+
+- **Rafter's own security config is a protected class, and four routes to disarming the gate are closed** (rf-vnxs, rf-r94l; reported in the secbolt audit se-8xzc/se-c3us). On published 0.10.1 and 0.10.2 the gate approved its own disarming: `rafter agent config set agent.hooks.enabled false` was rated `low` and ALLOWED, it persisted to `~/.rafter/config.json`, and every later command — including `rm -rf /` and `curl … | bash` — was then allowed. Three steps, no malformed input, only the documented CLI. It defeated the CRITICAL tier, the one no policy, mode or deny-list can override, which made it worse than any bypass 0.10.1 fixed: those each needed a trick, this needed the product's own interface. The match is now structural rather than a string blacklist — resolved exec plus an argv walk over a protected key *namespace*, evaluated on the sanitized text as well as the raw, so `bash -c "rafter agent config set …"` and `echo … | bash` are caught at any argv position. FOUR routes are closed, not one: the three self-disabling keys (`hooks.enabled`, `hooks.secretScan`, `hooks.commandPolicy`), the `agent disable <component>` route, and — because the config is a *file* — the Write/Edit route that needs no CLI at all. `evaluateWrite` now refuses any write inside the rafter config dir, checked before the no-content early return, since a truncating write disarms just as well. Both runtimes.
+- **The approval message no longer advertises a route the gate denies** (rf-r94l). It printed `To configure: rafter agent config set agent.riskLevel minimal`, which this change now hard-blocks — the hook coaching the agent toward a door it would then slam. That line is gone, and the deny message states the real reason: a wrong reason teaches the agent to hunt for a rule whose shape it was never told.
+
 ## [0.10.2] - 2026-09-09
 
 ### Security
