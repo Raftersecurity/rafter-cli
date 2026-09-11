@@ -710,7 +710,114 @@ export function sanitizeCommandForMatching(command: string): string {
 /**
  * Assess risk level of a command string.
  */
+/**
+ * rf-vnxs — reconfiguring rafter's OWN security controls is a PROTECTED CLASS.
+ *
+ * The gate must never approve its own disarming. On 0.10.1 it did: the hook
+ * rated `rafter agent config set agent.hooks.enabled false` as `low`, allowed
+ * it, and every later command — including the CRITICAL tier that no policy,
+ * mode or deny-list can override — was then permitted. Three steps, no
+ * malformed command, and it persists to config.json.
+ *
+ * This is matched STRUCTURALLY — resolved exec plus an argv walk — and not by
+ * string, because the spellings are unbounded and were all observed allowed on
+ * the published artifact: extra whitespace, `FALSE`, `npx @rafter-security/cli
+ * …`, `sudo -E rafter …`, the `agent disable` component route, and three
+ * different self-disabling keys (hooks.enabled, hooks.secretScan,
+ * hooks.commandPolicy). A blacklist of one string is one alias away from being
+ * a no-op — the same shape as the CHAIN_OPS one-liner that was proven inert
+ * only by running the shipped module.
+ */
+const RAFTER_EXECS = new Set(["rafter", "rafter-cli"]);
+const PACKAGE_RUNNERS = new Set(["npx", "bunx", "pnpx", "dlx", "pnpm", "yarn", "bun"]);
+const RAFTER_PACKAGE = /^(?:@rafter-security\/cli|rafter-cli|rafter)(?:@[\w.^~*-]+)?$/;
+
+/** Config keys that gate the hook. Namespace, not a leaf — see hook-control. */
+const PROTECTED_CONFIG_KEY = /^(?:agent\.)?(?:hooks|commandpolicy)\b|^agent\.risklevel$/;
+
+/**
+ * True if this statement's argv reconfigures or removes a rafter security
+ * control.
+ *
+ * The rafter invocation is looked for at ANY position, not just as the
+ * statement's own exec, because a shell that carries a command string puts it
+ * in the operand: `bash -c "rafter agent config set agent.hooks.enabled false"`
+ * and `bash -c "$(echo rafter …)"` both sanitize to a statement whose exec is
+ * `bash`, and an exec-only walk reads them — wrongly — as not-rafter. A quoted
+ * word is skipped on the raw pass so that `echo 'rafter agent config set …'`
+ * stays prose; the sanitized pass is where an actually-executed operand has
+ * already been unwrapped for us.
+ */
+function statementDisarmsRafter(words: Piece[]): boolean {
+  for (let j = 0; j < words.length; j++) {
+    if (words[j].quoted) continue;
+    let k = j;
+    let exec = execName(words[k].text);
+    k++;
+
+    // `npx [-y] @rafter-security/cli …`, `pnpm dlx rafter-cli …`, `bunx rafter …`
+    if (PACKAGE_RUNNERS.has(exec)) {
+      while (k < words.length && (words[k].text.startsWith("-") || ["dlx", "exec"].includes(words[k].text.toLowerCase()))) k++;
+      if (k >= words.length || !RAFTER_PACKAGE.test(words[k].text.toLowerCase())) continue;
+      k++;
+      exec = "rafter";
+    }
+    if (!RAFTER_EXECS.has(exec)) continue;
+
+    const args = words.slice(k).map((w) => w.text.toLowerCase()).filter((a) => !a.startsWith("-"));
+    for (let n = 0; n + 1 < args.length; n++) {
+      // `… config set <protected key>` — the key is the next non-flag operand.
+      if (args[n] === "config" && args[n + 1] === "set") {
+        const key = args[n + 2];
+        if (key && PROTECTED_CONFIG_KEY.test(key)) return true;
+      }
+      // `… agent disable <component>` — uninstalls a control outright.
+      if (args[n] === "agent" && args[n + 1] === "disable") return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * True if the command disarms rafter, checked on BOTH the raw text and the
+ * sanitized text. Raw catches the ordinary invocation; sanitized catches the
+ * case where a shell runs the OUTPUT of something else — `bash -c "$(echo
+ * rafter agent config set …)"`, whose own exec is `echo` and which a walk over
+ * the raw argv therefore reads, correctly, as a print. That is the same
+ * executes-output distinction sable-c6an turned on.
+ */
+export function modifiesRafterSecurityConfig(command: string): boolean {
+  if (disarmsRafter(command, 0)) return true;
+  const sanitized = sanitizeCommandForMatching(command);
+  return sanitized !== command && disarmsRafter(sanitized, 0);
+}
+
+/** True if any statement (or any command substitution) disarms rafter. */
+function disarmsRafter(command: string, depth = 0): boolean {
+  if (depth > MAX_SANITIZE_DEPTH) return false;
+  const { pieces } = tokenize(command);
+  let stmt: Piece[] = [];
+  const statements: Piece[][] = [];
+  for (const p of pieces) {
+    if (p.op !== null) {
+      if (CHAIN_OPS.has(p.op) || p.op === "\n" || p.op === "\r") { statements.push(stmt); stmt = []; }
+      continue;
+    }
+    stmt.push(p);
+    for (const sub of p.substs ?? []) {
+      if (disarmsRafter(sub, depth + 1)) return true;
+    }
+  }
+  statements.push(stmt);
+  return statements.some(statementDisarmsRafter);
+}
+
 export function assessCommandRisk(command: string): CommandRiskLevel {
+  // rf-vnxs: checked on the RAW command, before sanitization, because the
+  // disarm is an ordinary well-formed invocation — there is nothing malformed
+  // for the sanitizer to normalise, and redaction could hide the operand.
+  if (modifiesRafterSecurityConfig(command)) return "critical";
+
   const cmd = sanitizeCommandForMatching(command).toLowerCase().trim();
   if (!cmd) return "low";
 
@@ -733,6 +840,9 @@ export function assessCommandRisk(command: string): CommandRiskLevel {
  * built-in rule matched.
  */
 export function matchedCriticalPattern(command: string): string | null {
+  if (modifiesRafterSecurityConfig(command)) {
+    return "rafter security configuration is protected (rf-vnxs)";
+  }
   const cmd = sanitizeCommandForMatching(command).toLowerCase().trim();
   for (const pattern of CRITICAL_PATTERNS) {
     if (pattern.test(cmd)) return pattern.source;
