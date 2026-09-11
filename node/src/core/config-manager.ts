@@ -324,10 +324,22 @@ export class ConfigManager {
     const policy = loadPolicy();
     if (!policy) return config;
 
-    // Ensure agent block exists
+    // Ensure agent block exists, AND that commandPolicy inside it does.
+    //
+    // Checking only for `agent` was not enough. A config file that carries an
+    // `agent` block without a `commandPolicy` key — a partial or hand-edited
+    // ~/.rafter/config.json, which is a normal thing to have — reaches the
+    // assignments below and throws
+    //   TypeError: Cannot set properties of undefined (setting 'mode')
+    // the moment the repo also has a .rafter.yml with a command_policy block.
+    // Found 2026-09-10 by an end-to-end test that loads a real config instead
+    // of a stub; the stubbed unit tests could not see it.
+    const agentDefaults = getDefaultConfig().agent!;
     if (!config.agent) {
-      const defaults = getDefaultConfig();
-      config.agent = defaults.agent;
+      config.agent = agentDefaults;
+    }
+    if (!config.agent.commandPolicy) {
+      config.agent.commandPolicy = { ...agentDefaults.commandPolicy };
     }
 
     // Risk level
@@ -512,14 +524,15 @@ function unionPatterns(floor: string[], project: string[]): string[] {
  * `allowOverride` is true the pre-sable-nz4y replace semantics are used.
  */
 export function mergeCommandPolicy(
-  target: { mode: string; blockedPatterns: string[]; requireApproval: string[] },
-  project: { mode?: string; blockedPatterns?: string[]; requireApproval?: string[] },
+  target: { mode: string; blockedPatterns: string[]; requireApproval: string[]; allowedPatterns?: string[] },
+  project: { mode?: string; blockedPatterns?: string[]; requireApproval?: string[]; allowedPatterns?: string[] },
   allowOverride: boolean
 ): void {
   if (allowOverride) {
     if (project.mode) target.mode = project.mode as any;
     if (project.blockedPatterns) target.blockedPatterns = project.blockedPatterns;
     if (project.requireApproval) target.requireApproval = project.requireApproval;
+    if (project.allowedPatterns) target.allowedPatterns = project.allowedPatterns;
     return;
   }
 
@@ -541,5 +554,20 @@ export function mergeCommandPolicy(
   }
   if (project.requireApproval) {
     target.requireApproval = unionPatterns(target.requireApproval, project.requireApproval);
+  }
+
+  // allowedPatterns is NOT unioned, and that asymmetry is the whole point.
+  // Unioning blockedPatterns or requireApproval can only ever ADD restriction,
+  // so a project contributing to them is safe. An allowlist is the opposite:
+  // it is a grant. Union it and a cloned repo ships
+  //   command_policy: { allowed_patterns: [".*"] }
+  // and waves every non-critical command through — which is precisely the
+  // bypass the floor exists to prevent (sable-nz4y / rf-adth). So the owner's
+  // allowlist stands and the project's is refused unless the owner has
+  // explicitly opted into project override.
+  if (project.allowedPatterns) {
+    console.error(
+      `Warning: project policy sets agent.commandPolicy.allowed_patterns, which can only loosen command policy — ignoring. Set agent.commandPolicy.allowProjectOverride: true in your global config to allow project policies to loosen command policy.`
+    );
   }
 }
