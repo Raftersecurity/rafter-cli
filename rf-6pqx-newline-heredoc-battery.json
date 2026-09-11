@@ -311,5 +311,186 @@
     "want": [
       "low"
     ]
+  },
+  {
+    "label": "vnxs disarm: plain disable",
+    "cmd": "rafter agent config set agent.hooks.enabled false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: sub-part secretScan",
+    "cmd": "rafter agent config set agent.hooks.secretScan false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: sub-part commandPolicy",
+    "cmd": "rafter agent config set agent.hooks.commandPolicy false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: extra whitespace",
+    "cmd": "rafter agent config set   agent.hooks.enabled   false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: uppercase value",
+    "cmd": "rafter agent config set agent.hooks.enabled FALSE",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: npx package runner",
+    "cmd": "npx @rafter-security/cli agent config set agent.hooks.enabled false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: npx -y + version pin",
+    "cmd": "npx -y @rafter-security/cli@0.10.1 agent config set agent.hooks.enabled false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: pnpm dlx",
+    "cmd": "pnpm dlx rafter-cli agent config set agent.hooks.enabled false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: sudo -E wrapper",
+    "cmd": "sudo -E rafter agent config set agent.hooks.enabled false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: env assignment prefix",
+    "cmd": "FOO=1 rafter agent config set agent.hooks.enabled false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: absolute path exec",
+    "cmd": "/usr/local/bin/rafter agent config set agent.hooks.enabled false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: --global flag",
+    "cmd": "rafter agent config set agent.hooks.enabled false --global",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: component uninstall",
+    "cmd": "rafter agent disable claude-code",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: chained after benign",
+    "cmd": "echo hi && rafter agent config set agent.hooks.enabled false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: chained on a newline",
+    "cmd": "echo hi\nrafter agent config set agent.hooks.enabled false",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: inside a substitution",
+    "cmd": "bash -c \"$(echo rafter agent config set agent.hooks.enabled false)\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: shell -c carries it",
+    "cmd": "bash -c \"rafter agent config set agent.hooks.enabled false\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: piped into a shell",
+    "cmd": "echo rafter agent config set agent.hooks.enabled false | bash",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs disarm: ssh remote disarm",
+    "cmd": "ssh host \"rafter agent config set agent.hooks.enabled false\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "vnxs guard: read-only show",
+    "cmd": "rafter agent config show",
+    "want": [
+      "low",
+      "medium"
+    ]
+  },
+  {
+    "label": "vnxs guard: read-only get",
+    "cmd": "rafter agent config get agent.hooks.enabled",
+    "want": [
+      "low",
+      "medium"
+    ]
+  },
+  {
+    "label": "vnxs guard: unrelated key",
+    "cmd": "rafter agent config set backend.endpoint https://x/",
+    "want": [
+      "low",
+      "medium"
+    ]
+  },
+  {
+    "label": "vnxs guard: a different CLI entirely",
+    "cmd": "git config set user.name bob",
+    "want": [
+      "low",
+      "medium"
+    ]
+  },
+  {
+    "label": "vnxs guard: prose mentioning it",
+    "cmd": "echo 'run rafter agent config set agent.hooks.enabled false'",
+    "want": [
+      "low",
+      "medium"
+    ]
+  },
+  {
+    "label": "vnxs guard: rafter doing normal work",
+    "cmd": "rafter secrets --diff HEAD",
+    "want": [
+      "low",
+      "medium"
+    ]
   }
 ]
