@@ -129,6 +129,8 @@ _TEXT_FLAGS = {
 # Operators that chain independent commands.
 _CHAIN_OPS = {";", "&&", "||", "|", "&"}
 
+
+
 # Operators whose following token is a redirect target (a path — never data).
 _REDIRECT_OPS = {">", ">>", "<", "<<"}
 
@@ -346,6 +348,21 @@ def _tokenize(s: str) -> tuple[list[_Piece], bool]:
         pieces.append(_Piece(start, i, None, "".join(text), quoted, substs))
 
     return pieces, unterminated
+
+
+def is_chained_command(command: str) -> bool:
+    r"""True if the command contains more than one statement.
+
+    Asked of the TOKENIZER rather than a regex. The first version of this was
+    ``re.compile(r"[;|&]|&&|\|\|")``, which omits the newline — and a newline
+    has been a statement separator in this module since rf-6pqx. With
+    ``^git push origin feature/`` allowlisted, ``git push origin feature/x`` and
+    a second line holding ``git push --force origin main`` classified ``allow``.
+    The tokenizer already normalises ``\n`` to ``;``, so routing the question
+    through it removes the second, narrower definition instead of widening it.
+    """
+    pieces, _ = _tokenize(command)
+    return any(p.op is not None and p.op in _CHAIN_OPS for p in pieces)
 
 
 def _exec_name(text: str) -> str:

@@ -5,6 +5,7 @@ import {
   matchedCriticalPattern,
   sanitizeCommandForMatching,
   CommandRiskLevel,
+  isChainedCommand,
 } from "./risk-rules.js";
 
 export type { CommandRiskLevel } from "./risk-rules.js";
@@ -91,6 +92,49 @@ export class CommandInterceptor {
           matchedPattern: pattern
         };
       }
+    }
+
+    // Check the positive allowlist. Deliberately AFTER blockedPatterns and
+    // BEFORE requireApproval: a deny rule always wins, and an allow rule's
+    // whole job is to suppress the approval prompt for a known-safe command.
+    //
+    // Two guards keep an allowlist from becoming a hole in the guard rail:
+    //
+    //   - A `critical` command is never allowlistable. NOTE: this guard is
+    //     currently UNREACHABLE — evaluate() hard-blocks critical at the top of
+    //     the method, before this loop — and a mutation sweep proved it:
+    //     deleting the guard leaves every test green, in both runtimes. Kept as
+    //     defence in depth, because it becomes the only protection the day that
+    //     early block is narrowed. Do not write a test claiming to exercise it;
+    //     such a test passes with the guard deleted.
+    //   - A match does not apply when the command holds more than one
+    //     statement. Patterns are unanchored by request, so without this
+    //     "^git push" would wave through `rm -rf / && git push` — or, via the
+    //     newline the original regex missed, anything on a second line.
+    // Defence in depth behind the config validator: a non-array here is not
+    // merely wrong, it is dangerous. A bare string iterates as CHARACTERS, and
+    // the first one of `"^git status"` is `^`, which matches every command —
+    // the allowlist would allow everything. The validator catches the shape
+    // `config set` writes; this catches every other way it could arrive.
+    const allowedPatterns = Array.isArray(policy.allowedPatterns) ? policy.allowedPatterns : [];
+    for (const pattern of allowedPatterns) {
+      if (!this.matchesPattern(command, pattern)) continue;
+
+      if (isChainedCommand(command)) {
+        // Fall through to normal classification rather than allowing.
+        break;
+      }
+      if (this.assessRisk(command) === "critical") {
+        break;
+      }
+      return {
+        command,
+        riskLevel: "low",
+        allowed: true,
+        requiresApproval: false,
+        reason: `Matches allowed pattern: ${pattern}`,
+        matchedPattern: pattern
+      };
     }
 
     // Check approval patterns
