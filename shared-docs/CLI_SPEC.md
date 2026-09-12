@@ -532,7 +532,14 @@ When `.rafter.yml` `ignore:` rules (or `.rafterignore`) hide one or more finding
 
 Exit code is unaffected by suppression — exit `1` is returned only when at least one *non-suppressed* finding remains.
 
-Remote `rafter run` emits the same suppression data as a separate `suppressed.json` artifact (alongside `findings.json`, which is unaffected), using this identical per-entry shape; its `source` is `".rafter/config.yml"` (the backend's config filename). So a finding hidden by an `ignore` rule is recoverable whether the scan ran locally or remotely.
+Remote `rafter run` (the hosted scanner) writes the same data as a separate `suppressed.json` artifact beside `findings.json` (`scan-results/{org}/{scan}/{mode}/suppressed.json`, written whenever a config file was present), with this per-entry shape under `_suppressed`; `source` is the repo-relative config file it actually read (`.rafter.yml`, `.rafter/config.yml`, …). It carries three things a local scan does not need:
+
+- `protected_suppressions` (and `protected_suppressed`, its count) — every must-fix, secret-scanner or unclassified critical/high finding an `ignore:` rule hid, with its `reason`. Each also appears in `_suppressed` with `protected` set. Read this list first (see *Protected findings* under `ignore:` below).
+- `blocked` — protected findings a rule matched but the hosted scanner kept, each with `blocked_by` (`must-fix`, `secret-scanner`, `unclassified-high`), `matched_by` (`exclude_paths`, or `ignore` for an ignore rule with no `reason`) and a `hint`: only an ignore rule that states a reason can hide a protected finding.
+- `unmatched` — every `paths`/`rules` selector that matched no finding. This is the usual answer to "my config is ignored": a hashed id from a different scan, a typo, or a glob that does not reach the file.
+- `applied` / `error` — `applied: false` with the parser's message when the file was rejected; findings are then reported unfiltered.
+
+So a finding hidden by an `ignore` rule is recoverable whether the scan ran locally or remotely, and a rule that hid nothing says why.
 
 ### rafter agent exec COMMAND [OPTIONS]
 
@@ -1123,7 +1130,7 @@ Start MCP server over stdio transport. Exposes 11 tools and 3 resources.
   "allowed": true,
   "risk_level": "low",
   "requires_approval": false,
-  "reason": "optional explanation string"
+  "reason": "why this is a false positive — required to suppress a must-fix or secret finding remotely"
 }
 ```
 
@@ -1142,7 +1149,7 @@ Start MCP server over stdio transport. Exposes 11 tools and 3 resources.
 **`suppress_finding` inputs:**
 - `path` (required, string) — file path or glob to suppress findings in (e.g. `test/fixtures/**`)
 - `rules` (optional, string[]) — specific rule/pattern names to suppress (e.g. `["AWS Access Key"]`); omit to suppress all rules for the path
-- `reason` (optional, string) — why this is a false positive; persisted with the rule and surfaced in `_suppressed` output
+- `reason` (optional, string) — why this is a false positive; persisted with the rule and surfaced in `_suppressed` output. **Required to suppress a must-fix or secret-scanner finding on the hosted scanner**: a rule without one keeps hiding ordinary findings but is held at the floor for protected ones — always give one.
 
 **`suppress_finding` output schema:** `{ ok, file, action, entry, suppression_count }` where `action` is `"created"` (new `.rafter.yml` written), `"appended"` (rule added to an existing file), or `"updated"` (an existing rule with the same path+rules scope had its reason refreshed). `entry` is the persisted ignore rule `{ paths, rules?, reason? }`. The tool resolves the existing policy file via the loader's precedence; if none exists it creates a canonical `.rafter.yml` at the git root. It never appends a duplicate rule for the same path+rules scope.
 
@@ -1345,7 +1352,7 @@ Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not a
 
 **URL caching:** URL-backed docs are cached at `~/.rafter/docs-cache/` keyed by `sha256(url)[:32]`. Default TTL is 86400 seconds. On network failure, a stale cached copy is served and a warning is printed. `docs list` never fetches; `docs show` fetches on miss/expired or when `--refresh` is set.
 
-**Ignore rules (`ignore:`):** suppress findings without removing them from the audit trail. Each entry needs `paths:` (a non-empty list of globs); `rules:` is optional (omitting it suppresses every rule on the matched paths) and `reason:` is surfaced verbatim in the JSON `_suppressed` output. First entry that matches wins, so put more specific entries earlier.
+**Ignore rules (`ignore:`):** suppress findings without removing them from the audit trail. Each entry needs `paths:` (a non-empty list of globs); `reason:` is optional but is what lets the hosted scanner hide a must-fix or secret-scanner finding (write one anyway — the same file is read by both engines); `rules:` is optional (omitting it suppresses every rule on the matched paths) and `reason:` is surfaced verbatim in the JSON `_suppressed` output. First entry that matches wins, so put more specific entries earlier.
 
 These rules are honored identically by the **local** CLI engines (Node and Python) and by the **remote `rafter run`** backend — they read the same `.rafter.yml` (and `.rafter/config.yml`) `ignore:` block. The matching contract is fixed and the same on every engine:
 
@@ -1357,7 +1364,11 @@ These rules are honored identically by the **local** CLI engines (Node and Pytho
 - A relative glob (no leading `/`, not starting with `**`) is auto-anchored to match **anywhere** along the absolute scan path, so `tests/fixtures/**` matches `/abs/project/tests/fixtures/foo`.
 - Path matching is case-sensitive.
 
-*Rule selectors (`rules:`)* — each entry matches a finding when it equals (case-insensitively) **either** the finding's rule **name/title** (e.g. `AWS Access Key`) **or** its **rule id** (e.g. `R-6D5E2` / `rules.autogrep.json.vuln-…`). Use the name for local pattern findings and the id for remote SAST/SCA findings. Non-existent selectors are harmless (they just never match).
+*Rule selectors (`rules:`)* — each entry matches a finding when it equals (case-insensitively) **either** the finding's rule **name/title** (e.g. `AWS Access Key`) **or** its **rule id** — the hashed `R-XXXXX` id the hosted report and PR comment show (e.g. `R-6D5E2`) or the scanner-native id (`rules.autogrep.json.vuln-…`); the hosted scanner accepts all three. Use the name for local pattern findings and either id for remote SAST/SCA findings. Non-existent selectors are harmless (they just never match); on a remote scan they are listed in `suppressed.json` under `unmatched`.
+
+*Key spelling* — every engine accepts the camelCase keys shown here and the hosted scanner's snake_case (`exclude_paths`) alike; if a file carries both, snake_case wins on the hosted scanner.
+
+*`reason:` is required to hide a protected finding* — on the hosted scanner an `ignore:` rule may hide a **must-fix**, **secret-scanner**, or unclassified **critical/high** finding on any scan (default branch or PR head alike) **only if it carries a non-empty `reason`**; the reason is the price. A rule without one (a blank reason counts as none) is not an error: it still suppresses ordinary findings, and for a protected finding it matches it is held at the floor — the finding stays in the report and `suppressed.json` lists it under `blocked` with `blocked_by` and a hint to add a reason. Every protected suppression that does go through is written to `suppressed.json` twice — in `_suppressed` with `protected` set to `must-fix`, `secret-scanner` or `unclassified-high`, and in the top-level `protected_suppressions` list with a count — so it cannot go unnoticed. The accepted trade (decision sb-d5ld, 2026-09-08): a committer can hide a planted secret in the same PR that suppresses it; it is visible in the diff and in the audit trail. `scan.excludePaths` cannot hide a protected finding at all, because it carries no reason slot: such matches are listed under `blocked` with a hint to use an ignore rule. Suppression is the project's decision on both sides; it is a separate surface from `commandPolicy`, which the global config may bound.
 
 ---
 
