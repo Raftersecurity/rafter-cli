@@ -5,7 +5,7 @@ import {
   matchedCriticalPattern,
   sanitizeCommandForMatching,
   CommandRiskLevel,
-  CHAIN_OPERATORS,
+  isChainedCommand,
 } from "./risk-rules.js";
 
 export type { CommandRiskLevel } from "./risk-rules.js";
@@ -107,14 +107,20 @@ export class CommandInterceptor {
     //     defence in depth, because it becomes the only protection the day that
     //     early block is narrowed. Do not write a test claiming to exercise it;
     //     such a test passes with the guard deleted.
-    //   - A match does not apply when the command contains a chain operator.
-    //     Patterns are unanchored by request, so without this "^git push"
-    //     would wave through `rm -rf / && git push`. This mirrors the same
-    //     disqualification SAFE_PREFIX already carries in risk-rules.ts.
-    for (const pattern of policy.allowedPatterns ?? []) {
+    //   - A match does not apply when the command holds more than one
+    //     statement. Patterns are unanchored by request, so without this
+    //     "^git push" would wave through `rm -rf / && git push` — or, via the
+    //     newline the original regex missed, anything on a second line.
+    // Defence in depth behind the config validator: a non-array here is not
+    // merely wrong, it is dangerous. A bare string iterates as CHARACTERS, and
+    // the first one of `"^git status"` is `^`, which matches every command —
+    // the allowlist would allow everything. The validator catches the shape
+    // `config set` writes; this catches every other way it could arrive.
+    const allowedPatterns = Array.isArray(policy.allowedPatterns) ? policy.allowedPatterns : [];
+    for (const pattern of allowedPatterns) {
       if (!this.matchesPattern(command, pattern)) continue;
 
-      if (CHAIN_OPERATORS.test(command)) {
+      if (isChainedCommand(command)) {
         // Fall through to normal classification rather than allowing.
         break;
       }

@@ -98,6 +98,37 @@ class TestAllowlistGuards:
         assert ev.allowed is False
         assert ev.risk_level == "critical"
 
+    def test_newline_is_a_statement_separator(self):
+        # rafter security review F1. The first chain check was a regex,
+        # /[;|&]|&&|\|\|/, which omits the newline — while a newline has been a
+        # statement separator in risk_rules since rf-6pqx. With "^git push
+        # origin feature/" allowlisted, a second line ran unclassified. The
+        # agent being gated writes the whole string, so this cost one keystroke.
+        ci = _interceptor(_policy(allowed_patterns=["^git push origin feature/"]))
+        assert ci.evaluate("git push origin feature/x\ngit push --force origin main").allowed is False
+        assert ci.evaluate("git status\nchmod 777 /etc/shadow").allowed is False
+
+    def test_carriage_return_is_a_statement_separator(self):
+        ci = _interceptor(_policy(allowed_patterns=["^git push origin feature/"]))
+        assert ci.evaluate("git push origin feature/x\r\ngit push --force origin main").allowed is False
+
+    def test_control_the_allowlist_still_works_on_a_single_statement(self):
+        # Without this, the two rows above would also pass with the allowlist
+        # broken outright — they must fail for the right reason.
+        ci = _interceptor(_policy(allowed_patterns=["^git push origin feature/"]))
+        assert ci.evaluate("git push origin feature/x").allowed is True
+
+    def test_a_scalar_string_allowlist_does_not_allow_everything(self):
+        # rafter security review F2. `rafter agent config set
+        # agent.commandPolicy.allowedPatterns '^git status'` stores a bare
+        # STRING (json.loads fails, the raw value is kept). Iterating a str
+        # yields CHARACTERS, so the first one, "^", matched every command and
+        # the allowlist allowed everything. Node warned and fell back; python
+        # did not, which made this a parity gap as well as a bypass.
+        ci = _interceptor(_policy(allowed_patterns="^git status"))
+        for cmd in ("chmod 777 /etc/shadow", "git push --force origin main", "sudo rm -rf /var/log"):
+            assert ci.evaluate(cmd).allowed is False, cmd
+
     def test_control_unmatched_command_still_needs_approval(self):
         # Proves the allowlist is not blanket-allowing.
         ci = _interceptor(_policy(allowed_patterns=["^git push"]))

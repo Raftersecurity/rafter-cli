@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .audit_logger import AuditLogger
 from .config_manager import ConfigManager
 from .risk_rules import (
-    CHAIN_OPERATORS,
+    is_chained_command,
     assess_command_risk,
     match_critical_pattern,
     sanitize_command_for_matching,
@@ -83,13 +83,19 @@ class CommandInterceptor:
         #     because it becomes the only protection the day that early block is
         #     narrowed. Do not write a test claiming to exercise it; such a test
         #     passes with the guard deleted.
-        #   - A match does not apply when the command contains a chain operator.
-        #     Patterns are unanchored by request, so without this "^git push"
-        #     would wave through ``rm -rf / && git push``.
-        for pattern in getattr(policy, "allowed_patterns", None) or []:
+        #   - A match does not apply when the command holds more than one
+        #     statement. Patterns are unanchored by request, so without this
+        #     "^git push" would wave through ``rm -rf / && git push`` — or, via
+        #     the newline the original regex missed, anything on a second line.
+        allowed = getattr(policy, "allowed_patterns", None) or []
+        if not isinstance(allowed, list):
+            # Defence in depth behind the validator: iterating a str yields
+            # CHARACTERS, and a leading "^" then matches every command.
+            allowed = []
+        for pattern in allowed:
             if not self._matches(command, pattern):
                 continue
-            if CHAIN_OPERATORS.search(command):
+            if is_chained_command(command):
                 # Fall through to normal classification rather than allowing.
                 break
             if risk_level == "critical":

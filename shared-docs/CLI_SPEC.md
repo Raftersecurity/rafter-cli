@@ -1299,7 +1299,7 @@ command_policy:
   # approval prompt, without lowering the global risk level. Unanchored
   # regex. blocked_patterns always wins; a `critical` command is never
   # allowlistable; and a match does not apply when the command contains a
-  # chain operator (`&&`, `;`, `|`), so "git push" cannot wave through
+  # statement separator (`&&`, `||`, `;`, `|`, `&`, or a NEWLINE), so "git push" cannot wave through
   # `rm -rf / && git push`.
   allowed_patterns: ["git push --force-with-lease"]
 scan:
