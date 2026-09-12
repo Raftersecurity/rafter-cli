@@ -36,6 +36,7 @@ export interface PolicyFile {
     mode?: string;
     blockedPatterns?: string[];
     requireApproval?: string[];
+    allowedPatterns?: string[];
   };
   scan?: {
     excludePaths?: string[];
@@ -134,6 +135,9 @@ function mapPolicy(raw: Record<string, any>): PolicyFile {
     }
     if (Array.isArray(raw.command_policy.require_approval)) {
       policy.commandPolicy.requireApproval = raw.command_policy.require_approval;
+    }
+    if (Array.isArray(raw.command_policy.allowed_patterns)) {
+      policy.commandPolicy.allowedPatterns = raw.command_policy.allowed_patterns;
     }
   }
 
@@ -321,6 +325,12 @@ function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFil
       if (!Array.isArray(policy.commandPolicy.requireApproval) || !policy.commandPolicy.requireApproval.every((v: any) => typeof v === "string")) {
         console.error(`Warning: "command_policy.require_approval" must be an array of strings — ignoring.`);
         delete policy.commandPolicy.requireApproval;
+      }
+    }
+    if (policy.commandPolicy.allowedPatterns !== undefined) {
+      if (!Array.isArray(policy.commandPolicy.allowedPatterns) || !policy.commandPolicy.allowedPatterns.every((v: any) => typeof v === "string")) {
+        console.error(`Warning: "command_policy.allowed_patterns" must be an array of strings — ignoring.`);
+        delete policy.commandPolicy.allowedPatterns;
       }
     }
   }

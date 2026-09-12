@@ -708,6 +708,30 @@ export function sanitizeCommandForMatching(command: string): string {
 }
 
 /**
+ * True if the command contains more than one statement.
+ *
+ * Asked of the TOKENIZER rather than a regex, deliberately. The first version
+ * of this was `/[;|&]|&&|\|\|/`, which omits the newline — and a newline has
+ * been a statement separator in this file since rf-6pqx, six lines from where
+ * that regex sat. The gap was reachable in one step: with `^git push origin
+ * feature/` allowlisted,
+ *
+ *     git push origin feature/x
+ *     git push --force origin main
+ *
+ * classified `allow`, because the chain check saw no operator. The agent being
+ * gated writes the whole string, so prefixing an allowlisted line is free.
+ *
+ * The tokenizer already normalises `\n` to `;`, so routing the question through
+ * it removes the second, narrower definition instead of widening it. One source
+ * of truth for "what separates two commands".
+ */
+export function isChainedCommand(command: string): boolean {
+  const { pieces } = tokenize(command);
+  return pieces.some((p) => p.op !== null && CHAIN_OPS.has(p.op));
+}
+
+/**
  * Assess risk level of a command string.
  */
 /**

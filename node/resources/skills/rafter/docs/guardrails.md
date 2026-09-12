@@ -24,23 +24,46 @@ Every command (Bash-like tool call) gets classified into one of four tiers by `s
 | `high` | Destructive or privileged (force push, `sudo`, broad file deletion, curl | sh) | **prompt** the agent / user for approval |
 | `critical` | Likely irreversible damage (`rm -rf /`, DB drop, wiping .git, repo-wide chmod) | **block** hard |
 
-Tiers are derived from regex patterns in `risk-rules.ts` (`CRITICAL_PATTERNS`, `HIGH_PATTERNS`, `MEDIUM_PATTERNS`) plus a `SAFE_PREFIX` allowlist. Presence of chain operators (`&&`, `||`, `;`, `|`) disqualifies the safe-prefix shortcut.
+Tiers are derived from regex patterns in `risk-rules.ts` (`CRITICAL_PATTERNS`, `HIGH_PATTERNS`, `MEDIUM_PATTERNS`) plus a `SAFE_PREFIX` allowlist. A command holding more than one statement disqualifies the safe-prefix shortcut. Statement separators are whatever the tokenizer treats as one — `&&`, `||`, `;`, `|`, `&`, and a NEWLINE — rather than a hand-kept list; the newline was missing from an earlier hand-kept copy and that was a live bypass.
 
 ## Policy Overrides
 
 `.rafter.yml` (project) and `~/.rafter/config.yml` (global) can override defaults:
 
 ```yaml
-risk:
+command_policy:
   blocked_patterns:
     - "terraform destroy"
   require_approval:
     - "^npm publish"
-  allow:
-    - "^pnpm run test"     # force low regardless of content
+  allowed_patterns:
+    - "^pnpm run test"          # force low, skipping the approval prompt
+    - "git push --force-with-lease"
 ```
 
-Merge order (most specific wins): project `.rafter.yml` > global config > built-in defaults. Dump the effective merged policy with `rafter policy export`.
+**On `allowed_patterns`.** Until 2026-09-07 this section documented a
+`risk.allow` key that was never implemented — a customer went looking for it
+and found nothing. The real key is `command_policy.allowed_patterns`, and it
+now exists.
+
+It is a positive allowlist for the known-safe command that trips a broad tier:
+the motivating case is `git push --force-with-lease` to a feature branch on a
+repo whose `main` is protected server-side, which classifies `high` and prompts
+on every push even though the dangerous version cannot land. Dropping
+`risk_level` to silence that is too blunt — it would also stop prompting for
+`sudo` and `curl | sh`.
+
+Three properties keep an allowlist from becoming a hole in the guard rail:
+
+1. **`blocked_patterns` always wins.** An allow rule never re-opens what a deny
+   rule closed.
+2. **`critical` is never allowlistable.** `rm -rf /`, a DB drop and wiping
+   `.git` stay blocked whatever the config says.
+3. **Chain operators disqualify a match.** Patterns are unanchored, so without
+   this `"git push"` would wave through `rm -rf / && git push`. A chained
+   command is classified exactly as it would be with no allowlist configured.
+
+Merge order: project `.rafter.yml` > global config > built-in defaults for most keys — but NOT for `command_policy`, which is a floor. A project policy may tighten command policy and never loosen it: `mode` is accepted only if at least as strict, `blocked_patterns` and `require_approval` are unioned, and `allowed_patterns` — being a grant rather than a restriction — is refused outright unless the machine owner sets `agent.commandPolicy.allowProjectOverride: true` in their global config. Dump the effective merged policy with `rafter policy export`.
 
 ## How to Interpret a Block
 

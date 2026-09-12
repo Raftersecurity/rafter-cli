@@ -56,6 +56,20 @@ class CommandPolicyConfig:
     #: would be no floor at all. Default (absent/False) keeps the floor: a
     #: project policy may tighten command policy, never loosen it.
     allow_project_override: bool = False
+    #: Positive allowlist: unanchored regexes that force a command to ``low``
+    #: and skip the approval prompt. For the known-safe command that would
+    #: otherwise trip a broad risk tier — the motivating case being
+    #: ``git push --force-with-lease`` to a feature branch on a repo whose main
+    #: is protected server-side.
+    #:
+    #: Three properties make this safe to put on a guard rail, and all three are
+    #: enforced in CommandInterceptor, not here:
+    #:   1. blocked_patterns always wins. An allowlist never re-opens what a
+    #:      deny rule closed.
+    #:   2. A ``critical`` command is never allowlistable.
+    #:   3. A match does not apply when the command contains a chain operator,
+    #:      so ``^git push`` cannot wave through ``rm -rf / && git push``.
+    allowed_patterns: list[str] = field(default_factory=list)
 
 
 @dataclass
