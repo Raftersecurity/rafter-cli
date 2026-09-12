@@ -774,8 +774,106 @@ def sanitize_command_for_matching(command: str) -> str:
     return _sanitize(command, 0)
 
 
+# rf-vnxs — reconfiguring rafter's OWN security controls is a PROTECTED CLASS.
+#
+# The gate must never approve its own disarming. On 0.10.1 it did: the hook
+# rated `rafter agent config set agent.hooks.enabled false` as `low`, allowed
+# it, and every later command — including the CRITICAL tier that no policy,
+# mode or deny-list can override — was then permitted. Three steps, no
+# malformed command, and it persists to config.json.
+#
+# Matched STRUCTURALLY (resolved exec + argv walk), never by string: every one
+# of these was observed ALLOWED on the published artifact — extra whitespace,
+# `FALSE`, `npx @rafter-security/cli …`, `pnpm dlx`, `sudo -E rafter …`, an
+# absolute path, the `agent disable` component route, and three separate
+# self-disabling keys. A blacklist of one string is one alias from being inert.
+_RAFTER_EXECS = {"rafter", "rafter-cli"}
+_PACKAGE_RUNNERS = {"npx", "bunx", "pnpx", "dlx", "pnpm", "yarn", "bun"}
+_RAFTER_PACKAGE = re.compile(r"^(?:@rafter-security/cli|rafter-cli|rafter)(?:@[\w.^~*-]+)?$")
+
+# Config keys that gate the hook. A namespace, not a leaf — see hook_control.
+_PROTECTED_CONFIG_KEY = re.compile(r"^(?:agent\.)?(?:hooks|commandpolicy)\b|^agent\.risklevel$")
+
+
+def _statement_disarms_rafter(words: list[_Piece]) -> bool:
+    """True if this statement's argv reconfigures or removes a rafter control.
+
+    The rafter invocation is looked for at ANY position, not just as the
+    statement's own exec: a shell carrying a command string puts it in the
+    operand, so `bash -c "rafter agent config set …"` and `bash -c "$(echo
+    rafter …)"` both reduce to a statement whose exec is `bash`. A quoted word
+    is skipped on the raw pass so `echo 'rafter agent config set …'` stays
+    prose; the sanitized pass sees operands that are actually executed already
+    unwrapped.
+    """
+    for j in range(len(words)):
+        if words[j].quoted:
+            continue
+        k = j
+        exec_ = _exec_name(words[k].text)
+        k += 1
+
+        if exec_ in _PACKAGE_RUNNERS:
+            while k < len(words) and (words[k].text.startswith("-") or words[k].text.lower() in ("dlx", "exec")):
+                k += 1
+            if k >= len(words) or not _RAFTER_PACKAGE.match(words[k].text.lower()):
+                continue
+            k += 1
+            exec_ = "rafter"
+        if exec_ not in _RAFTER_EXECS:
+            continue
+
+        args = [w.text.lower() for w in words[k:] if not w.text.startswith("-")]
+        for n in range(len(args) - 1):
+            if args[n] == "config" and args[n + 1] == "set":
+                key = args[n + 2] if n + 2 < len(args) else None
+                if key and _PROTECTED_CONFIG_KEY.match(key):
+                    return True
+            if args[n] == "agent" and args[n + 1] == "disable":
+                return True
+    return False
+
+
+def _disarms_rafter(command: str, depth: int = 0) -> bool:
+    """True if any statement (or command substitution) disarms rafter."""
+    if depth > _MAX_SANITIZE_DEPTH:
+        return False
+    pieces, _ = _tokenize(command)
+    statements: list[list[_Piece]] = []
+    stmt: list[_Piece] = []
+    for p in pieces:
+        if p.op is not None:
+            if p.op in _CHAIN_OPS or p.op in ("\n", "\r"):
+                statements.append(stmt)
+                stmt = []
+            continue
+        stmt.append(p)
+        for sub in (p.substs or []):
+            if _disarms_rafter(sub, depth + 1):
+                return True
+    statements.append(stmt)
+    return any(_statement_disarms_rafter(st) for st in statements)
+
+
+def modifies_rafter_security_config(command: str) -> bool:
+    """True if the command disarms rafter, checked on raw AND sanitized text.
+
+    Raw catches the ordinary invocation; sanitized catches a shell running the
+    OUTPUT of something else, whose own exec is `echo` and which a walk over
+    the raw argv therefore reads, correctly, as a print.
+    """
+    if _disarms_rafter(command):
+        return True
+    sanitized = sanitize_command_for_matching(command)
+    return sanitized != command and _disarms_rafter(sanitized)
+
+
 def assess_command_risk(command: str) -> str:
     """Assess risk level of a command string."""
+    # rf-vnxs: checked before the pattern loops. The disarm is an ordinary
+    # well-formed invocation — nothing malformed for the sanitizer to normalise.
+    if modifies_rafter_security_config(command):
+        return "critical"
     cmd = sanitize_command_for_matching(command).strip()
     if not cmd:
         return "low"
