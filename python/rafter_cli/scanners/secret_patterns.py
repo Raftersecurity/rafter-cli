@@ -81,6 +81,34 @@ DEFAULT_SECRET_PATTERNS: list[Pattern] = [
         severity="critical",
         description="Stripe Restricted API Key detected",
     ),
+    # OpenAI (rf-f5is / se-wagv, external report). The hook's Write gate is
+    # regex-only and this file had NO OpenAI rule at all, so `sk-proj-` and
+    # legacy keys were ALLOWED through the gate at any length while
+    # `rafter secrets` caught them via betterleaks. The two engines disagreed
+    # and the one guarding writes was the blind one.
+    #
+    # No `(?i)`: these prefixes and their base62 bodies are case-sensitive, and
+    # the convention here is that prefixed vendor tokens (ghp_, AKIA, AIza, xox)
+    # match case-sensitively. Lower-casing them would only add false positives.
+    Pattern(
+        name="OpenAI API Key",
+        regex=r"sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{40,}",
+        severity="critical",
+        description="OpenAI project/service/admin API key detected",
+    ),
+    Pattern(
+        name="OpenAI API Key (legacy)",
+        regex=r"sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}",
+        severity="critical",
+        description="OpenAI legacy API key detected",
+    ),
+    # Supabase (rf-f5is / se-wagv). Detected by NEITHER engine at any length.
+    Pattern(
+        name="Supabase Secret Key",
+        regex=r"sb_secret_[A-Za-z0-9_-]{20,}",
+        severity="critical",
+        description="Supabase secret key detected",
+    ),
     # Twilio
     Pattern(
         name="Twilio API Key",
