@@ -492,5 +492,124 @@
       "low",
       "medium"
     ]
+  },
+  {
+    "label": "lbyp: rafter agent exec --force quoted rm -rf path",
+    "cmd": "rafter agent exec --force \"rm -rf /tmp/x\"",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "lbyp: rafter agent exec quoted rm -rf /",
+    "cmd": "rafter agent exec \"rm -rf /\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "lbyp: rafter agent exec --force quoted chmod 777",
+    "cmd": "rafter agent exec --force \"chmod 777 /etc/passwd\"",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "lbyp: rafter agent exec quoted git push --force",
+    "cmd": "rafter agent exec \"git push origin main --force\"",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "lbyp: npx @rafter-security/cli agent exec quoted chmod 777",
+    "cmd": "npx @rafter-security/cli agent exec \"chmod 777 /etc/passwd\"",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "lbyp: pnpm dlx rafter-cli agent exec quoted chmod 777",
+    "cmd": "pnpm dlx rafter-cli agent exec \"chmod 777 /etc/passwd\"",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "lbyp: sudo -E rafter agent exec quoted chmod 777",
+    "cmd": "sudo -E rafter agent exec \"chmod 777 /etc/passwd\"",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "lbyp: absolute-path rafter agent exec quoted chmod 777",
+    "cmd": "/usr/local/bin/rafter agent exec \"chmod 777 /etc/passwd\"",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "lbyp: bash -c wrapping rafter agent exec quoted rm -rf /",
+    "cmd": "bash -c \"rafter agent exec 'rm -rf /'\"",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "lbyp: rafter agent exec --dry-run quoted rm -rf / is a check, not a run",
+    "cmd": "rafter agent exec --dry-run \"rm -rf /\"",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "lbyp: rafter agent exec quoted safe command stays low",
+    "cmd": "rafter agent exec \"echo hello world\"",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "lbyp: echo of a rafter agent exec line is prose",
+    "cmd": "echo 'rafter agent exec \"rm -rf /\"'",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "lbyp: rafter secrets with a quoted path is not exec",
+    "cmd": "rafter secrets \"my project/src\"",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "lbyp: script -c pty wrapper around rafter agent exec",
+    "cmd": "script -q -c \"rafter agent exec 'echo hi'\" /dev/null",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "lbyp: unbuffer pty wrapper around rafter agent exec",
+    "cmd": "unbuffer rafter agent exec \"echo hi\"",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "lbyp: expect -c spawning rafter agent exec and typing yes",
+    "cmd": "expect -c 'spawn rafter agent exec \"echo hi\"; send \"yes\\r\"'",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "lbyp: python pty.spawn around rafter",
+    "cmd": "python3 -c \"import pty; pty.spawn(['rafter','agent','exec','echo hi'])\"",
+    "want": [
+      "high"
+    ]
   }
 ]
