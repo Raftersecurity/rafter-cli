@@ -611,5 +611,12 @@
     "want": [
       "high"
     ]
+  },
+  {
+    "label": "lbyp: unbuffer pty wrapper around rafter agent exec with a critical operand",
+    "cmd": "unbuffer rafter agent exec \"rm -rf /\"",
+    "want": [
+      "critical"
+    ]
   }
 ]
