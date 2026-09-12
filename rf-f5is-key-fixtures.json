@@ -1,0 +1,42 @@
+[
+  {
+    "label": "supabase sb_secret_ at a real length",
+    "prefix": "sb_secret_", "fill": "A", "len": 32, "suffix": "",
+    "expect": "Supabase Secret Key"
+  },
+  {
+    "label": "openai sk-proj- at a real length",
+    "prefix": "sk-proj-", "fill": "A", "len": 48, "suffix": "",
+    "expect": "OpenAI API Key"
+  },
+  {
+    "label": "openai sk-svcacct-",
+    "prefix": "sk-svcacct-", "fill": "B", "len": 44, "suffix": "",
+    "expect": "OpenAI API Key"
+  },
+  {
+    "label": "openai sk-admin-",
+    "prefix": "sk-admin-", "fill": "C", "len": 40, "suffix": "",
+    "expect": "OpenAI API Key"
+  },
+  {
+    "label": "openai legacy sk- with the T3BlbkFJ marker",
+    "prefix": "sk-", "fill": "A", "len": 20, "suffix": "T3BlbkFJBBBBBBBBBBBBBBBBBBBB",
+    "expect": "OpenAI API Key (legacy)"
+  },
+  {
+    "label": "GUARD a too-short sb_secret_ is not a key",
+    "prefix": "sb_secret_", "fill": "A", "len": 8, "suffix": "",
+    "expect": null
+  },
+  {
+    "label": "GUARD a too-short sk-proj- is not a key",
+    "prefix": "sk-proj-", "fill": "A", "len": 10, "suffix": "",
+    "expect": null
+  },
+  {
+    "label": "GUARD prose mentioning sk and secrets",
+    "prefix": "ordinary text about sk and secrets, ", "fill": "x", "len": 5, "suffix": "",
+    "expect": null
+  }
+]
