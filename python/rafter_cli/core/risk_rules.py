@@ -129,6 +129,11 @@ _TEXT_FLAGS = {
 # Operators that chain independent commands.
 _CHAIN_OPS = {";", "&&", "||", "|", "&"}
 
+#: Mirror of node's CHAIN_OPERATORS. Used by the interceptor to disqualify an
+#: allowlist match on a chained command, so an unanchored "^git push" cannot
+#: wave through "rm -rf / && git push".
+CHAIN_OPERATORS = re.compile(r"[;|&]|&&|\|\|")
+
 # Operators whose following token is a redirect target (a path — never data).
 _REDIRECT_OPS = {">", ">>", "<", "<<"}
 

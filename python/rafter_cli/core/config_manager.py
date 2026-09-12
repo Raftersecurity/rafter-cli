@@ -514,6 +514,8 @@ def merge_command_policy(target, project: dict, allow_override: bool) -> None:
             target.blocked_patterns = project["blocked_patterns"]
         if project.get("require_approval") is not None:
             target.require_approval = project["require_approval"]
+        if project.get("allowed_patterns") is not None:
+            target.allowed_patterns = project["allowed_patterns"]
         return
 
     mode = project.get("mode")
@@ -539,4 +541,21 @@ def merge_command_policy(target, project: dict, allow_override: bool) -> None:
     if project.get("require_approval") is not None:
         target.require_approval = _union_patterns(
             target.require_approval, project["require_approval"]
+        )
+
+    # allowed_patterns is NOT unioned, and that asymmetry is the whole point.
+    # Unioning blocked_patterns or require_approval can only ever ADD
+    # restriction, so a project contributing to them is safe. An allowlist is
+    # the opposite: it is a grant. Union it and a cloned repo ships
+    #     command_policy: {allowed_patterns: [".*"]}
+    # and waves every non-critical command through — precisely the bypass the
+    # floor exists to prevent (sable-nz4y / rf-adth). So the owner's allowlist
+    # stands and the project's is refused unless the owner opted in.
+    if project.get("allowed_patterns") is not None:
+        print(
+            "rafter: project policy sets agent.commandPolicy.allowed_patterns, which can "
+            "only loosen command policy — ignoring. Set "
+            "agent.commandPolicy.allowProjectOverride: true in your global config to "
+            "allow project policies to loosen command policy.",
+            file=sys.stderr,
         )
