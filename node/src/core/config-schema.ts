@@ -82,6 +82,7 @@ export interface RafterConfig {
        */
       allowProjectOverride?: boolean;
 
+      /**
        * Positive allowlist: unanchored regexes that force a command to `low`
        * and skip the approval prompt. For the known-safe command that would
        * otherwise trip a broad risk tier -- the motivating case being

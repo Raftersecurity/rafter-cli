@@ -23,9 +23,16 @@ describe("command_policy.allowed_patterns — real .rafter.yml to verdict", () =
   let tmpDir: string;
   let origCwd: string;
 
+  let origHome: string | undefined;
+
   beforeEach(() => {
     tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "rafter-allowlist-")));
     origCwd = process.cwd();
+    // getRafterDir() is os.homedir()-relative, so without this the "global
+    // config" these tests read is the DEVELOPER'S — the result would depend on
+    // whose machine ran the suite.
+    origHome = process.env.HOME;
+    process.env.HOME = tmpDir;
     const { execSync } = require("child_process");
     execSync("git init", { cwd: tmpDir, stdio: "ignore" });
     process.chdir(tmpDir);
@@ -34,15 +41,39 @@ describe("command_policy.allowed_patterns — real .rafter.yml to verdict", () =
 
   afterEach(() => {
     process.chdir(origCwd);
+    if (origHome === undefined) delete process.env.HOME;
+    else process.env.HOME = origHome;
     fs.rmSync(tmpDir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
+
+  /**
+   * Owner's global config. `allowProjectOverride` opts out of the floor.
+   *
+   * Built from getDefaultConfig() rather than hand-rolled: a partial
+   * commandPolicy (no blockedPatterns / requireApproval) makes evaluate()
+   * throw `policy.blockedPatterns is not iterable`, so a hand-written stub
+   * would test a shape no real install has.
+   */
+  async function writeGlobalConfig(allowProjectOverride: boolean) {
+    const { getDefaultConfig } = await import("../src/core/config-defaults.js");
+    const cfg: any = getDefaultConfig();
+    cfg.agent.commandPolicy.mode = "approve-dangerous";
+    cfg.agent.commandPolicy.allowProjectOverride = allowProjectOverride;
+    const dir = path.join(tmpDir, ".rafter");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify(cfg));
+  }
 
   function writePolicy(yml: string) {
     fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), yml);
   }
 
-  it("carries allowed_patterns from YAML all the way into the merged config", async () => {
+  it("maps allowed_patterns from YAML, but the FLOOR refuses a project's grant", async () => {
+    // rf-3n1i / sable-nz4y. An allowlist is a GRANT, so unlike blocked_patterns
+    // it is never contributed by a project policy: a cloned repo shipping
+    // allowed_patterns would otherwise wave its own commands through.
+    await writeGlobalConfig(false);
     writePolicy([
       "command_policy:",
       "  mode: approve-dangerous",
@@ -50,18 +81,39 @@ describe("command_policy.allowed_patterns — real .rafter.yml to verdict", () =
       "",
     ].join("\n"));
 
+    // The YAML mapper still produces the camelCase key — dropping the mapping
+    // is what made this unreachable before, and that must not regress.
     const { loadPolicy } = await import("../src/core/policy-loader.js");
-    const policy = loadPolicy();
-    // 1. the YAML mapper must produce the camelCase key
-    expect(policy?.commandPolicy?.allowedPatterns).toEqual(["git push --force-with-lease"]);
+    expect(loadPolicy()?.commandPolicy?.allowedPatterns).toEqual([
+      "git push --force-with-lease",
+    ]);
 
-    // 2. and loadWithPolicy must copy it onto the merged config
+    // ...and the merge refuses it, because the owner did not opt in.
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { ConfigManager } = await import("../src/core/config-manager.js");
     const merged = new ConfigManager().loadWithPolicy();
-    expect(merged.agent?.commandPolicy.allowedPatterns).toEqual(["git push --force-with-lease"]);
+    expect(merged.agent?.commandPolicy.allowedPatterns ?? []).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it("applies the project allowlist once the owner sets allowProjectOverride", async () => {
+    await writeGlobalConfig(true);
+    writePolicy([
+      "command_policy:",
+      "  mode: approve-dangerous",
+      '  allowed_patterns: ["git push --force-with-lease"]',
+      "",
+    ].join("\n"));
+
+    const { ConfigManager } = await import("../src/core/config-manager.js");
+    const merged = new ConfigManager().loadWithPolicy();
+    expect(merged.agent?.commandPolicy.allowedPatterns).toEqual([
+      "git push --force-with-lease",
+    ]);
   });
 
   it("actually suppresses the customer's prompt end to end", async () => {
+    await writeGlobalConfig(true);
     writePolicy([
       "command_policy:",
       "  mode: approve-dangerous",
@@ -77,6 +129,7 @@ describe("command_policy.allowed_patterns — real .rafter.yml to verdict", () =
   });
 
   it("still refuses a chained command written through real YAML", async () => {
+    await writeGlobalConfig(true);
     writePolicy([
       "command_policy:",
       "  mode: approve-dangerous",
@@ -90,6 +143,7 @@ describe("command_policy.allowed_patterns — real .rafter.yml to verdict", () =
   });
 
   it("still lets blocked_patterns win when both are set in YAML", async () => {
+    await writeGlobalConfig(true);
     writePolicy([
       "command_policy:",
       "  mode: approve-dangerous",
