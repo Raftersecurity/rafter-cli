@@ -94,6 +94,13 @@ def _map_policy(raw: dict) -> dict:
             policy["command_policy"]["blocked_patterns"] = cp["blocked_patterns"]
         if isinstance(cp.get("require_approval"), list):
             policy["command_policy"]["require_approval"] = cp["require_approval"]
+        # Without this the allowlist is unreachable from .rafter.yml: the
+        # interceptor reads allowed_patterns off the merged config and nothing
+        # ever put it there. Any new command_policy key needs a line HERE and
+        # in config_manager's merge, or it is documentation for a feature that
+        # does not run. (rf-3n1i)
+        if isinstance(cp.get("allowed_patterns"), list):
+            policy["command_policy"]["allowed_patterns"] = cp["allowed_patterns"]
 
     scan = raw.get("scan")
     if isinstance(scan, dict):
@@ -252,6 +259,13 @@ def _validate_policy(policy: dict, raw: dict) -> dict:
         if "mode" in cp and cp["mode"] not in _VALID_COMMAND_MODES:
             print('Warning: "command_policy.mode" must be one of: allow-all, approve-dangerous, deny-list \u2014 ignoring.', file=sys.stderr)
             del cp["mode"]
+        if "allowed_patterns" in cp:
+            if not isinstance(cp["allowed_patterns"], list) or not all(isinstance(v, str) for v in cp["allowed_patterns"]):
+                print(
+                    'rafter: "command_policy.allowed_patterns" must be a list of strings — ignoring.',
+                    file=sys.stderr,
+                )
+                cp.pop("allowed_patterns", None)
         if "blocked_patterns" in cp:
             if not isinstance(cp["blocked_patterns"], list) or not all(isinstance(v, str) for v in cp["blocked_patterns"]):
                 print('Warning: "command_policy.blocked_patterns" must be an array of strings \u2014 ignoring.', file=sys.stderr)
