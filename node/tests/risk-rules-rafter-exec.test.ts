@@ -66,3 +66,46 @@ describe("rafter agent exec operand is a command (sable-lbyp)", () => {
     expect(assessCommandRisk('script -q -c "ls -la" /dev/null')).toBe("low");
   });
 });
+
+describe("the pty rule is scoped to `agent exec`, like its sibling", () => {
+  // As first written the rule was /\bpty\.(?:spawn|fork|openpty)\b.*\brafter\b/
+  // — no subcommand — so ANY rafter invocation under Python's pty module went
+  // low -> high: `rafter --version`, `rafter audit`, `rafter secrets scan`.
+  // That contradicts this patch's own principle that only `agent exec` carries
+  // a command, and in headless CI a HIGH with stdin not a TTY is DENIED
+  // outright (exit 1), turning a previously-succeeding call into a hard failure.
+  //
+  // The gap survived review because the over-block controls tested
+  // `rafter secrets` WITHOUT a pty wrapper while the pty cases used only
+  // `agent exec` — so the COMBINATION was never asserted. These are it.
+  const NON_EXEC = ["--version", "audit", "secrets scan", "secrets --diff HEAD",
+                    "agent status", "agent config show", "policy export"];
+  const FORMS = [
+    (s: string) => `python3 -c "import pty; pty.spawn(['rafter','${s.split(/\s+/).join("','")}'])"`,
+    (s: string) => `python3 -c "import pty; pty.fork(); rafter ${s}"`,
+    (s: string) => `python -c "import pty; pty.openpty(); rafter ${s}"`,
+  ];
+  for (const sub of NON_EXEC) {
+    for (const f of FORMS) {
+      it(`pty around \`rafter ${sub}\` is not elevated`, () => {
+        expect(assessCommandRisk(f(sub))).toBe("low");
+      });
+    }
+  }
+
+  it("CONTROL — pty around `agent exec` IS still elevated (argv form)", () => {
+    // The separator is ['",\s]+ and not \s+ precisely for this: pty.spawn takes
+    // an ARGV LIST, so the real shape is ['rafter','agent','exec',...]. A
+    // whitespace-only separator stops matching the case the rule exists for —
+    // an existing test caught exactly that.
+    expect(assessCommandRisk(
+      `python3 -c "import pty; pty.spawn(['rafter','agent','exec','rm -rf /'])"`
+    )).not.toBe("low");
+  });
+
+  it("CONTROL — pty around `agent exec` IS still elevated (shell form)", () => {
+    expect(assessCommandRisk(
+      `python3 -c "import pty; pty.fork(); rafter agent exec 'rm -rf /'"`
+    )).not.toBe("low");
+  });
+});
