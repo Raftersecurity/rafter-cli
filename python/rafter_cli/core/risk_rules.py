@@ -33,6 +33,12 @@ CRITICAL_PATTERNS: list[str] = [
 ]
 
 HIGH_PATTERNS: list[str] = [
+    # sable-lbyp: a pseudo-terminal wrapper around rafter's own approval prompt.
+    # `rafter agent exec` grants approval only to a person at a TTY; `script`,
+    # `expect`, `unbuffer`, `socat` and Python's pty module manufacture one and
+    # can type "yes". Wrapping rafter in any of them is itself the signal.
+    r"\b(?:script|expect|unbuffer|socat)\b.*\brafter(?:-cli)?\s+agent\s+exec\b",
+    r"\bpty\.(?:spawn|fork|openpty)\b.*\brafter\b",
     r"rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*",   # rm -rf, -fr, -r -f, -f -r
     r"rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*",   # reversed order
     r"sudo\s+rm",
@@ -113,6 +119,7 @@ _EVAL_FLAGS = {"-c", "-e", "--command", "--execute", "--eval", "-exec", "--exec"
 
 # Prefix wrappers that delegate to the command that follows them.
 _TAIL_WRAPPERS = {
+    "unbuffer",  # expect's pty wrapper: delegates to the command that follows (sable-lbyp)
     "sudo", "doas", "env", "nohup", "timeout", "nice", "ionice",
     "time", "watch", "setsid", "stdbuf", "chrt", "command",
 }
@@ -448,7 +455,12 @@ def _process_segment(
             has_shell_exec = True
         if not p.quoted and p.text.lower() in _EVAL_FLAGS:
             has_eval_flag = True
-    code_carrying = has_shell_exec or has_eval_flag or exec_ in _EVAL_EXECS
+    # sable-lbyp: rafter's own `agent exec` runs its operand, so the hook must
+    # see through its own binary the way it sees through `bash -c`.
+    code_carrying = (
+        has_shell_exec or has_eval_flag or exec_ in _EVAL_EXECS
+        or _rafter_exec_runs_operand(pieces, exec_idx)
+    )
 
     # sable-c6an. Two questions the code conflated:
     #   code_carrying   -- this segment RUNS a command string it was handed
@@ -793,6 +805,54 @@ _RAFTER_PACKAGE = re.compile(r"^(?:@rafter-security/cli|rafter-cli|rafter)(?:@[\
 
 # Config keys that gate the hook. A namespace, not a leaf — see hook_control.
 _PROTECTED_CONFIG_KEY = re.compile(r"^(?:agent\.)?(?:hooks|commandpolicy)\b|^agent\.risklevel$")
+
+
+def _rafter_exec_runs_operand(pieces: list[_Piece], exec_idx: int) -> bool:
+    """sable-lbyp (from rf-ss67) -- ``rafter agent exec <operand>`` RUNS its
+    operand, so a segment whose exec is rafter's own binary is code-carrying:
+    the quoted operand is a command string, not prose, and must reach the
+    patterns.
+
+    Before this, ``rafter agent exec --force "rm -rf /tmp/x"`` was the one
+    shape the hook could not see: an unrecognised evaluator with a quoted
+    multi-word argument is data by the sanitizer's rule, so the hook said
+    ``low`` while exec ran a HIGH-tier command. rf-ss67 closed the bypass at
+    the other end (exec no longer skips approval; only a person at a TTY can
+    grant it); this makes the hook itself classify the operand, so the audit
+    trail and the block land where the agent's tool call is.
+
+    Resolution mirrors the rf-vnxs disarm check: the segment's resolved exec
+    (wrappers such as ``sudo -E``, ``env``, ``unbuffer`` already skipped by the
+    caller), an absolute path (``_exec_name`` keeps the basename), or a package
+    runner (``npx @rafter-security/cli``, ``pnpm dlx rafter-cli``).
+
+    ``--dry-run`` is the one exemption: exec then prints the classification and
+    runs nothing, and that flow is what the shipped docs tell agents to use to
+    check a command BEFORE running it. A flag an old CLI does not know makes it
+    error out, never execute, so the exemption cannot be abused by version skew.
+    """
+    if exec_idx == -1 or pieces[exec_idx].quoted:
+        return False
+    k = exec_idx
+    exec_ = _exec_name(pieces[k].text)
+    k += 1
+    if exec_ in _PACKAGE_RUNNERS:
+        while k < len(pieces) and pieces[k].op is None and (
+            pieces[k].text.startswith("-") or pieces[k].text.lower() in ("dlx", "exec")
+        ):
+            k += 1
+        if k >= len(pieces) or pieces[k].op is not None or not _RAFTER_PACKAGE.match(pieces[k].text.lower()):
+            return False
+        k += 1
+        exec_ = "rafter"
+    if exec_ not in _RAFTER_EXECS:
+        return False
+    rest = [p for p in pieces[k:] if p.op is None]
+    args = [p.text.lower() for p in rest if not p.text.startswith("-")]
+    if len(args) < 2 or args[0] != "agent" or args[1] != "exec":
+        return False
+    dry_run = any(not p.quoted and p.text.lower() == "--dry-run" for p in rest)
+    return not dry_run
 
 
 def _statement_disarms_rafter(words: list[_Piece]) -> bool:

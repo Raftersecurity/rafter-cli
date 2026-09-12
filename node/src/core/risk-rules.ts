@@ -38,6 +38,12 @@ const CRITICAL_PATTERN_SOURCES: string[] = [
 export const CRITICAL_PATTERNS: RegExp[] = CRITICAL_PATTERN_SOURCES.map((s) => new RegExp(s));
 
 export const HIGH_PATTERNS: RegExp[] = [
+  // sable-lbyp: a pseudo-terminal wrapper around rafter's own approval prompt.
+  // `rafter agent exec` grants approval only to a person at a TTY; `script`,
+  // `expect`, `unbuffer`, `socat` and Python's pty module manufacture one and
+  // can type "yes". Wrapping rafter in any of them is itself the signal.
+  /\b(?:script|expect|unbuffer|socat)\b.*\brafter(?:-cli)?\s+agent\s+exec\b/,
+  /\bpty\.(?:spawn|fork|openpty)\b.*\brafter\b/,
   /rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*/,  // rm -rf, -fr, -r -f, -f -r (any path)
   /rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*/,  // rm -fr, reversed
   /sudo\s+rm/,
@@ -127,6 +133,7 @@ const EVAL_FLAGS = new Set(["-c", "-e", "--command", "--execute", "--eval", "-ex
 const TAIL_WRAPPERS = new Set([
   "sudo", "doas", "env", "nohup", "timeout", "nice", "ionice",
   "time", "watch", "setsid", "stdbuf", "chrt", "command",
+  "unbuffer",  // expect's pty wrapper: delegates to the command that follows (sable-lbyp)
 ]);
 
 /** Commands whose operands are pure text data — searching or printing, never executing. */
@@ -412,7 +419,10 @@ function processSegment(
     if (!p.quoted && SHELL_EXECS.has(execName(p.text))) hasShellExec = true;
     if (!p.quoted && EVAL_FLAGS.has(p.text.toLowerCase())) hasEvalFlag = true;
   }
-  const codeCarrying = hasShellExec || hasEvalFlag || EVAL_EXECS.has(exec);
+  // sable-lbyp: rafter's own `agent exec` runs its operand, so the hook must
+  // see through its own binary the way it sees through `bash -c`.
+  const codeCarrying =
+    hasShellExec || hasEvalFlag || EVAL_EXECS.has(exec) || rafterExecRunsOperand(pieces, execIdx);
 
   // sable-c6an. Two questions the code conflated, and conflating them gets one
   // of them wrong:
@@ -734,6 +744,52 @@ const RAFTER_PACKAGE = /^(?:@rafter-security\/cli|rafter-cli|rafter)(?:@[\w.^~*-
 
 /** Config keys that gate the hook. Namespace, not a leaf — see hook-control. */
 const PROTECTED_CONFIG_KEY = /^(?:agent\.)?(?:hooks|commandpolicy)\b|^agent\.risklevel$/;
+
+/**
+ * sable-lbyp (from rf-ss67) — `rafter agent exec <operand>` RUNS its operand,
+ * so a segment whose exec is rafter's own binary is code-carrying: the quoted
+ * operand is a command string, not prose, and must reach the patterns.
+ *
+ * Before this, `rafter agent exec --force "rm -rf /tmp/x"` was the one shape
+ * the hook could not see: an unrecognised evaluator with a quoted multi-word
+ * argument is data by the sanitizer's rule, so the hook said `low` while exec
+ * ran a HIGH-tier command. rf-ss67 closed the bypass at the other end (exec no
+ * longer skips approval and only a person at a TTY can grant it); this makes
+ * the hook itself classify the operand, so the audit trail and the block land
+ * where the agent's tool call is, not two processes later.
+ *
+ * Resolution is the same as the rf-vnxs disarm check: the segment's resolved
+ * exec (wrappers such as `sudo -E`, `env`, `unbuffer` already skipped by the
+ * caller), an absolute path (`execName` keeps the basename, so
+ * `/usr/local/bin/rafter` is `rafter`), or a package runner
+ * (`npx @rafter-security/cli`, `pnpm dlx rafter-cli`, `bunx rafter`).
+ *
+ * `--dry-run` is the one exemption: exec then prints the classification and
+ * runs nothing, and that flow is what the shipped docs tell agents to use to
+ * check a command BEFORE running it. Treating its operand as executed would
+ * block the very check. A flag an old CLI does not know makes it error out,
+ * never execute, so the exemption cannot be abused by version skew.
+ */
+function rafterExecRunsOperand(pieces: Piece[], execIdx: number): boolean {
+  if (execIdx === -1) return false;
+  let k = execIdx;
+  let exec = execName(pieces[k].text);
+  if (pieces[k].quoted) return false;
+  k++;
+  if (PACKAGE_RUNNERS.has(exec)) {
+    while (k < pieces.length && !pieces[k].op && (pieces[k].text.startsWith("-") || ["dlx", "exec"].includes(pieces[k].text.toLowerCase()))) k++;
+    if (k >= pieces.length || pieces[k].op || !RAFTER_PACKAGE.test(pieces[k].text.toLowerCase())) return false;
+    k++;
+    exec = "rafter";
+  }
+  if (!RAFTER_EXECS.has(exec)) return false;
+
+  const rest = pieces.slice(k).filter((p) => !p.op);
+  const args = rest.filter((p) => !p.text.startsWith("-")).map((p) => p.text.toLowerCase());
+  if (args[0] !== "agent" || args[1] !== "exec") return false;
+  const dryRun = rest.some((p) => !p.quoted && p.text.toLowerCase() === "--dry-run");
+  return !dryRun;
+}
 
 /**
  * True if this statement's argv reconfigures or removes a rafter security
