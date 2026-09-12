@@ -55,7 +55,7 @@ outputs:
     description: 'Number of low/note findings'
     value: ${{ steps.results.outputs.low_count }}
   status:
-    description: 'Scan status: completed, failed, timeout, unreadable (the scan may have finished but its report could not be read), or unreachable (the Rafter API could not be contacted)'
+    description: 'Scan status: completed, failed, timeout, unreadable (the scan may have finished but its report could not be read), rate-limited (the API throttled us until the retry budget ran out), or unreachable (the Rafter API could not be contacted)'
     value: ${{ steps.results.outputs.status || steps.poll.outputs.status }}
 
 runs:
@@ -150,6 +150,13 @@ runs:
         MAX_TRANSIENT_FAILURES=5
         TRANSIENT_FAILURES=0
         LAST_ERROR=""
+        # sable-96ex — a 429 is ambiguous here: on scan submit it means "out of
+        # credits", on this endpoint it would mean "going too fast".
+        # Retry-After is the disambiguator, so a 429 is retried only when the
+        # server says when to come back. This is the longest such wait we honor;
+        # a CI job cannot sit out an hour-long limiter window.
+        MAX_RETRY_AFTER=60
+        LAST_RATE_LIMITED=0
 
         # Wall-clock deadline so retry backoff cannot quietly stretch the
         # documented timeout-minutes budget.
@@ -159,16 +166,18 @@ runs:
 
         while [ "$(date +%s)" -lt "$DEADLINE" ]; do
           BODY_FILE="$(mktemp)"
+          HDR_FILE="$(mktemp)"
           HTTP_CODE=$(curl -sS --connect-timeout 10 --max-time 60 \
-            -o "$BODY_FILE" -w "%{http_code}" \
+            -o "$BODY_FILE" -D "$HDR_FILE" -w "%{http_code}" \
             -H "x-api-key: ${RAFTER_API_KEY}" \
             "${RAFTER_URL}/api/static/scan?scan_id=${SCAN_ID}") || {
               # A transport error is exactly as transient as a 5xx, and counts
               # the same. Previously it retried on a flat 10s forever, which
               # meant an unreachable backend reported "scan did not complete
               # within N minutes" — a timeout message for a DNS failure.
-              rm -f "$BODY_FILE"
+              rm -f "$BODY_FILE" "$HDR_FILE"
               LAST_ERROR="curl transport error contacting ${RAFTER_URL}"
+              LAST_RATE_LIMITED=0
               TRANSIENT_FAILURES=$((TRANSIENT_FAILURES+1))
               if [ "$TRANSIENT_FAILURES" -ge "$MAX_TRANSIENT_FAILURES" ]; then
                 echo "::error::Rafter could not reach the API for scan ${SCAN_ID} after ${MAX_TRANSIENT_FAILURES} attempts."
@@ -184,14 +193,51 @@ runs:
               continue
             }
           RESPONSE=$(cat "$BODY_FILE")
-          rm -f "$BODY_FILE"
+          # Retry-After is server-controlled and becomes a sleep duration.
+          # Digits only, so a malformed header cannot produce a garbage sleep;
+          # and capped in LENGTH as well as value, because `[ 1e23 -gt 60 ]` is
+          # an error that evaluates false, which would leave `sleep` a number it
+          # honors literally and hang the job until the runner times out.
+          RETRY_AFTER=""
+          if [ "$HTTP_CODE" -eq 429 ]; then
+            # The LAST header block only, and only if it names Retry-After
+            # exactly once. `curl -D` dumps every block it received, so a 103
+            # Early Hints block carrying a Retry-After would otherwise be read
+            # as the 429's own — and a bare 429 would be retried, which is the
+            # one thing this branch exists to prevent. Two Retry-Afters (an
+            # origin's and a proxy's, say) is not a delay either; both runtimes
+            # answer the same way. Resetting at each status line is what makes
+            # this the final response's header, and it needs no `tac`.
+            RETRY_AFTER=$(tr -d '\r' < "$HDR_FILE" | awk '
+              /^[Hh][Tt][Tt][Pp]\// { n = 0; v = ""; next }
+              /^[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]:/ { n++; v = $0 }
+              END { if (n == 1) { sub(/^[^:]*:[ \t]*/, "", v); print v } }')
+            case "$RETRY_AFTER" in
+              ''|*[!0-9]*) RETRY_AFTER="" ;;
+              *)
+                if [ "${#RETRY_AFTER}" -gt 6 ]; then RETRY_AFTER="$MAX_RETRY_AFTER"; fi
+                ;;
+            esac
+          fi
+          rm -f "$BODY_FILE" "$HDR_FILE"
 
-          if [ "$HTTP_CODE" -ge 500 ] || [ "$HTTP_CODE" -eq 408 ] || [ "$HTTP_CODE" -eq 404 ]; then
+          if [ "$HTTP_CODE" -ge 500 ] || [ "$HTTP_CODE" -eq 408 ] || [ "$HTTP_CODE" -eq 404 ] \
+             || { [ "$HTTP_CODE" -eq 429 ] && [ -n "$RETRY_AFTER" ]; }; then
             ERROR=$(echo "$RESPONSE" | jq -r '.error // empty' 2>/dev/null | tr -d '\r\n' | cut -c1-200 || true)
             LAST_ERROR="HTTP ${HTTP_CODE}${ERROR:+ — $ERROR}"
             TRANSIENT_FAILURES=$((TRANSIENT_FAILURES+1))
+            if [ -n "$RETRY_AFTER" ]; then LAST_RATE_LIMITED=1; else LAST_RATE_LIMITED=0; fi
 
             if [ "$TRANSIENT_FAILURES" -ge "$MAX_TRANSIENT_FAILURES" ]; then
+              if [ "$LAST_RATE_LIMITED" -eq 1 ]; then
+                # Saying "could not read the report" for a throttled run points
+                # the customer at the wrong thing entirely.
+                echo "::error::Rafter was rate limited by the API while polling scan ${SCAN_ID} after ${MAX_TRANSIENT_FAILURES} attempts."
+                echo "::error::The scan itself may still be running — check it in your dashboard at ${RAFTER_URL}/dashboard"
+                echo "::error::Last response from the server: ${LAST_ERROR}"
+                echo "status=rate-limited" >> "$GITHUB_OUTPUT"
+                exit 1
+              fi
               echo "::error::Rafter could not read the report for scan ${SCAN_ID} after ${MAX_TRANSIENT_FAILURES} attempts."
               echo "::error::The scan itself may have finished — check it in your dashboard at ${RAFTER_URL}/dashboard"
               echo "::error::Last response from the server: ${LAST_ERROR}"
@@ -200,7 +246,21 @@ runs:
             fi
 
             BACKOFF=$(( 2 ** TRANSIENT_FAILURES ))   # 2s, 4s, 8s, 16s
-            echo "::warning::Report not readable yet (${LAST_ERROR}); retrying in ${BACKOFF}s (${TRANSIENT_FAILURES}/${MAX_TRANSIENT_FAILURES})"
+            if [ -n "$RETRY_AFTER" ]; then
+              # The server named the delay; obey it instead of our own schedule.
+              BACKOFF="$RETRY_AFTER"
+              if [ "$BACKOFF" -gt "$MAX_RETRY_AFTER" ]; then BACKOFF="$MAX_RETRY_AFTER"; fi
+              # ...but never past the deadline. timeout-minutes became a real
+              # wall clock in sable-l10k, and a 60s honored delay is long enough
+              # to overrun it — the server does not get to extend a budget the
+              # workflow author set.
+              REMAINING=$(( DEADLINE - $(date +%s) ))
+              if [ "$REMAINING" -lt 0 ]; then REMAINING=0; fi
+              if [ "$BACKOFF" -gt "$REMAINING" ]; then BACKOFF="$REMAINING"; fi
+              echo "::warning::Rate limited by the API (${LAST_ERROR}); retrying in ${BACKOFF}s (${TRANSIENT_FAILURES}/${MAX_TRANSIENT_FAILURES})"
+            else
+              echo "::warning::Report not readable yet (${LAST_ERROR}); retrying in ${BACKOFF}s (${TRANSIENT_FAILURES}/${MAX_TRANSIENT_FAILURES})"
+            fi
             sleep "$BACKOFF"
             POLL_COUNT=$((POLL_COUNT+1))
             continue
@@ -254,25 +314,53 @@ runs:
         # here: this runs the instant the scan reports completed, which is the
         # likeliest moment for the report object to not be readable yet. Retry
         # transient failures with backoff rather than failing the build.
+        #
+        # sable-96ex — a 429 is retried here on exactly one condition: the
+        # server sent a Retry-After saying when to come back. Without it a 429
+        # on this API means quota exhausted, and sleeping through five retries
+        # before failing anyway is worse than failing now.
         fetch_results() {
           local out="$1"
           local url="$2"
           local attempt=1
           local max_attempts=5
-          local code body err last=""
+          local max_retry_after=60
+          local code body err hdr retry_after last="" rate_limited=0
 
           while :; do
+            hdr="$(mktemp)"
+            retry_after=""
             if code=$(curl -sS --connect-timeout 10 --max-time 60 \
-              -o "$out" -w "%{http_code}" \
+              -o "$out" -D "$hdr" -w "%{http_code}" \
               -H "x-api-key: ${RAFTER_API_KEY}" "$url"); then
               if [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
+                rm -f "$hdr"
                 return 0
               fi
               body=$(cat "$out" || true)
               err=$(echo "$body" | jq -r '.error // empty' 2>/dev/null | tr -d '\r\n' | cut -c1-200 || true)
               last="HTTP ${code}${err:+ — $err}"
-              if [ "$code" -lt 500 ] && [ "$code" -ne 408 ] && [ "$code" -ne 404 ]; then
-                # Not transient — a bad key or malformed request. Say so now.
+              if [ "$code" -eq 429 ]; then
+                # Server-controlled, and becomes a sleep duration: digits only,
+                # and length-capped so a 23-digit value cannot slip past the
+                # numeric comparison below and hang the job (see the poll loop).
+                # Last header block, named exactly once — see the poll loop.
+                retry_after=$(tr -d '\r' < "$hdr" | awk '
+                  /^[Hh][Tt][Tt][Pp]\// { n = 0; v = ""; next }
+                  /^[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]:/ { n++; v = $0 }
+                  END { if (n == 1) { sub(/^[^:]*:[ \t]*/, "", v); print v } }')
+                case "$retry_after" in
+                  ''|*[!0-9]*) retry_after="" ;;
+                  *)
+                    if [ "${#retry_after}" -gt 6 ]; then retry_after="$max_retry_after"; fi
+                    ;;
+                esac
+              fi
+              if [ "$code" -lt 500 ] && [ "$code" -ne 408 ] && [ "$code" -ne 404 ] \
+                 && [ -z "$retry_after" ]; then
+                # Not transient — a bad key, an exhausted quota, or a malformed
+                # request. Say so now.
+                rm -f "$hdr"
                 echo "::error::Rafter results fetch failed: ${last}"
                 echo "status=unreadable" >> "$GITHUB_OUTPUT"
                 return 1
@@ -280,8 +368,17 @@ runs:
             else
               last="curl transport error fetching ${url}"
             fi
+            rm -f "$hdr"
+            if [ -n "$retry_after" ]; then rate_limited=1; else rate_limited=0; fi
 
             if [ "$attempt" -ge "$max_attempts" ]; then
+              if [ "$rate_limited" -eq 1 ]; then
+                echo "::error::Rafter was rate limited by the API while fetching the report for scan ${SCAN_ID} after ${max_attempts} attempts."
+                echo "::error::The scan itself finished — check it in your dashboard at ${RAFTER_URL}/dashboard"
+                echo "::error::Last response from the server: ${last}"
+                echo "status=rate-limited" >> "$GITHUB_OUTPUT"
+                return 1
+              fi
               echo "::error::Rafter could not read the report for scan ${SCAN_ID} after ${max_attempts} attempts."
               echo "::error::The scan itself finished — check it in your dashboard at ${RAFTER_URL}/dashboard"
               echo "::error::Last response from the server: ${last}"
@@ -293,7 +390,13 @@ runs:
             fi
 
             local backoff=$(( 2 ** attempt ))
-            echo "::warning::Report not readable yet (${last}); retrying in ${backoff}s (${attempt}/${max_attempts})"
+            if [ -n "$retry_after" ]; then
+              backoff="$retry_after"
+              if [ "$backoff" -gt "$max_retry_after" ]; then backoff="$max_retry_after"; fi
+              echo "::warning::Rate limited by the API (${last}); retrying in ${backoff}s (${attempt}/${max_attempts})"
+            else
+              echo "::warning::Report not readable yet (${last}); retrying in ${backoff}s (${attempt}/${max_attempts})"
+            fi
             sleep "$backoff"
             attempt=$((attempt+1))
           done
