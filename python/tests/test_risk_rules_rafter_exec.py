@@ -64,3 +64,41 @@ def test_pty_wrapper_around_rafter_exec_is_high(cmd):
 
 def test_pty_wrapper_without_rafter_is_not_the_signal():
     assert assess_command_risk('script -q -c "ls -la" /dev/null') == "low"
+
+class TestPtyWrapperIsScopedToAgentExec:
+    """The pty rule must require `agent exec`, exactly as its sibling does.
+
+    As first written it was ``\\bpty\\.(?:spawn|fork|openpty)\\b.*\\brafter\\b`` —
+    no subcommand — so ANY rafter invocation under Python's pty module went
+    low -> high: ``rafter --version``, ``rafter audit``, ``rafter secrets scan``.
+    That contradicts this patch's own principle that only ``agent exec`` carries
+    a command.
+
+    It matters operationally, not just tidily: in headless CI a command needing
+    approval with stdin not a TTY is DENIED outright, exit 1, so a
+    previously-succeeding call becomes a hard failure.
+
+    The gap survived review because the over-block controls tested
+    ``rafter secrets`` WITHOUT a pty wrapper and the pty cases used only
+    ``agent exec`` — so the COMBINATION was never asserted. These rows are that
+    combination.
+    """
+
+    @pytest.mark.parametrize("sub", ["--version", "audit", "secrets scan",
+                                     "secrets --diff HEAD", "agent status",
+                                     "agent config show", "policy export"])
+    @pytest.mark.parametrize("form", [
+        "python3 -c \"import pty; pty.spawn(['rafter','{s}'])\"",
+        "python3 -c \"import pty; pty.fork(); rafter {s}\"",
+        "python -c \"import pty; pty.openpty(); rafter {s}\"",
+    ])
+    def test_pty_around_a_non_exec_subcommand_is_not_elevated(self, sub, form):
+        assert assess_command_risk(form.format(s=sub)) == "low"
+
+    @pytest.mark.parametrize("form", [
+        "python3 -c \"import pty; pty.spawn(['rafter','agent','exec','rm -rf /'])\"",
+        "python3 -c \"import pty; pty.fork(); rafter agent exec 'rm -rf /'\"",
+    ])
+    def test_control_pty_around_agent_exec_is_still_elevated(self, form):
+        # Without this the rows above would also pass with the rule deleted.
+        assert assess_command_risk(form) != "low"
