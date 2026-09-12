@@ -95,11 +95,28 @@ describe("CommandInterceptor — allowedPatterns", () => {
   // in play. That is a real pre-existing gap in risk-rules.ts -- piping to a
   // shell is only caught for `curl`-shaped commands -- and it is tracked
   // separately. It is not something this feature introduced or can fix.)
+  it("does not treat a scalar-string allowlist as a character-wise allowlist", () => {
+    // rafter security review F2. Node warns and falls back to []; python did
+    // not, and iterated the string's CHARACTERS so a leading "^" matched every
+    // command. Pinned in BOTH runtimes so the parity cannot drift back.
+    stubPolicy(interceptor, { allowedPatterns: "^git status" as any });
+    for (const cmd of ["chmod 777 /etc/shadow", "git push --force origin main"]) {
+      expect(interceptor.evaluate(cmd).allowed, cmd).toBe(false);
+    }
+  });
+
   it("does not let an allowlisted prefix smuggle a chained command", () => {
     const chained = [
       "rm -rf / && git push",
       "git push; sudo shutdown now",
       "git push | sh",
+      // rafter security review F1. The chain check was a regex omitting the
+      // newline, while a newline has been a statement separator in risk-rules
+      // since rf-6pqx. These three rows passed with the hole wide open, which
+      // is why the check now asks the tokenizer instead of a second regex.
+      "git push origin feature/x\ngit push --force origin main",
+      "git status\nchmod 777 /etc/shadow",
+      "git push origin feature/x\r\ngit push --force origin main",
     ];
 
     stubPolicy(interceptor, { allowedPatterns: [] });

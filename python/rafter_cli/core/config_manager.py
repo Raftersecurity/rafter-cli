@@ -206,6 +206,17 @@ class ConfigManager:
                 if key in cp and (not isinstance(cp[key], list) or not all(isinstance(v, str) for v in cp[key])):
                     print(f'rafter: config "commandPolicy.{key}" must be an array of strings — using default.', file=sys.stderr)
                     del cp[key]
+            # Every sibling key is validated; this one was added to node's
+            # validator and not to python's. A bare STRING is the shape
+            # `rafter agent config set agent.commandPolicy.allowedPatterns
+            # '^git status'` actually writes — json.loads fails, the raw string
+            # is stored — and python then iterates its CHARACTERS, so the first
+            # one, "^", matches every command and the allowlist allows
+            # everything. Node warned and fell back to []; python did not.
+            for key in ("allowedPatterns", "allowed_patterns"):
+                if key in cp and (not isinstance(cp[key], list) or not all(isinstance(v, str) for v in cp[key])):
+                    print(f'rafter: config "commandPolicy.{key}" must be an array of strings — using default.', file=sys.stderr)
+                    del cp[key]
             for key in ("allowProjectOverride", "allow_project_override"):
                 if key in cp and not isinstance(cp[key], bool):
                     print(f'rafter: config "commandPolicy.{key}" must be a boolean — ignoring (project policies cannot loosen command policy).', file=sys.stderr)
