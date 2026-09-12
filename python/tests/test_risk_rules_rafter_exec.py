@@ -64,3 +64,12 @@ def test_pty_wrapper_around_rafter_exec_is_high(cmd):
 
 def test_pty_wrapper_without_rafter_is_not_the_signal():
     assert assess_command_risk('script -q -c "ls -la" /dev/null') == "low"
+
+
+def test_unbuffer_is_a_tail_wrapper_so_the_operand_is_still_seen():
+    # Without the wrapper entry `unbuffer` would be the exec and the operand
+    # prose, reaching only HIGH through the pty pattern. A critical operand
+    # must still be CRITICAL.
+    cmd = 'unbuffer rafter agent exec "rm -rf /"'
+    assert "rm -rf /" in sanitize_command_for_matching(cmd)
+    assert assess_command_risk(cmd) == "critical"

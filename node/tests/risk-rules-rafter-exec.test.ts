@@ -65,4 +65,13 @@ describe("rafter agent exec operand is a command (sable-lbyp)", () => {
     // The wrapper alone, without rafter, is not the signal.
     expect(assessCommandRisk('script -q -c "ls -la" /dev/null')).toBe("low");
   });
+
+  it("unbuffer is a tail wrapper: the command after it resolves as the exec", () => {
+    // Without the wrapper entry, `unbuffer` would be the exec and the operand
+    // prose, so this would only reach HIGH through the pty pattern. The
+    // operand must still be seen, so a critical one is CRITICAL.
+    const cmd = 'unbuffer rafter agent exec "rm -rf /"';
+    expect(sanitizeCommandForMatching(cmd)).toContain("rm -rf /");
+    expect(assessCommandRisk(cmd)).toBe("critical");
+  });
 });
