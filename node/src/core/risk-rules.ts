@@ -218,6 +218,25 @@ function tokenize(s: string): { pieces: Piece[]; unterminated: boolean } {
     // operator branch below so it becomes a statement separator (rf-6pqx).
     if (/\s/.test(c) && c !== "\n" && c !== "\r") { i++; continue; }
 
+    // `<(cmd)` / `>(cmd)` — PROCESS SUBSTITUTION. The content is a command that
+    // RUNS, exactly as `$(cmd)` does, so it goes in substs and the existing
+    // recursive scan handles it with no new rule.
+    //
+    // Without this the tokenizer never forms the construct: it emits op `<`,
+    // which is in REDIRECT_OPS, so `(cmd` becomes a redirect TARGET and is left
+    // untouched, while the remaining words are redacted as the host's data
+    // operands. TWO independent wrong decisions that conspire —
+    // `ack <(rm -rf /)` sanitized to `ack <(rm    `, harmless-looking head
+    // preserved and dangerous tail deleted. Fixing either alone leaves the
+    // bypass, which is worth knowing when reviewing this. (rf-zvll)
+    if ((c === "<" || c === ">") && s[i + 1] === "(") {
+      const start = i;
+      const r = readSubst(s, i);
+      i = r.next;
+      pieces.push({ start, end: i, op: null, text: "", quoted: false, substs: [r.inner] });
+      continue;
+    }
+
     if (isOpChar(c)) {
       const start = i;
       if (c === "\n" || c === "\r") {

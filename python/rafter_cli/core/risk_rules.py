@@ -243,6 +243,23 @@ def _tokenize(s: str) -> tuple[list[_Piece], bool]:
             i += 1
             continue
 
+        # `<(cmd)` / `>(cmd)` -- PROCESS SUBSTITUTION. The content is a command
+        # that RUNS, exactly as `$(cmd)` does, so it goes in substs and the
+        # existing recursive scan handles it with no new rule.
+        #
+        # Without this the tokenizer never forms the construct: it emits op `<`,
+        # which is in _REDIRECT_OPS, so `(cmd` becomes a redirect TARGET and is
+        # left untouched, while the remaining words are redacted as the host's
+        # data operands. TWO independent wrong decisions that conspire --
+        # `ack <(rm -rf /)` sanitized to `ack <(rm    `, the harmless-looking
+        # head preserved and the dangerous tail deleted. Fixing either alone
+        # leaves the bypass, which is worth knowing when reviewing this. (rf-zvll)
+        if c in ("<", ">") and i + 1 < n and s[i + 1] == "(":
+            start = i
+            inner, i = _read_subst(s, i)
+            pieces.append(_Piece(start, i, None, "", False, [inner]))
+            continue
+
         if _is_op_char(c):
             start = i
             if c in ("\n", "\r"):
