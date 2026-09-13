@@ -41,6 +41,16 @@ jobs:
           fi
           echo "Versions match: $NODE_VERSION"
 
+      - name: Ensure this version is not already published
+        # The check validate-release never did, and the one that actually bites.
+        # Version AGREEMENT across the manifests was verified; whether the agreed
+        # version had already SHIPPED was not -- so main's version equalling the
+        # published one passed validation and failed later at the registry, three
+        # times, each leaving a security fix public-but-unshipped. Fails CLOSED on
+        # an unreachable registry: a gate that opens because it could not see is
+        # the failure being fixed, not a new one.
+        run: ./scripts/check-version-unpublished.sh "${{ steps.node-version.outputs.VERSION }}"
+
       - name: Ensure ClawHub skill version matches package version
         # rf-zgwj — the SKILL.md frontmatter version is what ClawHub publishes
         # under. Drift here would silently ship a stale version on the next
