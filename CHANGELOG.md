@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-09-12
+
+### Security
+
+- **OpenAI and Supabase keys are detected by the hook's Write gate** (rf-f5is; external report se-wagv). The Write gate is regex-only and `secret-patterns` carried **no OpenAI rule at all**, so `sk-proj-`, `sk-svcacct-`, `sk-admin-` and legacy `sk-…T3BlbkFJ…` keys were allowed straight through at any length — while `rafter secrets` caught them via betterleaks. Two engines disagreeing, and the one guarding writes was the blind one. `sb_secret_` (Supabase) was caught by neither, at any length. Three rules added to both runtimes, matched case-sensitively in line with the other prefixed vendor tokens (`ghp_`, `AKIA`, `AIza`, `xox`); lower-casing them would add false positives and catch nothing real. Verified against the published 0.10.3 artifact before the fix, with controls, so the miss was evidence rather than an empty result.
+
+- **`command_policy.allowed_patterns` works in Python, and cannot be granted by a project** (rf-3n1i). The key was documented in `shared-docs/CLI_SPEC.md` and implemented in Node only — for every Python user it parsed to nothing and enforced nothing, which is worse than an absent key because the operator believes the allowlist is on. Implementing it exposed a second problem: an allowlist is a **grant**, so unlike `blocked_patterns` and `require_approval` — which are unioned, because contributing to them can only add restriction — a project `.rafter.yml` must not contribute to it. Otherwise a cloned repo shipping `allowed_patterns: [".*"]` waves through every non-critical command, defeating the policy floor. The owner's list stands; a project's is refused unless `allowProjectOverride` is set.
+
+- **Two allowlist bypasses closed** (rf-3n1i). A newline was not treated as a statement separator by the allowlist's chain check, so with `^git push origin feature/` allowlisted a second line ran unclassified; the check now asks the tokenizer, which has treated a newline as a separator since rf-6pqx, rather than keeping a second narrower definition. And a scalar-string `allowedPatterns` was iterated **character by character**, so a leading `^` matched every command and the allowlist allowed everything — the shape `rafter agent config set` actually writes. Guarded at the validator and at the consumer, in both runtimes.
+
 ## [0.10.3] - 2026-09-11
 
 ### Security
