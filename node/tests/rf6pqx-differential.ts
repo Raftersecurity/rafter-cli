@@ -1,6 +1,6 @@
 // rf-6pqx DIFFERENTIAL gate (node) — mirror of rf-6pqx-differential.py. Same
 // generated corpus; asserts the candidate is never more permissive than main
-// except a pure data-heredoc body (#230). Run:
+// except a construct whose owner does not execute it (data heredoc #230; here-string rf-gn0h). Run:
 //   bun run rf-6pqx-differential.node.ts <main risk-rules.ts> <candidate risk-rules.ts>
 const RANK: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 const mainMod = await import(process.argv[2]);
@@ -14,7 +14,13 @@ const corpus: [string, string, boolean][] = [];
 for (const E of [...DATA_EXECS, ...SHELL_EXECS]) {
   const sh = isShell(E);
   corpus.push([`heredoc-data [${E}]`, `${E} <<EOF\n${P}\nEOF`, !sh]);
-  corpus.push([`herestring-1 [${E}]`, `${E} <<< "${P}"`, false]);
+  // A here-string whose owner does NOT execute it is data, exactly as a data-heredoc
+  // body is (#230). Keyed on the exec name computed here, never on the code under
+  // test, so a broken candidate cannot grant itself the row. (rf-gn0h)
+  corpus.push([`herestring-1 [${E}]`, `${E} <<< "${P}"`, !sh]);
+  // ...and the composition that exemption must never mask: owner is data, output executed.
+  corpus.push([`herestring-pipe-bash [${E}]`, `${E} <<< "${P}" | bash`, false]);
+  corpus.push([`herestring-pipe-sh [${E}]`, `${E} <<< "${P}" | sudo sh`, false]);
   corpus.push([`herestring-multi [${E}]`, `${E} <<< "marker" > /tmp/x\n${P}`, false]);
   corpus.push([`heredoc-pipe-bash [${E}]`, `${E} <<EOF | bash\n${P}\nEOF`, false]);
   corpus.push([`heredoc-pipe-sh [${E}]`, `${E} <<DATA | sudo sh\n${P}\nDATA`, false]);

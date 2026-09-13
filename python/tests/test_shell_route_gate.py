@@ -68,11 +68,28 @@ def test_baseline_cannot_hide_a_row_that_still_disagrees(tmp_path):
     Without this the baseline could be trimmed to make the gate green while the
     bypass is still live, which is the failure mode of every suppression list.
     """
+    # Builds its OWN disagreeing row rather than borrowing one from the real
+    # baseline. The first version took `under["keys"][0]` — and the moment the
+    # last real bypass was fixed the baseline went EMPTY and this test had
+    # nothing to drop. Same disease as the sibling test above: a gate-mechanics
+    # test must not depend on the current bug list, because the bug list is
+    # DESIGNED to shrink to zero and this test has to keep working after it does.
+    corpus = json.loads(CORPUS.read_text())
+    synthetic = "synthetic/still-broken#feedface"
+    corpus["rows"].append({
+        "key": synthetic, "tag": "synthetic/still-broken",
+        "cmd": "echo ok", "executes": True,   # permanently disagrees: harmless payload
+    })
     under = json.loads(UNDER.read_text())
-    assert under["keys"], "baseline is empty; this test would be vacuous"
-    dropped = under["keys"][0]
-    under["keys"] = under["keys"][1:]
-    r = _run(tmp_path, under=under)
+    under["keys"] = sorted(set(under["keys"]) | {synthetic})
+
+    # Sanity: with the row baselined, the gate is quiet.
+    assert synthetic not in _run(tmp_path, corpus=corpus, under=under)["new_under"]
+
+    # Now drop it while it still disagrees — the gate MUST notice.
+    dropped = synthetic
+    under["keys"] = [k for k in under["keys"] if k != synthetic]
+    r = _run(tmp_path, corpus=corpus, under=under)
     assert dropped in r["new_under"], (
         "dropping a still-disagreeing row from the baseline did NOT fail the gate — "
         "the baseline is a suppression list"
@@ -85,8 +102,17 @@ def test_a_fresh_disagreeing_row_fails_the_gate(tmp_path):
     corpus["rows"].append({
         "key": "synthetic/new-bypass#deadbeef",
         "tag": "synthetic/new-bypass",
-        # A shape that executes its payload and that the classifier does not see.
-        "cmd": "trap '__PAYLOAD__' EXIT; true",
+        # A FIXTURE, not a real bypass, and that distinction is the point. The
+        # first version of this row used `trap '<payload>' EXIT`, which WAS a
+        # real bypass at the time -- and then rf-zvll A2 fixed trap, the row
+        # stopped disagreeing, and this test failed. A regression test whose
+        # subject can be fixed out from under it is self-defeating.
+        #
+        # So the row is now a construct the oracle records as executing while
+        # the classifier rates it low FOREVER, because the payload is genuinely
+        # harmless. `echo ok` should never be critical; the disagreement is
+        # therefore permanent and no future fix can dissolve it.
+        "cmd": "echo ok",
         "executes": True,
     })
     r = _run(tmp_path, corpus=corpus)
