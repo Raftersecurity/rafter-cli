@@ -882,6 +882,68 @@ function disarmsRafter(command: string, depth = 0): boolean {
   return statements.some(statementDisarmsRafter);
 }
 
+/**
+ * True if a SHELL receives its program through a channel rather than as a path.
+ *
+ * rf-zvll mechanism B. Three shapes, all measured EXECUTING by the sandboxed
+ * oracle while classifying `low`:
+ *
+ *     cat payload.txt | sh          the payload is in a file
+ *     echo <b64> | base64 -d | sh   the payload is encoded
+ *     bash < payload.txt            no pipe at all, just a redirect
+ *
+ * The classifier cannot read any of them, so no amount of better parsing
+ * recovers the payload — this is a POSTURE decision, not an analysis one.
+ *
+ * DELIBERATELY EXCLUDES a plain file ARGUMENT (`bash deploy.sh`). We cannot read
+ * that either, so the distinction is not one of RISK — it is one of FREQUENCY,
+ * and saying so plainly matters more than dressing it up. Measured over 13,613
+ * intercepted commands: stream forms are 0.022% of traffic in 2 of 665 repos,
+ * while `curl|wget` into a shell — already approval-gated — is 100 events. The
+ * form that already prompts is 33x more common than everything this newly
+ * gates. That sample is ONE machine; the limit is recorded on rf-zvll.
+ */
+export function shellProgramFromStream(command: string): boolean {
+  const { pieces } = tokenize(command);
+  const segments: Piece[][] = [];
+  const enders: (string | null)[] = [];
+  let cur: Piece[] = [];
+  for (const piece of pieces) {
+    if (piece.op !== null && CHAIN_OPS.has(piece.op)) {
+      segments.push(cur); enders.push(piece.op); cur = [];
+      continue;
+    }
+    cur.push(piece);
+  }
+  segments.push(cur); enders.push(null);
+
+  // Iterative, not one step: `env FOO=1 bash` needs two skips, and a single
+  // lookahead silently resolved to `FOO=1` — caught by its own test row.
+  const resolve = (seg: Piece[]): string => {
+    const words = seg.filter((w) => w.op === null);
+    for (let k = 0; k < words.length; k++) {
+      const t = words[k].text;
+      if (ENV_ASSIGNMENT.test(t) || t.startsWith("-")) continue;
+      if (TAIL_WRAPPERS.has(execName(t))) continue;
+      return execName(t);
+    }
+    return "";
+  };
+
+  for (let idx = 0; idx < segments.length; idx++) {
+    const seg = segments[idx];
+    if (SHELL_EXECS.has(resolve(seg))) {
+      // `bash < file` / `bash <<< str` — the program arrives on stdin.
+      for (const w of seg) if (w.op === "<" || w.op === "<<<") return true;
+    }
+    // `… | bash` — this segment's OUTPUT is the next one's program.
+    if (enders[idx] === "|" && idx + 1 < segments.length) {
+      if (SHELL_EXECS.has(resolve(segments[idx + 1]))) return true;
+    }
+  }
+  return false;
+}
+
 export function assessCommandRisk(command: string): CommandRiskLevel {
   // rf-vnxs: checked on the RAW command, before sanitization, because the
   // disarm is an ordinary well-formed invocation — there is nothing malformed
@@ -894,6 +956,11 @@ export function assessCommandRisk(command: string): CommandRiskLevel {
   for (const pattern of CRITICAL_PATTERNS) {
     if (pattern.test(cmd)) return "critical";
   }
+  // rf-zvll B2: a shell fed its program from a channel we cannot read requires
+  // approval. Checked AFTER critical so `echo 'rm -rf /' | sh` — where the
+  // payload IS readable and matches — keeps its hard block rather than being
+  // softened to approval.
+  if (shellProgramFromStream(command)) return "high";
   for (const pattern of HIGH_PATTERNS) {
     if (pattern.test(cmd)) return "high";
   }

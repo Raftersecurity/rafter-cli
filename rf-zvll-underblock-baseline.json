@@ -1,35 +1,9 @@
 {
  "note": "EXPECTED FAILURES, not passes. Each entry is a construct that RUNS its payload (bash adjudicated) while the classifier rates it low/medium. The gate fails on any under-block NOT listed here, so a new bypass breaks the build from day one while these do not block anyone. Every fix SHRINKS this list and the shrink is the evidence. Kept separate from the over-block baseline on purpose: merged, a fix could trade one for the other silently.",
- "count": 29,
+ "count": 3,
  "keys": [
-  "delivery/base64|bash#bd982224c3",
-  "delivery/base64|bash-s#ac792a270d",
-  "delivery/base64|dash#d6b5a46deb",
-  "delivery/base64|dash-s#ae7c6ab35a",
   "delivery/base64|eval#4ab0b6212d",
-  "delivery/base64|sh#bae40dce1d",
-  "delivery/base64|sh-s#1029bf86b4",
-  "delivery/base64|zsh#6bb58c6838",
-  "delivery/base64|zsh-s#478f933e51",
-  "delivery/file|bash#e96351d959",
-  "delivery/file|bash-s#ed9ca36b99",
-  "delivery/file|dash#9a2453f79f",
-  "delivery/file|dash-s#bd72c6f7a3",
   "delivery/file|eval#831c79be71",
-  "delivery/file|sh#62dddacd5a",
-  "delivery/file|sh-s#866d7cb801",
-  "delivery/file|zsh#5a9304ea68",
-  "delivery/file|zsh-s#dd1ac3d1ab",
-  "delivery/xxd|bash#0cf79230de",
-  "delivery/xxd|bash-s#1272cad619",
-  "delivery/xxd|dash#f161501ba7",
-  "delivery/xxd|dash-s#b9155b36e5",
-  "delivery/xxd|eval#878fe1f202",
-  "delivery/xxd|sh#13533a6f25",
-  "delivery/xxd|sh-s#e5f072cda6",
-  "delivery/xxd|zsh#d337bb26f7",
-  "delivery/xxd|zsh-s#f7353694f8",
-  "production-shell/redirect-in#3a19d8e9b1",
-  "production-shell/redirect-in#4da43cb052"
+  "delivery/xxd|eval#878fe1f202"
  ]
 }

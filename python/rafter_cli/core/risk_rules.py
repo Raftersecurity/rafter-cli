@@ -930,6 +930,75 @@ def modifies_rafter_security_config(command: str) -> bool:
     return sanitized != command and _disarms_rafter(sanitized)
 
 
+def shell_program_from_stream(command: str) -> bool:
+    """True if a SHELL receives its program through a channel rather than as a path.
+
+    rf-zvll mechanism B. Three shapes, all measured executing by the sandboxed
+    oracle while classifying `low`:
+
+        cat payload.txt | sh        the payload is in a file
+        echo <b64> | base64 -d | sh the payload is encoded
+        bash < payload.txt          no pipe at all, just a redirect
+
+    The classifier cannot read any of them, so no amount of better parsing
+    recovers the payload -- this is a POSTURE decision, not an analysis one. A
+    shell fed from a channel requires approval regardless of whether we can see
+    what it is being fed.
+
+    DELIBERATELY EXCLUDES a plain file ARGUMENT (`bash deploy.sh`). We cannot
+    read that either, so the distinction is not one of RISK -- it is one of
+    FREQUENCY, and saying so plainly matters more than dressing it up. Measured
+    over 13,613 intercepted commands: the stream forms are 0.022% of traffic in
+    2 of 665 repos, while `curl|wget` into a shell -- already approval-gated --
+    is 100 events. The form that already prompts is 33x more common than
+    everything this newly gates, so the added prompt volume is ~3% of what
+    curl|bash already generates. That sample is ONE machine; the limit and what
+    would overturn it are recorded on rf-zvll.
+    """
+    pieces, _ = _tokenize(command)
+    segments: list[list[_Piece]] = []
+    enders: list[str | None] = []
+    cur: list[_Piece] = []
+    for piece in pieces:
+        if piece.op is not None and piece.op in _CHAIN_OPS:
+            segments.append(cur); enders.append(piece.op); cur = []
+            continue
+        cur.append(piece)
+    segments.append(cur); enders.append(None)
+
+    def _resolve(seg: list[_Piece]) -> str:
+        """Exec of a segment, skipping wrappers, their flags and env assignments.
+
+        Iterative, not one step: `env FOO=1 bash` needs two skips, and a single
+        lookahead silently resolved to `FOO=1` -- caught by its own test row.
+        """
+        words = [w for w in seg if w.op is None]
+        k = 0
+        while k < len(words):
+            t = words[k].text
+            if _ENV_ASSIGNMENT.match(t) or t.startswith("-"):
+                k += 1
+                continue
+            if _exec_name(t) in _TAIL_WRAPPERS:
+                k += 1
+                continue
+            return _exec_name(t)
+        return ""
+
+    for idx, seg in enumerate(segments):
+        exec_ = _resolve(seg)
+        if exec_ in _SHELL_EXECS:
+            # `bash < file` / `bash <<< str` -- the program arrives on stdin.
+            for w in seg:
+                if w.op in ("<", "<<<"):
+                    return True
+        # `… | bash` -- this segment's OUTPUT is the next one's program.
+        if enders[idx] == "|" and idx + 1 < len(segments):
+            if _resolve(segments[idx + 1]) in _SHELL_EXECS:
+                return True
+    return False
+
+
 def assess_command_risk(command: str) -> str:
     """Assess risk level of a command string."""
     # rf-vnxs: checked before the pattern loops. The disarm is an ordinary
@@ -942,6 +1011,12 @@ def assess_command_risk(command: str) -> str:
     for p in CRITICAL_PATTERNS:
         if re.search(p, cmd, re.IGNORECASE):
             return "critical"
+    # rf-zvll B2: a shell fed its program from a channel we cannot read requires
+    # approval. Checked AFTER critical so `echo 'rm -rf /' | sh` -- where the
+    # payload IS readable and matches -- keeps its hard block rather than being
+    # softened to approval.
+    if shell_program_from_stream(command):
+        return "high"
     for p in HIGH_PATTERNS:
         if re.search(p, cmd, re.IGNORECASE):
             return "high"
