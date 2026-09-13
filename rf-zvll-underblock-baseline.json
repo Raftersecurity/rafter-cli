@@ -1,9 +1,5 @@
 {
- "note": "EXPECTED FAILURES, not passes. Each entry is a construct that RUNS its payload (bash adjudicated) while the classifier rates it low/medium. The gate fails on any under-block NOT listed here, so a new bypass breaks the build from day one while these do not block anyone. Every fix SHRINKS this list and the shrink is the evidence. Kept separate from the over-block baseline on purpose: merged, a fix could trade one for the other silently.",
- "count": 3,
- "keys": [
-  "delivery/base64|eval#4ab0b6212d",
-  "delivery/file|eval#831c79be71",
-  "delivery/xxd|eval#878fe1f202"
- ]
+ "note": "EMPTY. Every route the generated corpus found is now classified. The gate therefore fails on ANY under-block, which is the strongest posture it can hold -- there is no longer a list of known-broken rows for a new bypass to hide among. Keep it empty: a row added here is a bypass someone decided to live with, and it needs saying out loud rather than appending.",
+ "count": 0,
+ "keys": []
 }
