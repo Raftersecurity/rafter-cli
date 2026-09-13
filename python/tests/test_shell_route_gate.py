@@ -85,8 +85,17 @@ def test_a_fresh_disagreeing_row_fails_the_gate(tmp_path):
     corpus["rows"].append({
         "key": "synthetic/new-bypass#deadbeef",
         "tag": "synthetic/new-bypass",
-        # A shape that executes its payload and that the classifier does not see.
-        "cmd": "trap '__PAYLOAD__' EXIT; true",
+        # A FIXTURE, not a real bypass, and that distinction is the point. The
+        # first version of this row used `trap '<payload>' EXIT`, which WAS a
+        # real bypass at the time -- and then rf-zvll A2 fixed trap, the row
+        # stopped disagreeing, and this test failed. A regression test whose
+        # subject can be fixed out from under it is self-defeating.
+        #
+        # So the row is now a construct the oracle records as executing while
+        # the classifier rates it low FOREVER, because the payload is genuinely
+        # harmless. `echo ok` should never be critical; the disagreement is
+        # therefore permanent and no future fix can dissolve it.
+        "cmd": "echo ok",
         "executes": True,
     })
     r = _run(tmp_path, corpus=corpus)
