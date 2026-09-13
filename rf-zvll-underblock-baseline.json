@@ -1,6 +1,6 @@
 {
  "note": "EXPECTED FAILURES, not passes. Each entry is a construct that RUNS its payload (bash adjudicated) while the classifier rates it low/medium. The gate fails on any under-block NOT listed here, so a new bypass breaks the build from day one while these do not block anyone. Every fix SHRINKS this list and the shrink is the evidence. Kept separate from the over-block baseline on purpose: merged, a fix could trade one for the other silently.",
- "count": 36,
+ "count": 29,
  "keys": [
   "delivery/base64|bash#bd982224c3",
   "delivery/base64|bash-s#ac792a270d",
@@ -30,13 +30,6 @@
   "delivery/xxd|zsh#d337bb26f7",
   "delivery/xxd|zsh-s#f7353694f8",
   "production-shell/redirect-in#3a19d8e9b1",
-  "production-shell/redirect-in#4da43cb052",
-  "production/procsubst-in#4664317ea2",
-  "production/procsubst-in#6fda08bef4",
-  "production/procsubst-in#85047cbe01",
-  "production/procsubst-out#32b6c0f119",
-  "production/procsubst-out#75b48703a5",
-  "production/procsubst-out#9e195ebbe0",
-  "production/trap-exit#406cfe4632"
+  "production-shell/redirect-in#4da43cb052"
  ]
 }

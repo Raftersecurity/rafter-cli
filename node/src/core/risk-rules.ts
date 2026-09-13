@@ -118,7 +118,18 @@ export const DEFAULT_REQUIRE_APPROVAL: string[] = [
 const SHELL_EXECS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash", "fish", "su"]);
 
 /** Execs whose arguments are executable text (a remote command, a script). */
-const EVAL_EXECS = new Set(["eval", "exec", "ssh", "sshpass", "xargs"]);
+const EVAL_EXECS = new Set([
+  // `trap 'cmd' EXIT` registers a command string that runs when the shell
+  // LEAVES. The payload is an ordinary quoted operand, so without this it is
+  // redacted as prose exactly as `echo "..."` correctly is. The deferral
+  // changes the deny message and the audit trail, not the decision. (rf-zvll A2)
+  "trap",
+  "eval",
+  "exec",
+  "ssh",
+  "sshpass",
+  "xargs",
+]);
 
 /** Flags carrying an executable string (`bash -c`, `python -c`, `mysql -e`, `find -exec`). */
 const EVAL_FLAGS = new Set(["-c", "-e", "--command", "--execute", "--eval", "-exec", "--exec"]);

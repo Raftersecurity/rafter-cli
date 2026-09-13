@@ -106,7 +106,18 @@ DEFAULT_REQUIRE_APPROVAL: list[str] = [
 _SHELL_EXECS = {"bash", "sh", "zsh", "dash", "ksh", "ash", "fish", "su"}
 
 # Execs whose arguments are executable text (a remote command, a script).
-_EVAL_EXECS = {"eval", "exec", "ssh", "sshpass", "xargs"}
+_EVAL_EXECS = {
+    # `trap 'cmd' EXIT` registers a command string that runs when the shell
+    # LEAVES. The payload is an ordinary quoted operand, so without this it is
+    # redacted as prose exactly as `echo "..."` correctly is. The deferral
+    # changes the deny message and the audit trail, not the decision. (rf-zvll A2)
+    "trap",
+    "eval",
+    "exec",
+    "ssh",
+    "sshpass",
+    "xargs",
+}
 
 # Flags carrying an executable string (`bash -c`, `python -c`, `mysql -e`, `find -exec`).
 _EVAL_FLAGS = {"-c", "-e", "--command", "--execute", "--eval", "-exec", "--exec"}
