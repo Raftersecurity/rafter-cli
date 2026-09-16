@@ -2,6 +2,9 @@ packages:
   - node
   - vscode
 
+allowBuilds:
+  esbuild: set this to true or false
+
 onlyBuiltDependencies:
   - esbuild
 
