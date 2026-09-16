@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-09-13
+
+### Security
+
+- **Process substitution no longer hides a destructive command** (rf-kyfe). `grep -q x <(rm -rf /)` and `printf %s <(rm -rf /)` both classified **low and were allowed**, while `cat <(rm -rf /)` classified `high` — the same payload scored three different ways depending on which program consumed it. The classifier now resolves a shell fed from a process-substitution channel, so all three reach `critical` and are denied. Verified by running the published 0.10.4 artifact against each probe before the fix and a build of this tree after, with `ls -la` as an allow control so the change discriminates rather than simply blocking more.
+
+- **Here-strings are classified on what they feed, not on the redirect** (rf-gn0h). `bash <<< "rm -rf /"` scored `high` and so passed a `critical`-only gate, while `cat <<< "just some text"` was over-blocked at `high`. Both were the same missing distinction: the payload of a here-string matters only when the program receiving it is a shell. `bash <<< …` now denies at `critical`; `cat <<< …` on benign text is `low`. The fix moves in both directions, which is the point — an over-block teaches users to disable the hook.
+
+### Added
+
+- **The release gate refuses a version that is already published** (#256). `validate-release` checked that the node, python and ClawHub manifests *agreed*, but never that the agreed version had not already shipped — so when main's version equalled the published one, validation passed and the publish job failed later at the registry with an error that does not say "you forgot the bump". That happened three times, each leaving a security fix merged to a public repo and absent from the package anyone installs. The check **fails closed**: if a registry cannot be reached it exits non-zero, because a release gate that opens when it cannot see is the same failure wearing a different hat.
+
+- **A shell-route corpus with an expected-failures gate** (rf-zvll, #253), so a route that is known-unclassified is recorded as such and a regression on a route that already works fails the build.
+
+### Known limitations
+
+- `echo "rm -rf /" | xargs bash -c` still classifies **low and is allowed** (rf-uajq). This release does not fix it: the new stream-resolution path fires on an eval-class program with a literal substitution, a shell-class program fed `<`/`<<<`, or a pipe into a shell-class program — and `xargs` is eval-class but not shell-class, with no substitution token present, so no branch triggers. The control `echo "rm -rf /" | bash` is denied at `critical`.
+- A malformed glob in a repo `.rafter.yml` (for example `src/test[unterminated`) fails the **Write/Edit secret scan** open in the Python runtime, allowing a write that carries a live credential; the command classifier is unaffected and still denies (rf-htc8).
+- A repo-local `.rafter.yml` `docs:` entry still accepts absolute paths, paths outside the repository, and arbitrary URLs (rf-blzj).
+
 ## [0.10.4] - 2026-09-12
 
 ### Security
