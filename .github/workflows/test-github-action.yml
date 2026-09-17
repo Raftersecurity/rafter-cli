@@ -14,10 +14,15 @@ on:
       - main
     paths:
       - 'github-action/**'
+      - 'action.yml'
       - '.github/workflows/test-github-action.yml'
   pull_request:
     paths:
       - 'github-action/**'
+      # The ROOT action.yml is a SECOND action file, and rf-v2mj lived in it.
+      # Without this line the probe that guards it would never fire on a change
+      # to it — a check watching a path its subject is not on.
+      - 'action.yml'
       - '.github/workflows/test-github-action.yml'
   workflow_dispatch:
 
@@ -403,6 +408,29 @@ jobs:
           fi
           [ "$FAIL" -eq 0 ] && echo "PASS: counts reached the gate and the gate failed the build."
           exit $FAIL
+
+  # sable-oubg / rf-7xv0 — a fork's branch name reached a shell holding
+  # RAFTER_API_KEY. Both probes FAIL on the pre-fix file and pass after, and
+  # both carry controls, so neither can pass by doing nothing.
+  test-trigger-injection:
+    name: "Trigger: a branch name cannot reach the key's shell"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the injection probe
+        run: bash github-action/tests/test-trigger-injection.sh
+
+  # sable-oubg / rf-v2mj — the ROOT action.yml derived its finding count with
+  # `|| echo "0"`, so an unreadable report rendered as a clean scan. Note this
+  # is the OTHER action.yml: the same defect class in github-action/action.yml
+  # was fixed under sable-fgk7 and this file was never touched by it.
+  test-root-action-counts:
+    name: "Root action: an unreadable report is not a clean scan"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the count-derivation probe
+        run: bash github-action/tests/test-root-action-counts.sh
 
   test-yaml-validity:
     name: action.yml is valid YAML
