@@ -68,20 +68,35 @@ runs:
         RAFTER_API_KEY: ${{ inputs.api-key }}
         RAFTER_URL: ${{ inputs.rafter-url }}
         SCAN_MODE: ${{ inputs.scan-mode }}
+        # rf-7xv0 — these two reach the script through the ENVIRONMENT, never
+        # through `${{ }}` inside `run:`. The runner expands `${{ }}` into the
+        # script TEXT before bash sees it, so an interpolated value is not data,
+        # it is source code — and `github.head_ref` is the branch name chosen by
+        # whoever opened the pull request. Any stranger can open one from a fork.
+        # This step's env carries RAFTER_API_KEY, so the branch name was running
+        # in a shell that could read the key.
+        GH_REPOSITORY: ${{ github.repository }}
+        GH_BRANCH: ${{ github.head_ref || github.ref_name }}
       run: |
         # --fail-with-body: non-2xx → body printed to stdout AND exit nonzero.
         # We capture body+status separately so future failures self-explain
         # (instead of just "curl exit 22"). API key never echoed.
         BODY_FILE="$(mktemp)"
+        # Built by jq from environment variables, not by pasting values into a
+        # quoted string. That fixes two things at once: the shell never sees the
+        # branch name as code, and a branch name containing a quote or backslash
+        # produces VALID JSON instead of a malformed body. Hand-quoting would
+        # have to get both right; jq --arg gets both right by construction.
+        PAYLOAD=$(jq -nc \
+          --arg repository_name "$GH_REPOSITORY" \
+          --arg branch_name "$GH_BRANCH" \
+          --arg scan_mode "$SCAN_MODE" \
+          '{repository_name: $repository_name, branch_name: $branch_name, scan_mode: $scan_mode}')
         HTTP_CODE=$(curl -sS --connect-timeout 10 --max-time 60 \
           -o "$BODY_FILE" -w "%{http_code}" -X POST \
           -H "Content-Type: application/json" \
           -H "x-api-key: ${RAFTER_API_KEY}" \
-          -d "{
-            \"repository_name\": \"${{ github.repository }}\",
-            \"branch_name\": \"${{ github.head_ref || github.ref_name }}\",
-            \"scan_mode\": \"${SCAN_MODE}\"
-          }" \
+          -d "$PAYLOAD" \
           "${RAFTER_URL}/api/static/scan") || {
             echo "::error::curl transport error contacting ${RAFTER_URL}/api/static/scan"
             cat "$BODY_FILE" || true
