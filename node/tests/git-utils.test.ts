@@ -66,6 +66,31 @@ describe("parseRemote host validation", () => {
       parseRemote("https://dev.azure.com/my-org/my-proj/_git/my-repo")
     ).toThrow(/dev\.azure\.com/);
   });
+
+  // Found in security review of this fix: a naive "replace : with /"
+  // treats the userinfo separator the same as the SCP host:path
+  // separator, so `host` (the value checked against the allowlist) can be
+  // attacker-chosen credentials rather than the real host -- and
+  // legitimate credentialed remotes (PAT-embedded HTTPS, common in CI)
+  // hard-fail the same way.
+  it.each([
+    // CI token-embedded remotes -- real shapes, must keep working.
+    ["github https with embedded token", "https://x-access-token:ghp_abc123@github.com/owner/repo.git", "owner/repo"],
+    ["gitlab https with embedded CI token", "https://gitlab-ci-token:glcbt-abc@gitlab.com/group/project.git", "group/project"],
+    // Explicit ssh:// scheme -- a normal, non-adversarial clone form.
+    ["explicit ssh:// scheme", "ssh://git@github.com/owner/repo.git", "owner/repo"],
+    ["explicit ssh:// scheme with port", "ssh://git@github.com:2222/owner/repo.git", "owner/repo"],
+  ])("%s still parses", (_label, url, expected) => {
+    expect(parseRemote(url)).toBe(expected);
+  });
+
+  it("does not let userinfo smuggle an unrecognized host past the check", () => {
+    // The real host is evil.com; "github.com" only appears as userinfo.
+    // Must be rejected (as evil.com), never accepted as github.com.
+    expect(() =>
+      parseRemote("https://github.com:x@evil.com/foo/bar.git")
+    ).toThrow(/evil\.com/);
+  });
 });
 
 // ── providerForHost (host → provider inference) ────────────────────
