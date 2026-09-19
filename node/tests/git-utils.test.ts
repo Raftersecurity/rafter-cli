@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { execSync } from "child_process";
 import { parseRemote, safeBranch, detectRepo, providerForHost, inferRemote } from "../src/utils/git.js";
+
+vi.mock("child_process");
+const mockedExecSync = vi.mocked(execSync);
 
 // ── parseRemote (pure function) ────────────────────────────────────
 
@@ -26,6 +30,41 @@ describe("parseRemote", () => {
 
   it("parses HTTP URL (no S)", () => {
     expect(parseRemote("http://github.com/owner/repo.git")).toBe("owner/repo");
+  });
+});
+
+// sable-pqmw: parseRemote used to slice the last two path segments of ANY
+// remote with no host check at all, so a non-GitHub-shaped remote silently
+// produced a wrong slug (e.g. Azure DevOps's `.../_git/repo` becomes
+// `_git/repo`; a filesystem remote becomes `<parent-dir>/<repo>`). The
+// backend turns that slug into `https://github.com/{slug}` and 404s,
+// burning a paid scan. It must now reject anything it can't recognize.
+describe("parseRemote host validation", () => {
+  it.each([
+    ["github https", "https://github.com/owner/repo", "owner/repo"],
+    ["github ssh", "git@github.com:owner/repo.git", "owner/repo"],
+    ["github https with .git", "https://github.com/owner/repo.git", "owner/repo"],
+    // GitLab stays supported -- separate multi-provider feature (sable-w79q)
+    // that already sends provider + repo_url alongside.
+    ["gitlab ssh", "git@gitlab.com:group/project.git", "group/project"],
+  ])("%s still parses", (_label, url, expected) => {
+    expect(parseRemote(url)).toBe(expected);
+  });
+
+  it.each([
+    // Azure DevOps: naive last-two-segments yields "_git/repo".
+    ["azure devops", "https://dev.azure.com/my-org/my-proj/_git/my-repo"],
+    // Bare filesystem remote: naive last-two-segments yields
+    // "<parent-dir>/<repo>" -- the "local/*" class seen in production.
+    ["bare filesystem path", "/home/ci/local/my-repo"],
+  ])("%s is rejected", (_label, url) => {
+    expect(() => parseRemote(url)).toThrow(/unsupported/i);
+  });
+
+  it("names the offending host in the error", () => {
+    expect(() =>
+      parseRemote("https://dev.azure.com/my-org/my-proj/_git/my-repo")
+    ).toThrow(/dev\.azure\.com/);
   });
 });
 
@@ -145,13 +184,27 @@ describe("safeBranch", () => {
     expect(gitFn).toHaveBeenCalledWith("symbolic-ref --quiet --short HEAD");
   });
 
-  it("falls back to rev-parse on detached HEAD", () => {
+  // sable-pqmw: a detached HEAD must not submit a commit SHA as a branch
+  // name -- it is not a branch and is guaranteed to 404 on the backend.
+  // The old behavior fell back to `rev-parse --short HEAD`; assert that
+  // even when a SHA IS available, it is never returned, and rev-parse is
+  // never even attempted.
+  it("throws on detached HEAD even when a SHA is available", () => {
     const gitFn = vi.fn()
       .mockImplementationOnce(() => { throw new Error("not on a branch"); })
       .mockReturnValueOnce("abc1234");
-    expect(safeBranch(gitFn)).toBe("abc1234");
-    expect(gitFn).toHaveBeenCalledTimes(2);
-    expect(gitFn).toHaveBeenNthCalledWith(2, "rev-parse --short HEAD");
+    expect(() => safeBranch(gitFn)).toThrow(/branch/i);
+    expect(gitFn).toHaveBeenCalledTimes(1);
+  });
+
+  // sable-pqmw: total git failure (e.g. an empty repo with no commits)
+  // must not fall back to a hardcoded "main" -- that guesses the default
+  // branch and is often wrong, and is misleading even when it isn't.
+  it("throws rather than inventing a default branch on total failure", () => {
+    const gitFn = vi.fn().mockImplementation(() => {
+      throw new Error("fatal: not a git repository");
+    });
+    expect(() => safeBranch(gitFn)).toThrow(/branch/i);
   });
 });
 
@@ -229,5 +282,30 @@ describe("detectRepo", () => {
     process.env.CI_BRANCH = "ci-branch";
     const result = detectRepo({});
     expect(result).toEqual({ repo: "org/repo", branch: "gh-branch" });
+  });
+
+  // sable-pqmw: an unrecognized-host remote (e.g. Azure DevOps) must
+  // surface as a clear, catchable error through the full detection path,
+  // not a silently wrong repository slug.
+  describe("with a real git remote (host validation)", () => {
+    beforeEach(() => {
+      mockedExecSync.mockReset();
+      mockedExecSync.mockImplementation((cmd: unknown) => {
+        const c = String(cmd);
+        if (c.includes("rev-parse --is-inside-work-tree")) return "true";
+        if (c.includes("remote get-url origin")) {
+          return "https://dev.azure.com/my-org/my-proj/_git/my-repo";
+        }
+        throw new Error(`unexpected git invocation in test: ${c}`);
+      });
+    });
+
+    afterEach(() => {
+      mockedExecSync.mockReset();
+    });
+
+    it("throws naming the host for an unrecognized remote", () => {
+      expect(() => detectRepo({})).toThrow(/dev\.azure\.com/);
+    });
   });
 });

@@ -27,43 +27,22 @@ def is_inside_repo() -> bool:
 
 
 def safe_branch() -> str:
-    """Return the current branch name, falling back to short HEAD."""
+    """Return the current branch name.
+
+    Raises RuntimeError on a detached HEAD (or when there is no HEAD at
+    all, e.g. an empty repo) instead of falling back to a commit SHA or a
+    hardcoded default branch. Neither is a real branch: a SHA is guaranteed
+    to 404 as a "branch" on the backend, and a hardcoded default is a guess
+    that is often wrong and, even when right, doesn't reflect what is
+    actually checked out.
+    """
     try:
         return _run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"])
     except subprocess.CalledProcessError:
-        try:
-            return _run(["git", "rev-parse", "--short", "HEAD"])
-        except subprocess.CalledProcessError:
-            return "main"
-
-
-def parse_remote(url: str) -> str:
-    """Parse a git remote URL into 'owner/repo' format."""
-    url = re.sub(r"^(https?://|git@)", "", url)
-    url = url.replace(":", "/")
-    if url.endswith(".git"):
-        url = url[:-4]
-    parts = url.split("/")
-    return "/".join(parts[-2:])
-
-
-def provider_for_host(host: str) -> str:
-    """Map a git remote host to a provider.
-
-    'github' is the backward-compatible default for any host we don't
-    recognize — a GitHub user's request is unaffected, and unknown
-    self-hosted hosts fall back to the legacy behavior.
-    """
-    host = host.lower()
-    if host == "github.com":
-        return "github"
-    if host == "gitlab.com" or host.endswith(".gitlab.com"):
-        return "gitlab"
-    if host == "bitbucket.org":
-        return "bitbucket"
-    if host == "codeberg.org" or host.endswith(".gitea.io"):
-        return "gitea"
-    return "github"  # backward-compatible default
+        raise RuntimeError(
+            "Could not determine the current branch (detached HEAD or no "
+            "commits yet). Please pass --branch explicitly."
+        )
 
 
 def _split_remote(url: str) -> tuple[str, str] | None:
@@ -83,6 +62,63 @@ def _split_remote(url: str) -> tuple[str, str] | None:
     host = parts[0]
     slug = "/".join(parts[-2:])
     return host, slug
+
+
+def _known_provider_for_host(host: str) -> str | None:
+    """Map a git remote host to a provider we actually recognize.
+
+    Unlike provider_for_host, returns None for a host we don't recognize
+    instead of defaulting to 'github' -- used where guessing is not safe.
+    """
+    host = host.lower()
+    if host == "github.com":
+        return "github"
+    if host == "gitlab.com" or host.endswith(".gitlab.com"):
+        return "gitlab"
+    if host == "bitbucket.org":
+        return "bitbucket"
+    if host == "codeberg.org" or host.endswith(".gitea.io"):
+        return "gitea"
+    return None
+
+
+def parse_remote(url: str) -> str:
+    """Parse a git remote URL into 'owner/repo' format.
+
+    Raises RuntimeError when the remote's host isn't one we recognize.
+    Blindly slicing the last two path segments of an arbitrary URL (the
+    old behavior) manufactures a wrong slug for anything that isn't
+    GitHub/GitLab/Bitbucket/Gitea shaped -- e.g. an Azure DevOps remote
+    ('.../org/proj/_git/repo') becomes '_git/repo', and a bare filesystem
+    remote becomes '<parent-dir>/<repo>'. The backend turns that slug into
+    an invalid clone URL and 404s, burning a paid scan.
+    """
+    parts = _split_remote(url)
+    if parts is None:
+        raise RuntimeError(
+            f"Could not determine owner/repo from git remote {url!r}. "
+            "Please pass --repo and --branch explicitly."
+        )
+    host, slug = parts
+    if _known_provider_for_host(host) is None:
+        raise RuntimeError(
+            f"Unsupported git remote host {host!r} (from {url!r}). "
+            "Only GitHub, GitLab, Bitbucket, and Gitea remotes are "
+            "auto-detected. Please pass --repo and --branch explicitly."
+        )
+    return slug
+
+
+def provider_for_host(host: str) -> str:
+    """Map a git remote host to a provider.
+
+    'github' is the backward-compatible default for any host we don't
+    recognize — a GitHub user's request is unaffected, and unknown
+    self-hosted hosts fall back to the legacy behavior. (Only used for the
+    additive provider/repo_url fields; parse_remote uses the stricter
+    _known_provider_for_host and rejects what this would silently default.)
+    """
+    return _known_provider_for_host(host) or "github"
 
 
 def infer_remote(url: str) -> tuple[str, str | None]:
