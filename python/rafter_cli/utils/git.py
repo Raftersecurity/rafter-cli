@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from urllib.parse import urlsplit
 
 
 def _run(cmd: list[str]) -> str:
@@ -45,15 +46,45 @@ def safe_branch() -> str:
         )
 
 
+_SCHEME_RE = re.compile(r"^(https?|ssh)://", re.IGNORECASE)
+
+
 def _split_remote(url: str) -> tuple[str, str] | None:
     """Split a git remote URL into (host, 'owner/repo').
 
-    Handles both 'git@host:owner/repo(.git)' (scp-like) and
-    'https://host/owner/repo(.git)'. Returns None when it can't be parsed
-    into host + slug.
+    Handles 'https://[user[:token]@]host[:port]/owner/repo(.git)' (and
+    http, ssh), and the scp-like '[user@]host:owner/repo(.git)'. Returns
+    None when it can't be parsed into host + slug.
+
+    Uses urlsplit (not a blanket ':' -> '/' substitution) so that a colon
+    inside userinfo -- 'https://user:token@host/...', a real shape for
+    CI-embedded credentials -- is never mistaken for the scp host:path
+    separator. Getting this wrong is a security bug, not just a parsing
+    one: the naive substitution let 'https://github.com:x@evil.com/a/b'
+    read as host 'github.com' (an allowed host) with the real host,
+    evil.com, silently discarded.
     """
-    rest = re.sub(r"^(https?://|git@)", "", url)
-    rest = rest.replace(":", "/")
+    if _SCHEME_RE.match(url):
+        parsed = urlsplit(url)
+        host = parsed.hostname
+        if not host:
+            return None
+        rest = f"{host}{parsed.path}"
+    elif ":" in url:
+        # scp-like: '[user@]host:owner/repo(.git)'. The user (if any) is
+        # whatever precedes the LAST '@' before this colon.
+        head, _, path = url.partition(":")
+        host = head.rsplit("@", 1)[-1]
+        if not host or "/" in host:
+            return None
+        rest = f"{host}/{path}"
+    else:
+        # No scheme, no ':' -- e.g. a bare filesystem path. Treated
+        # opaquely: the leading segment stands in for "host" below, so it
+        # is rejected unless it happens to equal a real host (it never
+        # will for a real filesystem path).
+        rest = url
+
     if rest.endswith(".git"):
         rest = rest[:-4]
     parts = [p for p in rest.split("/") if p]

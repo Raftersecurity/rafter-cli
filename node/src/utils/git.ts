@@ -29,13 +29,51 @@ export function safeBranch(gitFn: (c: string) => string): string {
 
 export type Provider = "github" | "gitlab" | "gitea" | "bitbucket";
 
+const SCHEME_RE = /^(https?|ssh):\/\//i;
+
 /**
- * Split a git remote URL into its host + owner/repo slug, handling both
- * `git@host:owner/repo(.git)` (scp-like) and `https://host/owner/repo(.git)`.
- * Returns null when the URL can't be parsed into host + slug.
+ * Split a git remote URL into its host + owner/repo slug, handling
+ * `https://[user[:token]@]host[:port]/owner/repo(.git)` (and http, ssh),
+ * and the scp-like `[user@]host:owner/repo(.git)`. Returns null when the
+ * URL can't be parsed into host + slug.
+ *
+ * Uses the URL parser (not a blanket ":" -> "/" substitution) so a colon
+ * inside userinfo — `https://user:token@host/...`, a real shape for
+ * CI-embedded credentials — is never mistaken for the scp host:path
+ * separator. Getting this wrong is a security bug, not just a parsing
+ * one: the naive substitution let `https://github.com:x@evil.com/a/b`
+ * read as host `github.com` (an allowed host) with the real host,
+ * evil.com, silently discarded.
  */
 function splitRemote(url: string): { host: string; slug: string } | null {
-  let rest = url.replace(/^(https?:\/\/|git@)/, "").replace(":", "/");
+  let rest: string;
+  if (SCHEME_RE.test(url)) {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return null;
+    }
+    if (!parsed.hostname) return null;
+    rest = `${parsed.hostname}${parsed.pathname}`;
+  } else if (url.includes(":")) {
+    // scp-like: "[user@]host:owner/repo(.git)". The user (if any) is
+    // whatever precedes the LAST "@" before this colon.
+    const colonIdx = url.indexOf(":");
+    const head = url.slice(0, colonIdx);
+    const path = url.slice(colonIdx + 1);
+    const atIdx = head.lastIndexOf("@");
+    const host = atIdx === -1 ? head : head.slice(atIdx + 1);
+    if (!host || host.includes("/")) return null;
+    rest = `${host}/${path}`;
+  } else {
+    // No scheme, no ":" -- e.g. a bare filesystem path. Treated opaquely:
+    // the leading segment stands in for "host" below, so it is rejected
+    // unless it happens to equal a real host (it never will for a real
+    // filesystem path).
+    rest = url;
+  }
+
   if (rest.endsWith(".git")) rest = rest.slice(0, -4);
   const parts = rest.split("/").filter((p) => p.length > 0);
   if (parts.length < 3) return null; // need host + owner + repo

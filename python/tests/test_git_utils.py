@@ -79,6 +79,32 @@ class TestParseRemoteHostValidation:
         with pytest.raises(RuntimeError, match="dev.azure.com"):
             parse_remote("https://dev.azure.com/my-org/my-proj/_git/my-repo")
 
+    # Found in security review of this fix: a naive "replace : with /"
+    # treats the userinfo separator the same as the SCP host:path
+    # separator, so `parts[0]` (the value checked against the host
+    # allowlist) can be attacker-chosen credentials rather than the real
+    # host -- and legitimate credentialed remotes (PAT-embedded HTTPS,
+    # common in CI) hard-fail the same way.
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            # CI token-embedded remotes -- real shapes, must keep working.
+            ("https://x-access-token:ghp_abc123@github.com/owner/repo.git", "owner/repo"),
+            ("https://gitlab-ci-token:glcbt-abc@gitlab.com/group/project.git", "group/project"),
+            # Explicit ssh:// scheme -- a normal, non-adversarial clone form.
+            ("ssh://git@github.com/owner/repo.git", "owner/repo"),
+            ("ssh://git@github.com:2222/owner/repo.git", "owner/repo"),
+        ],
+    )
+    def test_credentialed_and_ssh_scheme_remotes_still_parse(self, url, expected):
+        assert parse_remote(url) == expected
+
+    def test_userinfo_cannot_smuggle_an_unrecognized_host_past_the_check(self):
+        # The real host is evil.com; "github.com" only appears as userinfo.
+        # Must be rejected (as evil.com), never accepted as github.com.
+        with pytest.raises(RuntimeError, match="evil.com"):
+            parse_remote("https://github.com:x@evil.com/foo/bar.git")
+
 
 # ── provider_for_host (host → provider inference) ───────────────────
 
