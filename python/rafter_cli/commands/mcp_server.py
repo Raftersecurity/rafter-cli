@@ -373,9 +373,14 @@ def create_mcp_server():
             path: File path or glob to suppress findings in (e.g. 'test/fixtures/**').
             rules: Specific rules to suppress, matched case-insensitively against a
                 finding's rule name OR rule id — e.g. 'AWS Access Key' (local pattern
-                name) or 'R-6D5E2' (remote SAST/SCA rule id). Omit to suppress all
-                rules for the path. Honored by both local scans and remote `rafter run`.
-            reason: Why this is a false positive — persisted with the rule. Strongly recommended.
+                name) or 'R-6D5E2' (the hashed id the hosted report shows; the native
+                rule id works too). Omit to suppress all rules for the path. Honored by
+                both local scans and remote `rafter run`. With a reason, the hosted
+                scanner will hide even a must-fix or secret-scanner finding and lists
+                it prominently in suppressed.json under `protected_suppressions`.
+            reason: Why this is a false positive — persisted with the rule. Required
+                for the hosted scanner to hide a must-fix or secret-scanner finding
+                (a rule without one is held at the floor for those), so always give one.
         """
         return json.dumps(handle_suppress_finding(path, rules, reason))
 
