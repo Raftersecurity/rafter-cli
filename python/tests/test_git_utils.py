@@ -40,6 +40,72 @@ class TestParseRemote:
         assert parse_remote("http://github.com/owner/repo.git") == "owner/repo"
 
 
+# sable-pqmw: parse_remote used to slice the last two path segments of ANY
+# remote with no host check at all, so a non-GitHub-shaped remote silently
+# produced a wrong slug (e.g. Azure DevOps's `.../_git/repo` becomes
+# `_git/repo`; a filesystem remote becomes `<parent-dir>/<repo>`). The
+# backend turns that slug into `https://github.com/{slug}` and 404s,
+# burning a paid scan. It must now reject anything it can't recognize.
+class TestParseRemoteHostValidation:
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            ("https://github.com/owner/repo", "owner/repo"),
+            ("git@github.com:owner/repo.git", "owner/repo"),
+            ("https://github.com/owner/repo.git", "owner/repo"),
+            # GitLab stays supported -- separate multi-provider feature
+            # (sable-w79q) that already sends provider + repo_url alongside.
+            ("git@gitlab.com:group/project.git", "group/project"),
+        ],
+    )
+    def test_recognized_remote_shapes_still_parse(self, url, expected):
+        assert parse_remote(url) == expected
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # Azure DevOps: naive last-two-segments yields "_git/repo".
+            "https://dev.azure.com/my-org/my-proj/_git/my-repo",
+            # Bare filesystem remote: naive last-two-segments yields
+            # "<parent-dir>/<repo>" -- the "local/*" class seen in production.
+            "/home/ci/local/my-repo",
+        ],
+    )
+    def test_unrecognized_host_remotes_are_rejected(self, url):
+        with pytest.raises(RuntimeError, match="[Uu]nsupported"):
+            parse_remote(url)
+
+    def test_rejection_names_the_offending_host(self):
+        with pytest.raises(RuntimeError, match="dev.azure.com"):
+            parse_remote("https://dev.azure.com/my-org/my-proj/_git/my-repo")
+
+    # Found in security review of this fix: a naive "replace : with /"
+    # treats the userinfo separator the same as the SCP host:path
+    # separator, so `parts[0]` (the value checked against the host
+    # allowlist) can be attacker-chosen credentials rather than the real
+    # host -- and legitimate credentialed remotes (PAT-embedded HTTPS,
+    # common in CI) hard-fail the same way.
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            # CI token-embedded remotes -- real shapes, must keep working.
+            ("https://x-access-token:ghp_abc123@github.com/owner/repo.git", "owner/repo"),
+            ("https://gitlab-ci-token:glcbt-abc@gitlab.com/group/project.git", "group/project"),
+            # Explicit ssh:// scheme -- a normal, non-adversarial clone form.
+            ("ssh://git@github.com/owner/repo.git", "owner/repo"),
+            ("ssh://git@github.com:2222/owner/repo.git", "owner/repo"),
+        ],
+    )
+    def test_credentialed_and_ssh_scheme_remotes_still_parse(self, url, expected):
+        assert parse_remote(url) == expected
+
+    def test_userinfo_cannot_smuggle_an_unrecognized_host_past_the_check(self):
+        # The real host is evil.com; "github.com" only appears as userinfo.
+        # Must be rejected (as evil.com), never accepted as github.com.
+        with pytest.raises(RuntimeError, match="evil.com"):
+            parse_remote("https://github.com:x@evil.com/foo/bar.git")
+
+
 # ── provider_for_host (host → provider inference) ───────────────────
 
 
@@ -139,21 +205,30 @@ class TestSafeBranch:
         with patch("rafter_cli.utils.git._run", return_value="feature/abc"):
             assert safe_branch() == "feature/abc"
 
-    def test_falls_back_to_short_head(self):
+    # sable-pqmw: a detached HEAD must not submit a commit SHA as a branch
+    # name -- it is not a branch and is guaranteed to 404 on the backend.
+    # The old behavior fell back to `rev-parse --short HEAD`; assert that
+    # even when a SHA IS available, it is never returned.
+    def test_detached_head_raises_even_when_a_sha_is_available(self):
         def mock_run(cmd):
             if "symbolic-ref" in cmd:
                 raise subprocess.CalledProcessError(1, cmd)
-            return "abc1234"
+            return "abc1234"  # a real SHA is obtainable but must be refused
 
         with patch("rafter_cli.utils.git._run", side_effect=mock_run):
-            assert safe_branch() == "abc1234"
+            with pytest.raises(RuntimeError, match="branch"):
+                safe_branch()
 
-    def test_falls_back_to_main(self):
+    # sable-pqmw: total git failure (e.g. an empty repo with no commits)
+    # must not fall back to a hardcoded "main" -- that guesses the default
+    # branch and is often wrong, and is misleading even when it isn't.
+    def test_total_failure_does_not_invent_a_default_branch(self):
         with patch(
             "rafter_cli.utils.git._run",
             side_effect=subprocess.CalledProcessError(1, "git"),
         ):
-            assert safe_branch() == "main"
+            with pytest.raises(RuntimeError, match="branch"):
+                safe_branch()
 
 
 # ── is_inside_repo ──────────────────────────────────────────────────
@@ -281,6 +356,24 @@ class TestDetectRepo:
                 "gitlab",
                 "https://gitlab.com/group/project",
             )
+
+    # sable-pqmw: an unrecognized-host remote (e.g. Azure DevOps) must
+    # surface as a clear, catchable error through the full detection path,
+    # not a silently wrong repository_name.
+    def test_raises_on_unrecognized_host_remote(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+        monkeypatch.delenv("CI_REPOSITORY", raising=False)
+        monkeypatch.delenv("GITHUB_REF_NAME", raising=False)
+        monkeypatch.delenv("CI_COMMIT_BRANCH", raising=False)
+        monkeypatch.delenv("CI_BRANCH", raising=False)
+
+        with patch("rafter_cli.utils.git.is_inside_repo", return_value=True), \
+             patch(
+                 "rafter_cli.utils.git._run",
+                 return_value="https://dev.azure.com/my-org/my-proj/_git/my-repo",
+             ):
+            with pytest.raises(RuntimeError, match="dev.azure.com"):
+                detect_repo()
 
     def test_raises_when_not_in_repo_and_no_env(self, monkeypatch):
         monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
