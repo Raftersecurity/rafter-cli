@@ -1,22 +1,22 @@
 /**
- * Security-control env vars must never be settable by a project `.env`.
+ * A project `.env` must never supply a rafter setting.
  *
  * `dotenv.config()` runs at CLI startup (index.ts) and, with no path, loads
- * `$CWD/.env` — which, when rafter runs inside an agent hook on a cloned repo,
- * is a file IN THE UNTRUSTED REPOSITORY. dotenv does not override a variable
- * already present in the real environment, but it DOES introduce one that was
- * unset — so a repo shipping `RAFTER_DISABLE_HOOKS=1` (or any `RAFTER_DISABLE_*`
- * / `RAFTER_HOOK_*` value) could switch off the victim's command policy and
- * secret scanning. That defeats the control whose own contract (hook-control.ts)
- * says the disable signal is honored only from the machine owner's environment.
+ * `$CWD/.env` — which, when rafter runs inside an agent hook or a scan on a
+ * cloned repo, is a file IN THE UNTRUSTED REPOSITORY. dotenv does not override
+ * a variable already present in the real environment, but it DOES introduce one
+ * that was unset. Every `RAFTER_*` variable is an operator setting: the disable
+ * switches and hook timeouts, but also the API key (which outranks the key the
+ * operator stored in ~/.rafter/config.json), the GitHub token, the notify
+ * webhook and the paid-scan confirmation. None of them may come from the repo
+ * being scanned.
  *
- * This runs dotenv, then drops any `RAFTER_DISABLE_*` / `RAFTER_HOOK_*` variable
- * that was NOT already set in the real environment before dotenv ran. The
- * owner's real values are preserved untouched; legitimate `.env` keys that do
- * not match those prefixes (RAFTER_API_KEY, RAFTER_GITHUB_TOKEN, …) are
- * unaffected. rf-7dda / sable-nz4y sibling.
+ * This runs dotenv, then drops any `RAFTER_*` variable that was NOT already set
+ * in the real environment before dotenv ran. The owner's real values are
+ * preserved untouched. This matches the Python runtime, which never reads the
+ * working directory's `.env`.
  */
-const PROTECTED_PREFIX = /^RAFTER_(DISABLE_|HOOK_)/;
+const PROTECTED_PREFIX = /^RAFTER_/;
 
 export function guardSecurityEnvFromDotenv(
   applyDotenv: () => void,

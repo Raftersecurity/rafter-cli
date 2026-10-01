@@ -7,7 +7,6 @@ import sys
 
 import requests
 import typer
-from dotenv import load_dotenv
 
 API_BASE = "https://rafter.so/api/"
 
@@ -133,7 +132,9 @@ def resolve_key(cli_opt: str | None) -> str:
     """Resolve API key: --api-key flag > RAFTER_API_KEY env > global config."""
     if cli_opt:
         return cli_opt
-    load_dotenv()
+    # No .env loading here: python-dotenv searches upward from this package's
+    # install path, which for a virtualenv inside a cloned repo reaches the
+    # repo's own .env. A repo must never supply the operator's credential.
     env_key = os.getenv("RAFTER_API_KEY")
     if env_key:
         return env_key
