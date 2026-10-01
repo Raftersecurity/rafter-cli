@@ -25,6 +25,8 @@ app = typer.Typer(
     help="Rafter CLI — the default security agent for AI workflows. Free for individuals and open source. No account required.",
     add_completion=True,
     no_args_is_help=True,
+    # Never render frame locals in tracebacks: they hold the API key.
+    pretty_exceptions_show_locals=False,
 )
 
 
