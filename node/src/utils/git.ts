@@ -1,9 +1,35 @@
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 
 export function git(cmd: string): string {
   return execSync(`git ${cmd}`, { stdio: ["ignore", "pipe", "ignore"] })
     .toString()
     .trim();
+}
+
+/**
+ * Look up `branch` on the `origin` remote.
+ *
+ * Returns the remote commit SHA, `null` when the remote answered and has no
+ * such branch, or `undefined` when it could not be asked (offline, auth
+ * failure, timeout). Callers treat `undefined` as unknown and carry on.
+ */
+export function remoteBranchSha(branch: string, cwd?: string): string | null | undefined {
+  try {
+    const out = execFileSync(
+      "git",
+      ["ls-remote", "--exit-code", "--heads", "origin", `refs/heads/${branch}`],
+      {
+        cwd,
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 15_000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      }
+    ).toString();
+    return out.split(/\s+/)[0] || undefined;
+  } catch (e: any) {
+    // --exit-code: status 2 means the remote has no matching ref.
+    return e?.status === 2 ? null : undefined;
+  }
 }
 
 /**
@@ -155,6 +181,8 @@ export interface DetectedRepo {
   branch?: string;
   provider?: Provider;
   repo_url?: string;
+  /** Both repo and branch came from the local checkout (origin + HEAD). */
+  local_branch?: boolean;
 }
 
 const AUTO_DETECT_FAILURE =
@@ -191,6 +219,7 @@ export function detectRepo(opts: { repo?: string; branch?: string; quiet?: boole
   // A rejection from parseRemote (unrecognized host) is deliberately NOT
   // swallowed into the generic message below — it names the offending
   // remote, which is the actionable part.
+  const repoFromOrigin = !repoSlug;
   if (!repoSlug) {
     let remoteUrl: string;
     try {
@@ -204,6 +233,7 @@ export function detectRepo(opts: { repo?: string; branch?: string; quiet?: boole
     repoUrl = inferred.repoUrl;
   }
 
+  const localBranch = repoFromOrigin && !branch;
   if (!branch) {
     branch = safeBranch(git);
   }
@@ -211,5 +241,5 @@ export function detectRepo(opts: { repo?: string; branch?: string; quiet?: boole
   if ((!opts.repo || !opts.branch) && !opts.quiet) {
     console.error(`Repo auto-detected: ${repoSlug} @ ${branch} (note: scanning remote)`);
   }
-  return { repo: repoSlug, branch, provider, repo_url: repoUrl };
+  return { repo: repoSlug, branch, provider, repo_url: repoUrl, local_branch: localBranch };
 }

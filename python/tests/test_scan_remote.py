@@ -200,6 +200,8 @@ class TestDoRemoteScan:
         assert "provider" not in body
         assert "repo_url" not in body
 
+    # Auto-detected branch: keep the remote-branch lookup off the network.
+    @patch("rafter_cli.commands.backend.remote_branch_sha", new=lambda *a, **k: False)
     @patch("rafter_cli.commands.backend.api_post")
     @patch(
         "rafter_cli.commands.backend.detect_repo",
@@ -224,6 +226,8 @@ class TestDoRemoteScan:
         assert body["provider"] == "gitlab"
         assert body["repo_url"] == "https://gitlab.com/group/project"
 
+    # Auto-detected branch: keep the remote-branch lookup off the network.
+    @patch("rafter_cli.commands.backend.remote_branch_sha", new=lambda *a, **k: False)
     @patch("rafter_cli.commands.backend.api_post")
     @patch(
         "rafter_cli.commands.backend.detect_repo",
@@ -305,6 +309,8 @@ class TestDoRemoteScan:
         err = capsys.readouterr().err
         assert "s-xyz" in err
 
+    # Auto-detected branch: keep the remote-branch lookup off the network.
+    @patch("rafter_cli.commands.backend.remote_branch_sha", new=lambda *a, **k: False)
     @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_auto_detect_message_when_not_explicit(self, _mock_repo, mock_post, capsys):
