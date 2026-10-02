@@ -27,6 +27,44 @@ def is_inside_repo() -> bool:
         return False
 
 
+def remote_branch_sha(branch: str, cwd: str | None = None) -> str | None | bool:
+    """Look up ``branch`` on the ``origin`` remote.
+
+    Returns the remote commit SHA, ``None`` when the remote answered and has
+    no such branch, or ``False`` when it could not be asked (offline, auth
+    failure, timeout). Callers treat ``False`` as unknown and carry on.
+    """
+    import os
+
+    try:
+        out = subprocess.run(
+            ["git", "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if out.returncode == 2:  # --exit-code: no matching ref on the remote
+        return None
+    if out.returncode != 0:
+        return False
+    return out.stdout.split()[0] if out.stdout.split() else False
+
+
+def branch_from_env() -> str | None:
+    """The branch a CI provider names in its environment, if any."""
+    import os
+
+    return (
+        os.getenv("GITHUB_REF_NAME")
+        or os.getenv("CI_COMMIT_BRANCH")
+        or os.getenv("CI_BRANCH")
+    )
+
+
 def safe_branch() -> str:
     """Return the current branch name.
 
@@ -178,11 +216,7 @@ def detect_repo(
     import os
 
     repo_env = os.getenv("GITHUB_REPOSITORY") or os.getenv("CI_REPOSITORY")
-    branch_env = (
-        os.getenv("GITHUB_REF_NAME")
-        or os.getenv("CI_COMMIT_BRANCH")
-        or os.getenv("CI_BRANCH")
-    )
+    branch_env = branch_from_env()
     repo_slug = repo or repo_env
     branch_name = branch or branch_env
     provider: str | None = None
