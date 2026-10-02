@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -390,6 +391,19 @@ class TestGitDiffScanning:
         assert any(line.file == "secrets.py" for line in added)
         assert len(results) == 1
         assert results[0].matches[0].pattern.name == "AWS Access Key ID"
+
+    def test_rejects_a_diff_ref_that_git_would_parse_as_an_option(self, tmp_path):
+        target = tmp_path / "untouched.txt"
+        target.write_text("keep\n")
+
+        result = subprocess.run(
+            [sys.executable, "-m", "rafter_cli", "secrets", self.repo,
+             "--diff", f"--output={target}", "--engine", "patterns", "--quiet"],
+            capture_output=True, text=True, cwd=self.repo, timeout=60,
+            env={**os.environ, "HOME": str(tmp_path)},
+        )
+        assert result.returncode == 2
+        assert target.read_text() == "keep\n"
 
     def test_clean_changed_files_produce_no_results(self, tmp_path):
         initial = _git("rev-parse HEAD", self.repo)
