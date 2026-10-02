@@ -489,6 +489,18 @@ describe("E2E: git --diff scanning", () => {
     expect(parsed.results[0].matches[0].pattern.name).toBe("AWS Access Key ID");
   });
 
+  it("rejects a --diff ref that git would parse as an option", () => {
+    const target = path.join(tmpDir, "untouched.txt");
+    fs.writeFileSync(target, "keep\n");
+
+    const r = rafter(
+      ["scan", "local", tmpDir, "--diff", `--output=${target}`, "--engine", "patterns", "--quiet"],
+      { cwd: tmpDir },
+    );
+    expect(r.exitCode).toBe(2);
+    expect(fs.readFileSync(target, "utf-8")).toBe("keep\n");
+  });
+
   it("exits 0 when changed files are clean", () => {
     const initialCommit = git("rev-parse HEAD");
 
