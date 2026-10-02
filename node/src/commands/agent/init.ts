@@ -7,7 +7,7 @@ import { SkillManager } from "../../utils/skill-manager.js";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execSync, spawnSync } from "child_process";
+import { execFileSync, execSync, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import { askYesNo } from "../../utils/prompt.js";
@@ -1184,10 +1184,15 @@ function registerGeminiSkills(skillsDir: string): void {
     const absPath = path.resolve(skillsDir, skill.name);
     if (!fs.existsSync(absPath)) continue;
     try {
-      execSync(`gemini skills link ${JSON.stringify(absPath)}`, {
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 10000,
-      });
+      const execOpts = { stdio: ["ignore", "pipe", "pipe"] as any, timeout: 10000 };
+      // No POSIX shell: the path comes from the working directory, whose name
+      // may hold shell syntax. Windows needs cmd.exe to run gemini's .cmd shim,
+      // and cmd.exe treats a double-quoted path literally.
+      if (process.platform === "win32") {
+        execSync(`gemini skills link ${JSON.stringify(absPath)}`, execOpts);
+      } else {
+        execFileSync("gemini", ["skills", "link", absPath], execOpts);
+      }
       console.log(fmt.success(`Registered ${skill.name} with Gemini CLI`));
     } catch (e: any) {
       const msg = (e?.stderr?.toString?.() || e?.message || "").trim();

@@ -2,7 +2,7 @@ import { Command } from "commander";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import { fileURLToPath } from 'url';
 import { fmt } from "../../utils/formatter.js";
 
@@ -115,7 +115,7 @@ async function installGlobalHook(hookName: string, templateName: string): Promis
   fs.chmodSync(hookPath, 0o755);
 
   try {
-    execSync(`git config --global core.hooksPath "${globalHooksDir}"`, { stdio: "pipe" });
+    execFileSync("git", ["config", "--global", "core.hooksPath", globalHooksDir], { stdio: "pipe" });
     console.log(fmt.success(`Installed Rafter ${hookName} hook globally`));
     console.log(`  Location: ${hookPath}`);
     console.log(`  Git config: core.hooksPath = ${globalHooksDir}`);
