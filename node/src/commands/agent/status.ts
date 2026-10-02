@@ -2,7 +2,7 @@ import { Command } from "commander";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { getRafterDir, getAuditLogPath, getBinDir } from "../../core/config-defaults.js";
 import { AuditLogger } from "../../core/audit-logger.js";
@@ -85,7 +85,7 @@ export function createStatusCommand(): Command {
       } catch {
         if (fs.existsSync(localBetterleaks)) {
           try {
-            const ver = execSync(`"${localBetterleaks}" version`, { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+            const ver = execFileSync(localBetterleaks, ["version"], { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
             betterleaksStatus = `${ver} (local)`;
           } catch {
             betterleaksStatus = `${localBetterleaks} (binary error)`;
