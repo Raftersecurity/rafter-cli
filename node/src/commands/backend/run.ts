@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import ora from "ora";
-import { detectRepo } from "../../utils/git.js";
+import { detectRepo, git, remoteBranchSha } from "../../utils/git.js";
 import {
   API,
   resolveKey,
@@ -96,8 +96,9 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
   const ghToken = opts.githubToken || process.env.RAFTER_GITHUB_TOKEN;
   let repo: string | undefined, branch: string | undefined;
   let detectedProvider: string | undefined, detectedRepoUrl: string | undefined;
+  let localBranch: boolean | undefined;
   try {
-    ({ repo, branch, provider: detectedProvider, repo_url: detectedRepoUrl } = detectRepo({
+    ({ repo, branch, provider: detectedProvider, repo_url: detectedRepoUrl, local_branch: localBranch } = detectRepo({
       repo: opts.repo,
       branch: opts.branch,
       quiet: opts.quiet,
@@ -109,6 +110,28 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
       console.error(e);
     }
     process.exit(EXIT_GENERAL_ERROR);
+  }
+
+  // The backend clones the remote, so an auto-detected branch that was never
+  // pushed can only fail there. Say so now instead of queueing that scan.
+  if (localBranch) {
+    const remoteSha = remoteBranchSha(branch!);
+    if (remoteSha === null) {
+      console.error(
+        `Branch "${branch}" does not exist on the remote (origin). Rafter scans the remote ` +
+          "repository: push the branch first, or pass --branch to scan one that exists."
+      );
+      process.exit(EXIT_GENERAL_ERROR);
+    }
+    if (remoteSha && !opts.quiet) {
+      let head: string | undefined;
+      try { head = git("rev-parse HEAD"); } catch { head = undefined; }
+      if (head && head !== remoteSha) {
+        console.error(
+          `Note: local HEAD differs from origin/${branch}; the scan covers the pushed commit ${remoteSha.slice(0, 7)}.`
+        );
+      }
+    }
   }
 
   // Explicit flags override inferred values.
