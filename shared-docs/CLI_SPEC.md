@@ -1459,7 +1459,7 @@ rafter agent config set agent.riskLevel aggressive
 
 ## Notes
 
-- API key: provided via `--api-key` flag, `RAFTER_API_KEY` env var, or `.env` file
+- API key: provided via `--api-key` flag, `RAFTER_API_KEY` env var, or a key stored in the global `~/.rafter/config.json`. A `.env` file in the working directory is never read for `RAFTER_*` settings
 - Git auto-detection works in CI (supports `GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, `CI_REPOSITORY`, `CI_COMMIT_BRANCH`, `CI_BRANCH`)
 - Remote code analysis targets the remote repository, not local files
 - All scan data to stdout, all status messages to stderr

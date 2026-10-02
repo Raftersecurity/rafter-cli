@@ -21,7 +21,7 @@ Requires Python 3.10+.
 ### Remote Code Analysis
 
 ```bash
-export RAFTER_API_KEY="your-key"   # or add to .env file
+export RAFTER_API_KEY="your-key"
 
 rafter run                                    # scan current repo (auto-detected)
 rafter scan --repo myorg/myrepo --branch main # scan specific repo
