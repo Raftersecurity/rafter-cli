@@ -432,6 +432,11 @@ async function scanDiffFiles(
   scanPath?: string,
   suppressions: Suppression[] = [],
 ): Promise<void> {
+  // git would parse a leading "-" as one of its own options, not a ref.
+  if (ref.startsWith("-")) {
+    console.error(`Error: invalid ref "${ref}" (a git ref cannot start with "-")`);
+    process.exit(2);
+  }
   await runGitAddedLineScan(
     ["diff", "-U0", "--no-color", "--diff-filter=ACM", ref],
     opts,

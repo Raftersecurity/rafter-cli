@@ -1736,6 +1736,13 @@ def _output_empty_diff_scan(
     )
 
 
+def _reject_option_like_ref(ref: str) -> None:
+    """git would parse a leading "-" as one of its own options, not a ref."""
+    if ref.startswith("-"):
+        print(f'Error: invalid ref "{ref}" (a git ref cannot start with "-")', file=sys.stderr)
+        raise typer.Exit(code=2)
+
+
 def _run_git_added_line_scan(
     git_args: list[str],
     git_cwd: str | None,
@@ -2176,6 +2183,7 @@ def scan(
 
     # --diff
     if diff:
+        _reject_option_like_ref(diff)
         _run_git_added_line_scan(
             ["diff", "-U0", "--no-color", "--diff-filter=ACM", diff],
             git_cwd,

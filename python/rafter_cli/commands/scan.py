@@ -117,6 +117,7 @@ def scan_local(
         _apply_exclude_paths,
         _load_baseline_entries,
         _run_git_added_line_scan,
+        _reject_option_like_ref,
     )
     from ..core.config_manager import ConfigManager
     from ..core.custom_patterns import load_suppressions, policy_ignore_to_suppressions
@@ -146,6 +147,7 @@ def scan_local(
 
     # --diff
     if diff:
+        _reject_option_like_ref(diff)
         _run_git_added_line_scan(
             ["diff", "-U0", "--no-color", "--diff-filter=ACM", diff],
             git_cwd,
