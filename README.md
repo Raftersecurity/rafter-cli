@@ -116,7 +116,7 @@ Requires Python 3.10+. Full feature parity with Node.js including local security
 Agentic security audits backed by a full SAST/SCA toolchain, via the Rafter API. The analysis engine examines your codebase the way a professional cybersecurity auditor would — following data flows across files, reasoning about authentication and authorization logic, and identifying vulnerabilities that pattern-matching alone cannot catch — then validates and enriches findings with industry-standard static analysis, dependency scanning, and secret detection. Runs against the **remote repository** on GitHub, not local files. Your code is deleted immediately after analysis completes. Auto-detection uses your local Git config to determine which repo and branch to analyze.
 
 ```sh
-export RAFTER_API_KEY="your-key"   # or use .env file
+export RAFTER_API_KEY="your-key"
 
 rafter run                                    # scan current repo (auto-detected)
 rafter scan --repo myorg/myrepo --branch main # scan specific repo
@@ -153,7 +153,7 @@ rafter get SCAN_ID > scan_results.json
 
 1. Sign up at [rafter.so](https://rafter.so)
 2. Dashboard → Settings → API Keys
-3. `export RAFTER_API_KEY="your-key"` or add to `.env`
+3. `export RAFTER_API_KEY="your-key"`
 
 ---
 

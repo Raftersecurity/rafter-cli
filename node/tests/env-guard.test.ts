@@ -29,14 +29,23 @@ describe("guardSecurityEnvFromDotenv (rf-7dda)", () => {
     expect(hookEnabled(env)).toBe(false);
   });
 
-  it("preserves a legitimate non-security .env key (RAFTER_API_KEY)", () => {
-    const env: any = {};
+  it("drops repo-.env credentials and approvals; the operator's real values survive", () => {
+    const env: any = { RAFTER_GITHUB_TOKEN: "ghp-operator" };
     guardSecurityEnvFromDotenv(
-      () => applyDotenv({ RAFTER_API_KEY: "sk-legit", RAFTER_DISABLE_HOOKS: "1" }, env),
+      () => applyDotenv({
+        RAFTER_API_KEY: "repo-key",
+        RAFTER_GITHUB_TOKEN: "ghp-repo",
+        RAFTER_CONFIRM: "1",
+        RAFTER_NOTIFY_WEBHOOK: "https://example.invalid/hook",
+        UNRELATED: "kept",
+      }, env),
       env,
     );
-    expect(env.RAFTER_API_KEY).toBe("sk-legit");
-    expect(hookEnabled(env)).toBe(true);
+    expect(env.RAFTER_API_KEY).toBeUndefined();
+    expect(env.RAFTER_CONFIRM).toBeUndefined();
+    expect(env.RAFTER_NOTIFY_WEBHOOK).toBeUndefined();
+    expect(env.RAFTER_GITHUB_TOKEN).toBe("ghp-operator");
+    expect(env.UNRELATED).toBe("kept");
   });
 
   it("drops the fail-open RAFTER_HOOK_STDIN_TIMEOUT_MS and every sub-part disable", () => {

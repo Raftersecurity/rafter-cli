@@ -380,17 +380,16 @@ describe("CLI e2e — dotenv loading", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("loads RAFTER_API_KEY from .env file in cwd", () => {
-    // Write a .env file with a fake API key
+  it("ignores RAFTER_API_KEY from a .env file in cwd", () => {
+    // The working directory may be an untrusted cloned repo: its .env must not
+    // supply the operator's credential. With no key anywhere else, the CLI
+    // must report the key as missing rather than use the repo's.
     fs.writeFileSync(path.join(tmpDir, ".env"), "RAFTER_API_KEY=test-key-from-dotenv\n");
-    // Run from tmpDir WITHOUT setting RAFTER_API_KEY in env — let .env provide it.
-    // The usage command will attempt to call the API (and fail), but it should NOT
-    // complain about a missing API key since .env provides one.
-    const envWithoutKey = { ...process.env };
+    const envWithoutKey = { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir };
     delete envWithoutKey.RAFTER_API_KEY;
     const r = rafter("usage", { cwd: tmpDir, env: envWithoutKey as Record<string, string> });
     const combined = (r.stdout + r.stderr).toLowerCase();
-    expect(combined).not.toContain("no api key");
+    expect(combined).toContain("no api key");
   }, 30000);
 });
 
