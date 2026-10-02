@@ -183,6 +183,14 @@ describe("AuditLogger", () => {
       expect(logger.verify()).toEqual([]);
     });
 
+    it("verify() passes after an entry longer than the 64 KB read chunk", () => {
+      const logger = new AuditLogger(logPath);
+      logger.logCommandIntercepted("echo 1", true, "allowed");
+      logger.logCommandIntercepted("x".repeat(140_000), true, "allowed");
+      logger.logCommandIntercepted("echo 3", true, "allowed");
+      expect(logger.verify()).toEqual([]);
+    });
+
     it("verify() detects an edited entry in the middle of the chain", () => {
       const logger = new AuditLogger(logPath);
       logger.logCommandIntercepted("echo 1", true, "allowed");

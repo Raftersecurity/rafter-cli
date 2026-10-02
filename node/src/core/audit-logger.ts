@@ -139,24 +139,32 @@ export interface AuditLogEntry {
 /**
  * Return sha256 hex of the last non-empty line of the file (including its
  * trailing newline), or null if the file is empty / does not exist.
- * Reads only the tail of the file so this is cheap even for large logs.
+ * Reads backwards from the end in chunks, so this stays cheap for large logs
+ * while still hashing the whole line when one entry is longer than a chunk
+ * (a long intercepted command can be).
  */
 export function readLastLineHash(filePath: string): string | null {
   if (!fs.existsSync(filePath)) return null;
-  const stat = fs.statSync(filePath);
-  if (stat.size === 0) return null;
-  // Read the last 64KB — an audit line tops out well under this.
-  const readBytes = Math.min(stat.size, 65536);
+  const size = fs.statSync(filePath).size;
+  if (size === 0) return null;
   const fd = fs.openSync(filePath, "r");
   try {
-    const buf = Buffer.alloc(readBytes);
-    fs.readSync(fd, buf, 0, readBytes, stat.size - readBytes);
-    const text = buf.toString("utf-8");
-    // Find last non-empty line
-    const lines = text.split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (lines[i].trim()) {
-        return createHash("sha256").update(lines[i] + "\n").digest("hex");
+    let buf = Buffer.alloc(0);
+    let pos = size;
+    while (pos > 0) {
+      const n = Math.min(65536, pos);
+      pos -= n;
+      const chunk = Buffer.alloc(n);
+      fs.readSync(fd, chunk, 0, n, pos);
+      buf = Buffer.concat([chunk, buf]);
+      const text = buf.toString("utf-8");
+      const lines = text.split("\n");
+      // lines[0] may be cut off by the chunk boundary; trust it only at file start.
+      const first = pos === 0 ? 0 : 1;
+      for (let i = lines.length - 1; i >= first; i--) {
+        if (lines[i].trim()) {
+          return createHash("sha256").update(lines[i] + "\n").digest("hex");
+        }
       }
     }
     return null;

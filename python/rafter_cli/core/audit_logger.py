@@ -80,19 +80,30 @@ def validate_webhook_url(raw_url: str) -> None:
 
 def read_last_line_hash(path: Path) -> str | None:
     """sha256 hex of the last non-empty line of path (including its trailing
-    newline), or None if the file is empty / missing."""
+    newline), or None if the file is empty / missing.
+
+    Reads backwards from the end in chunks, so this stays cheap for large logs
+    while still hashing the whole line when one entry is longer than a chunk
+    (a long intercepted command can be)."""
     if not path.exists():
         return None
     size = path.stat().st_size
     if size == 0:
         return None
-    read_bytes = min(size, 65536)
+    buf = b""
+    pos = size
     with path.open("rb") as f:
-        f.seek(size - read_bytes)
-        tail = f.read(read_bytes).decode("utf-8", errors="replace")
-    for line in reversed(tail.split("\n")):
-        if line.strip():
-            return hashlib.sha256((line + "\n").encode("utf-8")).hexdigest()
+        while pos > 0:
+            n = min(65536, pos)
+            pos -= n
+            f.seek(pos)
+            buf = f.read(n) + buf
+            lines = buf.decode("utf-8", errors="replace").split("\n")
+            # lines[0] may be cut off by the chunk boundary; trust it only at file start.
+            first = 0 if pos == 0 else 1
+            for line in reversed(lines[first:]):
+                if line.strip():
+                    return hashlib.sha256((line + "\n").encode("utf-8")).hexdigest()
     return None
 
 
