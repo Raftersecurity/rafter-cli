@@ -14,6 +14,7 @@ from rafter_cli.utils.git import (
     get_git_root,
     provider_for_host,
     infer_remote,
+    remote_branch_sha,
 )
 
 
@@ -385,3 +386,33 @@ class TestDetectRepo:
         with patch("rafter_cli.utils.git.is_inside_repo", return_value=False):
             with pytest.raises(RuntimeError, match="Could not auto-detect"):
                 detect_repo()
+
+
+# ── remote_branch_sha (real git, local bare origin) ─────────────────
+
+
+def test_remote_branch_sha_tells_unpushed_from_pushed_and_unreachable(tmp_path):
+    """`rafter run` scans the remote, so it must tell an unpushed local branch
+    (remote answers, branch absent) apart from a pushed one and from a remote
+    it cannot reach."""
+
+    def g(cwd, *args):
+        return subprocess.check_output(
+            ["git", *args], cwd=cwd, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+
+    bare = tmp_path / "origin.git"
+    work = tmp_path / "work"
+    work.mkdir()
+    g(tmp_path, "init", "-q", "--bare", str(bare))
+    g(work, "init", "-q", "-b", "main")
+    g(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
+    g(work, "remote", "add", "origin", str(bare))
+    g(work, "push", "-q", "origin", "main")
+    g(work, "checkout", "-q", "-b", "task/unpushed")
+
+    assert remote_branch_sha("main", cwd=str(work)) == g(work, "rev-parse", "main")
+    assert remote_branch_sha("task/unpushed", cwd=str(work)) is None
+
+    g(work, "remote", "set-url", "origin", str(tmp_path / "missing.git"))
+    assert remote_branch_sha("main", cwd=str(work)) is False
