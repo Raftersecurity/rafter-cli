@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-10-02
+
+### Security
+
+- **Unhandled errors no longer print your API key.** A command that failed with an unhandled exception could include the key and other local values in its traceback, printed to the terminal or a CI log. Tracebacks are now printed without local variables.
+
+- **A project's `.env` can no longer supply Rafter's own settings.** Previously, if the working directory had a `.env` file, its `RAFTER_*` values (including `RAFTER_API_KEY`) were read and could override the key and settings you configured yourself — a repository you merely scanned could supply credentials the CLI would then use. `.env` can no longer set any `RAFTER_*` variable; your own shell environment and the value stored in `~/.rafter/config.json` are unaffected. **Behavior change:** if you were relying on `RAFTER_API_KEY` (or another `RAFTER_*` setting) in a project `.env`, move it to your shell environment or to the config file — the CLI will now report the key as missing if `.env` was its only source.
+
+- **`rafter secrets --diff <ref>` and `rafter agent scan --diff <ref>` no longer accept a value that looks like a command-line option.** A ref beginning with `-` could previously be misread by git as an option rather than a ref, which could overwrite an unrelated file and report a scan as clean with no secrets found. Such a value is now rejected before it reaches git.
+
+- **`rafter agent init --local --with-gemini` no longer runs through a shell.** A path containing shell metacharacters could previously have part of it executed as a command during skill registration. Paths are now passed directly to the subprocess, never interpreted by a shell.
+
+### Fixed
+
+- **`rafter run` now checks that an auto-detected branch has been pushed before scanning it.** Running `rafter run` without `--branch` from a local branch that doesn't exist on the remote used to queue a scan that failed later with a "branch not found" error. The CLI now checks first and fails immediately with a clear message to push the branch or pass `--branch` explicitly. If the branch exists on the remote but your local commit is ahead of it, the CLI now notes that the scan covers the pushed commit, not your local changes.
+
 ## [0.10.5] - 2026-09-13
 
 ### Security
@@ -72,7 +88,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Rafter Sites CLI + MCP** (Rome-1/securable-bolt#151). New `rafter sites create|scan|list|get` commands and matching MCP tools (`sites_create`/`sites_scan`/`sites_list`/`sites_get`) for Rafter Sites — live-application security monitoring (exposed backends, DNS misconfig, SEO, accessibility) — calling the new API-key-authenticated `/api/static/sites*` endpoints. `sites scan` accepts either a project id or a URL. Node + Python parity, MCP tools resolve the API key from `RAFTER_API_KEY` or stored config rather than exiting, so a missing key fails the one tool call instead of the whole server.
 - Live-tested against production before release, which surfaced and fixed: `--format md` now fails with a clear error instead of silently returning JSON (the Sites API has no markdown representation yet); MCP `sites_scan` now rejects being given both `projectId` and `url` instead of silently preferring `projectId`; a double-slash in constructed request URLs; and unreachable per-status default error messages.
 
 ## [0.9.1] - 2026-07-21

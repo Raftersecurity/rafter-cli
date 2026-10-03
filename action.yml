@@ -98,10 +98,30 @@ runs:
         # ({_note, scan_mode, triage_applied, results: [...]}); older versions
         # emitted a bare array. Handle both so users pinning `version:` to an
         # older release don't break.
+        # rf-v2mj — `|| echo "0"` here was the whole bug: jq fails on a truncated
+        # report, an HTML error page or an auth failure, and the fallback turned
+        # every one of those into finding-count=0. Zero findings and "I could not
+        # read the output" became the same value, so the gate passed PRECISELY
+        # when it could not see its input. An unreadable report is not a clean
+        # scan; the count is emitted only when a parse actually succeeded.
         if [ "${{ inputs.format }}" = "json" ]; then
-          COUNT=$(echo "${OUTPUT}" | jq '[(if type == "array" then . else .results end) | .[]?.matches[]?] | length' 2>/dev/null || echo "0")
+          if ! COUNT=$(printf '%s' "${OUTPUT}" | jq -e '[(if type == "array" then . else .results end) | .[]?.matches[]?] | length' 2>/dev/null); then
+            echo "::error::Rafter's output could not be parsed as JSON, so the finding count is unknown."
+            echo "::error::A report this action cannot read is not a clean scan. Re-run, or check the scanner's stderr above."
+            # Deliberately NOT written as 0: a consumer reading finding-count
+            # gets an empty string, never a fabricated zero.
+            echo "finding-count=" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
         else
-          COUNT=$(echo "${OUTPUT}" | grep -c 'Secret:' 2>/dev/null || echo "0")
+          # grep exits 1 for "no matches", which is a CLEAN result and must not
+          # be confused with grep failing (exit >1).
+          COUNT=$(printf '%s' "${OUTPUT}" | grep -c 'Secret:'); GREP_STATUS=$?
+          if [ "$GREP_STATUS" -gt 1 ]; then
+            echo "::error::Could not scan Rafter's output for findings (grep exited ${GREP_STATUS})."
+            echo "finding-count=" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
         fi
         echo "finding-count=${COUNT}" >> "$GITHUB_OUTPUT"
 

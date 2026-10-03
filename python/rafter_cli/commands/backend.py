@@ -24,7 +24,7 @@ from ..utils.api import (
     resolve_key,
     write_payload,
 )
-from ..utils.git import detect_repo
+from ..utils.git import _run, branch_from_env, detect_repo, remote_branch_sha
 
 
 def _plus_approval_gate_enabled() -> bool:
@@ -407,6 +407,30 @@ def _do_remote_scan(
 
     if not (repo and branch) and not quiet:
         print(f"Repo auto-detected: {repo_slug} @ {branch_name} (note: scanning remote)", file=sys.stderr)
+
+    # The backend clones the remote, so an auto-detected branch that was never
+    # pushed can only fail there. Say so now instead of queueing that scan.
+    # A repo_url is inferred only when the slug came from the origin remote.
+    if detected_repo_url and not branch and not branch_from_env():
+        remote_sha = remote_branch_sha(branch_name)
+        if remote_sha is None:
+            print(
+                f'Branch "{branch_name}" does not exist on the remote (origin). Rafter scans '
+                "the remote repository: push the branch first, or pass --branch to scan one that exists.",
+                file=sys.stderr,
+            )
+            raise typer.Exit(code=EXIT_GENERAL_ERROR)
+        if remote_sha and not quiet:
+            try:
+                head = _run(["git", "rev-parse", "HEAD"])
+            except Exception:
+                head = None
+            if head and head != remote_sha:
+                print(
+                    f"Note: local HEAD differs from origin/{branch_name}; "
+                    f"the scan covers the pushed commit {remote_sha[:7]}.",
+                    file=sys.stderr,
+                )
 
     # Explicit flags override inferred values.
     resolved_provider = provider or detected_provider

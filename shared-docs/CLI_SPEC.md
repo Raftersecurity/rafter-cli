@@ -76,8 +76,8 @@ Aliases: `rafter scan`, `rafter scan remote`
 Trigger a new security scan for a repository.
 
 - `-k, --api-key TEXT` — API key. Resolution order: this flag → `RAFTER_API_KEY` env → `backend.apiKey` in global config (see `rafter agent config`)
-- `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
-- `-b, --branch TEXT` — branch (default: current branch or 'main')
+- `-r, --repo TEXT` — org/repo (default: auto-detected from git remote; errors if the remote's host isn't a recognized GitHub/GitLab/Bitbucket/Gitea host — pass this flag explicitly for anything else)
+- `-b, --branch TEXT` — branch (default: current branch; errors on a detached HEAD instead of submitting a commit SHA or guessing 'main' — pass this flag explicitly). When both repo and branch are auto-detected, rafter asks `origin` whether the branch exists and exits `1` if it does not, since the scan runs against the remote; if `origin` cannot be reached it proceeds. When the pushed commit differs from local `HEAD` it notes that the scan covers the pushed commit
 - `-f, --format [json|md]` — output format (default: md)
 - `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds agentic deep-dive analysis that examines your codebase the way a professional cybersecurity auditor would — tracing data flows and reasoning about business logic on top of the full SAST/SCA toolchain. **Plus is a paid tier that consumes credits.**
 - `--github-token TEXT` — GitHub PAT for private repos (or `RAFTER_GITHUB_TOKEN` env var)
@@ -1459,7 +1459,7 @@ rafter agent config set agent.riskLevel aggressive
 
 ## Notes
 
-- API key: provided via `--api-key` flag, `RAFTER_API_KEY` env var, or `.env` file
+- API key: provided via `--api-key` flag, `RAFTER_API_KEY` env var, or a key stored in the global `~/.rafter/config.json`. A `.env` file in the working directory is never read for `RAFTER_*` settings
 - Git auto-detection works in CI (supports `GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, `CI_REPOSITORY`, `CI_COMMIT_BRANCH`, `CI_BRANCH`)
 - Remote code analysis targets the remote repository, not local files
 - All scan data to stdout, all status messages to stderr

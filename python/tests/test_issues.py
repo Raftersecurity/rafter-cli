@@ -802,3 +802,45 @@ class TestFromScanCommandRefusesUnreadablePayload:
             )
         assert exc.value.exit_code == 1
         assert "No findings to create issues for" not in capsys.readouterr().err
+
+
+# sable-pqmw: detect_repo() can now raise a RuntimeError whose text embeds
+# the (attacker-influenceable) remote URL/host. That text reaches
+# print_stderr(fmt.error(...)), which renders through Rich with markup
+# parsing on -- a value containing a bracketed sequence like "[/bold]"
+# closes a tag that was never opened and crashes with an uncaught
+# rich.errors.MarkupError instead of a clean error + exit code.
+class TestDetectRepoFailureRendering:
+    def test_markup_like_error_text_does_not_crash_from_scan(self, monkeypatch):
+        import typer
+
+        from rafter_cli.commands.issues import issues_app as mod
+
+        def raise_malicious(*a, **k):
+            raise RuntimeError("Unsupported git remote host 'evil[/bold]host' (from '...').")
+
+        monkeypatch.setattr(mod, "detect_repo", raise_malicious)
+
+        with pytest.raises(typer.Exit) as exc:
+            mod.from_scan(
+                scan_id=None, from_local="/nonexistent.json", repo=None, api_key=None,
+                no_dedup=True, dry_run=True, quiet=False,
+            )
+        assert exc.value.exit_code == 1
+
+    def test_markup_like_error_text_does_not_crash_from_text(self, monkeypatch):
+        import typer
+
+        from rafter_cli.commands.issues import issues_app as mod
+
+        def raise_malicious(*a, **k):
+            raise RuntimeError("Unsupported git remote host 'evil[/bold]host' (from '...').")
+
+        monkeypatch.setattr(mod, "detect_repo", raise_malicious)
+
+        with pytest.raises(typer.Exit) as exc:
+            mod.from_text(
+                text="a bug", file=None, title=None, labels=None, repo=None,
+                dry_run=True, quiet=False,
+            )
+        assert exc.value.exit_code == 1
