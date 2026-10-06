@@ -155,6 +155,8 @@ class TestWebhookNotification:
             assert body["timestamp"] is not None
             assert "[rafter]" in body["text"]
             assert "[rafter]" in body["content"]
+            # Slack ("text") and Discord ("content") payloads carry the same message.
+            assert body["text"] == body["content"]
 
     def test_no_webhook_on_low_risk(self, logger: AuditLogger):
         config = self._make_config(webhook="https://hooks.example.com/test")
@@ -184,49 +186,6 @@ class TestWebhookNotification:
             # Critical should trigger
             logger.log_secret_detected("config.js", "AWS Key", "blocked")
             mock_thread.assert_called_once()
-
-    def test_webhook_failure_does_not_block_logging(self, logger: AuditLogger, tmp_path: Path):
-        config = self._make_config(webhook="https://hooks.example.com/test")
-
-        def failing_post():
-            raise ConnectionError("network error")
-
-        with patch("rafter_cli.core.config_manager.ConfigManager.load", return_value=config), \
-             patch("threading.Thread") as mock_thread:
-            mock_instance = MagicMock()
-            mock_thread.return_value = mock_instance
-
-            logger.log_secret_detected("config.js", "AWS Key", "blocked")
-
-            # Audit log should still be written
-            log_path = tmp_path / "audit.jsonl"
-            assert log_path.exists()
-            content = log_path.read_text()
-            assert "secret_detected" in content
-
-    def test_payload_includes_slack_and_discord_fields(self, logger: AuditLogger):
-        config = self._make_config(webhook="https://hooks.example.com/test")
-        fake_addrinfo = [(2, 1, 6, '', ('93.184.216.34', 443))]
-
-        with patch("rafter_cli.core.config_manager.ConfigManager.load", return_value=config), \
-             patch("rafter_cli.core.audit_logger.socket.getaddrinfo", return_value=fake_addrinfo), \
-             patch("threading.Thread") as mock_thread:
-            mock_instance = MagicMock()
-            mock_thread.return_value = mock_instance
-
-            logger.log_secret_detected("config.js", "AWS Key", "blocked", "claude-code")
-
-        target_fn = mock_thread.call_args.kwargs["target"]
-        with patch("rafter_cli.core.audit_logger.socket.getaddrinfo", return_value=fake_addrinfo), \
-             patch("urllib.request.urlopen") as mock_urlopen:
-            target_fn()
-            req = mock_urlopen.call_args[0][0]
-            body = json.loads(req.data.decode())
-            # Slack compatibility
-            assert "text" in body
-            # Discord compatibility
-            assert "content" in body
-            assert body["text"] == body["content"]
 
 
 class TestConfigDeserialization:

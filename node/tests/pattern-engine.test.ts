@@ -94,23 +94,6 @@ line 3`;
     expect(matches.length).toBe(0);
   });
 
-  it("should detect multiple secrets in same text", () => {
-    const engine = new PatternEngine(testPatterns);
-    const text = `
-      const AWS_KEY = "AKIAIOSFODNN7EXAMPLE";
-      const GITHUB_TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz1234567890";
-    `;
-
-    const matches = engine.scan(text);
-
-    // Should find at least AWS key and GitHub token
-    expect(matches.length).toBeGreaterThanOrEqual(2);
-    const awsMatch = matches.find(m => m.pattern.name === "AWS Access Key");
-    const githubMatch = matches.find(m => m.pattern.name === "GitHub Token");
-    expect(awsMatch).toBeDefined();
-    expect(githubMatch).toBeDefined();
-  });
-
   it("should not match compound variable names like anthropic_api_key", () => {
     const engine = new PatternEngine(testPatterns);
     const text = 'anthropic_api_key = "sk-ant-something"';

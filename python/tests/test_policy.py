@@ -87,12 +87,6 @@ class TestBackendCompat:
 
 
 class TestGenerateClaudeConfig:
-    def test_valid_json(self):
-        output = _generate_claude_config()
-        config = json.loads(output)
-        assert "hooks" in config
-        assert "PreToolUse" in config["hooks"]
-
     def test_has_bash_matcher(self):
         config = json.loads(_generate_claude_config())
         matchers = [entry["matcher"] for entry in config["hooks"]["PreToolUse"]]

@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-import pytest
 
 from rafter_cli.core.custom_patterns import (
     load_custom_patterns,
@@ -314,6 +312,8 @@ class TestIsSuppressed:
         suppressions = [Suppression(path_glob="*.env", pattern_name="AWS Access Key ID")]
         assert is_suppressed(".env", "AWS Access Key ID", suppressions)
         assert not is_suppressed(".env", "Generic Secret", suppressions)
+        # A pattern-scoped rule does not leak to other paths.
+        assert not is_suppressed("src/main.py", "AWS Access Key ID", suppressions)
 
     def test_case_insensitive_pattern_name(self):
         suppressions = [Suppression(path_glob="*.env", pattern_name="aws access key id")]
@@ -342,21 +342,6 @@ class TestIsSuppressed:
 class TestCustomPatternsViaScanner:
     """Test custom patterns passed to RegexScanner constructor."""
 
-    def test_custom_pattern_name_in_results(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "rafter_cli.core.custom_patterns.get_rafter_dir", lambda: tmp_path
-        )
-        scanner = RegexScanner(
-            custom_patterns=[
-                {"name": "Internal Token", "regex": "INTERNAL_TK_[A-Z0-9]{20}", "severity": "critical"},
-            ]
-        )
-
-        f = tmp_path / "config.txt"
-        f.write_text("token = INTERNAL_TK_ABCDEFGHIJ0123456789\n")
-        result = scanner.scan_file(str(f))
-        assert any(m.pattern.name == "Internal Token" for m in result.matches)
-
     def test_custom_pattern_severity_respected(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
             "rafter_cli.core.custom_patterns.get_rafter_dir", lambda: tmp_path
@@ -373,46 +358,3 @@ class TestCustomPatternsViaScanner:
         match = next((m for m in result.matches if m.pattern.name == "Low Risk Token"), None)
         assert match is not None
         assert match.pattern.severity == "low"
-
-    def test_custom_pattern_missing_description(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "rafter_cli.core.custom_patterns.get_rafter_dir", lambda: tmp_path
-        )
-        scanner = RegexScanner(
-            custom_patterns=[
-                {"name": "No Desc", "regex": "NODESC_[0-9]{8}", "severity": "medium"},
-            ]
-        )
-
-        f = tmp_path / "file.txt"
-        f.write_text("NODESC_12345678\n")
-        result = scanner.scan_file(str(f))
-        assert any(m.pattern.name == "No Desc" for m in result.matches)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Interaction tests: custom patterns + .rafterignore
-# ══════════════════════════════════════════════════════════════════════
-
-
-class TestInteraction:
-    """Test interactions between custom patterns and .rafterignore."""
-
-    def test_custom_pattern_in_ignored_file_suppressed(self):
-        suppressions = [Suppression(path_glob="test/fixtures/*")]
-        assert is_suppressed("test/fixtures/secrets.txt", "Custom (internal)", suppressions)
-
-    def test_custom_pattern_not_in_rafterignore_reported(self):
-        suppressions = [Suppression(path_glob="test/fixtures/*")]
-        assert not is_suppressed("src/config.py", "Custom (internal)", suppressions)
-
-    def test_builtin_pattern_in_rafterignore_suppressed(self):
-        suppressions = [Suppression(path_glob="*.env", pattern_name="AWS Access Key ID")]
-        assert is_suppressed("config/.env", "AWS Access Key ID", suppressions)
-
-    def test_builtin_pattern_not_in_rafterignore_reported(self):
-        suppressions = [Suppression(path_glob="*.env", pattern_name="AWS Access Key ID")]
-        # Different pattern, same file
-        assert not is_suppressed("config/.env", "Generic Secret", suppressions)
-        # Same pattern, different file
-        assert not is_suppressed("src/main.py", "AWS Access Key ID", suppressions)

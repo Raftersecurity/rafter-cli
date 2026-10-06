@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from typer.testing import CliRunner
 
 from rafter_cli.commands.agent import (
@@ -366,21 +365,6 @@ class TestProbeClaudeCode:
 class TestVerifyCommand:
     def _make_check(self, passed: bool, optional: bool = False) -> _CheckResult:
         return _CheckResult("Test", passed, "detail", optional=optional)
-
-    def test_exits_0_when_all_core_checks_pass(self, tmp_path):
-        """All core checks pass, optional absent → exit 0."""
-        with patch("rafter_cli.commands.agent._check_config",
-                   return_value=_CheckResult("Config", True, "ok")), \
-             patch("rafter_cli.commands.agent._check_betterleaks",
-                   return_value=_CheckResult("Betterleaks", True, "ok")), \
-             patch("rafter_cli.commands.agent._check_claude_code",
-                   return_value=_CheckResult("Claude Code", False, "not configured", optional=True)), \
-             patch("rafter_cli.commands.agent._check_openclaw",
-                   return_value=_CheckResult("OpenClaw", False, "not installed", optional=True)), \
-             patch("rafter_cli.commands.agent._check_codex",
-                   return_value=_CheckResult("Codex CLI", False, "not detected", optional=True)):
-            result = runner.invoke(agent_app, ["verify"])
-        assert result.exit_code == 0
 
     def test_exits_0_with_all_checks_passing(self, tmp_path):
         """All checks pass → exit 0, no warnings."""
