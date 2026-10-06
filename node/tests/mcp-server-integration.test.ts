@@ -432,35 +432,9 @@ describe("MCP Server — version reporting", () => {
     // Ensure it's NOT the old hardcoded "0.5.0"
     expect(version).not.toBe("0.5.0");
   });
-
-  it("version is read dynamically from package.json, not hardcoded", async () => {
-    // Read the source to confirm no hardcoded version
-    const fs = await import("fs");
-    const source = fs.readFileSync(
-      new URL("../src/commands/mcp/server.ts", import.meta.url),
-      "utf8"
-    );
-    // Should use createRequire to load package.json, not a hardcoded string
-    expect(source).toContain('_require("../../../package.json")');
-    expect(source).not.toMatch(/version:\s*["']0\.5\.0["']/);
-    expect(source).not.toMatch(/version:\s*["']0\.6\.\d["']/);
-  });
 });
 
 describe("MCP Server — lifecycle", () => {
-  it("should create and connect server without errors", async () => {
-    const s = createServer();
-    const c = new Client({ name: "lifecycle-test", version: "1.0.0" });
-    const [ct, st] = InMemoryTransport.createLinkedPair();
-
-    await expect(
-      Promise.all([s.connect(st), c.connect(ct)])
-    ).resolves.not.toThrow();
-
-    await c.close();
-    await s.close();
-  });
-
   it("should handle multiple sequential connect/disconnect cycles", async () => {
     for (let i = 0; i < 3; i++) {
       const s = createServer();

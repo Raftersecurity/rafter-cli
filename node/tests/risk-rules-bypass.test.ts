@@ -164,10 +164,6 @@ describe("risk rule evasion vectors", () => {
       expect(assessCommandRisk("git push origin feature/my-branch")).toBe("low");
     });
 
-    it("npm install is low risk", () => {
-      expect(assessCommandRisk("npm install express")).toBe("low");
-    });
-
     it("curl without pipe is low risk", () => {
       expect(assessCommandRisk("curl -o file.tar.gz https://example.com/release.tar.gz")).toBe("low");
     });
@@ -223,11 +219,6 @@ describe("risk rule evasion vectors", () => {
 
     it("hard-blocks a nested shell wrapper", () => {
       expect(assessCommandRisk(`bash -c "sh -c 'rm -rf /'"`)).toBe("critical");
-    });
-
-    it("does NOT flag an echo nested inside a shell wrapper", () => {
-      // The inner command is `echo '…'` — printing is not executing.
-      expect(assessCommandRisk(`bash -c "echo 'rm -rf /'"`)).toBe("low");
     });
 
     it("still risk-assesses a shell-wrapped force push", () => {

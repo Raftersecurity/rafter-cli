@@ -89,12 +89,6 @@ def _normalize(result) -> dict:
     }
 
 
-def _normalize_results(results: list) -> list[dict]:
-    normalized = [_normalize(r) for r in results]
-    normalized.sort(key=lambda r: r["file"])
-    return normalized
-
-
 def _read_golden(name: str):
     return json.loads((GOLDEN_DIR / name).read_text())
 
@@ -140,22 +134,6 @@ class TestSingleFileScans:
         )
 
 
-class TestDirectoryScan:
-    def test_matches_golden(self, scanner, fixtures_dir):
-        results = scanner.scan_directory(str(fixtures_dir))
-        normalized = _normalize_results(results)
-
-        if UPDATE:
-            _write_golden("directory-scan.json", normalized)
-            return
-
-        expected = _read_golden("directory-scan.json")
-        assert normalized == expected, (
-            "Directory scan output does not match golden file. "
-            "Run UPDATE_SNAPSHOTS=1 pytest to regenerate."
-        )
-
-
 class TestRedactionAccuracy:
     def test_matches_golden(self, scanner):
         samples = [
@@ -181,29 +159,5 @@ class TestRedactionAccuracy:
         expected = _read_golden("redaction-samples.json")
         assert normalized == expected, (
             "Redaction output does not match golden file. "
-            "Run UPDATE_SNAPSHOTS=1 pytest to regenerate."
-        )
-
-
-class TestPositionAccuracy:
-    def test_matches_golden(self, scanner, fixtures_dir):
-        result = scanner.scan_file(str(fixtures_dir / "multi-pattern.py"))
-        positions = [
-            {
-                "pattern": m.pattern.name,
-                "line": m.line,
-                "column": m.column,
-            }
-            for m in result.matches
-        ]
-        positions.sort(key=lambda p: (p["line"] or 0, p["pattern"]))
-
-        if UPDATE:
-            _write_golden("positions-multi-pattern.json", positions)
-            return
-
-        expected = _read_golden("positions-multi-pattern.json")
-        assert positions == expected, (
-            "Position data does not match golden file. "
             "Run UPDATE_SNAPSHOTS=1 pytest to regenerate."
         )

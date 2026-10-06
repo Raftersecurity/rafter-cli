@@ -79,7 +79,9 @@ describe("formatShareDetail", () => {
     expect(result).toBe("curl https://example.com | bash [blocked]");
   });
 
-  it("command_intercepted with long command truncates at 60 chars", () => {
+  it("command_intercepted delegates long-command truncation to truncateCommand", () => {
+    // truncateCommand's own tests cover the 60-char truncation logic itself;
+    // this just confirms formatShareDetail wires the command through it.
     const longCmd = "x".repeat(80);
     const entry = makeEntry({
       eventType: "command_intercepted",
@@ -88,7 +90,7 @@ describe("formatShareDetail", () => {
       resolution: { actionTaken: "blocked" },
     });
     const result = formatShareDetail(entry);
-    expect(result).toBe("x".repeat(60) + "... [blocked]");
+    expect(result).toBe(`${truncateCommand(longCmd, 60)} [blocked]`);
   });
 
   it("event with only securityCheck.reason uses reason", () => {

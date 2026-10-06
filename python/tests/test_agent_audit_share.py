@@ -3,13 +3,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from typer.testing import CliRunner
 
 from rafter_cli.commands.agent import (
     _format_share_detail,
     _truncate_command,
-    _audit_share,
     agent_app,
 )
 
@@ -154,23 +152,9 @@ class TestAuditShareIntegration:
         assert "Policy: sha256:" in out
         assert "Recent events (last 5):" in out
         assert "https://github.com/Raftersecurity/rafter-cli/issues" in out
-
-    def test_share_output_contains_event_line(self, capsys):
-        with (
-            patch(
-                "rafter_cli.commands.agent.ConfigManager",
-                return_value=MagicMock(load_with_policy=MagicMock(return_value=self._mock_cfg())),
-            ),
-            patch(
-                "rafter_cli.commands.agent.AuditLogger",
-                return_value=MagicMock(read=MagicMock(return_value=self._mock_entries())),
-            ),
-        ):
-            result = runner.invoke(agent_app, ["audit", "--share"])
-
-        assert "command_intercepted" in result.output
-        assert "HIGH" in result.output
-        assert "[blocked]" in result.output
+        assert "command_intercepted" in out
+        assert "HIGH" in out
+        assert "[blocked]" in out
 
     def test_share_no_entries(self):
         with (
@@ -187,19 +171,6 @@ class TestAuditShareIntegration:
 
         assert result.exit_code == 0
         assert "(no entries)" in result.output
-
-    def test_policy_hash_is_16_hex_chars(self):
-        with (
-            patch(
-                "rafter_cli.commands.agent.ConfigManager",
-                return_value=MagicMock(load_with_policy=MagicMock(return_value=self._mock_cfg())),
-            ),
-            patch(
-                "rafter_cli.commands.agent.AuditLogger",
-                return_value=MagicMock(read=MagicMock(return_value=[])),
-            ),
-        ):
-            result = runner.invoke(agent_app, ["audit", "--share"])
 
         import re
         match = re.search(r"sha256:([0-9a-f]+)", result.output)

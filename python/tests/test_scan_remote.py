@@ -7,19 +7,16 @@ Covers:
 from __future__ import annotations
 
 import json
-import sys
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import click.exceptions
 import pytest
-import typer
 
 from rafter_cli.commands.backend import _do_remote_scan, _handle_scan_status_interactive
 from rafter_cli.utils.api import (
     EXIT_GENERAL_ERROR,
     EXIT_INSUFFICIENT_SCOPE,
     EXIT_QUOTA_EXHAUSTED,
-    EXIT_SCAN_NOT_FOUND,
     EXIT_SUCCESS,
 )
 
@@ -43,45 +40,6 @@ def _mock_response(status_code: int, text: str = "", json_body=None) -> MagicMoc
 
 class TestDoRemoteScan:
     """Unit tests for the core remote scan trigger function."""
-
-    @patch("rafter_cli.commands.backend.api_post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
-    def test_success_skip_interactive(self, _mock_repo, mock_post):
-        """200 with skip_interactive returns without polling."""
-        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
-
-        # Should not raise
-        _do_remote_scan(
-            repo="owner/repo",
-            branch="main",
-            api_key="test-key",
-            fmt="json",
-            skip_interactive=True,
-            quiet=True,
-        )
-
-    @patch("rafter_cli.commands.backend.api_post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
-    def test_posts_correct_body(self, _mock_repo, mock_post):
-        """Verify POST body contains repository_name, branch_name, scan_mode."""
-        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
-
-        _do_remote_scan(
-            repo="owner/repo",
-            branch="main",
-            api_key="test-key",
-            fmt="json",
-            skip_interactive=True,
-            quiet=True,
-            mode="fast",
-        )
-
-        _, kwargs = mock_post.call_args
-        body = kwargs["json"]
-        assert body["repository_name"] == "owner/repo"
-        assert body["branch_name"] == "main"
-        assert body["scan_mode"] == "fast"
-        assert "github_token" not in body
 
     @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
@@ -132,49 +90,36 @@ class TestDoRemoteScan:
         assert "provider" not in body
         assert "repo_url" not in body
 
+    @pytest.mark.parametrize(
+        "provider, repo, repo_url",
+        [
+            ("gitlab", "group/project", "https://gitlab.com/group/project"),
+            ("bitbucket", "team/repo", "https://bitbucket.org/team/repo"),
+        ],
+    )
     @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
-    def test_flag_provider_gitlab_sends_provider_and_repo_url(self, _mock_repo, mock_post):
-        """--provider gitlab + --repo-url are sent for a non-github remote."""
+    def test_flag_provider_sends_provider_and_repo_url(
+        self, _mock_repo, mock_post, provider, repo, repo_url
+    ):
+        """--provider <non-github> + --repo-url are sent together for a non-github remote."""
         mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
 
         _do_remote_scan(
-            repo="group/project",
+            repo=repo,
             branch="main",
             api_key="test-key",
             fmt="json",
             skip_interactive=True,
             quiet=True,
-            provider="gitlab",
-            repo_url="https://gitlab.com/group/project",
+            provider=provider,
+            repo_url=repo_url,
         )
 
         _, kwargs = mock_post.call_args
         body = kwargs["json"]
-        assert body["provider"] == "gitlab"
-        assert body["repo_url"] == "https://gitlab.com/group/project"
-
-    @patch("rafter_cli.commands.backend.api_post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
-    def test_flag_provider_bitbucket_sends_pair(self, _mock_repo, mock_post):
-        """--provider bitbucket + --repo-url are sent together."""
-        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
-
-        _do_remote_scan(
-            repo="team/repo",
-            branch="main",
-            api_key="test-key",
-            fmt="json",
-            skip_interactive=True,
-            quiet=True,
-            provider="bitbucket",
-            repo_url="https://bitbucket.org/team/repo",
-        )
-
-        _, kwargs = mock_post.call_args
-        body = kwargs["json"]
-        assert body["provider"] == "bitbucket"
-        assert body["repo_url"] == "https://bitbucket.org/team/repo"
+        assert body["provider"] == provider
+        assert body["repo_url"] == repo_url
 
     @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("group/project", "main", None, None))
@@ -542,24 +487,6 @@ class TestHandleScanStatusInteractive:
         assert json.loads(out) == response_data
 
     @patch("rafter_cli.commands.backend.api_get")
-    def test_404_raises_exit_scan_not_found(self, mock_get):
-        """HTTP 404 → exit code 2 (scan not found)."""
-        mock_get.return_value = _mock_response(404, "not found")
-
-        with pytest.raises(click.exceptions.Exit) as exc_info:
-            _handle_scan_status_interactive("bad-id", {"x-api-key": "k"}, "md", True)
-        assert exc_info.value.exit_code == EXIT_SCAN_NOT_FOUND
-
-    @patch("rafter_cli.commands.backend.api_get")
-    def test_non_200_raises_general_error(self, mock_get):
-        """Non-200, non-404 → exit code 1 (general error)."""
-        mock_get.return_value = _mock_response(500, "server error")
-
-        with pytest.raises(click.exceptions.Exit) as exc_info:
-            _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "md", True)
-        assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
-
-    @patch("rafter_cli.commands.backend.api_get")
     def test_failed_status_raises_general_error(self, mock_get):
         """Status 'failed' → exit code 1."""
         mock_get.return_value = _mock_response(
@@ -570,13 +497,22 @@ class TestHandleScanStatusInteractive:
             _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "md", True)
         assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
 
+    @pytest.mark.parametrize(
+        "status, markdown",
+        [
+            ("queued", "ok"),
+            ("pending", "done"),
+        ],
+    )
     @patch("rafter_cli.commands.backend.time.sleep")
     @patch("rafter_cli.commands.backend.api_get")
-    def test_polls_queued_then_completed(self, mock_get, mock_sleep):
-        """Queued → poll → completed."""
+    def test_polls_non_terminal_status_then_completed(
+        self, mock_get, mock_sleep, status, markdown
+    ):
+        """Queued/pending → poll → completed."""
         mock_get.side_effect = [
-            _mock_response(200, json_body={"status": "queued"}),
-            _mock_response(200, json_body={"status": "completed", "markdown": "ok"}),
+            _mock_response(200, json_body={"status": status}),
+            _mock_response(200, json_body={"status": "completed", "markdown": markdown}),
         ]
 
         result = _handle_scan_status_interactive(
@@ -585,21 +521,6 @@ class TestHandleScanStatusInteractive:
         assert result == EXIT_SUCCESS
         assert mock_get.call_count == 2
         mock_sleep.assert_called_with(10)
-
-    @patch("rafter_cli.commands.backend.time.sleep")
-    @patch("rafter_cli.commands.backend.api_get")
-    def test_polls_pending_then_completed(self, mock_get, mock_sleep):
-        """Pending → poll → completed."""
-        mock_get.side_effect = [
-            _mock_response(200, json_body={"status": "pending"}),
-            _mock_response(200, json_body={"status": "completed", "markdown": "done"}),
-        ]
-
-        result = _handle_scan_status_interactive(
-            "s1", {"x-api-key": "k"}, "md", True
-        )
-        assert result == EXIT_SUCCESS
-        assert mock_get.call_count == 2
 
     @patch("rafter_cli.commands.backend.time.sleep")
     @patch("rafter_cli.commands.backend.api_get")

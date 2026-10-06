@@ -10,7 +10,6 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -205,17 +204,15 @@ class TestMixedContent:
 
 
 class TestEdgeCases:
-    def test_empty_file(self, tmp_path):
-        (tmp_path / "empty.txt").write_text("")
+    def test_empty_directory_empty_file_and_whitespace_only_file(self, tmp_path):
         scanner = RegexScanner()
-        result = scanner.scan_file(str(tmp_path / "empty.txt"))
-        assert len(result.matches) == 0
+        assert len(scanner.scan_directory(str(tmp_path))) == 0
 
-    def test_whitespace_only_file(self, tmp_path):
+        (tmp_path / "empty.txt").write_text("")
+        assert len(scanner.scan_file(str(tmp_path / "empty.txt")).matches) == 0
+
         (tmp_path / "ws.txt").write_text("   \n\n\t\t\n   ")
-        scanner = RegexScanner()
-        result = scanner.scan_file(str(tmp_path / "ws.txt"))
-        assert len(result.matches) == 0
+        assert len(scanner.scan_file(str(tmp_path / "ws.txt")).matches) == 0
 
     def test_unicode_content_around_secrets(self, tmp_path):
         content = (
@@ -259,11 +256,6 @@ class TestEdgeCases:
         scanner = RegexScanner()
         result = scanner.scan_file("/tmp/nonexistent-rafter-file-99999.txt")
         assert len(result.matches) == 0
-
-    def test_empty_directory(self, tmp_path):
-        scanner = RegexScanner()
-        results = scanner.scan_directory(str(tmp_path))
-        assert len(results) == 0
 
 
 # ── Git --staged scanning ────────────────────────────────────────────

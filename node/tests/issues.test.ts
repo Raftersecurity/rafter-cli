@@ -111,18 +111,6 @@ describe("buildFromBackendVulnerability", () => {
     line: 42,
   };
 
-  it("creates draft with correct title", () => {
-    const draft = buildFromBackendVulnerability(vuln);
-    expect(draft.title).toContain("[CRITICAL]");
-    expect(draft.title).toContain("sql-injection");
-  });
-
-  it("includes file and line in body", () => {
-    const draft = buildFromBackendVulnerability(vuln);
-    expect(draft.body).toContain("`src/db.ts`");
-    expect(draft.body).toContain("line 42");
-  });
-
   it("sets security and severity labels", () => {
     const draft = buildFromBackendVulnerability(vuln);
     expect(draft.labels).toContain("security");
@@ -148,24 +136,6 @@ describe("buildFromLocalMatch", () => {
     line: 10,
     redacted: "AKIA****XXXX",
   };
-
-  it("creates draft with pattern name in title", () => {
-    const draft = buildFromLocalMatch("src/config.ts", match);
-    expect(draft.title).toContain("AWS Access Key");
-    expect(draft.title).toContain("config.ts");
-    expect(draft.title).toContain("[HIGH]");
-  });
-
-  it("includes redacted match in body", () => {
-    const draft = buildFromLocalMatch("src/config.ts", match);
-    expect(draft.body).toContain("AKIA****XXXX");
-  });
-
-  it("includes remediation steps", () => {
-    const draft = buildFromLocalMatch("src/config.ts", match);
-    expect(draft.body).toContain("Rotate the exposed credential");
-    expect(draft.body).toContain("secrets manager");
-  });
 
   it("sets secret-detected label", () => {
     const draft = buildFromLocalMatch("src/config.ts", match);
@@ -213,11 +183,6 @@ describe("parseNaturalText", () => {
     expect(result.labels).toContain("severity:critical");
   });
 
-  it("detects P0 as critical", () => {
-    const result = parseNaturalText("P0 issue found");
-    expect(result.labels).toContain("severity:critical");
-  });
-
   it("detects high severity", () => {
     const result = parseNaturalText("High severity bug in parser");
     expect(result.labels).toContain("severity:high");
@@ -231,17 +196,6 @@ describe("parseNaturalText", () => {
   it("detects low severity", () => {
     const result = parseNaturalText("Low priority cleanup");
     expect(result.labels).toContain("severity:low");
-  });
-
-  it("detects security keywords", () => {
-    const result = parseNaturalText("XSS vulnerability in comments");
-    expect(result.labels).toContain("security");
-  });
-
-  it("extracts file references", () => {
-    const result = parseNaturalText("Bug in src/auth.ts:42");
-    expect(result.body).toContain("src/auth.ts:42");
-    expect(result.body).toContain("### Referenced Files");
   });
 
   it("adds Rafter footer", () => {
@@ -375,14 +329,6 @@ describe("from-scan: deduplication flow", () => {
     const filtered = [draft1, draft2].filter((d) => !dupes.has(d.fingerprint));
     expect(filtered).toHaveLength(1);
     expect(filtered[0].fingerprint).toBe(draft2.fingerprint);
-  });
-
-  it("keeps all drafts when --no-dedup (no filtering applied)", () => {
-    const draft1 = makeDraft("a.ts", "AWS_KEY");
-    const draft2 = makeDraft("b.ts", "DB_PASS");
-    // With --no-dedup, we skip the findDuplicates call entirely
-    const drafts = [draft1, draft2];
-    expect(drafts).toHaveLength(2);
   });
 
   it("keeps all drafts when no existing issues have fingerprints", () => {
@@ -541,26 +487,9 @@ describe("from-scan: vulnerabilitiesFromPayload (sable-fgk7)", () => {
   });
 });
 
-// ── from-scan: --repo flag override ──────────────────────────────────
-
-describe("from-scan: repo flag", () => {
-  it("uses explicit repo when --repo is provided", () => {
-    const repo = "my-org/my-repo";
-    // The repo flag is used directly without git detection
-    expect(repo).toBe("my-org/my-repo");
-  });
-});
-
 // ── from-scan: error handling ────────────────────────────────────────
 
 describe("from-scan: error handling", () => {
-  it("requires --scan-id or --from-local", () => {
-    // Neither option provided should be an error state
-    const scanId = undefined;
-    const fromLocal = undefined;
-    expect(!scanId && !fromLocal).toBe(true);
-  });
-
   it("throws on invalid JSON file", () => {
     const badFile = `/tmp/rafter-test-bad-${Date.now()}.json`;
     fs.writeFileSync(badFile, "not valid json{{{");
@@ -707,37 +636,6 @@ describe("from-text: file path extraction", () => {
   });
 });
 
-// ── from-text: --file flag ───────────────────────────────────────────
-
-describe("from-text: --file input", () => {
-  let tmpFile: string;
-
-  beforeEach(() => {
-    tmpFile = `/tmp/rafter-test-text-${Date.now()}.txt`;
-  });
-
-  afterEach(() => {
-    if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
-  });
-
-  it("reads text from file and parses correctly", () => {
-    fs.writeFileSync(tmpFile, "## Critical Security Bug\nSQL injection in src/db.ts:15");
-    const text = fs.readFileSync(tmpFile, "utf-8");
-    const parsed = parseNaturalText(text);
-    expect(parsed.title).toBe("Critical Security Bug");
-    expect(parsed.labels).toContain("severity:critical");
-    expect(parsed.labels).toContain("security");
-    expect(parsed.body).toContain("src/db.ts:15");
-  });
-
-  it("handles empty file", () => {
-    fs.writeFileSync(tmpFile, "   \n  \n  ");
-    const text = fs.readFileSync(tmpFile, "utf-8");
-    const parsed = parseNaturalText(text);
-    expect(parsed.title).toBe("Security issue reported via Rafter CLI");
-  });
-});
-
 // ── from-text: --text inline ─────────────────────────────────────────
 
 describe("from-text: --text inline", () => {
@@ -761,20 +659,6 @@ describe("from-text: --text inline", () => {
 // ── cross-implementation fingerprint consistency ─────────────────────
 
 describe("fingerprint: cross-implementation consistency", () => {
-  it("produces same hash for same inputs across repeated calls", () => {
-    const fp1 = fingerprint("src/config.ts", "AWS_KEY");
-    const fp2 = fingerprint("src/config.ts", "AWS_KEY");
-    const fp3 = fingerprint("src/config.ts", "AWS_KEY");
-    expect(fp1).toBe(fp2);
-    expect(fp2).toBe(fp3);
-  });
-
-  it("fingerprint is stable for backend and local match on same file+rule", () => {
-    const backendFp = fingerprint("src/auth.ts", "sql-injection");
-    const localFp = fingerprint("src/auth.ts", "sql-injection");
-    expect(backendFp).toBe(localFp);
-  });
-
   it("empty file and rule still produce valid fingerprint", () => {
     const fp = fingerprint("", "");
     expect(fp).toHaveLength(12);

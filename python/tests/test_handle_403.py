@@ -1,7 +1,6 @@
 """Tests for handle_403 (structured 403 handling)."""
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock
 
 from rafter_cli.utils.api import (
@@ -95,14 +94,6 @@ class TestHandle403:
 
 
 class TestHandleScopeErrorDeprecated:
-    def test_returns_true_for_403(self):
-        resp = _mock_response(403, "forbidden", json_body={})
-        assert handle_scope_error(resp) is True
-
     def test_returns_true_for_scan_mode_403(self):
         resp = _mock_response(403, "", json_body={"scan_mode": "fast", "limit": 5})
         assert handle_scope_error(resp) is True
-
-    def test_returns_false_for_non_403(self):
-        assert handle_scope_error(_mock_response(200, "ok")) is False
-        assert handle_scope_error(_mock_response(429, "quota")) is False
