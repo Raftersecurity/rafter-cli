@@ -1,12 +1,10 @@
 """Tests for API key scope enforcement (403 handling)."""
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
 
 import click
 import pytest
-import typer
 
 from rafter_cli.utils.api import (
     EXIT_GENERAL_ERROR,
@@ -197,18 +195,6 @@ class TestReadOnlyEndpoints:
         # Should not raise
         result = _handle_scan_status_interactive("abc", {"x-api-key": "read_key"}, "json", True)
         assert result == 0
-
-    @patch("rafter_cli.commands.backend.api_get")
-    def test_get_usage_200_with_read_key(self, mock_get, capsys):
-        """GET /api/static/usage works with read-only key."""
-        mock_get.return_value = _mock_response(200, "")
-        mock_get.return_value.json.return_value = {
-            "scans_used": 5,
-            "scans_limit": 100,
-        }
-        # Directly call the usage endpoint logic pattern
-        resp = mock_get.return_value
-        assert resp.status_code == 200
 
 
 # ── Backward compatibility: 401 still handled as before ──────────────

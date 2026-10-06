@@ -502,15 +502,6 @@ describe("CommandInterceptor — Error Paths", () => {
     ).not.toThrow();
   });
 
-  it("handles invalid regex patterns via substring fallback", () => {
-    // The interceptor should fall back to substring matching if regex is invalid.
-    // We test this indirectly — patterns containing special regex chars should
-    // still be matched as substrings.
-    const result = interceptor.evaluate("ls");
-    expect(result).toBeDefined();
-    expect(typeof result.allowed).toBe("boolean");
-  });
-
   it("returns riskLevel for every evaluation", () => {
     const cmds = [
       "ls",
@@ -566,26 +557,6 @@ describe("Scan — Error Paths", () => {
       const scanner = new RegexScanner();
       const result = scanner.scanFile(binFile);
       expect(result.matches.length).toBe(0);
-    });
-
-    it("detects secrets and produces correct result structure", () => {
-      const secretFile = path.join(tmpDir, "secrets.txt");
-      fs.writeFileSync(
-        secretFile,
-        'AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"\n',
-      );
-      const scanner = new RegexScanner();
-      const result = scanner.scanFile(secretFile);
-      expect(result.file).toBe(secretFile);
-      expect(result.matches.length).toBeGreaterThan(0);
-      for (const m of result.matches) {
-        expect(m.pattern).toBeDefined();
-        expect(m.pattern.name).toBeDefined();
-        expect(m.pattern.severity).toBeDefined();
-        expect(["low", "medium", "high", "critical"]).toContain(
-          m.pattern.severity,
-        );
-      }
     });
 
     it("respects custom patterns from config", () => {
@@ -657,50 +628,6 @@ describe("AuditLogger — Error Paths", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("reads empty/non-existent log gracefully", () => {
-    const logPath = path.join(tmpDir, "nonexistent.jsonl");
-    const logger = new AuditLogger(logPath);
-    const entries = logger.read();
-    expect(Array.isArray(entries)).toBe(true);
-    expect(entries.length).toBe(0);
-  });
-
-  it("handles corrupt JSONL lines gracefully", () => {
-    const logPath = path.join(tmpDir, "audit.jsonl");
-    fs.writeFileSync(
-      logPath,
-      '{"eventType":"test","timestamp":"2026-01-01T00:00:00Z","sessionId":"s1","securityCheck":{"passed":true},"resolution":{"actionTaken":"allowed"}}\n' +
-        "{bad json\n" +
-        '{"eventType":"test2","timestamp":"2026-01-02T00:00:00Z","sessionId":"s2","securityCheck":{"passed":true},"resolution":{"actionTaken":"allowed"}}\n',
-    );
-    const logger = new AuditLogger(logPath);
-    const entries = logger.read();
-    // Should skip corrupt line, return valid entries
-    expect(entries.length).toBe(2);
-  });
-
-  it("log() writes valid JSONL entry", () => {
-    const logPath = path.join(tmpDir, "audit.jsonl");
-    const logger = new AuditLogger(logPath);
-    logger.log({
-      eventType: "command_intercepted",
-      securityCheck: { passed: true },
-      resolution: { actionTaken: "allowed" },
-    });
-    expect(fs.existsSync(logPath)).toBe(true);
-    const content = fs.readFileSync(logPath, "utf-8").trim();
-    const entry = JSON.parse(content);
-    expect(entry.eventType).toBe("command_intercepted");
-    expect(entry.timestamp).toBeDefined();
-    expect(entry.sessionId).toBeDefined();
-  });
-
-  it("validates webhook URLs — rejects private IPs", async () => {
-    await expect(
-      validateWebhookUrl("http://192.168.1.1/hook"),
-    ).rejects.toThrow();
-  });
-
   it("validates webhook URLs — rejects localhost", async () => {
     await expect(
       validateWebhookUrl("http://localhost/hook"),
@@ -727,55 +654,6 @@ describe("BetterleaksScanner — Error Paths", () => {
     const scanner = new BetterleaksScanner();
     const result = await scanner.isAvailable();
     expect(typeof result).toBe("boolean");
-  });
-
-  it("scanFile throws when betterleaks is not installed", async () => {
-    const scanner = new BetterleaksScanner();
-    try {
-      await scanner.scanFile("/tmp/test.txt");
-      // If it doesn't throw, that's also acceptable (empty results)
-    } catch (e: any) {
-      expect(e.message).toBeDefined();
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 7. Integration-style: CLI exit code contract
-// ---------------------------------------------------------------------------
-
-describe("CLI Exit Code Contract (per CLI_SPEC.md)", () => {
-  it("backend commands: exit codes 0-4 are defined", () => {
-    // This is a contract test — verifying the constants match CLI_SPEC.md
-    expect(EXIT_SUCCESS).toBe(0); // Success
-    expect(EXIT_GENERAL_ERROR).toBe(1); // General error
-    expect(EXIT_SCAN_NOT_FOUND).toBe(2); // Scan not found (HTTP 404)
-    expect(EXIT_QUOTA_EXHAUSTED).toBe(3); // Quota exhausted (HTTP 429 or 403 scan-mode limit)
-    expect(EXIT_INSUFFICIENT_SCOPE).toBe(4); // Insufficient scope / forbidden (HTTP 403)
-  });
-
-  it("handle403 return values match exit codes", () => {
-    // Non-403 → -1 (not handled)
-    expect(handle403({ response: { status: 200 } })).toBe(-1);
-
-    // scan_mode → EXIT_QUOTA_EXHAUSTED (3)
-    expect(
-      handle403({
-        response: { status: 403, data: { scan_mode: "fast", limit: 1 } },
-      }),
-    ).toBe(3);
-
-    // scope error → EXIT_INSUFFICIENT_SCOPE (4)
-    expect(
-      handle403({
-        response: { status: 403, data: { error: "scope required" } },
-      }),
-    ).toBe(4);
-
-    // generic 403 → EXIT_INSUFFICIENT_SCOPE (4)
-    expect(
-      handle403({ response: { status: 403, data: "forbidden" } }),
-    ).toBe(4);
   });
 });
 

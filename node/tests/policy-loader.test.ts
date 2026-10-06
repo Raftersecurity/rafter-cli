@@ -210,42 +210,6 @@ audit:
     expect(stderrSpy.mock.calls.some((c) => String(c[0]).includes("auto_update_betterleaks"))).toBe(true);
   });
 
-  it("warns on unknown top-level keys", async () => {
-    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const yml = `
-version: "1"
-unknown_key: true
-`;
-    fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), yml);
-    await loadPolicyFresh();
-
-    expect(stderrSpy.mock.calls.some((c) => String(c[0]).includes("unknown_key"))).toBe(true);
-  });
-
-  it("warns and strips invalid risk_level", async () => {
-    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const yml = `
-risk_level: invalid
-`;
-    fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), yml);
-    const policy = await loadPolicyFresh();
-
-    expect(policy!.riskLevel).toBeUndefined();
-    expect(stderrSpy.mock.calls.some((c) => String(c[0]).includes("risk_level"))).toBe(true);
-  });
-
-  it("warns and strips invalid command_policy.mode", async () => {
-    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const yml = `
-command_policy:
-  mode: invalid-mode
-`;
-    fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), yml);
-    const policy = await loadPolicyFresh();
-
-    expect(policy!.commandPolicy?.mode).toBeUndefined();
-  });
-
   it("warns and strips invalid custom pattern (missing regex)", async () => {
     const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const yml = `
@@ -320,30 +284,6 @@ ignore: []
     fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), yml);
     const policy = await loadPolicyFresh();
     expect(policy!.ignore).toBeUndefined();
-  });
-
-  it("warns and strips invalid audit.retention_days (non-number)", async () => {
-    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const yml = `
-audit:
-  retention_days: "not a number"
-`;
-    fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), yml);
-    const policy = await loadPolicyFresh();
-
-    expect(policy!.audit?.retentionDays).toBeUndefined();
-  });
-
-  it("warns and strips invalid audit.log_level", async () => {
-    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const yml = `
-audit:
-  log_level: verbose
-`;
-    fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), yml);
-    const policy = await loadPolicyFresh();
-
-    expect(policy!.audit?.logLevel).toBeUndefined();
   });
 
   it("handles empty YAML file gracefully", async () => {

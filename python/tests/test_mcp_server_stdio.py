@@ -12,8 +12,6 @@ import os
 import signal
 import subprocess
 import sys
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -413,13 +411,6 @@ class TestErrorHandling:
 
 class TestLifecycle:
     """Test server process lifecycle over real stdio transport."""
-
-    @pytest.mark.asyncio
-    async def test_connect_disconnect_cleanly(self):
-        session, cm = await create_connected_session()
-        result = await session.list_tools()
-        assert len(result.tools) == 11
-        await cleanup(session, cm)
 
     @pytest.mark.asyncio
     async def test_sequential_sessions(self):

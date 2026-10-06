@@ -32,12 +32,8 @@ describe("BetterleaksScanner.parseResults", () => {
   // #217 — betterleaks >=1.1.2 writes the literal `null` for a clean scan via
   // the `dir`/`git` subcommands. Regression guard: this is an empty result, not
   // a version mismatch, and must not emit warning noise on every clean file.
-  it("treats a literal `null` report as an empty result set", () => {
+  it("treats a literal `null` report as an empty result set without warning", () => {
     expect(parseResults(writeReport("null"))).toEqual([]);
-  });
-
-  it("does not warn on a `null` report", () => {
-    parseResults(writeReport("null"));
     expect(stderrSpy).not.toHaveBeenCalled();
   });
 

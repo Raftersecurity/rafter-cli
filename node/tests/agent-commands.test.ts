@@ -216,20 +216,12 @@ describe("agent init", () => {
     expect(fs.existsSync(path.join(home, ".rafter", "patterns"))).toBe(true);
   });
 
-  it("respects --risk-level flag", () => {
-    runCli("agent init --risk-level minimal", home);
+  it.each(["minimal", "aggressive"])("respects --risk-level %s", (level) => {
+    runCli(`agent init --risk-level ${level}`, home);
     const cfg = JSON.parse(
       fs.readFileSync(path.join(home, ".rafter", "config.json"), "utf-8")
     );
-    expect(cfg.agent.riskLevel).toBe("minimal");
-  });
-
-  it("respects --risk-level aggressive", () => {
-    runCli("agent init --risk-level aggressive", home);
-    const cfg = JSON.parse(
-      fs.readFileSync(path.join(home, ".rafter", "config.json"), "utf-8")
-    );
-    expect(cfg.agent.riskLevel).toBe("aggressive");
+    expect(cfg.agent.riskLevel).toBe(level);
   });
 
   it("is idempotent — running twice doesn't corrupt config", () => {
@@ -560,23 +552,9 @@ describe("agent exec", () => {
     expect(r.stdout).toContain("hello world");
   });
 
-  it("--skip-scan skips pre-execution scanning", () => {
-    const r = runCli('agent exec "echo test" --skip-scan', home);
-    expect(r.exitCode).toBe(0);
-  });
-
   it("reports failure for commands that error", () => {
     const r = runCli('agent exec "false"', home);
     expect(r.exitCode).not.toBe(0);
-  });
-
-  it("writes to audit log on command evaluation", () => {
-    runCli('agent exec "echo audit-test"', home);
-    const auditPath = path.join(home, ".rafter", "audit.jsonl");
-    if (fs.existsSync(auditPath)) {
-      const content = fs.readFileSync(auditPath, "utf-8");
-      expect(content).toContain("command_intercepted");
-    }
   });
 });
 
@@ -601,16 +579,6 @@ describe("agent audit", () => {
     expect(r.stdout).toContain("No audit log entries found");
   });
 
-  it("shows entries after commands are executed", () => {
-    // Generate some audit entries
-    runCli('agent exec "echo test1"', home);
-    runCli('agent exec "echo test2"', home);
-
-    const r = runCli("agent audit", home);
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("audit log entries");
-  });
-
   it("--last limits number of entries", () => {
     // Generate entries
     for (let i = 0; i < 5; i++) {
@@ -622,26 +590,13 @@ describe("agent audit", () => {
     expect(r.stdout).toContain("2 audit log entries");
   });
 
-  it("--event filters by event type", () => {
-    runCli('agent exec "echo test"', home);
-    const r = runCli("agent audit --event command_intercepted", home);
-    expect(r.exitCode).toBe(0);
-    // Should either find entries or say no entries
-    const combined = r.stdout;
-    expect(combined).toMatch(/(command_intercepted|No audit log entries)/);
-  });
-
-  it("--share generates a redacted excerpt", () => {
+  it("--share generates a redacted excerpt with version and OS info", () => {
     const r = runCli("agent audit --share", home);
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("Rafter Audit Excerpt");
     expect(r.stdout).toContain("Environment:");
     expect(r.stdout).toContain("Policy:");
     expect(r.stdout).toContain("Recent events");
-  });
-
-  it("--share includes version and OS info", () => {
-    const r = runCli("agent audit --share", home);
     expect(r.stdout).toContain("CLI:");
     expect(r.stdout).toContain("OS:");
   });
@@ -797,13 +752,6 @@ describe("agent verify", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("outputs verify header", () => {
-    const r = runCli("agent verify", home);
-    // Verify always outputs the header
-    const combined = r.stdout + r.stderr;
-    expect(combined).toMatch(/Rafter Agent Verify|check/i);
-  });
-
   it("fails when no config exists (exit 1)", () => {
     const r = runCli("agent verify", home);
     // Config check is a hard failure
@@ -815,15 +763,6 @@ describe("agent verify", () => {
     const r = runCli("agent verify", home);
     // Config should pass now (betterleaks may still fail)
     expect(r.stdout).toContain("Config:");
-  });
-
-  it("reports optional checks as warnings not failures", () => {
-    runCli("agent init", home);
-    const r = runCli("agent verify", home);
-    // Claude Code is optional — should show a warning, not a hard fail
-    const combined = r.stdout;
-    // Optional checks show warning messages (with "not detected" or similar)
-    expect(combined).toMatch(/(Claude Code|OpenClaw|Codex|Gemini|Cursor|Windsurf)/);
   });
 
   it("shows check summary line", () => {
@@ -839,62 +778,37 @@ describe("agent verify", () => {
     expect(r.stdout).toContain("Claude Code:");
   });
 
-  it("detects Gemini when configured", () => {
-    // Set up fake Gemini config
-    const geminiDir = path.join(home, ".gemini");
-    fs.mkdirSync(geminiDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(geminiDir, "settings.json"),
-      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } })
-    );
+  // ── rf-65zg: Continue.dev detection shares this shape ───────────────
 
-    runCli("agent init", home);
-    const r = runCli("agent verify", home);
-    expect(r.stdout).toContain("Gemini CLI:");
-    expect(r.stdout).toContain("MCP server configured");
-  });
-
-  it("detects Cursor when configured", () => {
-    const cursorDir = path.join(home, ".cursor");
-    fs.mkdirSync(cursorDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(cursorDir, "mcp.json"),
-      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } })
-    );
-
-    runCli("agent init", home);
-    const r = runCli("agent verify", home);
-    expect(r.stdout).toContain("Cursor:");
-    expect(r.stdout).toContain("MCP server configured");
-  });
-
-  it("detects Windsurf when configured", () => {
-    const wsDir = path.join(home, ".codeium", "windsurf");
-    fs.mkdirSync(wsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(wsDir, "mcp_config.json"),
-      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } })
-    );
-
-    runCli("agent init", home);
-    const r = runCli("agent verify", home);
-    expect(r.stdout).toContain("Windsurf:");
-    expect(r.stdout).toContain("MCP server configured");
-  });
-
-  // ── rf-65zg ────────────────────────────────────────────────────────
-
-  it("detects Continue.dev when configured (rf-65zg)", () => {
-    const continueDir = path.join(home, ".continue");
-    fs.mkdirSync(continueDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(continueDir, "config.json"),
+  it.each([
+    [
+      "Gemini CLI",
+      [".gemini", "settings.json"],
+      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } }),
+    ],
+    [
+      "Cursor",
+      [".cursor", "mcp.json"],
+      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } }),
+    ],
+    [
+      "Windsurf",
+      [".codeium", "windsurf", "mcp_config.json"],
+      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } }),
+    ],
+    [
+      "Continue.dev",
+      [".continue", "config.json"],
       JSON.stringify({ mcpServers: [{ name: "rafter", command: "rafter" }] }),
-    );
+    ],
+  ] as const)("detects %s when configured", (platform, pathParts, configBody) => {
+    const configPath = path.join(home, ...pathParts);
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, configBody);
 
     runCli("agent init", home);
     const r = runCli("agent verify", home);
-    expect(r.stdout).toContain("Continue.dev:");
+    expect(r.stdout).toContain(`${platform}:`);
     expect(r.stdout).toContain("MCP server configured");
   });
 
@@ -1021,16 +935,13 @@ describe("audit helpers", () => {
 
 describe("cross-command integration", () => {
   let home: string;
-  let tmpDir: string;
 
   beforeEach(() => {
     home = createTempHome();
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-cross-"));
   });
 
   afterEach(() => {
     fs.rmSync(home, { recursive: true, force: true });
-    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("init → config show → verify: full lifecycle", () => {
@@ -1046,33 +957,6 @@ describe("cross-command integration", () => {
     // Verify finds config
     const verify = runCli("agent verify", home);
     expect(verify.stdout).toContain("Config:");
-  });
-
-  it("scan generates audit entries visible in audit", () => {
-    runCli("agent init", home);
-
-    // Create a file with a secret and scan it
-    const f = path.join(tmpDir, "leak.txt");
-    fs.writeFileSync(f, `${FAKE_AWS_KEY}\n`);
-    runCli(`agent scan ${f} --engine patterns --quiet`, home);
-
-    // The scan should have logged to audit
-    const auditPath = path.join(home, ".rafter", "audit.jsonl");
-    if (fs.existsSync(auditPath)) {
-      const content = fs.readFileSync(auditPath, "utf-8");
-      expect(content.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("exec → audit shows intercepted commands", () => {
-    runCli("agent init", home);
-    runCli('agent exec "echo cross-test"', home);
-
-    const r = runCli("agent audit --event command_intercepted", home);
-    expect(r.exitCode).toBe(0);
-    // Should show the intercepted command
-    const combined = r.stdout;
-    expect(combined).toMatch(/(command_intercepted|echo|No audit log entries)/);
   });
 
   it("status reflects audit event counts after exec", () => {

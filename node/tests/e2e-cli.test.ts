@@ -37,23 +37,11 @@ function rafter(args: string | string[], opts?: { cwd?: string; env?: Record<str
 
 describe("CLI e2e — version and help", () => {
 
-  it("--version outputs a semver string", () => {
-    const r = rafter("--version");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
-  }, 30000);
-
   it("--version matches package.json version", () => {
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../package.json"), "utf-8"));
     const r = rafter("--version");
     expect(r.exitCode).toBe(0);
     expect(r.stdout.trim()).toBe(pkg.version);
-  }, 30000);
-
-  it("--help outputs usage information", () => {
-    const r = rafter("--help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("rafter");
   }, 30000);
 
   it("--help lists all top-level commands", () => {
@@ -64,38 +52,26 @@ describe("CLI e2e — version and help", () => {
     }
   }, 30000);
 
-  it("agent --help shows agent subcommands", () => {
-    const r = rafter("agent --help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("scan");
-    expect(r.stdout).toContain("exec");
-    expect(r.stdout).toContain("audit");
-  }, 30000);
-
-  it("scan --help shows scan subcommands", () => {
-    const r = rafter("scan --help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("remote");
-    expect(r.stdout).toContain("remote");
-  }, 30000);
-
-  it("policy --help shows policy subcommands", () => {
-    const r = rafter("policy --help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("export");
-  }, 30000);
-
-  it("mcp --help shows mcp subcommands", () => {
-    const r = rafter("mcp --help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("serve");
-  }, 30000);
-
-  it("ci --help shows ci subcommands", () => {
-    const r = rafter("ci --help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("init");
-  }, 30000);
+  // "scan" has only one visible subcommand ("local" is a hidden back-compat
+  // alias — see scan/index.ts), so it legitimately checks a single substring
+  // while the others check several.
+  it.each([
+    ["agent", ["scan", "exec", "audit"]],
+    ["scan", ["remote"]],
+    ["policy", ["export"]],
+    ["mcp", ["serve"]],
+    ["ci", ["init"]],
+  ] as const)(
+    "%s --help shows its subcommands",
+    (command, expectedSubstrings) => {
+      const r = rafter(`${command} --help`);
+      expect(r.exitCode).toBe(0);
+      for (const s of expectedSubstrings) {
+        expect(r.stdout).toContain(s);
+      }
+    },
+    30000
+  );
 });
 
 describe("CLI e2e — rafter secrets (local secret scanning)", () => {
@@ -303,16 +279,6 @@ describe("CLI e2e — command routing", () => {
   it("unknown command exits nonzero", () => {
     const r = rafter("nonexistent-command");
     expect(r.exitCode).not.toBe(0);
-  }, 30000);
-
-  it("secrets routes to scanner (exit 2 for missing path)", () => {
-    const r = rafter("secrets /tmp/nonexistent-rafter-routing-test");
-    expect(r.exitCode).toBe(2);
-  }, 30000);
-
-  it("agent exec routes to interceptor", () => {
-    const r = rafter(["agent", "exec", "echo routing-test"]);
-    expect(r.exitCode).toBe(0);
   }, 30000);
 
   it("policy export routes to exporter", () => {

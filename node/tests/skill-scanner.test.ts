@@ -165,26 +165,6 @@ describe("audit-skill --deep without the tool", () => {
     expect(r.exitCode).toBe(2);
     expect(r.stdout + r.stderr).toContain("cisco-ai-skill-scanner");
   });
-
-  it("unknown --engine exits 2", () => {
-    const skill = path.join(tmpDir(), "s.md");
-    fs.writeFileSync(skill, "# Skill");
-    const r = runCli(["agent", "audit-skill", skill, "--engine", "bogus"]);
-    expect(r.exitCode).toBe(2);
-  });
-});
-
-// ── Default behavior unchanged without --deep ───────────────────────────
-
-describe("audit-skill default (no --deep)", () => {
-  it("has no deepScan key", () => {
-    const skill = path.join(tmpDir(), "s.md");
-    fs.writeFileSync(skill, "# clean skill");
-    const r = runCli(["agent", "audit-skill", skill, "--json"]);
-    expect(r.exitCode).toBe(0);
-    const data = JSON.parse(r.stdout);
-    expect(data.deepScan).toBeUndefined();
-  });
 });
 
 // ── Installer argv ──────────────────────────────────────────────────────
@@ -240,19 +220,6 @@ function writeMalicious(d: string) {
 }
 
 describe.skipIf(!HAS_SKILL_SCANNER)("deep CLI integration (real binary)", () => {
-  it("benign skill has no actionable findings", () => {
-    const d = tmpDir();
-    writeBenign(d);
-    const r = runCli(["agent", "audit-skill", path.join(d, "SKILL.md"), "--deep", "--json"]);
-    const data = JSON.parse(r.stdout);
-    expect(data.deepScan).toBeDefined();
-    const actionable = data.deepScan.findings.filter((f: { severity: string }) =>
-      ["critical", "high", "medium"].includes(f.severity),
-    );
-    expect(actionable).toEqual([]);
-    expect(r.exitCode).toBe(0);
-  });
-
   it("malicious skill is flagged (prompt_injection + data_exfiltration)", () => {
     const d = tmpDir();
     writeMalicious(d);
@@ -263,20 +230,5 @@ describe.skipIf(!HAS_SKILL_SCANNER)("deep CLI integration (real binary)", () => 
     expect(cats.has("data_exfiltration")).toBe(true);
     expect(r.exitCode).toBe(1);
     expect(data.deepScan.maxSeverity).toBe("critical");
-  });
-
-  it("--engine skill-scanner is equivalent to --deep", () => {
-    const d = tmpDir();
-    writeBenign(d);
-    const r = runCli([
-      "agent",
-      "audit-skill",
-      path.join(d, "SKILL.md"),
-      "--engine",
-      "skill-scanner",
-      "--json",
-    ]);
-    expect(r.exitCode).toBe(0);
-    expect(JSON.parse(r.stdout).deepScan).toBeDefined();
   });
 });

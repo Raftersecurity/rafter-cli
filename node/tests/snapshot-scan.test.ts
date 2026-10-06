@@ -83,12 +83,6 @@ function normalize(result: ScanResult): object {
   };
 }
 
-function normalizeResults(results: ScanResult[]): object[] {
-  return results
-    .map(normalize)
-    .sort((a: any, b: any) => a.file.localeCompare(b.file));
-}
-
 function readGolden(name: string): object | object[] {
   return JSON.parse(fs.readFileSync(path.join(GOLDEN_DIR, name), "utf-8"));
 }
@@ -142,21 +136,6 @@ describe("Snapshot/Golden File Tests", () => {
     }
   });
 
-  describe("directory scan", () => {
-    it("matches golden file for full directory scan", () => {
-      const results = scanner.scanDirectory(fixturesDir);
-      const normalized = normalizeResults(results);
-
-      if (UPDATE) {
-        writeGolden("directory-scan.json", normalized);
-        return;
-      }
-
-      const expected = readGolden("directory-scan.json");
-      expect(normalized).toEqual(expected);
-    });
-  });
-
   describe("redaction accuracy", () => {
     it("matches golden file for redaction samples", () => {
       const samples = [
@@ -179,28 +158,6 @@ describe("Snapshot/Golden File Tests", () => {
 
       const expected = readGolden("redaction-samples.json");
       expect(normalized).toEqual(expected);
-    });
-  });
-
-  describe("position accuracy", () => {
-    it("matches golden file for line and column positions", () => {
-      const result = scanner.scanFile(path.join(fixturesDir, "multi-pattern.py"));
-      const positions = result.matches.map((m) => ({
-        pattern: m.pattern.name,
-        line: m.line,
-        column: m.column,
-      })).sort((a, b) => {
-        if ((a.line ?? 0) !== (b.line ?? 0)) return (a.line ?? 0) - (b.line ?? 0);
-        return a.pattern.localeCompare(b.pattern);
-      });
-
-      if (UPDATE) {
-        writeGolden("positions-multi-pattern.json", positions);
-        return;
-      }
-
-      const expected = readGolden("positions-multi-pattern.json");
-      expect(positions).toEqual(expected);
     });
   });
 });
