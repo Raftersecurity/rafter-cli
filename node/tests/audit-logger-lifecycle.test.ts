@@ -432,5 +432,20 @@ describe("AuditLogger lifecycle", () => {
       expect(entries[0].action?.command).toContain("你好世界");
       expect(entries[0].action?.command).toContain("🌍");
     });
+
+    it("corrupt entry in log: one bad line doesn't break read", () => {
+      const logger = new AuditLogger(logPath);
+      logger.logCommandIntercepted("before", true, "allowed");
+
+      // Inject corrupt line
+      fs.appendFileSync(logPath, "CORRUPT LINE\n");
+
+      logger.logCommandIntercepted("after", true, "allowed");
+
+      const entries = logger.read();
+      expect(entries).toHaveLength(2);
+      expect(entries[0].action?.command).toBe("before");
+      expect(entries[1].action?.command).toBe("after");
+    });
   });
 });
