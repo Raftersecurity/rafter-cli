@@ -476,6 +476,15 @@ async function scanStagedFiles(
  * Shared handler for --diff / --staged: parse unified diff for + lines, scan
  * with the patterns engine, then apply exclude_paths / baseline / suppressions.
  */
+/** Upper bound on the `git diff` read. Far above any real staged diff, so the
+ * scan runs; a diff past even this fails as a scan error (exit 2), not a
+ * finding (see the catch below). Overridable via RAFTER_GIT_DIFF_MAX_BUFFER
+ * (bytes) for constrained hosts or to exercise the scan-error path in tests. */
+function gitDiffMaxBuffer(): number {
+  const raw = Number(process.env.RAFTER_GIT_DIFF_MAX_BUFFER);
+  return Number.isInteger(raw) && raw > 0 ? raw : 256 * 1024 * 1024;
+}
+
 async function runGitAddedLineScan(
   gitArgs: string[],
   opts: ScanOpts,
@@ -493,6 +502,11 @@ async function runGitAddedLineScan(
       encoding: "utf-8",
       cwd,
       stdio: ["pipe", "pipe", "ignore"],
+      // The default 1 MiB cap makes `git diff` throw ENOBUFS on ordinary large
+      // staged diffs (lockfiles, generated or vendored files). That crash used
+      // to exit 1 — indistinguishable from a real finding, so a commit gate
+      // reported a broken scan as a possible secret (#274). Read the whole diff.
+      maxBuffer: gitDiffMaxBuffer(),
     });
 
     if (!patch.trim()) {
@@ -537,7 +551,16 @@ async function runGitAddedLineScan(
       console.error(errorOpts?.notRepoMessage ?? "Error: Not in a git repository or invalid ref");
       process.exit(2);
     }
-    throw error;
+    // A scan that could not run is a scan ERROR, never a finding. Exit 2 (per
+    // CLI_SPEC: invalid input / scan error) so a commit gate keying on the exit
+    // code never mistakes a broken scan for a detected secret (#274). ENOBUFS is
+    // the known case (a diff past the buffer), but any failure to read/parse the
+    // diff belongs here rather than surfacing as exit 1.
+    const detail = error?.code === "ENOBUFS"
+      ? "staged diff too large for the scanner to read"
+      : (error?.message ?? String(error));
+    console.error(`Error: secret scan could not run (${detail}); no scan was performed`);
+    process.exit(2);
   }
 }
 
