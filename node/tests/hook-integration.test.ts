@@ -281,6 +281,21 @@ describe("Hook Integration — Real Git Repos", () => {
       expect(result.files).toBe(0);
     });
 
+    // #274 sibling: the hook read the staged diff at the default 1 MiB buffer,
+    // and its catch returned "no secrets", so any commit over 1 MiB skipped
+    // the scan and a secret in it was allowed through.
+    it("finds a secret in a staged diff over 1 MiB", () => {
+      const bulk = Array.from(
+        { length: 20000 },
+        (_, i) => `const benign_${i} = "lorem ipsum dolor sit amet consectetur";`,
+      ).join("\n");
+      fs.writeFileSync(path.join(repoDir, "big.js"), `${bulk}\nconst k = "${FAKE_AWS_KEY}";\n`);
+      execSync("git add big.js", gitExecOpts(repoDir));
+
+      const result = scanStagedFiles(repoDir);
+      expect(result.secretsFound).toBe(true);
+    });
+
     it("returns zero when nothing is staged", () => {
       const result = scanStagedFiles(repoDir);
       expect(result.secretsFound).toBe(false);
