@@ -6,7 +6,7 @@
  * correctly against real git state.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
+import { execSync, spawnSync, ExecSyncOptionsWithStringEncoding } from "child_process";
 import { randomBytes } from "crypto";
 import fs from "fs";
 import path from "path";
@@ -294,6 +294,25 @@ describe("Hook Integration — Real Git Repos", () => {
 
       const result = scanStagedFiles(repoDir);
       expect(result.secretsFound).toBe(true);
+    });
+
+    // The hook must fail CLOSED when the staged diff cannot be read: a scan
+    // that never ran is not "no secrets". Driven through the real built CLI so
+    // the deny decision itself is asserted, not just the scan result.
+    it("denies git commit when the staged diff cannot be read", () => {
+      fs.writeFileSync(path.join(repoDir, "big.js"), "x".repeat(4096) + "\n");
+      execSync("git add big.js", gitExecOpts(repoDir));
+
+      const r = spawnSync("node", [path.resolve(__dirname, "../dist/index.js"), "hook", "pretool"], {
+        cwd: repoDir,
+        input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "git commit -m x" } }),
+        encoding: "utf-8",
+        timeout: 30_000,
+        env: { ...process.env, HOME: repoDir, XDG_CONFIG_HOME: path.join(repoDir, ".config"), RAFTER_GIT_DIFF_MAX_BUFFER: "1024" },
+      });
+      const out = JSON.parse(r.stdout || "{}").hookSpecificOutput ?? {};
+      expect(out.permissionDecision).toBe("deny");
+      expect(out.permissionDecisionReason).toContain("could not run");
     });
 
     it("returns zero when nothing is staged", () => {

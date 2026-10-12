@@ -248,6 +248,24 @@ describe("CLI e2e — command risk assessment", () => {
     expect(r.exitCode).not.toBe(0);
   }, 30000);
 
+  // A staged diff that cannot be read must block the commit (exit 2), never
+  // let it through unscanned; outside a repo there is nothing to scan.
+  it("agent exec blocks git commit when the staged diff cannot be read", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-exec-diff-"));
+    try {
+      const git = (a: string) => execFileSync("git", a.split(" "), { cwd: dir, stdio: "ignore" });
+      git("init -q");
+      fs.writeFileSync(path.join(dir, "big.js"), "x".repeat(4096) + "\n");
+      git("add big.js");
+      const env = { ...process.env, HOME: dir, RAFTER_GIT_DIFF_MAX_BUFFER: "1024" };
+      const r = rafter(["agent", "exec", "git commit -m x"], { cwd: dir, env });
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("could not run");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("agent exec allows safe commands", () => {
     const r = rafter(["agent", "exec", "echo hello"]);
     expect(r.exitCode).toBe(0);
