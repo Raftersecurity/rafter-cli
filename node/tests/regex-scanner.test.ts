@@ -17,6 +17,19 @@ describe("RegexScanner", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  // The Node and Python CLIs must skip the same directories by default: Python
+  // once scanned vendor/ and reported 19,920 findings where Node reported 271.
+  it("skips the same default directories as the Python CLI", () => {
+    const skipped = ["node_modules", ".git", "dist", "build", ".next", "coverage", ".vscode", ".idea", "vendor", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "results", ".terraform", "bower_components"];
+    for (const dir of skipped) {
+      fs.mkdirSync(path.join(tmpDir, dir), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, dir, "creds.env"), "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n");
+    }
+    fs.writeFileSync(path.join(tmpDir, "creds.env"), "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n");
+    const results = scanner.scanDirectory(tmpDir, { respectGitignore: false });
+    expect(results.map((r) => path.relative(tmpDir, r.file))).toEqual(["creds.env"]);
+  });
+
   describe("symlink handling", () => {
     it("should not follow symlinked directories", () => {
       // Create an "outside" directory with a secret
