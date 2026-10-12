@@ -252,4 +252,5 @@ class BetterleaksScanner:
         if len(match) <= 8:
             return "*" * len(match)
         v = 4
-        return match[:v] + "*" * (len(match) - v * 2) + match[-v:]
+        # Cap the mask: betterleaks returns whole PEM blocks as the secret.
+        return match[:v] + "*" * min(len(match) - v * 2, 16) + match[-v:]
