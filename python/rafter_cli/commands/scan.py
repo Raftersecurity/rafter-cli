@@ -108,6 +108,7 @@ def scan_local(
     """(deprecated alias for 'rafter secrets')."""
     from .agent import (
         _select_engine,
+        _engine_label,
         _scan_file,
         _scan_directory,
         _output_scan_results,
@@ -196,11 +197,11 @@ def scan_local(
 
     if os.path.isdir(resolved_path):
         if not quiet:
-            print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
+            print(f"Scanning directory: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
         results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
     else:
         if not quiet:
-            print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
+            print(f"Scanning file: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
         results = _scan_file(resolved_path, eng, custom_patterns)
 
     filtered = _apply_baseline(results, baseline_entries)
