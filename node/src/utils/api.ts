@@ -4,6 +4,19 @@ import { ConfigManager } from "../core/config-manager.js";
 export const API = "https://rafter.so/api/";
 
 /**
+ * The API base in effect right now.
+ *
+ * `RAFTER_API_URL`, read fresh on every call rather than cached at import
+ * time, overrides the production default in `API`. This is how the test
+ * suite points the CLI at a local, non-routable port instead of the live
+ * backend — see `node/tests/env-isolation-setup.ts`. Production never sets
+ * the var, so this is a no-op outside tests.
+ */
+function resolveApiBase(): string {
+  return process.env.RAFTER_API_URL || API;
+}
+
+/**
  * sable-2s6p — the HTTP client for every authenticated Rafter API call.
  *
  * `maxRedirects: 0` is the point of it. axios (via follow-redirects) replays
@@ -49,7 +62,7 @@ apiClient.interceptors.response.use(undefined, (error: any) => {
 
 /** Join API with a path segment without producing a double slash, regardless of leading/trailing slashes on either side. */
 export function apiUrl(path: string): string {
-  return `${API.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  return `${resolveApiBase().replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
 // Exit codes
