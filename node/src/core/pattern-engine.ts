@@ -44,9 +44,22 @@ const SECRET_ENV_NAME_RE = /(?:^|_)(KEY|TOKEN|SECRET|SECRETS|PASSWORD|PASSWD|PWD
 
 export class PatternEngine {
   private patterns: Pattern[];
+  private regexes: Map<Pattern, RegExp>;
 
   constructor(patterns: Pattern[]) {
     this.patterns = patterns;
+    this.regexes = new Map(patterns.map((p) => [p, this.createRegex(p.regex)]));
+  }
+
+  /** The pattern's compiled regex, rewound for a fresh search. */
+  private regexFor(pattern: Pattern): RegExp {
+    let regex = this.regexes.get(pattern);
+    if (!regex) {
+      regex = this.createRegex(pattern.regex);
+      this.regexes.set(pattern, regex);
+    }
+    regex.lastIndex = 0;
+    return regex;
   }
 
   /**
@@ -56,7 +69,7 @@ export class PatternEngine {
     const matches: PatternMatch[] = [];
 
     for (const pattern of this.patterns) {
-      const regex = this.createRegex(pattern.regex);
+      const regex = this.regexFor(pattern);
       let match;
 
       while ((match = regex.exec(text)) !== null) {
@@ -83,7 +96,7 @@ export class PatternEngine {
       const line = lines[lineNum];
 
       for (const pattern of this.patterns) {
-        const regex = this.createRegex(pattern.regex);
+        const regex = this.regexFor(pattern);
         let match;
 
         while ((match = regex.exec(line)) !== null) {
@@ -117,7 +130,7 @@ export class PatternEngine {
     let redacted = this.redactEnvAssignments(text);
 
     for (const pattern of this.patterns) {
-      const regex = this.createRegex(pattern.regex);
+      const regex = this.regexFor(pattern);
       redacted = redacted.replace(regex, (match) =>
         this.isFalsePositive(pattern, match) ? match : this.redact(match)
       );
