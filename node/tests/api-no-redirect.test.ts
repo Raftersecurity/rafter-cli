@@ -131,4 +131,20 @@ describe("API URL construction (sable-2s6p)", () => {
       if (savedApiUrl !== undefined) process.env.RAFTER_API_URL = savedApiUrl;
     }
   });
+
+  it("RAFTER_API_URL never sends the key over plain http to a remote host", async () => {
+    const savedApiUrl = process.env.RAFTER_API_URL;
+    try {
+      const { apiUrl } = await import("../src/utils/api.js");
+      process.env.RAFTER_API_URL = "http://evil.example/api/";
+      expect(apiUrl("static/scan")).toBe("https://rafter.so/api/static/scan");
+      process.env.RAFTER_API_URL = "http://localhost:8080/api/";
+      expect(apiUrl("static/scan")).toBe("http://localhost:8080/api/static/scan");
+      process.env.RAFTER_API_URL = "https://staging.example/api/";
+      expect(apiUrl("static/scan")).toBe("https://staging.example/api/static/scan");
+    } finally {
+      if (savedApiUrl === undefined) delete process.env.RAFTER_API_URL;
+      else process.env.RAFTER_API_URL = savedApiUrl;
+    }
+  });
 });
