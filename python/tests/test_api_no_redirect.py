@@ -133,3 +133,13 @@ class TestApiUrlConstruction:
         assert api_url("static/scan") == "https://rafter.so/api/static/scan"
         assert api_url("/static/scan") == "https://rafter.so/api/static/scan"
         assert API_BASE.endswith("/")  # the trap this guards against
+
+    def test_api_url_override_never_sends_key_over_plain_http(self, monkeypatch):
+        from rafter_cli.utils.api import api_url
+
+        monkeypatch.setenv("RAFTER_API_URL", "http://evil.example/api/")
+        assert api_url("static/scan") == "https://rafter.so/api/static/scan"
+        monkeypatch.setenv("RAFTER_API_URL", "http://localhost:8080/api/")
+        assert api_url("static/scan") == "http://localhost:8080/api/static/scan"
+        monkeypatch.setenv("RAFTER_API_URL", "https://staging.example/api/")
+        assert api_url("static/scan") == "https://staging.example/api/static/scan"
