@@ -150,3 +150,15 @@ def test_symlinked_file_not_followed(scanner, tmp_path):
 
     results = scanner.scan_directory(str(scan_dir))
     assert len(results) == 0
+
+
+# The Node and Python CLIs must skip the same directories by default: Python
+# once scanned vendor/ and reported 19,920 findings where Node reported 271.
+def test_skips_the_same_default_directories_as_the_node_cli(scanner, tmp_path):
+    skipped = ["node_modules", ".git", "dist", "build", ".next", "coverage", ".vscode", ".idea", "vendor", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "results", ".terraform", "bower_components"]
+    for d in skipped:
+        (tmp_path / d).mkdir(parents=True, exist_ok=True)
+        (tmp_path / d / "creds.env").write_text("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n")
+    (tmp_path / "creds.env").write_text("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n")
+    results = scanner.scan_directory(str(tmp_path), respect_gitignore=False)
+    assert [os.path.relpath(r.file, tmp_path) for r in results] == ["creds.env"]
