@@ -9,7 +9,7 @@ import { fmt } from "../../utils/formatter.js";
 export function createUpdateSkillScannerCommand(): Command {
   return new Command("update-skill-scanner")
     .description(
-      "Install or update the optional skill-scanner deep engine (audit-skill --deep)",
+      "Install or update the optional skill-scanner deep engine (skill review --deep)",
     )
     .option("--version <version>", "skill-scanner version to install", SKILL_SCANNER_VERSION)
     .action(async (opts: { version: string }) => {

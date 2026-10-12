@@ -1113,7 +1113,7 @@ def _install_opencode_mcp(root: Path) -> bool:
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
     with_betterleaks: bool = typer.Option(False, "--with-betterleaks", help="Download and install Betterleaks binary"),
-    with_skill_scanner: bool = typer.Option(False, "--with-skill-scanner", help="Install the optional skill-scanner deep engine (heavy; audit-skill --deep)"),
+    with_skill_scanner: bool = typer.Option(False, "--with-skill-scanner", help="Install the optional skill-scanner deep engine (heavy; skill review --deep)"),
     with_openclaw: bool = typer.Option(False, "--with-openclaw", help="Install OpenClaw integration"),
     with_claude_code: bool = typer.Option(False, "--with-claude-code", help="Install Claude Code integration"),
     with_codex: bool = typer.Option(False, "--with-codex", help="Install Codex CLI integration"),
@@ -3555,7 +3555,7 @@ def update_skill_scanner(
         help="skill-scanner version to install (default: pinned version)",
     ),
 ):
-    """Install or update the optional `skill-scanner` deep engine (audit-skill --deep).
+    """Install or update the optional `skill-scanner` deep engine (skill review --deep).
 
     Installs Cisco AI Defense's skill-scanner in an isolated environment (uv tool,
     or pip --user fallback). This is a heavy third-party package and its
