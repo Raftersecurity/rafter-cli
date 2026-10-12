@@ -305,3 +305,15 @@ class TestAuditLogDefaults:
             handle_read_audit_log(since="2026-01-01T00:00:00")
             call_kwargs = mock_cls.return_value.read.call_args[1]
             assert call_kwargs["since"].tzinfo == timezone.utc
+
+
+# The triage loop the suppress_finding description promises: once a finding is
+# suppressed, the next scan_secrets call must not report it again.
+def test_scan_secrets_does_not_report_a_suppressed_finding(tmp_path, monkeypatch):
+    from rafter_cli.commands.mcp_server import handle_suppress_finding
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test" / "fixtures").mkdir(parents=True)
+    (tmp_path / "test" / "fixtures" / "creds.env").write_text("AWS_KEY=AKIAIOSFODNN7EXAMPLE1\n")
+    assert len(handle_scan_secrets(str(tmp_path), engine="patterns")) == 1
+    handle_suppress_finding("test/fixtures/**", reason="fixture")
+    assert handle_scan_secrets(str(tmp_path), engine="patterns") == []
