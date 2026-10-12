@@ -122,8 +122,13 @@ class TestApiUrlConstruction:
             + "\n".join(offenders)
         )
 
-    def test_api_url_joins_cleanly(self):
+    def test_api_url_joins_cleanly(self, monkeypatch):
         from rafter_cli.utils.api import API_BASE, api_url
+
+        # The test suite redirects RAFTER_API_URL away from production (see
+        # conftest.py); unset it here to exercise the real default this test
+        # is actually about.
+        monkeypatch.delenv("RAFTER_API_URL", raising=False)
 
         assert api_url("static/scan") == "https://rafter.so/api/static/scan"
         assert api_url("/static/scan") == "https://rafter.so/api/static/scan"

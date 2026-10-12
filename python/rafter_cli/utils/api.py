@@ -10,6 +10,18 @@ import typer
 
 API_BASE = "https://rafter.so/api/"
 
+
+def _resolve_api_base() -> str:
+    """The API base in effect right now.
+
+    ``RAFTER_API_URL``, read fresh on every call rather than cached at import
+    time, overrides the production default. This is how the test suite points
+    the CLI at a local, non-routable port instead of the live backend — see
+    ``python/tests/conftest.py``. Production never sets the var, so this is a
+    no-op outside tests.
+    """
+    return os.environ.get("RAFTER_API_URL") or API_BASE
+
 # Exit codes
 EXIT_SUCCESS = 0
 EXIT_GENERAL_ERROR = 1
@@ -84,7 +96,7 @@ def api_url(path: str) -> str:
     to the single-slash form. That worked only because the client followed the
     redirect — so sable-2s6p's fix would have broken every core command.
     """
-    return f"{API_BASE.rstrip('/')}/{path.lstrip('/')}"
+    return f"{_resolve_api_base().rstrip('/')}/{path.lstrip('/')}"
 
 
 def api_request(method: str, url: str, **kwargs) -> "requests.Response":
