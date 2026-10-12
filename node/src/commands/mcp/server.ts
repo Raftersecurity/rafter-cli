@@ -15,6 +15,8 @@ import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager, redactConfigSecrets, isSecretConfigKey, maskSecretValue } from "../../core/config-manager.js";
 import { listDocs, resolveDocSelector, fetchDoc } from "../../core/docs-loader.js";
 import { writeSuppression } from "../../core/suppression-writer.js";
+import { applySuppressions } from "../../core/custom-patterns.js";
+import { collectSuppressions } from "../agent/scan.js";
 import { apiUrl, apiClient} from "../../utils/api.js";
 import { describeSitesError, resolveMcpApiKey } from "../sites/errors.js";
 import { createRequire } from "module";
@@ -144,7 +146,7 @@ export function createServer(): Server {
       },
       {
         name: "suppress_finding",
-        description: "Triage a false positive by persisting a suppression rule into the project's .rafter.yml. Use when a scan_secrets finding (or a remote scan finding) is a confirmed false positive — e.g. a test fixture or sample credential. Suppressed findings still surface under '_suppressed' in scan output, so the decision is reviewable and version-controlled. Always include a reason.",
+        description: "Triage a false positive by persisting a suppression rule into the project's .rafter.yml. Use when a scan_secrets finding (or a remote scan finding) is a confirmed false positive — e.g. a test fixture or sample credential. scan_secrets stops reporting suppressed findings; `rafter secrets --json` lists them under '_suppressed', so the decision is reviewable and version-controlled. Always include a reason.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -229,11 +231,22 @@ export function createServer(): Server {
           }
         };
 
+        // Honor the project's suppressions, as `rafter secrets` does, so a
+        // finding triaged with suppress_finding is not reported again.
+        const report = (results: ScanResult[]) => {
+          const suppressions = collectSuppressions(new ConfigManager().loadWithPolicy().agent?.scan?.ignore);
+          // Drop only what was suppressed; a clean file keeps its empty entry.
+          const kept = new Map(applySuppressions(results, suppressions).results.map((r) => [r.file, r]));
+          return textResult(formatScanResults(
+            results.filter((r) => r.matches.length === 0 || kept.has(r.file)).map((r) => kept.get(r.file) ?? r),
+          ));
+        };
+
         if (engine === "betterleaks") {
           const bl = new BetterleaksScanner();
           if (!(await bl.isAvailable())) return errorResult("Betterleaks not installed");
           try {
-            return textResult(formatScanResults(await bl.scanDirectory(scanPath)));
+            return report(await bl.scanDirectory(scanPath));
           } catch {
             return errorResult("Betterleaks scan failed");
           }
@@ -247,16 +260,16 @@ export function createServer(): Server {
           if (await bl.isAvailable()) {
             try {
               const blResults = await bl.scanDirectory(scanPath);
-              return textResult(formatScanResults(unionScanResults(blResults, runPatterns())));
+              return report(unionScanResults(blResults, runPatterns()));
             } catch {
               // betterleaks failed — fall through to patterns-only.
             }
           }
-          return textResult(formatScanResults(runPatterns()));
+          return report(runPatterns());
         }
 
         // patterns (and any unrecognized value — the tool schema enums this).
-        return textResult(formatScanResults(runPatterns()));
+        return report(runPatterns());
       }
 
       case "evaluate_command": {
