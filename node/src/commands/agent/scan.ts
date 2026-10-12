@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
-import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
+import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import { BetterleaksScanner } from "../../scanners/betterleaks.js";
 import { unionScanResults } from "../../scanners/union.js";
 import { BinaryManager, BETTERLEAKS_VERSION } from "../../utils/binary-manager.js";
@@ -476,15 +476,6 @@ async function scanStagedFiles(
  * Shared handler for --diff / --staged: parse unified diff for + lines, scan
  * with the patterns engine, then apply exclude_paths / baseline / suppressions.
  */
-/** Upper bound on the `git diff` read. Far above any real staged diff, so the
- * scan runs; a diff past even this fails as a scan error (exit 2), not a
- * finding (see the catch below). Overridable via RAFTER_GIT_DIFF_MAX_BUFFER
- * (bytes) for constrained hosts or to exercise the scan-error path in tests. */
-function gitDiffMaxBuffer(): number {
-  const raw = Number(process.env.RAFTER_GIT_DIFF_MAX_BUFFER);
-  return Number.isInteger(raw) && raw > 0 ? raw : 256 * 1024 * 1024;
-}
-
 async function runGitAddedLineScan(
   gitArgs: string[],
   opts: ScanOpts,

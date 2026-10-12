@@ -10,7 +10,7 @@ import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
 import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
-import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
+import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
 import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
 import fs from "fs";
@@ -378,9 +378,11 @@ export function scanStagedFiles(cwd: string = process.cwd()): StagedScanResult {
   try {
     const repoRoot = execSync("git rev-parse --show-toplevel", gitOpts).trim() || cwd;
 
+    // At the default 1 MiB buffer a larger staged diff threw ENOBUFS, the catch
+    // below returned "no secrets", and the commit skipped the scan (#274).
     const patch = execSync(
       "git diff -U0 --no-color --cached --diff-filter=ACM",
-      gitOpts,
+      { ...gitOpts, maxBuffer: gitDiffMaxBuffer() },
     ).trim();
     if (!patch) {
       return { ...empty, repoRoot };
