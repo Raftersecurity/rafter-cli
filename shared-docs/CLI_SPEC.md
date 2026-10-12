@@ -126,6 +126,10 @@ Retrieve results from a scan.
 
 **Vulnerability levels (JSON output):** The `level` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
 
+#### Failed scans
+
+A scan whose status is `failed` exits `1` from `rafter run`, `rafter get` and `rafter get --interactive`. stderr names the API's `error_code` and `error` message, and adds a re-run hint when the payload says `retryable: true`. With `--format json` the failure payload is also written to stdout, so a consumer can read `error_code` and `retryable` itself. Both runtimes.
+
 #### Poll-loop retry contract
 
 A report is not necessarily durable the instant a scan flips to `completed`, so a poll can hit a 5xx on a scan that is readable seconds later. Both runtimes retry transient read failures instead of aborting. This applies to `rafter run`, `rafter get --interactive`, and plain `rafter get <scan_id>`:
