@@ -707,6 +707,11 @@ async function scanFile(
   return runPatterns();
 }
 
+/** An engine failure's message, e.g. "Betterleaks scan failed (timed out after 60s)". */
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 /**
  * Scan a directory with selected engine
  */
@@ -717,9 +722,9 @@ async function scanDirectory(
   history?: boolean,
   respectGitignore?: boolean,
 ): Promise<ScanResult[]> {
-  // respectGitignore default is true. The patterns engine honors it via
-  // RegexScanner.scanDirectory; betterleaks honors it natively (gitleaks
-  // ancestry — reads .gitignore unless --no-git is set).
+  // respectGitignore default is true. Both engines honor it: the patterns
+  // engine via RegexScanner.scanDirectory, betterleaks by scanning only the
+  // files git does not ignore (BetterleaksScanner.scanDirectory, #262).
   const runPatterns = (): ScanResult[] => {
     const scanner = new RegexScanner(scanCfg?.customPatterns);
     return scanner.scanDirectory(dirPath, {
@@ -735,9 +740,9 @@ async function scanDirectory(
     // exclude-paths post-filter below applies to the merged set.
     const blPromise = (async (): Promise<ScanResult[]> => {
       try {
-        return await new BetterleaksScanner().scanDirectory(dirPath, { useGit: history ?? false });
-      } catch {
-        console.error(fmt.warning("Betterleaks scan failed, using patterns only for this run"));
+        return await new BetterleaksScanner().scanDirectory(dirPath, { useGit: history ?? false, respectGitignore });
+      } catch (e) {
+        console.error(fmt.warning(`${errorText(e)}; using patterns only for this run`));
         return [];
       }
     })();
@@ -746,9 +751,9 @@ async function scanDirectory(
   } else if (engine === "betterleaks") {
     try {
       const bl = new BetterleaksScanner();
-      results = await bl.scanDirectory(dirPath, { useGit: history ?? false });
+      results = await bl.scanDirectory(dirPath, { useGit: history ?? false, respectGitignore });
     } catch (e) {
-      console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
+      console.error(fmt.warning(`${errorText(e)}; falling back to patterns`));
       results = runPatterns();
     }
   } else {

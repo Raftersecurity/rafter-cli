@@ -13,6 +13,62 @@ from typing import NamedTuple
 from ..core.pattern_engine import Pattern, PatternMatch
 from ..utils.binary_manager import BinaryManager
 
+# Per-invocation timeout for the betterleaks subprocess.
+SCAN_TIMEOUT_S = 60
+
+# Budget for the path arguments of one `betterleaks dir` call. Windows caps a
+# whole command line at 32,767 characters; elsewhere the limit is far larger.
+ARG_CHARS_PER_CALL = 24_000 if sys.platform == "win32" else 500_000
+
+# Config env vars betterleaks consults before the target's own .toml.
+CONFIG_ENV_VARS = (
+    "BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG", "BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML",
+)
+
+
+def git_visible_files(dir_path: str) -> list[str] | None:
+    """Files under ``dir_path`` that git does not ignore (tracked, plus
+    untracked and not ignored), as absolute paths. Returns None when
+    ``dir_path`` is not inside a git work tree or git is unavailable, so the
+    caller scans the directory whole. Mirrors ``gitVisibleFiles`` in
+    node/src/scanners/betterleaks.ts.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", dir_path, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."],
+            capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    files: dict[str, None] = {}
+    for rel in r.stdout.decode("utf-8", "surrogateescape").split("\0"):
+        if not rel:
+            continue
+        abs_path = os.path.join(dir_path, rel)
+        # Skip deleted-but-tracked paths, submodule dirs and symlinks
+        # (betterleaks does not follow symlinks by default either).
+        if os.path.isfile(abs_path) and not os.path.islink(abs_path):
+            files[abs_path] = None
+    return list(files)
+
+
+def _chunk_by_length(paths: list[str], budget: int) -> list[list[str]]:
+    """Split ``paths`` into groups whose joined length stays under ``budget``."""
+    chunks: list[list[str]] = []
+    cur: list[str] = []
+    length = 0
+    for p in paths:
+        if cur and length + len(p) + 1 > budget:
+            chunks.append(cur)
+            cur, length = [], 0
+        cur.append(p)
+        length += len(p) + 1
+    if cur:
+        chunks.append(cur)
+    return chunks
+
 
 @dataclass
 class BetterleaksScanResult:
@@ -116,8 +172,35 @@ class BetterleaksScanner:
             matches=[self._convert(r) for r in results],
         )
 
-    def scan_directory(self, dir_path: str, *, use_git: bool = False) -> list[BetterleaksScanResult]:
-        results = self._run_scan(dir_path, use_git=use_git)
+    def scan_directory(
+        self, dir_path: str, *, use_git: bool = False, respect_gitignore: bool = True,
+    ) -> list[BetterleaksScanResult]:
+        """Scan a directory: git history with use_git, else the filesystem.
+
+        `betterleaks dir` has no notion of .gitignore, so given a directory it
+        walks node_modules, build output and local secret stores (.env) alike:
+        slow enough to hit the timeout on an ordinary checkout, and noisy
+        (#262). With respect_gitignore (the default, matching the patterns
+        engine) and a target inside a git work tree, it is handed git's own
+        list of non-ignored files instead.
+        """
+        files = None if use_git or not respect_gitignore else git_visible_files(dir_path)
+        if files is None:
+            results = self._run_scan(dir_path, use_git=use_git)
+        else:
+            # Given file paths instead of a directory, betterleaks no longer
+            # finds the target's own .betterleaks.toml / .gitleaks.toml, so pass
+            # it explicitly unless an env var already chooses the config.
+            config_args: list[str] = []
+            if not any(os.environ.get(v) for v in CONFIG_ENV_VARS):
+                for name in (".betterleaks.toml", ".gitleaks.toml"):
+                    cfg = os.path.join(dir_path, name)
+                    if os.path.exists(cfg):
+                        config_args = ["-c", cfg]
+                        break
+            results = []
+            for chunk in _chunk_by_length(files, ARG_CHARS_PER_CALL):
+                results.extend(self._run_scan(chunk, extra_args=config_args))
         grouped: dict[str, list[PatternMatch]] = {}
         for r in results:
             f = r.get("File", "unknown")
@@ -126,7 +209,9 @@ class BetterleaksScanner:
 
     # ------------------------------------------------------------------
 
-    def _run_scan(self, target: str, *, use_git: bool = False) -> list[dict]:
+    def _run_scan(
+        self, target: str | list[str], *, use_git: bool = False, extra_args: list[str] | None = None,
+    ) -> list[dict]:
         if not self._path:
             raise RuntimeError("Betterleaks not available")
 
@@ -136,12 +221,18 @@ class BetterleaksScanner:
             # `git <path>` for git history; report destination is --report-path.
             # `--` ensures a target path beginning with `-` isn't parsed as a flag.
             subcommand = "git" if use_git else "dir"
-            cmd = [self._path, subcommand, "-f", "json", "--report-path", report_path, "--", target]
+            targets = [target] if isinstance(target, str) else target
+            cmd = [
+                self._path, subcommand, *(extra_args or []),
+                "-f", "json", "--report-path", report_path, "--", *targets,
+            ]
             try:
-                result = subprocess.run(cmd, capture_output=True, timeout=60)
-            except subprocess.TimeoutExpired:
-                print(f"[rafter] Warning: Betterleaks scan of {target} timed out", file=sys.stderr)
-                return []
+                result = subprocess.run(cmd, capture_output=True, timeout=SCAN_TIMEOUT_S)
+            except subprocess.TimeoutExpired as exc:
+                # An error, never an empty result: returning [] here made the
+                # betterleaks-only engine report a scan that never finished as
+                # clean (#262).
+                raise RuntimeError(f"Betterleaks scan failed (timed out after {SCAN_TIMEOUT_S}s)") from exc
             except (OSError, FileNotFoundError) as exc:
                 raise RuntimeError(f"Betterleaks invocation failed: {exc}") from exc
 
