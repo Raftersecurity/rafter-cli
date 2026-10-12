@@ -329,3 +329,19 @@ def test_env_redaction_only_touches_secret_assignment_in_mixed_command():
     out = _engine().redact_text("FOO=bar SECRET_TOKEN=abcdef1234567890 rafter")
     assert "FOO=bar" in out
     assert "abcdef1234567890" not in out
+
+
+def test_does_not_compile_regexes_per_line(monkeypatch):
+    # Compiling every pattern for every line made the regex engine 45x slower
+    # than betterleaks on a large repo.
+    from rafter_cli.core.pattern_engine import Pattern
+    engine = PatternEngine([
+        Pattern(name="AWS Access Key ID", regex="AKIA[A-Z0-9]{16}", severity="critical"),
+        Pattern(name="Generic", regex="(?i)secret", severity="low"),
+    ])
+    calls = []
+    original = PatternEngine._compile
+    monkeypatch.setattr(PatternEngine, "_compile", staticmethod(lambda r: calls.append(r) or original(r)))
+    text = "\n".join("x" if i % 50 else "AKIAIOSFODNN7EXAMPLE" for i in range(200))
+    assert [m.line for m in engine.scan_with_position(text)] == [1, 51, 101, 151]
+    assert calls == []
