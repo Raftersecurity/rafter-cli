@@ -46,6 +46,25 @@ export function redactConfigSecrets<T>(value: T): T {
 /**
  * Validate a parsed config JSON object, warning and falling back to defaults for invalid fields.
  */
+/**
+ * The Python CLI writes the shared config file with snake_case keys
+ * (`backend.api_key`, `agent.risk_level`). Rename them to camelCase so a config
+ * written by either CLI reads the same here. Component IDs under
+ * `agent.components` are data, not field names, and keep their spelling.
+ * Where both spellings exist, the camelCase one (Node's own) wins.
+ */
+function camelizeKeys(value: any, keepKeys = false): any {
+  if (Array.isArray(value)) return value.map((v) => camelizeKeys(v));
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, any> = {};
+  for (const [key, v] of Object.entries(value)) {
+    const camel = keepKeys ? key : key.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+    if (camel !== key && camel in value) continue;
+    out[camel] = camelizeKeys(v, !keepKeys && camel === "components");
+  }
+  return out;
+}
+
 function validateConfig(raw: any): RafterConfig {
   if (!raw || typeof raw !== "object") {
     console.error("Warning: config file is not a JSON object — using defaults.");
@@ -177,7 +196,7 @@ export class ConfigManager {
     try {
       const content = fs.readFileSync(this.configPath, "utf-8");
       const parsed = JSON.parse(content);
-      const config = validateConfig(parsed);
+      const config = validateConfig(camelizeKeys(parsed));
 
       // Migrate config if needed
       return this.migrate(config);
