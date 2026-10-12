@@ -55,6 +55,17 @@ describe("unionScanResults (sable-j85)", () => {
     expect(out[0].matches).toHaveLength(2);
   });
 
+  it("dedups one secret both engines start at the same position, despite different extracted text", () => {
+    // betterleaks extracts a whole PEM block; the regex pattern only its header.
+    const bl: ScanResult[] = [{ file: "k.pem", matches: [match("private-key", "-----BEGIN RSA PRIVATE KEY-----\nMIIE", 3, 5)] }];
+    const pat: ScanResult[] = [{ file: "k.pem", matches: [match("Private Key", "-----BEGIN RSA PRIVATE KEY-----", 3, 5)] }];
+
+    const out = unionScanResults(bl, pat);
+
+    expect(out[0].matches).toHaveLength(1);
+    expect(out[0].matches[0].engines).toEqual(["betterleaks", "patterns"]);
+  });
+
   it("merges into one file group, betterleaks findings first", () => {
     const bl: ScanResult[] = [{ file: "a.env", matches: [match("bl-only", "X", 1)] }];
     const pat: ScanResult[] = [{ file: "a.env", matches: [match("pat-only", "Y", 2)] }];

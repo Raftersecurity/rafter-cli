@@ -57,3 +57,11 @@ class TestParseReport:
     def test_malformed_json_still_warns(self, write_report, capsys):
         assert BetterleaksScanner._parse_report(write_report("{not json")) == []
         assert "Failed to parse" in capsys.readouterr().err
+
+
+def test_convert_reports_1_based_column_on_every_line():
+    # betterleaks 1.1.x reports StartColumn one past the 1-based column on every
+    # line but the first; the regex engine reports the true column.
+    from rafter_cli.scanners.betterleaks import BetterleaksScanner
+    assert BetterleaksScanner._convert({"RuleID": "jwt", "StartLine": 1, "StartColumn": 1, "Secret": "eyJ"}).column == 1
+    assert BetterleaksScanner._convert({"RuleID": "jwt", "StartLine": 2, "StartColumn": 6, "Secret": "eyJ"}).column == 5
