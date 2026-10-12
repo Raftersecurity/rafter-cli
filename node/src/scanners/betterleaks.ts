@@ -280,7 +280,8 @@ export class BetterleaksScanner {
     const visibleChars = 4;
     const start = match.substring(0, visibleChars);
     const end = match.substring(match.length - visibleChars);
-    const middle = "*".repeat(match.length - (visibleChars * 2));
+    // Cap the mask: betterleaks returns whole PEM blocks as the secret.
+    const middle = "*".repeat(Math.min(match.length - (visibleChars * 2), 16));
     return start + middle + end;
   }
 
