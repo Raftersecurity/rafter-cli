@@ -1228,26 +1228,31 @@ def init(
 
     # Warn about requested but undetected environments (user scope only —
     # in --local scope we create the directories in CWD as needed).
+    # Gated on the EXPLICIT --with-<platform> flag, not the resolved want_*
+    # (which --all also sets): --all means "install all DETECTED
+    # integrations" per its own --help text, so an undetected platform
+    # under --all is normal and shouldn't warn individually — 9 such
+    # warnings buried the ones that actually matter (rafter-cli#231).
     if scope == "user":
-        if want_openclaw and not has_openclaw:
+        if with_openclaw and not has_openclaw:
             rprint(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"))
-        if want_claude_code and not has_claude_code:
+        if with_claude_code and not has_claude_code:
             rprint(fmt.warning("Claude Code requested but not detected (~/.claude not found)"))
-        if want_codex and not has_codex:
+        if with_codex and not has_codex:
             rprint(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"))
-        if want_gemini and not has_gemini:
+        if with_gemini and not has_gemini:
             rprint(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"))
-        if want_cursor and not has_cursor:
+        if with_cursor and not has_cursor:
             rprint(fmt.warning("Cursor requested but not detected (~/.cursor not found)"))
-        if want_windsurf and not has_windsurf:
+        if with_windsurf and not has_windsurf:
             rprint(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"))
-        if want_continue and not has_continue_dev:
+        if with_continue and not has_continue_dev:
             rprint(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
-        if want_aider and not has_aider:
+        if with_aider and not has_aider:
             rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
-        if want_hermes and not has_hermes:
+        if with_hermes and not has_hermes:
             rprint(fmt.warning("Hermes requested but not detected (~/.hermes not found)"))
-        if want_opencode and not has_opencode:
+        if with_opencode and not has_opencode:
             rprint(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"))
 
     # --dry-run: print every file path the command would touch, then exit
@@ -2687,6 +2692,11 @@ class _CheckResult:
     passed: bool
     detail: str
     optional: bool = False  # optional checks warn but don't fail exit code
+    # True only for an optional check whose platform/integration isn't present
+    # on this machine at all (e.g. ~/.cursor doesn't exist). Distinguishes "not
+    # applicable here" from "present but misconfigured" so the summary line
+    # doesn't count every uninstalled editor as a "core check" (rafter-cli#231).
+    not_detected: bool = False
 
 
 def _check_betterleaks() -> _CheckResult:
@@ -2749,7 +2759,7 @@ def _check_claude_code() -> _CheckResult:
     claude_dir = home / ".claude"
 
     if not claude_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-claude-code' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-claude-code' to enable", optional=True, not_detected=True)
 
     settings_path = claude_dir / "settings.json"
     if not settings_path.exists():
@@ -2785,7 +2795,7 @@ def _check_openclaw() -> _CheckResult:
     openclaw_root = home / ".openclaw"
 
     if not openclaw_root.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-openclaw' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-openclaw' to enable", optional=True, not_detected=True)
 
     skill_path = openclaw_root / "workspace" / "skills" / "rafter-security" / "SKILL.md"
     if not skill_path.exists():
@@ -2818,7 +2828,7 @@ def _check_codex() -> _CheckResult:
     home = Path.home()
 
     if not (home / ".codex").exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-codex' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-codex' to enable", optional=True, not_detected=True)
 
     skill_path = home / ".agents" / "skills" / "rafter" / "SKILL.md"
     if not skill_path.exists():
@@ -2834,7 +2844,7 @@ def _check_gemini() -> _CheckResult:
     gemini_dir = home / ".gemini"
 
     if not gemini_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-gemini' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-gemini' to enable", optional=True, not_detected=True)
 
     settings_path = gemini_dir / "settings.json"
     if not settings_path.exists():
@@ -2857,7 +2867,7 @@ def _check_cursor() -> _CheckResult:
     cursor_dir = home / ".cursor"
 
     if not cursor_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-cursor' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-cursor' to enable", optional=True, not_detected=True)
 
     mcp_path = cursor_dir / "mcp.json"
     if not mcp_path.exists():
@@ -2880,7 +2890,7 @@ def _check_windsurf() -> _CheckResult:
     windsurf_dir = home / ".codeium" / "windsurf"
 
     if not windsurf_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-windsurf' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-windsurf' to enable", optional=True, not_detected=True)
 
     mcp_path = windsurf_dir / "mcp_config.json"
     if not mcp_path.exists():
@@ -2903,7 +2913,7 @@ def _check_continue_dev() -> _CheckResult:
     continue_dir = home / ".continue"
 
     if not continue_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-continue' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-continue' to enable", optional=True, not_detected=True)
 
     config_path = continue_dir / "config.json"
     if not config_path.exists():
@@ -2939,7 +2949,7 @@ def _check_aider() -> _CheckResult:
 
     conf = project_conf if project_conf.exists() else user_conf if user_conf.exists() else None
     if conf is None:
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-aider' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-aider' to enable", optional=True, not_detected=True)
 
     try:
         raw = conf.read_text()
@@ -2980,7 +2990,7 @@ def _check_hermes() -> _CheckResult:
     hermes_dir = home / ".hermes"
 
     if not hermes_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-hermes' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-hermes' to enable", optional=True, not_detected=True)
 
     config_path = hermes_dir / "config.yaml"
     if not config_path.exists():
@@ -3008,7 +3018,7 @@ def _check_opencode() -> _CheckResult:
     opencode_dir = home / ".config" / "opencode"
 
     if not opencode_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-opencode' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-opencode' to enable", optional=True, not_detected=True)
 
     config_path = opencode_dir / "opencode.json"
     if not config_path.exists():
@@ -3167,9 +3177,24 @@ def verify(
                 rprint(fmt.error(f"{r.name}: FAIL — {r.detail}"))
 
         rprint()
+        # "Core checks" excludes optional integrations that simply aren't
+        # present on this machine — those were never candidates to pass, so
+        # counting them in the denominator (and calling them "core" in the
+        # same breath as "optional") misrepresents a healthy install as a
+        # mostly-failing one (rafter-cli#231). An optional check that IS
+        # applicable here but still failed (e.g. hooks installed but
+        # disabled) still counts as core: it's a real, actionable warning.
+        not_applicable = [r for r in results if not r.passed and r.optional and r.not_detected]
+        core_results = [r for r in results if not (r.optional and r.not_detected)]
+        core_warned = [r for r in core_results if not r.passed and r.optional]
         if not hard_failed:
-            warn_note = f" ({len(warned)} optional check{'s' if len(warned) != 1 else ''} not configured)" if warned else ""
-            rprint(fmt.success(f"{len(passed)}/{len(results)} core checks passed{warn_note}"))
+            notes = []
+            if core_warned:
+                notes.append(f"{len(core_warned)} optional check{'s' if len(core_warned) != 1 else ''} not configured")
+            if not_applicable:
+                notes.append(f"{len(not_applicable)} optional integration{'s' if len(not_applicable) != 1 else ''} not detected")
+            warn_note = f" ({', '.join(notes)})" if notes else ""
+            rprint(fmt.success(f"{len(passed)}/{len(core_results)} core checks passed{warn_note}"))
         else:
             rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
         rprint()
