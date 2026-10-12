@@ -240,7 +240,10 @@ export class BetterleaksScanner {
       },
       match: result.Secret || result.Match,
       line: result.StartLine,
-      column: result.StartColumn,
+      // betterleaks 1.1.x reports StartColumn one past the 1-based column on
+      // every line but the first. Report the true column, as the regex engine
+      // does, so the union can merge the two engines' findings.
+      column: result.StartLine > 1 && result.StartColumn > 1 ? result.StartColumn - 1 : result.StartColumn,
       redacted: this.redact(result.Secret || result.Match)
     };
   }
