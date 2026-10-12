@@ -1901,16 +1901,20 @@ def _scan_directory(
         bl_results: list[ScanResult] = []
         try:
             bl = BetterleaksScanner()
-            bl_results = [ScanResult(file=r.file, matches=r.matches) for r in bl.scan_directory(dir_path, use_git=history)]
-        except Exception:
-            print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
+            bl_results = [
+                ScanResult(file=r.file, matches=r.matches)
+                for r in bl.scan_directory(dir_path, use_git=history, respect_gitignore=respect_gitignore)
+            ]
+        except Exception as exc:
+            print_stderr(fmt.warning(f"{exc}; using patterns only for this run"))
         results = union_scan_results(bl_results, run_patterns())
     elif engine == "betterleaks":
         try:
             bl = BetterleaksScanner()
-            results = bl.scan_directory(dir_path, use_git=history)
+            results = bl.scan_directory(dir_path, use_git=history, respect_gitignore=respect_gitignore)
             results = [ScanResult(file=r.file, matches=r.matches) for r in results]
-        except Exception:
+        except Exception as exc:
+            print_stderr(fmt.warning(f"{exc}; falling back to patterns"))
             results = run_patterns()
     else:
         results = run_patterns()
