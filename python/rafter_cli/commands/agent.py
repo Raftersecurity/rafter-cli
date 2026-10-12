@@ -1631,6 +1631,12 @@ def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> st
     return "both" if usable == "betterleaks" else "patterns"
 
 
+def _engine_label(engine: str) -> str:
+    """Self-explanatory display label for a resolved engine — "both" alone
+    doesn't say which two engines ran (issue #231 item 6)."""
+    return "both: betterleaks + patterns" if engine == "both" else engine
+
+
 def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
     """sable-o4k — guard against a stale rafter-managed betterleaks binary
     silently returning zero findings (a leftover binary from an older rafter
@@ -2024,7 +2030,7 @@ def _watch_and_scan(
     eng = _select_engine(engine, quiet, auto_update)
 
     if not quiet:
-        print_stderr(fmt.info(f"Watching {watch_path} for changes ({eng}). Press Ctrl+C to exit."))
+        print_stderr(fmt.info(f"Watching {watch_path} for changes ({_engine_label(eng)}). Press Ctrl+C to exit."))
 
     # Initial scan
     if os.path.isdir(watch_path):
@@ -2232,11 +2238,11 @@ def scan(
 
     if os.path.isdir(resolved_path):
         if not quiet:
-            print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
+            print(f"Scanning directory: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
         results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
     else:
         if not quiet:
-            print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
+            print(f"Scanning file: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
         results = _scan_file(resolved_path, eng, custom_patterns)
 
     filtered = _apply_baseline(results, baseline_entries)
