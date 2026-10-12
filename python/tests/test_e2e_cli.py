@@ -389,6 +389,30 @@ def _exec(args, *, stdin_text="", home=None):
     return result.stdout, result.stderr, result.returncode
 
 
+class TestAgentExecStagedDiffFailsClosed:
+    """`agent exec git commit` must not run a commit it could not scan."""
+
+    def _repo(self, tmp_path, name, content):
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        (tmp_path / name).write_bytes(content)
+        subprocess.run(["git", "add", name], cwd=tmp_path, check=True)
+
+    def test_blocks_commit_when_git_diff_fails(self, tmp_path):
+        self._repo(tmp_path, "a.js", b"const a = 1;\n")
+        (tmp_path / ".git" / "index").write_bytes(b"corrupt")
+        _, err, rc = rafter(["agent", "exec", "git commit -m x"], cwd=tmp_path,
+                            env_override={"HOME": str(tmp_path)})
+        assert rc == 2
+        assert "could not run" in err
+
+    def test_scans_non_utf8_staged_diff(self, tmp_path):
+        self._repo(tmp_path, "latin1.txt", b"caf\xe9\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n")
+        out, err, rc = rafter(["agent", "exec", "git commit -m x"], cwd=tmp_path,
+                              env_override={"HOME": str(tmp_path)})
+        assert rc == 1
+        assert "Secrets detected" in out + err
+
+
 class TestAgentExecApproval:
     """Every test proves the command did NOT run: the file mode is the witness."""
 

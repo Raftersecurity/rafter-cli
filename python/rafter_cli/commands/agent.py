@@ -2503,23 +2503,30 @@ def exec_cmd(
     # Pre-exec scan for git commands (+ lines in staged diff only)
     if not skip_scan and command.strip().startswith(("git commit", "git push")):
         try:
+            rev = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+            )
+        except FileNotFoundError:
+            rev = None
+        # Outside a git repo there is nothing staged to scan.
+        if rev is not None and rev.returncode == 0:
             from ..utils.git_diff import parse_unified_diff_added_lines
             from ..scanners.git_diff_scan import scan_added_diff_lines
 
-            patch = subprocess.run(
+            # surrogateescape: a non-UTF-8 diff is still scanned, not a crash.
+            diff = subprocess.run(
                 ["git", "diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
-                capture_output=True,
-                text=True,
-            ).stdout
-            if patch.strip():
-                repo_root = subprocess.run(
-                    ["git", "rev-parse", "--show-toplevel"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                ).stdout.strip()
-                added = parse_unified_diff_added_lines(patch)
-                results = scan_added_diff_lines(added, repo_root)
+                capture_output=True, text=True, encoding="utf-8", errors="surrogateescape",
+            )
+            if diff.returncode != 0:
+                # A scan that could not run is a scan error (exit 2), never a pass.
+                detail = diff.stderr.strip() or f"git diff exited {diff.returncode}"
+                print(f"Error: secret scan could not run ({detail}); command blocked", file=sys.stderr)
+                interceptor.log_evaluation(evaluation, "blocked")
+                raise typer.Exit(code=2)
+            if diff.stdout.strip():
+                added = parse_unified_diff_added_lines(diff.stdout)
+                results = scan_added_diff_lines(added, rev.stdout.strip())
                 total = sum(len(r.matches) for r in results)
                 if results:
                     rprint(f"\n{fmt.warning('Secrets detected in staged files!')}\n")
@@ -2527,8 +2534,6 @@ def exec_cmd(
                     rprint(f"\nRun 'rafter secrets' for details.\n")
                     interceptor.log_evaluation(evaluation, "blocked")
                     raise typer.Exit(code=1)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
 
     # Requires approval — only a person at a terminal can give it.
     if evaluation.requires_approval:

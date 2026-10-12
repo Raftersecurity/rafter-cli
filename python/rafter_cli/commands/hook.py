@@ -292,15 +292,25 @@ def _scan_staged_files() -> dict:
     """
     empty = {"secrets_found": False, "count": 0, "files": 0, "findings": [], "repo_root": os.getcwd()}
     try:
-        repo_root = subprocess.run(
+        rev = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True,
-        ).stdout.strip() or os.getcwd()
-
-        output = subprocess.run(
+        )
+    except OSError:
+        return empty
+    if rev.returncode != 0:
+        return empty  # Not a git repo: no staged files to scan.
+    repo_root = rev.stdout.strip() or os.getcwd()
+    try:
+        # surrogateescape: a non-UTF-8 diff is still scanned instead of raising
+        # into the pretool's fail-open catch.
+        diff = subprocess.run(
             ["git", "diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
-            capture_output=True, text=True,
-        ).stdout
+            capture_output=True, text=True, encoding="utf-8", errors="surrogateescape",
+        )
+        if diff.returncode != 0:
+            raise RuntimeError(diff.stderr.strip() or f"git diff exited {diff.returncode}")
+        output = diff.stdout
         if not output.strip():
             return {**empty, "repo_root": repo_root}
 
@@ -327,9 +337,9 @@ def _scan_staged_files() -> dict:
             "findings": kept,
             "repo_root": repo_root,
         }
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
-        print(f"rafter: staged file scan failed: {exc}", file=sys.stderr)
-        return empty
+    except Exception as exc:
+        # Inside a repo, a scan that could not run must not read as "no secrets".
+        return {**empty, "repo_root": repo_root, "scan_error": str(exc)}
 
 
 def _evaluate_bash(command: str, control=None) -> dict:
@@ -371,6 +381,15 @@ def _evaluate_bash(command: str, control=None) -> dict:
     trimmed = command.strip()
     if control.secret_scan_enabled and trimmed.startswith(("git commit", "git push")):
         result = _scan_staged_files()
+        if result.get("scan_error"):
+            audit.log_command_intercepted(
+                command, False, "blocked", f"secret scan could not run: {result['scan_error']}"
+            )
+            return {
+                "decision": "deny",
+                "reason": f"Rafter: secret scan of the staged diff could not run ({result['scan_error']}); "
+                "commit blocked rather than allowed unscanned. Run 'rafter secrets --staged' to investigate.",
+            }
         if result["secrets_found"]:
             # Audit per file so the log records WHICH file + pattern, not a bare count.
             repo_root = result.get("repo_root") or os.getcwd()
