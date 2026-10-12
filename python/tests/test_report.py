@@ -316,3 +316,11 @@ class TestSeverityRank:
     def test_case_insensitive(self):
         assert _severity_rank("CRITICAL") == 0
         assert _severity_rank("High") == 1
+
+
+def test_renders_output_of_secrets_json_piped_into_it(tmp_path):
+    (tmp_path / "creds.env").write_text("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n")
+    scan = CliRunner(mix_stderr=False).invoke(app, ["secrets", "--json", "--engine", "patterns", str(tmp_path)])
+    r = runner.invoke(app, ["report"], input=scan.stdout)
+    assert r.exit_code == 0, r.output
+    assert "AWS Access Key ID" in r.stdout
