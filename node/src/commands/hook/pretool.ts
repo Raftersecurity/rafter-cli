@@ -9,6 +9,7 @@ import { getRafterDir } from "../../core/config-defaults.js";
 import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
 import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
+import { shellQuote } from "../agent/exec.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
 import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
@@ -99,12 +100,16 @@ function formatBlockedMessage(command: string, evaluation: CommandEvaluation): s
   return `\u2717 Rafter blocked: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}`;
 }
 
-function formatApprovalMessage(command: string, evaluation: CommandEvaluation): string {
+export function formatApprovalMessage(command: string, evaluation: CommandEvaluation): string {
   const cmdDisplay = command.length > 60 ? command.slice(0, 60) + "..." : command;
   const rule = evaluation.matchedPattern ?? "policy match";
   const label = RISK_LABELS[evaluation.riskLevel] ?? evaluation.riskLevel.toUpperCase();
   const desc = RISK_DESCRIPTIONS[evaluation.riskLevel] ?? "";
-  return `\u26a0 Rafter: approval required\n  Command: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}\n\nTo approve: a person must run \`rafter agent exec "${command}"\` at an\n            interactive terminal and confirm. There is no flag that\n            skips the prompt.`;
+  // The command is echoed into a suggested shell invocation, so it must be
+  // quoted as data, not interpolated raw \u2014 a raw double-quoted echo lets a
+  // command containing `"`, `$`, or a backtick break out of the quoting or
+  // get shell-expanded when pasted (rf issue #231 item 5).
+  return `\u26a0 Rafter: approval required\n  Command: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}\n\nTo approve: a person must run \`rafter agent exec ${shellQuote(command)}\` at an\n            interactive terminal and confirm. There is no flag that\n            skips the prompt.`;
 }
 
 export function createHookPretoolCommand(): Command {
