@@ -279,7 +279,9 @@ describe("agent init", () => {
   });
 
   it("--dry-run with --with-betterleaks lists the binary download", () => {
-    const r = runCli("agent init --with-betterleaks --dry-run", home);
+    // Keep a betterleaks on the developer's PATH out of view: the plan only
+    // lists a download when the real run would perform one (#231).
+    const r = runCli("agent init --with-betterleaks --dry-run", home, { PATH: "/usr/bin:/bin" });
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("DOWNLOAD");
     expect(r.stdout).toContain("betterleaks");

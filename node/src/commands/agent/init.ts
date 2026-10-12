@@ -88,6 +88,7 @@ const AGENT_SKILLS: { name: string; description: string }[] = [
   { name: "rafter", description: "Rafter Remote" },
   { name: "rafter-secure-design", description: "Rafter Secure Design" },
   { name: "rafter-code-review", description: "Rafter Code Review" },
+  { name: "rafter-skill-review", description: "Rafter Skill Review" },
 ];
 
 /**
@@ -111,7 +112,11 @@ function printDryRunPlan(plan: {
   wantHermes: boolean;
   wantOpenCode: boolean;
   wantBetterleaks: boolean;
+  /** Path of a betterleaks binary the real run would reuse instead of downloading. */
+  betterleaksExisting: string | null;
+  betterleaksSupported: boolean;
   wantSkillScanner: boolean;
+  claudeCodeMcpDisabled: boolean;
   riskLevel: string;
 }): void {
   const home = os.homedir();
@@ -129,6 +134,9 @@ function printDryRunPlan(plan: {
   const R = (p: string, note?: string) => {
     console.log(`  REMOVE    ${p}${note ? `   (${note})` : ""}`);
   };
+  const S = (p: string, note: string) => {
+    console.log(`  SKIP      ${p}   (${note})`);
+  };
 
   console.log();
   console.log(fmt.info("DRY RUN — no files will be created or modified."));
@@ -143,7 +151,13 @@ function printDryRunPlan(plan: {
   if (plan.wantBetterleaks) {
     console.log();
     console.log("Betterleaks (--with-betterleaks / --all):");
-    D(path.join(home, ".rafter", "bin", "betterleaks"), "binary, ~12MB from GitHub releases");
+    if (plan.betterleaksExisting) {
+      S(plan.betterleaksExisting, "betterleaks already present; no download");
+    } else if (!plan.betterleaksSupported) {
+      S(path.join(home, ".rafter", "bin", "betterleaks"), "no betterleaks build for this platform; pattern-based scanning");
+    } else {
+      D(path.join(home, ".rafter", "bin", "betterleaks"), "binary, ~12MB from GitHub releases");
+    }
   }
 
   if (plan.wantSkillScanner) {
@@ -156,12 +170,19 @@ function printDryRunPlan(plan: {
     console.log();
     console.log("Claude Code (--with-claude-code):");
     W(path.join(plan.root, ".claude", "settings.json"), "PreToolUse + PostToolUse hooks merged");
-    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
-      W(path.join(plan.root, ".claude", "skills", s, "SKILL.md"));
+    for (const s of AGENT_SKILLS) {
+      W(path.join(plan.root, ".claude", "skills", s.name, "SKILL.md"));
     }
     W(path.join(plan.root, ".claude", "agents", "rafter.md"), "sub-agent");
     W(path.join(plan.root, ".claude", "CLAUDE.md"), "rafter:start/end marker block");
-    W(path.join(plan.root, ".mcp.json"), "project-scope MCP config");
+    // .mcp.json is a project-scope file; the user-scope install never writes it.
+    if (plan.scope === "project") {
+      if (plan.claudeCodeMcpDisabled) {
+        S(path.join(plan.root, ".mcp.json"), "claude-code.mcp disabled");
+      } else {
+        W(path.join(plan.root, ".mcp.json"), "project-scope MCP config");
+      }
+    }
   }
 
   if (plan.wantCodex) {
@@ -1354,11 +1375,18 @@ export function createInitCommand(): Command {
       // built from the SAME resolved want* / has* booleans the install
       // path uses, so the listing mirrors what would actually run.
       if (opts.dryRun) {
+        const bm = new BinaryManager();
+        const betterleaksExisting = !wantBetterleaks || opts.update
+          ? null
+          : bm.isBetterleaksInstalled()
+            ? bm.getBetterleaksPath()
+            : bm.findBetterleaksOnPath();
+        const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
         printDryRunPlan({
           root,
           scope,
           wantOpenClaw: wantOpenClaw && (hasOpenClaw),
-          wantClaudeCode: wantClaudeCode && (hasClaudeCode || opts.local),
+          wantClaudeCode: wantClaudeCode && (hasClaudeCode || opts.withClaudeCode || opts.local),
           wantCodex: wantCodex && (hasCodex || opts.local),
           wantGemini: wantGemini && (hasGemini || opts.local),
           wantCursor: wantCursor && (hasCursor || opts.local),
@@ -1368,7 +1396,10 @@ export function createInitCommand(): Command {
           wantHermes: wantHermes && hasHermes,
           wantOpenCode: wantOpenCode && hasOpenCode,
           wantBetterleaks,
+          betterleaksExisting,
+          betterleaksSupported: bm.getPlatformInfo().supported,
           wantSkillScanner,
+          claudeCodeMcpDisabled: components["claude-code.mcp"]?.enabled === false,
           riskLevel: opts.riskLevel,
         });
         return;
