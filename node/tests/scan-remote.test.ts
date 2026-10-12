@@ -168,6 +168,33 @@ describe("handleScanStatus", () => {
     expect(code).toBe(EXIT_GENERAL_ERROR);
   });
 
+  it("says why a scan failed and hands the payload to JSON consumers", async () => {
+    const failed = {
+      status: "failed",
+      error_code: "SCAN_STALLED",
+      error: "The scan stopped sending progress updates. Please re-run the scan.",
+      retryable: true,
+    };
+    mockedAxios.get
+      .mockResolvedValueOnce({ data: { status: "processing" } })
+      .mockResolvedValueOnce({ data: failed });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const outSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    vi.useFakeTimers();
+    const promise = handleScanStatus("s1", headers, "json");
+    await vi.advanceTimersByTimeAsync(10000);
+    const code = await promise;
+    vi.useRealTimers();
+
+    expect(code).toBe(EXIT_GENERAL_ERROR);
+    const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(stderr).toContain("SCAN_STALLED");
+    expect(stderr).toContain("stopped sending progress updates");
+    expect(stderr).toContain("rafter run");
+    expect(JSON.parse(String(outSpy.mock.calls[0][0])).error_code).toBe("SCAN_STALLED");
+  });
+
   it("polls when status is pending", async () => {
     mockedAxios.get
       .mockResolvedValueOnce({ data: { status: "pending" } })

@@ -282,8 +282,8 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
           spinner?.succeed("Scan completed");
           return writePayload(poll.data, fmt, quiet);
         } else if (status === "failed") {
-          spinner?.fail("Scan failed");
-          return EXIT_GENERAL_ERROR;
+          spinner?.stop();
+          return reportFailedScan(poll.data, fmt);
         }
       }
     } catch (e: any) {
@@ -302,8 +302,7 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
     }
     return writePayload(poll.data, fmt, quiet);
   } else if (status === "failed") {
-    console.error("Scan failed");
-    return EXIT_GENERAL_ERROR;
+    return reportFailedScan(poll.data, fmt);
   } else {
     if (!quiet) {
       console.error(`Scan status: ${status}`);
@@ -311,4 +310,19 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
   }
 
   return writePayload(poll.data, fmt, quiet);
+}
+
+/**
+ * A failed scan: say why on stderr, as the API explains it, and in JSON mode
+ * hand the payload to stdout so an agent can read `error_code`/`retryable`.
+ */
+export function reportFailedScan(data: any, fmt?: string): number {
+  const code = typeof data?.error_code === "string" ? ` (${data.error_code})` : "";
+  const reason = typeof data?.error === "string" && data.error ? `: ${data.error}` : "";
+  console.error(output.error(`Scan failed${code}${reason}`));
+  if (data?.retryable === true) {
+    console.error("This failure is retryable: start a new scan with `rafter run`.");
+  }
+  if (fmt === "json") writePayload(data, fmt);
+  return EXIT_GENERAL_ERROR;
 }

@@ -616,6 +616,29 @@ class TestHandleScanStatusInteractive:
 
     @patch("rafter_cli.commands.backend.time.sleep")
     @patch("rafter_cli.commands.backend.api_get")
+    def test_failed_scan_says_why_and_hands_payload_to_json(self, mock_get, mock_sleep, capsys):
+        failed = {
+            "status": "failed",
+            "error_code": "SCAN_STALLED",
+            "error": "The scan stopped sending progress updates. Please re-run the scan.",
+            "retryable": True,
+        }
+        mock_get.side_effect = [
+            _mock_response(200, json_body={"status": "processing"}),
+            _mock_response(200, json_body=failed),
+        ]
+
+        with pytest.raises(click.exceptions.Exit) as exc_info:
+            _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "json", False)
+        assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
+        out, err = capsys.readouterr()
+        assert "SCAN_STALLED" in err
+        assert "stopped sending progress updates" in err
+        assert "rafter run" in err
+        assert json.loads(out)["error_code"] == "SCAN_STALLED"
+
+    @patch("rafter_cli.commands.backend.time.sleep")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_multiple_polls_before_completion(self, mock_get, mock_sleep):
         """Multiple polls before scan completes."""
         mock_get.side_effect = [

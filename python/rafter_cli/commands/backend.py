@@ -359,8 +359,7 @@ def _handle_scan_status_interactive(
                     print("Scan completed!", file=sys.stderr)
                 return write_payload(data, fmt, quiet)
             elif status == "failed":
-                print("Scan failed.", file=sys.stderr)
-                raise typer.Exit(code=EXIT_GENERAL_ERROR)
+                _report_failed_scan(data, fmt)
         if not quiet:
             print(f"Scan status: {status}", file=sys.stderr)
     elif status == "completed":
@@ -368,13 +367,25 @@ def _handle_scan_status_interactive(
             print("Scan completed!", file=sys.stderr)
         return write_payload(data, fmt, quiet)
     elif status == "failed":
-        print("Scan failed.", file=sys.stderr)
-        raise typer.Exit(code=EXIT_GENERAL_ERROR)
+        _report_failed_scan(data, fmt)
     else:
         if not quiet:
             print(f"Scan status: {status}", file=sys.stderr)
 
     return write_payload(data, fmt, quiet)
+
+
+def _report_failed_scan(data: dict, fmt: str) -> None:
+    """A failed scan: say why on stderr, as the API explains it, and in JSON
+    mode hand the payload to stdout so an agent can read error_code/retryable."""
+    code = f" ({data['error_code']})" if isinstance(data.get("error_code"), str) else ""
+    reason = f": {data['error']}" if isinstance(data.get("error"), str) and data["error"] else ""
+    print(f"Scan failed{code}{reason}", file=sys.stderr)
+    if data.get("retryable") is True:
+        print("This failure is retryable: start a new scan with `rafter run`.", file=sys.stderr)
+    if fmt == "json":
+        write_payload(data, fmt)
+    raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
 
 def _do_remote_scan(
@@ -524,6 +535,8 @@ def register_backend_commands(app: typer.Typer) -> None:
                 print(f"Error: {e}", file=sys.stderr)
                 raise typer.Exit(code=EXIT_GENERAL_ERROR)
             data = resp.json()
+            if data.get("status") == "failed":
+                _report_failed_scan(data, fmt)
             return write_payload(data, fmt, quiet)
 
         _handle_scan_status_interactive(scan_id, headers, fmt, quiet)
