@@ -48,9 +48,13 @@ export function createReportCommand(): Command {
 
       let results: ReportResult[];
       try {
-        results = JSON.parse(jsonData);
+        const parsed = JSON.parse(jsonData);
+        // `rafter secrets --json` wraps its results in an object.
+        results = Array.isArray(parsed) ? parsed : parsed?.results;
         if (!Array.isArray(results)) {
-          throw new Error("Expected a JSON array of scan results");
+          throw new Error(Array.isArray(parsed?.vulnerabilities)
+            ? "this is a remote scan result; render it with `rafter get <scan_id> --format md`"
+            : "Expected the JSON output of `rafter secrets --json`");
         }
       } catch (e: any) {
         console.error(`Error: Invalid JSON input — ${e.message}`);
