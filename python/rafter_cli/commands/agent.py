@@ -134,6 +134,7 @@ _AGENT_SKILLS: list[dict[str, str]] = [
     {"name": "rafter", "description": "Rafter Remote"},
     {"name": "rafter-secure-design", "description": "Rafter Secure Design"},
     {"name": "rafter-code-review", "description": "Rafter Code Review"},
+    {"name": "rafter-skill-review", "description": "Rafter Skill Review"},
 ]
 
 
@@ -271,6 +272,9 @@ def _print_dry_run_plan(
     want_betterleaks: bool,
     want_skill_scanner: bool,
     risk_level: str,
+    betterleaks_existing: Path | None = None,
+    betterleaks_supported: bool = True,
+    claude_code_mcp_disabled: bool = False,
 ) -> None:
     """Print every file path the install would touch — without writing anything (rf-hrtd).
 
@@ -298,6 +302,9 @@ def _print_dry_run_plan(
         suffix = f"   ({note})" if note else ""
         print(f"  REMOVE    {p}{suffix}")
 
+    def S(p: Path, note: str) -> None:
+        print(f"  SKIP      {p}   ({note})")
+
     rprint()
     rprint(fmt.info("DRY RUN — no files will be created or modified."))
     scope_note = f" (cwd: {root})" if scope == "project" else ""
@@ -312,7 +319,12 @@ def _print_dry_run_plan(
     if want_betterleaks:
         print()
         print("Betterleaks (--with-betterleaks / --all):")
-        D(home / ".rafter" / "bin" / "betterleaks", "binary, ~12MB from GitHub releases")
+        if betterleaks_existing:
+            S(betterleaks_existing, "betterleaks already present; no download")
+        elif not betterleaks_supported:
+            S(home / ".rafter" / "bin" / "betterleaks", "no betterleaks build for this platform; pattern-based scanning")
+        else:
+            D(home / ".rafter" / "bin" / "betterleaks", "binary, ~12MB from GitHub releases")
 
     if want_skill_scanner:
         print()
@@ -323,11 +335,16 @@ def _print_dry_run_plan(
         print()
         print("Claude Code (--with-claude-code):")
         W(root / ".claude" / "settings.json", "PreToolUse + PostToolUse hooks merged")
-        for s in ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"):
-            W(root / ".claude" / "skills" / s / "SKILL.md")
+        for s in _AGENT_SKILLS:
+            W(root / ".claude" / "skills" / s["name"] / "SKILL.md")
         W(root / ".claude" / "agents" / "rafter.md", "sub-agent")
         W(root / ".claude" / "CLAUDE.md", "rafter:start/end marker block")
-        W(root / ".mcp.json", "project-scope MCP config")
+        # .mcp.json is a project-scope file; the user-scope install never writes it.
+        if scope == "project":
+            if claude_code_mcp_disabled:
+                S(root / ".mcp.json", "claude-code.mcp disabled")
+            else:
+                W(root / ".mcp.json", "project-scope MCP config")
 
     if want_codex:
         print()
@@ -708,6 +725,42 @@ _CURSOR_RULE_SKILLS: tuple[str, ...] = (
     "rafter-code-review",
     "rafter-skill-review",
 )
+
+
+def _install_codex_hooks(root: Path) -> None:
+    """Install Rafter PreToolUse/PostToolUse hooks into <root>/.codex/hooks.json.
+
+    Mirrors Node's installCodexHooks: Codex uses the Claude Code hook protocol,
+    and Bash + apply_patch are the tools Codex documents hook support for.
+    """
+    codex_dir = root / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    hooks_path = codex_dir / "hooks.json"
+
+    config: dict[str, Any] = {}
+    if hooks_path.exists():
+        try:
+            config = json.loads(hooks_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Codex hooks.json was unreadable, creating new one"))
+
+    hooks = config.setdefault("hooks", {})
+    rafter_bin = _resolve_rafter_path()
+    for event, sub in (("PreToolUse", "pretool"), ("PostToolUse", "posttool")):
+        entries = hooks.get(event) or []
+        entries = [
+            e for e in entries
+            if not any(f"hook {sub}" in h.get("command", "") for h in (e.get("hooks") or []))
+        ]
+        entries.append({
+            "matcher": "Bash|apply_patch",
+            "hooks": [{"type": "command", "command": f"{rafter_bin} hook {sub}"}],
+        })
+        hooks[event] = entries
+
+    hooks_path.write_text(json.dumps(config, indent=2))
+    rprint(fmt.success(f"Installed PreToolUse hooks to {hooks_path}"))
+    rprint(fmt.success(f"Installed PostToolUse hooks to {hooks_path}"))
 
 
 def _install_cursor_hooks(root: Path) -> None:
@@ -1254,11 +1307,17 @@ def init(
     # before any filesystem write happens (rf-hrtd). Built from the same
     # resolved want_* / has_* booleans the install path uses.
     if dry_run:
+        _bl_existing: Path | None = None
+        if want_betterleaks and not update:
+            _bl_which = shutil.which("betterleaks")
+            _bl_local = Path.home() / ".rafter" / "bin" / ("betterleaks.exe" if sys.platform == "win32" else "betterleaks")
+            _bl_existing = Path(_bl_which) if _bl_which else (_bl_local if _bl_local.exists() else None)
+        _components = manager.get("agent.components") or {}
         _print_dry_run_plan(
             root=root,
             scope=scope,
             want_openclaw=want_openclaw and has_openclaw,
-            want_claude_code=want_claude_code and (has_claude_code or local),
+            want_claude_code=want_claude_code and (has_claude_code or with_claude_code or local),
             want_codex=want_codex and (has_codex or local),
             want_gemini=want_gemini and (has_gemini or local),
             want_cursor=want_cursor and (has_cursor or local),
@@ -1270,6 +1329,9 @@ def init(
             want_betterleaks=want_betterleaks,
             want_skill_scanner=want_skill_scanner,
             risk_level=risk_level,
+            betterleaks_existing=_bl_existing,
+            betterleaks_supported=BinaryManager().is_platform_supported(),
+            claude_code_mcp_disabled=_components.get("claude-code.mcp", {}).get("enabled") is False,
         )
         return
 
@@ -1398,6 +1460,7 @@ def init(
     if (has_codex or (local and want_codex)) and want_codex:
         try:
             ok, error = _install_codex_skills(root)
+            _install_codex_hooks(root)
             codex_ok = ok
             if ok and scope == "user":
                 manager.set("agent.environments.codex.enabled", True)
