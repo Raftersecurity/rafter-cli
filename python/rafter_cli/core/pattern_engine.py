@@ -54,14 +54,15 @@ _SECRET_ENV_NAME_RE = re.compile(
 class PatternEngine:
     def __init__(self, patterns: Sequence[Pattern]):
         self._patterns = list(patterns)
+        # Compile once: compiling per line dominated scan time on large repos.
+        self._compiled = [
+            (p, c) for p in self._patterns if (c := self._compile(p.regex)) is not None
+        ]
 
     def scan(self, text: str) -> list[PatternMatch]:
         """Scan text for pattern matches (no line info)."""
         matches: list[PatternMatch] = []
-        for pattern in self._patterns:
-            compiled = self._compile(pattern.regex)
-            if compiled is None:
-                continue
+        for pattern, compiled in self._compiled:
             for m in compiled.finditer(text):
                 if self._is_false_positive(pattern, m.group(0)):
                     continue
@@ -76,10 +77,7 @@ class PatternEngine:
         """Scan text with line/column information."""
         matches: list[PatternMatch] = []
         for line_num, line in enumerate(text.split("\n"), start=1):
-            for pattern in self._patterns:
-                compiled = self._compile(pattern.regex)
-                if compiled is None:
-                    continue
+            for pattern, compiled in self._compiled:
                 for m in compiled.finditer(line):
                     if self._is_false_positive(pattern, m.group(0)):
                         continue
@@ -105,10 +103,7 @@ class PatternEngine:
              pattern are masked wherever they appear.
         """
         result = self._redact_env_assignments(text)
-        for pattern in self._patterns:
-            compiled = self._compile(pattern.regex)
-            if compiled is None:
-                continue
+        for pattern, compiled in self._compiled:
             result = compiled.sub(
                 lambda m, p=pattern: m.group(0) if self._is_false_positive(p, m.group(0)) else self._redact(m.group(0)),
                 result,
