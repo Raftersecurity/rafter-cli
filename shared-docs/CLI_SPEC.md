@@ -1227,11 +1227,11 @@ Post scan results to Slack or Discord channels via webhooks.
 
 Generate a standalone HTML security report from scan results.
 
-- `[INPUT]` — path to JSON scan results (default: read from stdin)
+- `[INPUT]` — path to the JSON output of `rafter secrets --json` (default: read from stdin); a bare array of its `results` is also accepted
 - `-o, --output <path>` — output file path (default: stdout)
 - `--title <title>` — report title (default: "Rafter Security Report")
 
-Node only. Not yet implemented in Python.
+Remote scan results (`rafter run`/`rafter get --format json`) are rejected with exit `2`; render those with `rafter get <scan_id> --format md`. Both runtimes.
 
 ### rafter issues create SUBCOMMAND
 
