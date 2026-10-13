@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The commit hook and `rafter agent exec` now block a commit whose staged diff cannot be read** (#274). A staged diff over 1 MiB (a lockfile, a generated or vendored file) made the read fail, and the failure was treated as "no secrets", so the commit went through unscanned. Large diffs are now read in full, and any other failure to read the staged diff blocks the commit (`agent exec` exits 2) with a message saying the scan could not run. In Python, a staged diff that is not valid UTF-8 is now scanned rather than skipped.
+
+- **A `.rafter.yml` that cannot be loaded no longer changes whether a commit is scanned.** If the file cannot be read, decoded or parsed, the commit hook, `rafter secrets --staged` and `rafter agent scan --staged` print a warning naming the file and the error, then scan with the default settings. None of the file's settings apply, including its `ignore` rules, so a broken file cannot suppress a finding. Previously the Python CLI could allow a commit containing a secret when `.rafter.yml` held well-formed YAML it could not map (for example a `null` entry in `custom_patterns`), and `secrets --staged` crashed.
+
+### Fixed
+
+- **`rafter secrets --staged` no longer reports a scan that could not run as a finding** (#274). It used to crash with exit 1 on a staged diff over 1 MiB, the same code as a detected secret. Large diffs are now scanned, and a scan that cannot run exits 2 with an error message.
+
 ## [0.10.6] - 2026-10-02
 
 ### Security
