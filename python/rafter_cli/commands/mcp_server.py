@@ -64,11 +64,21 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
         except NotADirectoryError:
             return [scanner.scan_file(path)]
 
+    def report(results: list[ScanResult]) -> list[dict]:
+        # Honor the project's suppressions, as `rafter secrets` does, so a
+        # finding triaged with suppress_finding is not reported again.
+        from ..core.custom_patterns import apply_suppressions, load_suppressions, policy_ignore_to_suppressions
+        scan_cfg = ConfigManager().load_with_policy().agent.scan
+        suppressions = policy_ignore_to_suppressions(scan_cfg.ignore) + load_suppressions()
+        # Drop only what was suppressed; a clean file keeps its empty entry.
+        kept = {r.file: r for r in apply_suppressions(results, suppressions)[0]}
+        return _format_scan_results([kept.get(r.file, r) for r in results if not r.matches or r.file in kept])
+
     if engine == "betterleaks":
         bl = BetterleaksScanner()
         if not bl.is_available():
             raise RuntimeError("Betterleaks not installed")
-        return _format_scan_results(bl.scan_directory(path))
+        return report(bl.scan_directory(path))
 
     if engine == "auto":
         # sable-j85 — run BOTH engines and union, so a betterleaks miss
@@ -78,14 +88,14 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
         if bl.is_available():
             try:
                 bl_results = bl.scan_directory(path)
-                return _format_scan_results(union_scan_results(bl_results, run_patterns()))
+                return report(union_scan_results(bl_results, run_patterns()))
             except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
                 print(f"rafter: betterleaks scan failed, falling back to patterns: {exc}", file=sys.stderr)
                 # Fall through to patterns-only.
-        return _format_scan_results(run_patterns())
+        return report(run_patterns())
 
     # patterns (and any unrecognized value — the tool schema enums this).
-    return _format_scan_results(run_patterns())
+    return report(run_patterns())
 
 
 def handle_evaluate_command(command: str) -> dict:
@@ -365,9 +375,10 @@ def create_mcp_server():
         """Triage a false positive by persisting a suppression rule into .rafter.yml.
 
         Use when a scan_secrets finding (or a remote scan finding) is a confirmed
-        false positive — e.g. a test fixture or sample credential. Suppressed
-        findings still surface under '_suppressed' in scan output, so the decision
-        is reviewable and version-controlled. Always include a reason.
+        false positive — e.g. a test fixture or sample credential. scan_secrets
+        stops reporting suppressed findings; `rafter secrets --json` lists them
+        under '_suppressed', so the decision is reviewable and version-controlled.
+        Always include a reason.
 
         Args:
             path: File path or glob to suppress findings in (e.g. 'test/fixtures/**').
