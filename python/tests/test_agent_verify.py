@@ -426,3 +426,45 @@ class TestVerifyCommand:
             result = runner.invoke(agent_app, ["verify"])
         assert result.exit_code == 0
         assert "optional" in result.output.lower() or "not configured" in result.output.lower()
+
+    def test_core_summary_excludes_undetected_optional_integrations(self):
+        """A healthy install with only Claude Code present must report
+        '3/3 core checks passed', not '3/12' — the 9 undetected platform
+        integrations (OpenClaw, Codex, Gemini, Cursor, Windsurf, Continue.dev,
+        Aider, Hermes, OpenCode) are not applicable on this machine at all and
+        must not inflate the 'core checks' denominator or be reported as
+        generic 'optional checks not configured' (rafter-cli#231)."""
+        def not_detected(name: str, flag: str) -> _CheckResult:
+            r = _CheckResult(name, False, f"Not detected — run 'rafter agent init --with-{flag}' to enable", optional=True)
+            r.not_detected = True  # type: ignore[attr-defined]
+            return r
+
+        with patch("rafter_cli.commands.agent._check_config",
+                   return_value=_CheckResult("Config", True, "ok")), \
+             patch("rafter_cli.commands.agent._check_betterleaks",
+                   return_value=_CheckResult("Betterleaks", True, "ok")), \
+             patch("rafter_cli.commands.agent._check_claude_code",
+                   return_value=_CheckResult("Claude Code", True, "ok")), \
+             patch("rafter_cli.commands.agent._check_openclaw",
+                   return_value=not_detected("OpenClaw", "openclaw")), \
+             patch("rafter_cli.commands.agent._check_codex",
+                   return_value=not_detected("Codex CLI", "codex")), \
+             patch("rafter_cli.commands.agent._check_gemini",
+                   return_value=not_detected("Gemini CLI", "gemini")), \
+             patch("rafter_cli.commands.agent._check_cursor",
+                   return_value=not_detected("Cursor", "cursor")), \
+             patch("rafter_cli.commands.agent._check_windsurf",
+                   return_value=not_detected("Windsurf", "windsurf")), \
+             patch("rafter_cli.commands.agent._check_continue_dev",
+                   return_value=not_detected("Continue.dev", "continue")), \
+             patch("rafter_cli.commands.agent._check_aider",
+                   return_value=not_detected("Aider", "aider")), \
+             patch("rafter_cli.commands.agent._check_hermes",
+                   return_value=not_detected("Hermes", "hermes")), \
+             patch("rafter_cli.commands.agent._check_opencode",
+                   return_value=not_detected("OpenCode", "opencode")):
+            result = runner.invoke(agent_app, ["verify"])
+        assert result.exit_code == 0
+        assert "3/3 core checks passed" in result.output
+        assert "9 optional integrations not detected" in result.output
+        assert "3/12 core checks passed" not in result.output
