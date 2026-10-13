@@ -18,7 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`rafter secrets --staged` no longer reports a scan that could not run as a finding** (#274). It used to crash with exit 1 on a staged diff over 1 MiB, the same code as a detected secret. Large diffs are now scanned, and a scan that cannot run exits 2 with an error message.
-### Fixed
 
 - **The built-in AWS Access Key ID pattern no longer flags the canonical AWS-docs example key** (#230). `AKIAIOSFODNN7EXAMPLE` and its siblings (any `AKIA…`/`ASIA…`/etc. key ending in `EXAMPLE`) matched the regex engine but not betterleaks, so e.g. the hook's Write gate denied a write containing the well-known public non-secret while `rafter secrets` via betterleaks allowed it. The regex engine now carries the same exemption betterleaks already applies, in both Node and Python. **Behavior change:** a key ending in `EXAMPLE` is no longer reported as a finding by the patterns engine; any other 16-character suffix is still detected as before.
 
