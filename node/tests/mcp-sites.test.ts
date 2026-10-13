@@ -56,6 +56,7 @@ vi.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
 
 import axios from "axios";
 import { createServer } from "../src/commands/mcp/server.js";
+import { apiUrl } from "../src/utils/api.js";
 
 // The code calls `apiClient` — the instance `create()` returns.
 const mockedAxios = vi.mocked((axios as any).create(), true);
@@ -97,7 +98,7 @@ describe("MCP sites_* tools", () => {
     expect(result.isError).toBeFalsy();
     expect(parseResult(result)).toEqual({ site: { id: "p1" }, run: { id: "r1" }, created: true });
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      "https://rafter.so/api/static/sites",
+      apiUrl("static/sites"),
       { url: "https://example.com" },
       { headers: { "x-api-key": "test-key" } }
     );
@@ -122,7 +123,7 @@ describe("MCP sites_* tools", () => {
     const result = await client.callTool({ name: "sites_scan", arguments: { projectId: "proj-1" } });
     expect(result.isError).toBeFalsy();
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      "https://rafter.so/api/static/sites/scan",
+      apiUrl("static/sites/scan"),
       { projectId: "proj-1" },
       expect.anything()
     );
@@ -157,7 +158,7 @@ describe("MCP sites_* tools", () => {
     const result = await client.callTool({ name: "sites_list", arguments: { limit: 5, include_archived: true } });
     expect(result.isError).toBeFalsy();
     expect(mockedAxios.get).toHaveBeenCalledWith(
-      "https://rafter.so/api/static/sites",
+      apiUrl("static/sites"),
       { params: { limit: "5", include_archived: "true" }, headers: { "x-api-key": "test-key" } }
     );
   });
@@ -176,7 +177,7 @@ describe("MCP sites_* tools", () => {
     const result = await client.callTool({ name: "sites_get", arguments: { id: "p1" } });
     expect(result.isError).toBeFalsy();
     expect(mockedAxios.get).toHaveBeenCalledWith(
-      "https://rafter.so/api/static/sites/p1",
+      apiUrl("static/sites/p1"),
       { headers: { "x-api-key": "test-key" } }
     );
   });
