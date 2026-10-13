@@ -8,6 +8,7 @@ import json
 import os
 import random
 import socket
+import sys
 import tempfile
 import threading
 import time
@@ -153,12 +154,23 @@ def find_git_repo_root(start_dir: Path, max_depth: int = 20) -> str | None:
     return None
 
 
+_warned_audit_failure = False
+
+
+def _warn_audit_failure(path: Path, exc: Exception) -> None:
+    global _warned_audit_failure
+    if _warned_audit_failure:
+        return
+    _warned_audit_failure = True
+    print(f"rafter: could not write audit log {path}: {exc}", file=sys.stderr)
+
+
 class AuditLogger:
     def __init__(self, log_path: Path | None = None):
         if log_path is not None:
             self._path = log_path
         else:
-            # Project-local override from .rafter.yml beats global
+            # Global config only: load_with_policy drops a project-level audit.log_path.
             policy_path = None
             try:
                 from .config_manager import ConfigManager
@@ -168,10 +180,23 @@ class AuditLogger:
                 pass
             self._path = Path(policy_path).expanduser() if policy_path else get_audit_log_path()
         self._session_id = f"{int(time.time() * 1000)}-{random.randbytes(4).hex()}"
-        self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except Exception as exc:
+            _warn_audit_failure(self._path, exc)
 
     def log(self, entry: dict[str, Any]) -> None:
-        """Append an audit entry (JSONL)."""
+        """Append an audit entry (JSONL).
+
+        Never raises: an audit failure must not change the caller's decision
+        (a hook deny that raised here would fail open).
+        """
+        try:
+            self._write_entry(entry)
+        except Exception as exc:
+            _warn_audit_failure(self._path, exc)
+
+    def _write_entry(self, entry: dict[str, Any]) -> None:
         from .config_manager import ConfigManager
         config = ConfigManager().load()
         if not config.agent.audit.log_all_actions:
