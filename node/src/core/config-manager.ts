@@ -178,6 +178,8 @@ function validateConfig(raw: any): RafterConfig {
   return raw as RafterConfig;
 }
 
+let warnedProjectLogPath = false;
+
 export class ConfigManager {
   private configPath: string;
 
@@ -405,8 +407,16 @@ export class ConfigManager {
       if (policy.audit.logLevel) {
         config.agent.audit.logLevel = policy.audit.logLevel as any;
       }
-      if (policy.audit.logPath) {
-        config.agent.audit.logPath = policy.audit.logPath;
+      // audit.log_path is honored only from the global config. A repo choosing
+      // where rafter APPENDS lines is a file-write primitive (~/.bashrc,
+      // ~/.ssh/authorized_keys), and an unwritable target used to turn every
+      // hook deny into an allow.
+      if (policy.audit.logPath && !warnedProjectLogPath) {
+        warnedProjectLogPath = true;
+        console.error(
+          'rafter: ignoring "audit.log_path" in the project policy file — the audit log location ' +
+          "can only be set in ~/.rafter/config.json (agent.audit.logPath).",
+        );
       }
     }
 

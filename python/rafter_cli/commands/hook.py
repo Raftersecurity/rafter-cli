@@ -492,46 +492,58 @@ def pretool(
 ):
     """PreToolUse hook handler. Reads tool input JSON from stdin, writes decision to stdout."""
     try:
-        raw = _read_stdin()
+        decision = decide_pretool(_read_stdin(), format)
+    except Exception as exc:
+        decision = _deny_on_error(exc)
+    _write_pretool_decision(decision, format)
 
-        try:
-            payload = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            _write_pretool_decision({"decision": "allow"}, format)
-            return
 
-        # Validate payload is a dict with expected shape
-        if not isinstance(payload, dict):
-            _write_pretool_decision({"decision": "allow"}, format)
-            return
+def decide_pretool(raw: str, fmt: str) -> dict:
+    """Decide one PreToolUse call from its raw stdin text.
 
-        tool_name, tool_input = _normalize_pretool_input(payload, format)
+    Input that is not a JSON object is allowed (nothing to evaluate). Any
+    exception raised while evaluating fails CLOSED: an unexpected error is not
+    evidence the call is safe. Conditions the loaders already handle (a
+    malformed .rafter.yml warns and falls back to defaults) never raise, so
+    they do not reach this.
+    """
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return {"decision": "allow"}
+    if not isinstance(payload, dict):
+        return {"decision": "allow"}
+    try:
+        return _evaluate_tool_call(payload, fmt)
+    except Exception as exc:
+        return _deny_on_error(exc)
 
-        if not isinstance(tool_input, dict):
-            tool_input = {}
 
-        # Honor the (trusted-source-only) hook off-switch before doing any work.
-        from ..core.hook_control import resolve_hook_control
+def _evaluate_tool_call(payload: dict, fmt: str) -> dict:
+    tool_name, tool_input = _normalize_pretool_input(payload, fmt)
+    if not isinstance(tool_input, dict):
+        tool_input = {}
 
-        control = resolve_hook_control()
-        if not control.hook_enabled:
-            _write_pretool_decision({"decision": "allow"}, format)
-            return
+    # Honor the (trusted-source-only) hook off-switch before doing any work.
+    from ..core.hook_control import resolve_hook_control
 
-        if tool_name == "Bash":
-            decision = _evaluate_bash(tool_input.get("command", ""), control)
-        elif tool_name in ("Write", "Edit"):
-            if not control.secret_scan_enabled:
-                decision = {"decision": "allow"}
-            else:
-                decision = _evaluate_write(tool_input)
-        else:
-            decision = {"decision": "allow"}
+    control = resolve_hook_control()
+    if not control.hook_enabled:
+        return {"decision": "allow"}
 
-        _write_pretool_decision(decision, format)
-    except Exception:
-        # Any unexpected error -> fail open
-        _write_pretool_decision({"decision": "allow"}, format)
+    if tool_name == "Bash":
+        return _evaluate_bash(tool_input.get("command", ""), control)
+    if tool_name in ("Write", "Edit"):
+        if not control.secret_scan_enabled:
+            return {"decision": "allow"}
+        return _evaluate_write(tool_input)
+    return {"decision": "allow"}
+
+
+def _deny_on_error(exc: Exception) -> dict:
+    reason = f"rafter hook error: {type(exc).__name__}: {exc}; denying to be safe"
+    print(reason, file=sys.stderr)
+    return {"decision": "deny", "reason": reason}
 
 
 @hook_app.command(
