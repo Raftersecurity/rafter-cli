@@ -814,7 +814,9 @@ The audit log is written to `~/.rafter/audit.jsonl` as newline-delimited JSON (J
 | `gitRepo` | string | no | Absolute path to the enclosing git repository root, if any |
 | `prevHash` | string\|null | yes | SHA-256 of the prior line (or `null` for the first entry) — forms the tamper-evident hash chain verified by `rafter agent audit --verify` |
 
-**Log location:** Defaults to `~/.rafter/audit.jsonl`. Overridable per project via `.rafter.yml` → `agent.audit.logPath` (e.g. set to `.rafter/audit.jsonl` for a repo-local log that each contributor can verify independently).
+**Log location:** Defaults to `~/.rafter/audit.jsonl`. Overridable only in the global config, `~/.rafter/config.json` → `agent.audit.logPath`. A project `.rafter.yml` `audit.log_path` is ignored with a stderr warning: a repository choosing the file rafter appends to is a file-write primitive.
+
+**Write failures:** A failed audit write is reported once on stderr and never changes a hook decision.
 
 **`action` object (optional):**
 
@@ -1086,6 +1088,8 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 - `--format <format>` — output format: `claude` (default, also works for Codex/Continue), `cursor`, `gemini`, `windsurf`
 
 On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
+
+**Errors fail closed.** Input that is not a JSON object is allowed (there is nothing to evaluate). Any unexpected exception while evaluating a call, for any tool, returns `deny` with the reason `rafter hook error: <type>: <message>; denying to be safe`, also printed to stderr. Conditions the loaders handle (a malformed `.rafter.yml` warns and falls back to defaults) are not errors. A failed audit-log write never changes a decision.
 
 **Hook off-switch.** The hook can be disabled at runtime from **trusted sources only** — the `RAFTER_DISABLE_HOOKS` / `RAFTER_DISABLE_SECRET_SCAN` / `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on) and the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default is enabled; a corrupt config or unrecognized value fails safe to enabled. By design this is **never** read from project-local `.rafter.yml`, so a hostile repo cannot ship a config that silently disables a victim's hook. `rafter agent status` reports the effective state and its source. See `shared-docs/CONFIG.md` for the full configuration reference.
 

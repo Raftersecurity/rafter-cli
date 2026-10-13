@@ -18,6 +18,7 @@ from .config_schema import (
 _VALID_RISK_LEVELS = {"minimal", "moderate", "aggressive"}
 _VALID_COMMAND_MODES = {"allow-all", "approve-dangerous", "deny-list"}
 _VALID_LOG_LEVELS = {"debug", "info", "warn", "error"}
+_warned_project_log_path = False
 
 # Config keys whose leaf name names a bearer credential — their values must be
 # masked before the config is shown to a human or handed to an MCP client.
@@ -330,8 +331,18 @@ class ConfigManager:
                 config.agent.audit.retention_days = audit["retention_days"]
             if audit.get("log_level"):
                 config.agent.audit.log_level = audit["log_level"]
-            if audit.get("log_path"):
-                config.agent.audit.log_path = audit["log_path"]
+            # audit.log_path is honored only from the global config. A repo
+            # choosing where rafter APPENDS lines is a file-write primitive
+            # (~/.bashrc, ~/.ssh/authorized_keys), and an unwritable target used
+            # to turn every hook deny into an allow.
+            global _warned_project_log_path
+            if audit.get("log_path") and not _warned_project_log_path:
+                _warned_project_log_path = True
+                print(
+                    'rafter: ignoring "audit.log_path" in the project policy file — the audit log '
+                    "location can only be set in ~/.rafter/config.json (agent.audit.logPath).",
+                    file=sys.stderr,
+                )
 
         return config
 

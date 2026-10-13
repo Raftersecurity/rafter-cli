@@ -123,32 +123,46 @@ export function createHookPretoolCommand(): Command {
     .option("--format <format>", "Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf", "claude")
     .action(async (opts) => {
       const format = (opts.format || "claude") as HookFormat;
+      let decision: HookDecision;
       try {
-        const input = await readStdin();
-        let raw: Record<string, any>;
-
-        try {
-          raw = JSON.parse(input);
-        } catch {
-          // Can't parse → fail open
-          writeDecision({ decision: "allow" }, format);
-          return;
-        }
-
-        // Validate payload is an object with expected shape
-        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-          writeDecision({ decision: "allow" }, format);
-          return;
-        }
-
-        const payload = normalizeInput(raw, format);
-        const decision = evaluateToolCall(payload);
-        writeDecision(decision, format);
-      } catch {
-        // Any unexpected error → fail open
-        writeDecision({ decision: "allow" }, format);
+        decision = decidePretool(await readStdin(), format);
+      } catch (e) {
+        decision = denyOnError(e);
       }
+      writeDecision(decision, format);
     });
+}
+
+/**
+ * Decide one PreToolUse call from its raw stdin text. Input that is not a JSON
+ * object is allowed (nothing to evaluate). Any exception thrown while
+ * evaluating fails CLOSED: an unexpected error is not evidence the call is
+ * safe. Conditions the loaders already handle (a malformed .rafter.yml warns
+ * and falls back to defaults) never throw, so they do not reach this.
+ */
+export function decidePretool(input: string, format: HookFormat): HookDecision {
+  let raw: Record<string, any>;
+  try {
+    raw = JSON.parse(input);
+  } catch {
+    return { decision: "allow" };
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { decision: "allow" };
+  }
+  try {
+    return evaluateToolCall(normalizeInput(raw, format));
+  } catch (e) {
+    return denyOnError(e);
+  }
+}
+
+function denyOnError(e: unknown): HookDecision {
+  const type = e instanceof Error ? e.constructor.name : typeof e;
+  const msg = e instanceof Error ? e.message : String(e);
+  const reason = `rafter hook error: ${type}: ${msg}; denying to be safe`;
+  console.error(reason);
+  return { decision: "deny", reason };
 }
 
 /**

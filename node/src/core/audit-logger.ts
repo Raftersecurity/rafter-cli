@@ -234,6 +234,15 @@ export const RISK_SEVERITY: Record<string, number> = {
   critical: 3,
 };
 
+let warnedAuditFailure = false;
+
+function warnAuditFailure(logPath: string, e: unknown): void {
+  if (warnedAuditFailure) return;
+  warnedAuditFailure = true;
+  const msg = e instanceof Error ? e.message : String(e);
+  console.error(`rafter: could not write audit log ${logPath}: ${msg}`);
+}
+
 export class AuditLogger {
   private logPath: string;
   private sessionId: string;
@@ -248,7 +257,7 @@ export class AuditLogger {
     if (logPath) {
       this.logPath = logPath;
     } else {
-      // Project-local override from .rafter.yml (via loadWithPolicy) beats global
+      // Global config only: loadWithPolicy drops a project-level audit.log_path.
       let policyPath: string | undefined;
       try {
         policyPath = this.configManager.loadWithPolicy()?.agent?.audit?.logPath;
@@ -262,15 +271,28 @@ export class AuditLogger {
 
     // Ensure log directory exists
     const dir = path.dirname(this.logPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      }
+    } catch (e) {
+      warnAuditFailure(this.logPath, e);
     }
   }
 
   /**
-   * Log an audit event
+   * Log an audit event. Never throws: an audit failure must not change the
+   * decision of the caller (a hook deny that throws here would fail open).
    */
   log(entry: Omit<AuditLogEntry, "timestamp" | "sessionId">): void {
+    try {
+      this.writeEntry(entry);
+    } catch (e) {
+      warnAuditFailure(this.logPath, e);
+    }
+  }
+
+  private writeEntry(entry: Omit<AuditLogEntry, "timestamp" | "sessionId">): void {
     const config = this.configManager.load();
 
     // Check if logging is enabled
