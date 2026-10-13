@@ -425,6 +425,57 @@ describe("E2E: git --staged scanning", () => {
     );
     expect(r.exitCode).toBe(0);
   });
+
+  // #274: a staged diff over the old 1 MiB execFileSync buffer threw ENOBUFS,
+  // crashed unhandled (exit 1), and a commit gate read that as a secret finding.
+  it("scans a large staged diff (>1 MiB) without crashing", () => {
+    const big = Array.from(
+      { length: 20000 },
+      (_, i) => `const benign_${i} = "lorem ipsum dolor sit amet consectetur adipiscing";`,
+    ).join("\n");
+    // > 1 MiB of added content guarantees a staged diff past the old buffer.
+    expect(big.length).toBeGreaterThan(1024 * 1024);
+    fs.writeFileSync(path.join(tmpDir, "big.ts"), big + "\n");
+    git("add big.ts");
+
+    const r = rafter(
+      ["scan", "local", tmpDir, "--staged", "--engine", "patterns", "--quiet"],
+      { cwd: tmpDir },
+    );
+    expect(r.exitCode).toBe(0);
+  });
+
+  it("still finds a real secret inside a large staged diff", () => {
+    const big = Array.from(
+      { length: 20000 },
+      (_, i) => `const benign_${i} = "lorem ipsum dolor sit amet consectetur";`,
+    ).join("\n");
+    fs.writeFileSync(
+      path.join(tmpDir, "big.ts"),
+      big + "\nconst key = 'AKIAIOSFODNN7EXAMPLE';\n",
+    );
+    git("add big.ts");
+
+    const r = rafter(
+      ["scan", "local", tmpDir, "--staged", "--engine", "patterns", "--quiet"],
+      { cwd: tmpDir },
+    );
+    expect(r.exitCode).toBe(1);
+  });
+
+  it("reports a scan that cannot read the diff as a scan error (exit 2), not a finding", () => {
+    fs.writeFileSync(path.join(tmpDir, "x.ts"), "const x = 1;\nconst y = 2;\n");
+    git("add x.ts");
+
+    // Force the diff past the buffer so the read fails — the failure must be a
+    // scan error (exit 2), distinct from a secret finding (exit 1).
+    const r = rafter(
+      ["scan", "local", tmpDir, "--staged", "--engine", "patterns", "--quiet"],
+      { cwd: tmpDir, env: { RAFTER_GIT_DIFF_MAX_BUFFER: "16" } },
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("secret scan could not run");
+  });
 });
 
 // ── Git --diff scanning ──────────��──────────────────────────────────

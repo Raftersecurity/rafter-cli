@@ -10,7 +10,7 @@ import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
 import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
-import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
+import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
 import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
 import fs from "fs";
@@ -250,6 +250,14 @@ function evaluateBash(command: string, control: HookControl): HookDecision {
   const trimmed = command.trim();
   if (control.secretScanEnabled && (trimmed.startsWith("git commit") || trimmed.startsWith("git push"))) {
     const scanResult = scanStagedFiles();
+    if (scanResult.scanError) {
+      audit.logCommandIntercepted(command, false, "blocked", `secret scan could not run: ${scanResult.scanError}`);
+      return {
+        decision: "deny",
+        reason: `Rafter: secret scan of the staged diff could not run (${scanResult.scanError}); ` +
+          "commit blocked rather than allowed unscanned. Run 'rafter secrets --staged' to investigate.",
+      };
+    }
     if (scanResult.secretsFound) {
       // Audit per file so the log records WHICH file + pattern, not a bare count.
       for (const r of scanResult.findings) {
@@ -353,6 +361,8 @@ interface StagedScanResult {
   findings: ScanResult[];
   /** Repo root, for rendering finding paths relative to the user's tree. */
   repoRoot: string;
+  /** Set when the staged diff could not be read; the commit gate must deny. */
+  scanError?: string;
 }
 
 /**
@@ -375,12 +385,18 @@ export function scanStagedFiles(cwd: string = process.cwd()): StagedScanResult {
   const empty: StagedScanResult = {
     secretsFound: false, count: 0, files: 0, findings: [], repoRoot: cwd,
   };
+  let repoRoot: string;
   try {
-    const repoRoot = execSync("git rev-parse --show-toplevel", gitOpts).trim() || cwd;
-
+    repoRoot = execSync("git rev-parse --show-toplevel", gitOpts).trim() || cwd;
+  } catch {
+    return empty; // Not a git repo: no staged files to scan.
+  }
+  try {
+    // At the default 1 MiB buffer a larger staged diff threw ENOBUFS, the catch
+    // below returned "no secrets", and the commit skipped the scan (#274).
     const patch = execSync(
       "git diff -U0 --no-color --cached --diff-filter=ACM",
-      gitOpts,
+      { ...gitOpts, maxBuffer: gitDiffMaxBuffer() },
     ).trim();
     if (!patch) {
       return { ...empty, repoRoot };
@@ -405,8 +421,12 @@ export function scanStagedFiles(cwd: string = process.cwd()): StagedScanResult {
       findings: kept,
       repoRoot,
     };
-  } catch {
-    return empty;
+  } catch (error: any) {
+    // Inside a repo, a scan that could not run must not read as "no secrets".
+    const scanError = error?.code === "ENOBUFS"
+      ? "staged diff too large for the scanner to read"
+      : (error?.message ?? String(error));
+    return { ...empty, repoRoot, scanError };
   }
 }
 

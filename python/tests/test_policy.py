@@ -281,6 +281,14 @@ class TestIgnoreRules:
         assert len(result["ignore"]) == 1
         assert result["ignore"][0]["paths"] == ["valid/**"]
 
+    def test_entry_with_non_list_rules_skipped_not_widened(self, capsys):
+        # `rules` present but not a list used to be dropped silently, turning a
+        # rule meant for one pattern into one that suppresses every pattern.
+        raw = {"ignore": [{"paths": ["**"], "rules": "AWS Access Key"}]}
+        result = _validate_policy(_map_policy(raw), raw)
+        assert "ignore" not in result
+        assert "rules" in capsys.readouterr().err
+
     def test_empty_ignore_array_dropped(self):
         raw = {"ignore": []}
         result = _validate_policy(_map_policy(raw), raw)

@@ -6,7 +6,7 @@
  * correctly against real git state.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
+import { execSync, spawnSync, ExecSyncOptionsWithStringEncoding } from "child_process";
 import { randomBytes } from "crypto";
 import fs from "fs";
 import path from "path";
@@ -269,6 +269,82 @@ describe("Hook Integration — Real Git Repos", () => {
       expect(result.secretsFound).toBe(false);
       expect(result.count).toBe(0);
       expect(result.files).toBe(0);
+    });
+
+    // #274 sibling: the hook read the staged diff at the default 1 MiB buffer,
+    // and its catch returned "no secrets", so any commit over 1 MiB skipped
+    // the scan and a secret in it was allowed through.
+    it("finds a secret in a staged diff over 1 MiB", () => {
+      const bulk = Array.from(
+        { length: 20000 },
+        (_, i) => `const benign_${i} = "lorem ipsum dolor sit amet consectetur";`,
+      ).join("\n");
+      fs.writeFileSync(path.join(repoDir, "big.js"), `${bulk}\nconst k = "${FAKE_AWS_KEY}";\n`);
+      execSync("git add big.js", gitExecOpts(repoDir));
+
+      const result = scanStagedFiles(repoDir);
+      expect(result.secretsFound).toBe(true);
+    });
+
+    // The hook must fail CLOSED when the staged diff cannot be read: a scan
+    // that never ran is not "no secrets". Driven through the real built CLI so
+    // the deny decision itself is asserted, not just the scan result.
+    it("denies git commit when the staged diff cannot be read", () => {
+      fs.writeFileSync(path.join(repoDir, "big.js"), "x".repeat(4096) + "\n");
+      execSync("git add big.js", gitExecOpts(repoDir));
+
+      const r = spawnSync("node", [path.resolve(__dirname, "../dist/index.js"), "hook", "pretool"], {
+        cwd: repoDir,
+        input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "git commit -m x" } }),
+        encoding: "utf-8",
+        timeout: 30_000,
+        env: { ...process.env, HOME: repoDir, XDG_CONFIG_HOME: path.join(repoDir, ".config"), RAFTER_GIT_DIFF_MAX_BUFFER: "1024" },
+      });
+      const out = JSON.parse(r.stdout || "{}").hookSpecificOutput ?? {};
+      expect(out.permissionDecision).toBe("deny");
+      expect(out.permissionDecisionReason).toContain("could not run");
+    });
+
+    // A .rafter.yml that cannot be loaded is not a scan failure: scan with the
+    // DEFAULT settings and warn. The file also carries a suppress-everything
+    // ignore rule, so a loader that kept the parts it could read would hide the
+    // secret; only defaults may apply. Covers the hook and `secrets --staged`.
+    describe("malformed .rafter.yml", () => {
+      const cli = path.resolve(__dirname, "../dist/index.js");
+      const run = (args: string[], input?: string) => spawnSync("node", [cli, ...args], {
+        cwd: repoDir, input, encoding: "utf-8", timeout: 30_000,
+        env: { ...process.env, HOME: repoDir, XDG_CONFIG_HOME: path.join(repoDir, ".config") },
+      });
+      const hook = () => {
+        const r = run(["hook", "pretool"], JSON.stringify({ tool_name: "Bash", tool_input: { command: "git commit -m x" } }));
+        return { out: JSON.parse(r.stdout || "{}").hookSpecificOutput ?? {}, stderr: r.stderr };
+      };
+      const stage = (body: string) => {
+        fs.writeFileSync(path.join(repoDir, ".rafter.yml"), 'ignore:\n  - paths: ["**"]\nscan:\n  custom_patterns: [null]\n');
+        fs.writeFileSync(path.join(repoDir, "a.js"), body);
+        execSync("git add a.js", gitExecOpts(repoDir));
+      };
+
+      it("still denies a staged secret, and warns", () => {
+        stage(`const k = "${FAKE_AWS_KEY}";\n`);
+        const { out, stderr } = hook();
+        expect(out.permissionDecision).toBe("deny");
+        expect(out.permissionDecisionReason).toContain("AWS Access Key ID");
+        expect(stderr).toMatch(/Warning: .*\.rafter\.yml/);
+        const s = run(["secrets", "--staged"]);
+        expect(s.status).toBe(1);
+        expect(s.stderr).toMatch(/Warning: .*\.rafter\.yml/);
+      });
+
+      it("allows a clean diff, and warns", () => {
+        stage("const a = 1;\n");
+        const { out, stderr } = hook();
+        expect(out.permissionDecision).toBe("allow");
+        expect(stderr).toMatch(/Warning: .*\.rafter\.yml/);
+        const s = run(["secrets", "--staged"]);
+        expect(s.status).toBe(0);
+        expect(s.stderr).toMatch(/Warning: .*\.rafter\.yml/);
+      });
     });
 
     it("returns zero when nothing is staged", () => {

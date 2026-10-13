@@ -350,6 +350,33 @@ class TestGitStagedScanning:
         assert added[0].file == "clean.py"
         assert len(results) == 0
 
+    def test_large_staged_diff_scans_without_crashing(self, tmp_path):
+        """Parity with the Node fix for #274: a staged diff over 1 MiB must scan
+        (Python reads the whole diff, no buffer cap), and a secret buried in it
+        is still found."""
+        bulk = "\n".join(
+            f'benign_{i} = "lorem ipsum dolor sit amet consectetur"'
+            for i in range(20000)
+        )
+        (tmp_path / "big.py").write_text(
+            bulk + "\nAPI_KEY = 'AKIAIOSFODNN7EXAMPLE'\n"
+        )
+        _git("add big.py", self.repo)
+        staged = subprocess.run(
+            ["git", "diff", "-U0", "--no-color", "--cached"],
+            capture_output=True, text=True, check=True, cwd=self.repo,
+        ).stdout
+        assert len(staged) > 1024 * 1024
+
+        results, _added, _repo_root = _scan_git_added_lines(
+            self.repo,
+            ["diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
+        )
+        assert any(
+            m.pattern.name == "AWS Access Key ID"
+            for r in results for m in r.matches
+        )
+
 
 # ── Git --diff scanning ─────────────────────────────────────────────
 
