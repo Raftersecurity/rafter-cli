@@ -230,6 +230,39 @@ class TestScanStagedFilesRealRepo:
         assert result["secrets_found"] is False
 
 
+# ── Pretool: fail closed when the staged diff cannot be scanned ─────────
+
+def _pretool_decision(command: str) -> dict:
+    """Run the real pretool entry point, including its fail-open outer catch."""
+    from typer.testing import CliRunner
+    from rafter_cli.commands.hook import hook_app
+
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}}
+    result = CliRunner(mix_stderr=False).invoke(hook_app, ["pretool"], input=json.dumps(payload))
+    return json.loads(result.output.strip())["hookSpecificOutput"]
+
+
+class TestPretoolStagedDiffFailsClosed:
+    def test_denies_commit_when_git_diff_fails(self, git_repo):
+        (git_repo / "a.js").write_text("const a = 1;\n")
+        subprocess.run(["git", "add", "a.js"], cwd=git_repo, capture_output=True, check=True)
+        (git_repo / ".git" / "index").write_bytes(b"corrupt")  # git diff --cached now fails
+
+        out = _pretool_decision('git commit -m "x"')
+        assert out["permissionDecision"] == "deny"
+        assert "could not run" in out["permissionDecisionReason"]
+
+    def test_scans_non_utf8_staged_diff(self, git_repo):
+        (git_repo / "latin1.txt").write_bytes(
+            b"caf\xe9\n" + f"AWS_ACCESS_KEY_ID={FAKE_AWS_KEY}\n".encode()
+        )
+        subprocess.run(["git", "add", "latin1.txt"], cwd=git_repo, capture_output=True, check=True)
+
+        out = _pretool_decision('git commit -m "x"')
+        assert out["permissionDecision"] == "deny"
+        assert "secret(s)" in out["permissionDecisionReason"]
+
+
 # ── Command interception in git context ─────────────────────────────────
 
 class TestCommandInterceptionGitContext:

@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
-import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
+import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import { BetterleaksScanner } from "../../scanners/betterleaks.js";
 import { unionScanResults } from "../../scanners/union.js";
 import { BinaryManager, BETTERLEAKS_VERSION } from "../../utils/binary-manager.js";
@@ -493,6 +493,11 @@ async function runGitAddedLineScan(
       encoding: "utf-8",
       cwd,
       stdio: ["pipe", "pipe", "ignore"],
+      // The default 1 MiB cap makes `git diff` throw ENOBUFS on ordinary large
+      // staged diffs (lockfiles, generated or vendored files). That crash used
+      // to exit 1 — indistinguishable from a real finding, so a commit gate
+      // reported a broken scan as a possible secret (#274). Read the whole diff.
+      maxBuffer: gitDiffMaxBuffer(),
     });
 
     if (!patch.trim()) {
@@ -537,7 +542,16 @@ async function runGitAddedLineScan(
       console.error(errorOpts?.notRepoMessage ?? "Error: Not in a git repository or invalid ref");
       process.exit(2);
     }
-    throw error;
+    // A scan that could not run is a scan ERROR, never a finding. Exit 2 (per
+    // CLI_SPEC: invalid input / scan error) so a commit gate keying on the exit
+    // code never mistakes a broken scan for a detected secret (#274). ENOBUFS is
+    // the known case (a diff past the buffer), but any failure to read/parse the
+    // diff belongs here rather than surfacing as exit 1.
+    const detail = error?.code === "ENOBUFS"
+      ? "staged diff too large for the scanner to read"
+      : (error?.message ?? String(error));
+    console.error(`Error: secret scan could not run (${detail}); no scan was performed`);
+    process.exit(2);
   }
 }
 

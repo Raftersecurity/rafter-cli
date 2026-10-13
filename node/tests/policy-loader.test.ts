@@ -277,6 +277,17 @@ ignore:
     expect(stderrSpy.mock.calls.some((c) => String(c[0]).includes("paths"))).toBe(true);
   });
 
+  // `rules` that is present but not a list used to be dropped silently, which
+  // turned a rule meant for one pattern into one that suppresses every pattern.
+  it("ignore: an entry whose rules is not a list is skipped, not widened", async () => {
+    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), 'ignore:\n  - paths: ["**"]\n    rules: "AWS Access Key"\n');
+    const policy = await loadPolicyFresh();
+
+    expect(policy?.ignore).toBeUndefined();
+    expect(stderrSpy.mock.calls.some((c) => String(c[0]).includes("rules"))).toBe(true);
+  });
+
   it("ignore: empty array results in no ignore section", async () => {
     const yml = `
 ignore: []
