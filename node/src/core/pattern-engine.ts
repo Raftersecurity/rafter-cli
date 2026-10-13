@@ -198,7 +198,8 @@ export class PatternEngine {
     const visibleChars = 4;
     const start = match.substring(0, visibleChars);
     const end = match.substring(match.length - visibleChars);
-    const middle = "*".repeat(match.length - (visibleChars * 2));
+    // Cap the mask so a long token (a JWT) does not print a line of asterisks.
+    const middle = "*".repeat(Math.min(match.length - (visibleChars * 2), 16));
     return start + middle + end;
   }
 }

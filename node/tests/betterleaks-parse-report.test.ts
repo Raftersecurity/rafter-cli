@@ -28,6 +28,19 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+describe("BetterleaksScanner redaction", () => {
+  const convert = (scanner as any).convertToPatternMatch.bind(scanner);
+
+  // betterleaks returns whole PEM blocks as the secret; one finding must not
+  // print a 1,700-character run of asterisks.
+  it("bounds the redacted length of a long secret", () => {
+    const pem = "-----BEGIN RSA PRIVATE KEY-----" + "A".repeat(1600) + "-----END RSA PRIVATE KEY-----";
+    const r = convert({ RuleID: "private-key", Tags: [], StartLine: 1, StartColumn: 1, Secret: pem }).redacted;
+    expect(r.length).toBeLessThanOrEqual(24);
+    expect(r.startsWith("----") && r.endsWith("----")).toBe(true);
+  });
+});
+
 describe("BetterleaksScanner.parseResults", () => {
   // #217 — betterleaks >=1.1.2 writes the literal `null` for a clean scan via
   // the `dir`/`git` subcommands. Regression guard: this is an empty result, not
