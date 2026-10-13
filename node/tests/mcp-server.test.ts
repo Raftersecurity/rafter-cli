@@ -248,7 +248,7 @@ describe("MCP Server — scan_secrets", () => {
         matches: [
           {
             pattern: { name: "AWS Access Key ID", severity: "high", regex: "" },
-            match: "AKIAIOSFODNN7EXAMPLE1",
+            match: "AKIAIOSFODNN7ABCDEFG1",
             line: 1,
             redacted: "AKIA****PLE1",
           },
@@ -298,7 +298,7 @@ describe("MCP Server — scan_secrets", () => {
         matches: [
           {
             pattern: { name: "AWS Access Key ID", severity: "high", regex: "" },
-            match: "AKIAIOSFODNN7EXAMPLE1",
+            match: "AKIAIOSFODNN7ABCDEFG1",
             line: 1,
             redacted: "AKIA****PLE1",
           },

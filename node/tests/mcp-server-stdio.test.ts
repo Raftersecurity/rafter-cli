@@ -111,7 +111,7 @@ describe("MCP Server — real stdio transport: scan_secrets", () => {
   });
 
   it("should detect a planted AWS key in a directory", async () => {
-    fs.writeFileSync(path.join(tmpDir, "creds.env"), "AWS_KEY=AKIAIOSFODNN7EXAMPLE1\n");
+    fs.writeFileSync(path.join(tmpDir, "creds.env"), "AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n");
 
     const result = await client.callTool({
       name: "scan_secrets",

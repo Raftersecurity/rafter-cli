@@ -12,7 +12,20 @@ def _engine():
 # -- AWS ------------------------------------------------------------------
 
 def test_aws_access_key_id():
+    matches = _engine().scan("AKIAIOSFODNN7ABCDEFG")
+    assert any(m.pattern.name == "AWS Access Key ID" for m in matches)
+
+
+# sable/#230: betterleaks skips the canonical AWS-docs example access key (it
+# ends in EXAMPLE); the built-in regex engine disagreed and flagged it. Copy
+# betterleaks' exemption so a Write containing the AWS docs sample isn't denied.
+def test_aws_access_key_id_ignores_docs_example():
     matches = _engine().scan("AKIAIOSFODNN7EXAMPLE")
+    assert not any(m.pattern.name == "AWS Access Key ID" for m in matches)
+
+
+def test_aws_access_key_id_detects_plausible_non_example_key():
+    matches = _engine().scan("AKIAQWERTYUIOPASDFGH")
     assert any(m.pattern.name == "AWS Access Key ID" for m in matches)
 
 

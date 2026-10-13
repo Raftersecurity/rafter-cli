@@ -25,7 +25,7 @@ class TestQuickScanSecrets:
         assert result.secrets == 0
 
     def test_detects_aws_key(self):
-        content = "aws_key = AKIAIOSFODNN7EXAMPLE"
+        content = "aws_key = AKIAIOSFODNN7ABCDEFG"
         result = _run_quick_scan(content)
         assert result.secrets >= 1
 

@@ -51,7 +51,7 @@ describe("Secret patterns — coverage matrix", () => {
 
   describe("AWS Access Key ID", () => {
     it("detects AKIA key", () => {
-      const r = scanString("AKIAIOSFODNN7EXAMPLE\n");
+      const r = scanString("AKIAIOSFODNN7ABCDEFG\n");
       expect(r.matches.length).toBeGreaterThan(0);
       expect(r.matches.some((m) => m.pattern.name.includes("AWS Access Key"))).toBe(true);
     });
@@ -64,6 +64,20 @@ describe("Secret patterns — coverage matrix", () => {
     it("ignores short strings starting with AKIA", () => {
       const r = scanString("AKIA is an AWS prefix\n");
       expect(r.matches.filter((m) => m.pattern.name.includes("AWS Access Key")).length).toBe(0);
+    });
+
+    // sable/#230: betterleaks skips the canonical AWS-docs example access
+    // key (it ends in EXAMPLE); the built-in regex engine disagreed and
+    // flagged it. Copy betterleaks' exemption so a Write containing the
+    // AWS docs sample isn't denied.
+    it("ignores the canonical AWS-docs example key (ends in EXAMPLE)", () => {
+      const r = scanString("AKIAIOSFODNN7EXAMPLE\n");
+      expect(r.matches.filter((m) => m.pattern.name.includes("AWS Access Key")).length).toBe(0);
+    });
+
+    it("still detects a plausible key that happens to share the EXAMPLE prefix but not the full EXAMPLE suffix", () => {
+      const r = scanString("AKIAQWERTYUIOPASDFGH\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("AWS Access Key"))).toBe(true);
     });
   });
 
@@ -379,7 +393,7 @@ describe("Multi-secret file scanning", () => {
 
   it("detects multiple different secret types in a single file", () => {
     const content = [
-      "AKIAIOSFODNN7EXAMPLE",
+      "AKIAIOSFODNN7ABCDEFG",
       "ghp_ABCDEFghijklmnopqrstuvwxyz0123456789",
       fakeSecret("sk_live_", "abcdefghijklmnopqrstuvwx"),
       "-----BEGIN RSA PRIVATE KEY-----",
@@ -408,7 +422,7 @@ describe("RegexScanner utility methods", () => {
 
   describe("scanText", () => {
     it("scans raw text without a file", () => {
-      const matches = scanner.scanText("AKIAIOSFODNN7EXAMPLE");
+      const matches = scanner.scanText("AKIAIOSFODNN7ABCDEFG");
       expect(matches.length).toBeGreaterThan(0);
     });
 
@@ -420,7 +434,7 @@ describe("RegexScanner utility methods", () => {
 
   describe("hasSecrets", () => {
     it("returns true when secrets present", () => {
-      expect(scanner.hasSecrets("AKIAIOSFODNN7EXAMPLE")).toBe(true);
+      expect(scanner.hasSecrets("AKIAIOSFODNN7ABCDEFG")).toBe(true);
     });
 
     it("returns false for clean text", () => {

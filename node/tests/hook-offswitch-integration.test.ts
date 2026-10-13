@@ -13,7 +13,7 @@ const CLI_ENTRY = path.join(PROJECT_ROOT, "dist", "index.js");
 
 const SECRET_WRITE = JSON.stringify({
   tool_name: "Write",
-  tool_input: { content: "aws_key = AKIAIOSFODNN7EXAMPLE" },
+  tool_input: { content: "aws_key = AKIAIOSFODNN7ABCDEFG" },
 });
 
 function runHook(cwd: string, env: Record<string, string> = {}): { decision: string } {

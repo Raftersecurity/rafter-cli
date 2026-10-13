@@ -42,7 +42,7 @@ class TestRealisticProjectScanning:
         (tmp_path / "src" / "config" / "keys.py").write_text(
             '# API configuration\n'
             'API_BASE = "https://api.example.com"\n'
-            'API_KEY = "AKIAIOSFODNN7EXAMPLE"\n'
+            'API_KEY = "AKIAIOSFODNN7ABCDEFG"\n'
         )
 
         # Source file with GitHub token
@@ -125,7 +125,7 @@ class TestRealisticProjectScanning:
         nm = tmp_path / "node_modules" / "some-pkg" / "src"
         nm.mkdir(parents=True)
         (nm / "config.js").write_text(
-            "module.exports = { key: 'AKIAIOSFODNN7EXAMPLE' };\n"
+            "module.exports = { key: 'AKIAIOSFODNN7ABCDEFG' };\n"
         )
 
         scanner = RegexScanner()
@@ -159,7 +159,7 @@ class TestMixedContent:
         content = "\n".join([
             "# Line 1: clean",
             "# Line 2: clean",
-            'aws = "AKIAIOSFODNN7EXAMPLE"',       # line 3
+            'aws = "AKIAIOSFODNN7ABCDEFG"',       # line 3
             "# Line 4: clean",
             "# Line 5: clean",
             'gh = "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789"',  # line 6
@@ -219,7 +219,7 @@ class TestEdgeCases:
             "# 配置文件 — Configuration\n"
             'api_key = "sk1234567890abcdef"\n'
             "# Ключ доступа — Access key\n"
-            "aws_key = AKIAIOSFODNN7EXAMPLE\n"
+            "aws_key = AKIAIOSFODNN7ABCDEFG\n"
             "# アクセストークン — Token\n"
         )
         (tmp_path / "unicode.txt").write_text(content)
@@ -232,7 +232,7 @@ class TestEdgeCases:
     def test_deeply_nested_directory(self, tmp_path):
         deep = tmp_path / "a" / "b" / "c" / "d" / "e" / "f"
         deep.mkdir(parents=True)
-        (deep / "secret.txt").write_text("AKIAIOSFODNN7EXAMPLE\n")
+        (deep / "secret.txt").write_text("AKIAIOSFODNN7ABCDEFG\n")
 
         scanner = RegexScanner()
         results = scanner.scan_directory(str(tmp_path))
@@ -241,11 +241,11 @@ class TestEdgeCases:
     def test_binary_files_skipped(self, tmp_path):
         for ext in [".jpg", ".png", ".exe", ".dll", ".zip", ".pyc"]:
             (tmp_path / f"file{ext}").write_bytes(
-                b"\x89PNG\r\n" + b"AKIAIOSFODNN7EXAMPLE"
+                b"\x89PNG\r\n" + b"AKIAIOSFODNN7ABCDEFG"
             )
 
         # One text file that should be caught
-        (tmp_path / "file.txt").write_text("AKIAIOSFODNN7EXAMPLE\n")
+        (tmp_path / "file.txt").write_text("AKIAIOSFODNN7ABCDEFG\n")
 
         scanner = RegexScanner()
         results = scanner.scan_directory(str(tmp_path))
@@ -311,7 +311,7 @@ class TestGitStagedScanning:
 
     def test_detects_secrets_in_staged_files(self, tmp_path):
         (tmp_path / "config.py").write_text(
-            "API_KEY = 'AKIAIOSFODNN7EXAMPLE'\n"
+            "API_KEY = 'AKIAIOSFODNN7ABCDEFG'\n"
         )
         _git("add config.py", self.repo)
 
@@ -340,7 +340,7 @@ class TestGitStagedScanning:
         _git("add clean.py", self.repo)
 
         # Create but don't stage a file with a secret
-        (tmp_path / "secret.py").write_text("key = 'AKIAIOSFODNN7EXAMPLE'\n")
+        (tmp_path / "secret.py").write_text("key = 'AKIAIOSFODNN7ABCDEFG'\n")
 
         results, added, _repo_root = _scan_git_added_lines(
             self.repo,
@@ -359,7 +359,7 @@ class TestGitStagedScanning:
             for i in range(20000)
         )
         (tmp_path / "big.py").write_text(
-            bulk + "\nAPI_KEY = 'AKIAIOSFODNN7EXAMPLE'\n"
+            bulk + "\nAPI_KEY = 'AKIAIOSFODNN7ABCDEFG'\n"
         )
         _git("add big.py", self.repo)
         staged = subprocess.run(
@@ -398,7 +398,7 @@ class TestGitDiffScanning:
     def test_detects_secrets_in_changed_files(self, tmp_path):
         initial = _git("rev-parse HEAD", self.repo)
 
-        (tmp_path / "secrets.py").write_text("key = 'AKIAIOSFODNN7EXAMPLE'\n")
+        (tmp_path / "secrets.py").write_text("key = 'AKIAIOSFODNN7ABCDEFG'\n")
         _git("add secrets.py", self.repo)
         _git('commit -m "add secrets"', self.repo)
 
@@ -439,7 +439,7 @@ class TestGitDiffScanning:
 
     def test_only_changed_files_scanned(self, tmp_path):
         """Files with secrets committed before the ref should not appear."""
-        (tmp_path / "old_secret.py").write_text("key = 'AKIAIOSFODNN7EXAMPLE'\n")
+        (tmp_path / "old_secret.py").write_text("key = 'AKIAIOSFODNN7ABCDEFG'\n")
         _git("add old_secret.py", self.repo)
         _git('commit -m "old secret"', self.repo)
 
@@ -458,7 +458,7 @@ class TestGitDiffScanning:
         assert len(results) == 0
 
     def test_does_not_reflag_preexisting_secret_without_plus_line(self, tmp_path):
-        (tmp_path / "config.py").write_text("key = 'AKIAIOSFODNN7EXAMPLE'\n")
+        (tmp_path / "config.py").write_text("key = 'AKIAIOSFODNN7ABCDEFG'\n")
         _git("add config.py", self.repo)
         _git('commit -m "config with secret"', self.repo)
 
@@ -485,7 +485,7 @@ class TestScannerAPI:
     def test_scan_files_returns_only_dirty_files(self, tmp_path):
         files_data = [
             ("clean1.py", "x = 1"),
-            ("dirty.py", "key = 'AKIAIOSFODNN7EXAMPLE'"),
+            ("dirty.py", "key = 'AKIAIOSFODNN7ABCDEFG'"),
             ("clean2.py", "y = 2"),
             ("dirty2.py", "-----BEGIN RSA PRIVATE KEY-----"),
         ]
@@ -505,7 +505,7 @@ class TestScannerAPI:
     def test_multiple_exclude_paths(self, tmp_path):
         for d in ["vendor", "generated", "src"]:
             (tmp_path / d).mkdir()
-            (tmp_path / d / "file.py").write_text("AKIAIOSFODNN7EXAMPLE\n")
+            (tmp_path / d / "file.py").write_text("AKIAIOSFODNN7ABCDEFG\n")
 
         scanner = RegexScanner()
         # "vendor" is NOT in Python's DEFAULT_EXCLUDE, so exclude it manually
@@ -517,15 +517,15 @@ class TestScannerAPI:
         assert "src" in results[0].file
 
     def test_max_depth_limits_recursion(self, tmp_path):
-        (tmp_path / "top.py").write_text("AKIAIOSFODNN7EXAMPLE\n")
+        (tmp_path / "top.py").write_text("AKIAIOSFODNN7ABCDEFG\n")
 
         level1 = tmp_path / "level1"
         level1.mkdir()
-        (level1 / "l1.py").write_text("AKIAIOSFODNN7EXAMPLE\n")
+        (level1 / "l1.py").write_text("AKIAIOSFODNN7ABCDEFG\n")
 
         level2 = level1 / "level2"
         level2.mkdir()
-        (level2 / "l2.py").write_text("AKIAIOSFODNN7EXAMPLE\n")
+        (level2 / "l2.py").write_text("AKIAIOSFODNN7ABCDEFG\n")
 
         scanner = RegexScanner()
 
@@ -538,7 +538,7 @@ class TestScannerAPI:
 
     def test_redact_masks_all_secret_types(self):
         secrets = [
-            "AKIAIOSFODNN7EXAMPLE",
+            "AKIAIOSFODNN7ABCDEFG",
             "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789",
             _fake_secret("sk_live", "_abcdefghijklmnopqrstuvwx"),
         ]
