@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import fs from "fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -224,11 +225,10 @@ export function createServer(): Server {
 
         const runPatterns = (): ScanResult[] => {
           const scanner = new RegexScanner();
-          try {
-            return scanner.scanDirectory(scanPath);
-          } catch {
-            return [scanner.scanFile(scanPath)];
-          }
+          // scanDirectory() on a file returns [] rather than throwing, so pick by type.
+          return fs.statSync(scanPath).isFile()
+            ? [scanner.scanFile(scanPath)]
+            : scanner.scanDirectory(scanPath);
         };
 
         // Honor the project's suppressions, as `rafter secrets` does, so a
