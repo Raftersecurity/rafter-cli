@@ -425,3 +425,23 @@ describe("CLI e2e — backend commands without API key", () => {
     expect(r.exitCode).toBe(1);
   }, 30000);
 });
+
+// process.exit() right after a large stdout write used to drop everything past
+// the first 64 KiB when stdout is a pipe, so `rafter secrets --json . | jq`
+// received truncated JSON.
+describe("CLI e2e — large JSON output through a pipe", () => {
+  it("delivers all of `secrets --json` before exiting", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-pipe-"));
+    try {
+      const lines = Array.from({ length: 3000 }, (_, i) => `KEY_${i}=AKIA${String(i).padStart(16, "0")}`);
+      fs.writeFileSync(path.join(dir, "creds.env"), lines.join("\n") + "\n");
+      const r = spawnSync("node", [CLI, "secrets", "--json", "--engine", "patterns", dir], {
+        encoding: "utf-8", maxBuffer: 64 * 1024 * 1024,
+      });
+      expect(r.stdout.length).toBeGreaterThan(200_000);
+      expect(JSON.parse(r.stdout).results[0].matches).toHaveLength(3000);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
