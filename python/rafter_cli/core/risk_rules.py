@@ -53,7 +53,7 @@ _REVERSE_SHELL_PATTERNS: list[str] = [
     # in --socket-path/docker.socket/trace=socket) + a spawn that NAMES a shell.
     # Order-independent anchored lookaheads: catches the socket-after-spawn
     # (canonical Node.js) form, and linear (no prefix[\s\S]*suffix backtracking).
-    r"^(?=[\s\S]*(socket\.socket|\bsocket\s*\(|tcpsocket\.|io::socket|pf_inet|sock_stream|net\.socket))(?=[\s\S]*(pty\.spawn|/bin/(ba)?sh|(os\.system|system|exec|popen|spawnsync|spawn|subprocess\.(call|run|popen|check_output|check_call))\s*[\s(\[{\"']*/?(bin/)?(ba|z|da|a|k)?sh\b))",
+    r"""^(?=[\s\S]*(socket\.socket|\bsocket\s*\(|tcpsocket\.|io::socket|pf_inet|sock_stream|net\.socket))(?=[\s\S]*(pty\.spawn|/bin/(ba)?sh|(os\.system|system|exec|popen|spawnsync|spawn|subprocess\.(call|run|popen|check_output|check_call))\s*[\s(\[{"']*/?(bin/)?(ba|z|da|a|k)?sh\b))""",
     # interpreter socket one-liner, part B: a socket call + a generic exec/system
     # + socket-fd wiring (dup2/fileno/pipe/redirect/read-loop). Catches forms
     # whose shell name arrives from the socket at runtime (perl `system $_ while
