@@ -280,6 +280,7 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
         status = poll.data.status;
         if (status === "completed") {
           spinner?.succeed("Scan completed");
+          warnIfPartial(poll.data);
           return writePayload(poll.data, fmt, quiet);
         } else if (status === "failed") {
           spinner?.stop();
@@ -300,6 +301,7 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
     if (!quiet) {
       console.error("Scan completed");
     }
+    warnIfPartial(poll.data);
     return writePayload(poll.data, fmt, quiet);
   } else if (status === "failed") {
     return reportFailedScan(poll.data, fmt);
@@ -309,6 +311,7 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
     }
   }
 
+  warnIfPartial(poll.data);
   return writePayload(poll.data, fmt, quiet);
 }
 
@@ -325,4 +328,19 @@ export function reportFailedScan(data: any, fmt?: string): number {
   }
   if (fmt === "json") writePayload(data, fmt);
   return EXIT_GENERAL_ERROR;
+}
+
+/**
+ * A completed scan the API marks partial (some scanners did not finish) is
+ * not a clean result. Say so on stderr, even with --quiet.
+ */
+export function warnIfPartial(data: any): void {
+  if (data?.partial !== true && data?.warning_code !== "SCAN_PARTIAL") return;
+  const code = typeof data?.warning_code === "string" ? data.warning_code : "SCAN_PARTIAL";
+  const missing = Array.isArray(data?.missing_scanners) && data.missing_scanners.length
+    ? ` Scanners that did not finish: ${data.missing_scanners.join(", ")}.`
+    : "";
+  console.error(output.warning(
+    `Scan completed with gaps (${code}): some scanners did not finish, so findings may be missing.${missing} Do not treat this result as clean.`
+  ));
 }

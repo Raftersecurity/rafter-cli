@@ -195,6 +195,24 @@ describe("handleScanStatus", () => {
     expect(JSON.parse(String(outSpy.mock.calls[0][0])).error_code).toBe("SCAN_STALLED");
   });
 
+  it("warns that a completed scan is partial, even with --quiet", async () => {
+    const partial = {
+      status: "completed", partial: true, warning_code: "SCAN_PARTIAL",
+      missing_scanners: ["opengrep_rafter"], vulnerabilities: [],
+    };
+    mockedAxios.get.mockResolvedValueOnce({ data: partial });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const outSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    const code = await handleScanStatus("s1", headers, "json", true);
+
+    expect(code).toBe(EXIT_SUCCESS);
+    const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(stderr).toContain("SCAN_PARTIAL");
+    expect(stderr).toContain("opengrep_rafter");
+    expect(JSON.parse(String(outSpy.mock.calls[0][0])).partial).toBe(true);
+  });
+
   it("polls when status is pending", async () => {
     mockedAxios.get
       .mockResolvedValueOnce({ data: { status: "pending" } })

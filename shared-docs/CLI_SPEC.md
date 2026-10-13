@@ -130,6 +130,10 @@ Retrieve results from a scan.
 
 A scan whose status is `failed` exits `1` from `rafter run`, `rafter get` and `rafter get --interactive`. stderr names the API's `error_code` and `error` message, and adds a re-run hint when the payload says `retryable: true`. With `--format json` the failure payload is also written to stdout, so a consumer can read `error_code` and `retryable` itself. Both runtimes.
 
+#### Partial scans
+
+A completed scan that the API marks `partial: true` or `warning_code: "SCAN_PARTIAL"` (some scanners did not finish) still exits `0` with its payload on stdout, but stderr warns that findings may be missing, names `missing_scanners` when the API lists them, and says not to treat the result as clean. The warning prints even with `--quiet`. Both runtimes.
+
 #### Poll-loop retry contract
 
 A report is not necessarily durable the instant a scan flips to `completed`, so a poll can hit a 5xx on a scan that is readable seconds later. Both runtimes retry transient read failures instead of aborting. This applies to `rafter run`, `rafter get --interactive`, and plain `rafter get <scan_id>`:
