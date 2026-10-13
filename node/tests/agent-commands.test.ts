@@ -97,7 +97,7 @@ function parseArgs(args: string): string[] {
 // the file itself doesn't trip secret-scanning push protection in GitHub /
 // pre-commit hooks. Each value individually matches the corresponding regex
 // in src/scanners/secret-patterns.ts.
-const FAKE_AWS_KEY = "AKIA" + "IOSFODNN7" + "EXAMPLE";
+const FAKE_AWS_KEY = "AKIA" + "IOSFODNN7" + "ABCDEFG";
 const FAKE_STRIPE_KEY = "sk" + "_live_" + "1234567890abcdefghijklmn";
 
 // ─── agent config ────────────────────────────────────────────────────────────

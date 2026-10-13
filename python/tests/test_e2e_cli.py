@@ -164,13 +164,13 @@ class TestSecretsScanning:
 
     def test_exits_1_when_secrets_detected(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIAIOSFODNN7EXAMPLE\n")
+        f.write_text("AKIAIOSFODNN7ABCDEFG\n")
         _, _, rc = rafter(f"secrets {f} --engine patterns --quiet")
         assert rc == 1
 
     def test_json_outputs_valid_json(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIA" + "IOSFODNN7" + "EXAMPLE\n")
+        f.write_text("AKIA" + "IOSFODNN7" + "ABCDEFG\n")
         stdout, _, rc = rafter(f"secrets {f} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
@@ -180,7 +180,7 @@ class TestSecretsScanning:
 
     def test_json_output_includes_scan_mode_note(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIA" + "IOSFODNN7" + "EXAMPLE\n")
+        f.write_text("AKIA" + "IOSFODNN7" + "ABCDEFG\n")
         stdout, _, rc = rafter(f"secrets {f} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
@@ -203,7 +203,7 @@ class TestSecretsScanning:
 
     def test_sarif_format_outputs_sarif_schema(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIAIOSFODNN7EXAMPLE\n")
+        f.write_text("AKIAIOSFODNN7ABCDEFG\n")
         stdout, _, rc = rafter(f"secrets {f} --engine patterns --format sarif")
         assert rc == 1
         sarif = json.loads(stdout)
@@ -215,7 +215,7 @@ class TestSecretsScanning:
     def test_scans_directory_recursively(self, tmp_path):
         sub = tmp_path / "src"
         sub.mkdir()
-        (sub / "config.ts").write_text("const key = '" + "AKIA" + "IOSFODNN7" + "EXAMPLE';\n")
+        (sub / "config.ts").write_text("const key = '" + "AKIA" + "IOSFODNN7" + "ABCDEFG';\n")
         stdout, _, rc = rafter(f"secrets {tmp_path} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
@@ -268,7 +268,7 @@ class TestSecretsScanning:
 class TestScanLocalAliasBackCompat:
     def test_alias_produces_identical_json_to_secrets(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIAIOSFODNN7EXAMPLE\n")
+        f.write_text("AKIAIOSFODNN7ABCDEFG\n")
         canonical_stdout, _, canonical_rc = rafter(f"secrets {f} --engine patterns --json")
         alias_stdout, _, alias_rc = rafter(f"scan local {f} --engine patterns --json")
         assert canonical_rc == 1

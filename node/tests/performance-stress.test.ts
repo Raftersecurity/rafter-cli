@@ -9,14 +9,14 @@ import { DEFAULT_SECRET_PATTERNS } from "../src/scanners/secret-patterns.js";
 
 // Fake secrets that look realistic but aren't
 const FAKE_SECRETS = [
-  'AKIAIOSFODNN7EXAMPLE',
+  'AKIAIOSFODNN7ABCDEFG',
   'ghp_FAKEEFGHIJKLMNOPQRSTUVWXYZ0123456789',
   'glpat-xxxxxxxxxxxxxxxxxxxx',
   'sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
   'xoxb-0000000FAKE-0000000FAKE00-FAKEFAKEFAKEFAKEFAKEFAKEFA',
   'SG.xxxxxxxxxxxxxxxxxxxx.yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy',
   'ghp_FAKE456789ABCDEFGHIJKLMNOPQRSTUVWXYz',
-  'AKIAI44QH8DHBEXAMPLE',
+  'AKIAI44QH8DHBABCDEFG',
 ];
 
 function generateFileContent(secretCount: number): string {
@@ -115,7 +115,7 @@ describe("Performance & Stress Tests", () => {
       // Add secret at depth 4
       const deepDir = path.join(scanDir, "dir_0", "dir_0", "dir_0", "deep");
       fs.mkdirSync(deepDir, { recursive: true });
-      fs.writeFileSync(path.join(deepDir, "secret.ts"), `const k = "AKIAIOSFODNN7EXAMPLE";`);
+      fs.writeFileSync(path.join(deepDir, "secret.ts"), `const k = "AKIAIOSFODNN7ABCDEFG";`);
 
       const scanner = new RegexScanner();
       // Scan with maxDepth=2 should miss the deep secret
@@ -166,7 +166,7 @@ describe("Performance & Stress Tests", () => {
       const lines: string[] = [];
       for (let i = 0; i < 20000; i++) {
         if (i % 200 === 0) {
-          lines.push(`const key_${i} = "AKIAIOSFODNN7EXAMPLE";`);
+          lines.push(`const key_${i} = "AKIAIOSFODNN7ABCDEFG";`);
         } else {
           lines.push(`// Line ${i}: Lorem ipsum dolor sit amet, consectetur adipiscing elit.`);
         }
@@ -285,7 +285,7 @@ describe("Performance & Stress Tests", () => {
 
       // Text with multiple different secret types
       const text = [
-        'AWS_KEY=AKIAIOSFODNN7EXAMPLE',
+        'AWS_KEY=AKIAIOSFODNN7ABCDEFG',
         'GITHUB_TOKEN=ghp_FAKEEFGHIJKLMNOPQRSTUVWXYZ0123456789',
         'GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx',
         'SLACK_TOKEN=xoxb-0000000FAKE-0000000FAKE00-FAKEFAKEFAKEFAKEFAKEFAKEFA',
@@ -358,7 +358,7 @@ describe("Performance & Stress Tests", () => {
         const ext = extensions[i % extensions.length];
         fs.writeFileSync(
           path.join(binDir, `file_${i}${ext}`),
-          Buffer.from("AKIAIOSFODNN7EXAMPLE")
+          Buffer.from("AKIAIOSFODNN7ABCDEFG")
         );
       }
 
@@ -371,7 +371,7 @@ describe("Performance & Stress Tests", () => {
     it("should handle files with very long lines", () => {
       const filePath = path.join(tmpDir, "long-lines.ts");
       // Single line with 100K chars and a secret buried in the middle
-      const content = "x".repeat(50000) + " AKIAIOSFODNN7EXAMPLE " + "y".repeat(50000);
+      const content = "x".repeat(50000) + " AKIAIOSFODNN7ABCDEFG " + "y".repeat(50000);
       fs.writeFileSync(filePath, content);
 
       const scanner = new RegexScanner();
@@ -394,7 +394,7 @@ describe("Performance & Stress Tests", () => {
         for (let i = 0; i < 20; i++) {
           fs.writeFileSync(
             path.join(dir, `secret_${i}.ts`),
-            `const k = "AKIAIOSFODNN7EXAMPLE";`
+            `const k = "AKIAIOSFODNN7ABCDEFG";`
           );
         }
       }
@@ -402,7 +402,7 @@ describe("Performance & Stress Tests", () => {
       // Also create a non-excluded dir with secrets
       const srcDir = path.join(scanDir, "src");
       fs.mkdirSync(srcDir, { recursive: true });
-      fs.writeFileSync(path.join(srcDir, "config.ts"), `const k = "AKIAIOSFODNN7EXAMPLE";`);
+      fs.writeFileSync(path.join(srcDir, "config.ts"), `const k = "AKIAIOSFODNN7ABCDEFG";`);
 
       const scanner = new RegexScanner();
       const results = scanner.scanDirectory(scanDir);

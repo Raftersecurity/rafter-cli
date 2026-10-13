@@ -292,7 +292,7 @@ describe("Agent Compatibility: Full Hook Lifecycle", () => {
         ...CLAUDE_CODE_PRETOOL_WRITE,
         tool_input: {
           file_path: "/tmp/config.env",
-          content: "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nSECRET=safe",
+          content: "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\nSECRET=safe",
         },
       };
       const result = evaluateToolCall(payload);
@@ -306,7 +306,7 @@ describe("Agent Compatibility: Full Hook Lifecycle", () => {
         tool_input: {
           file_path: "/tmp/config.ts",
           old_string: "const key = '';",
-          new_string: "const key = 'AKIAIOSFODNN7EXAMPLE';",
+          new_string: "const key = 'AKIAIOSFODNN7ABCDEFG';",
         },
       };
       const result = evaluateToolCall(payload);
@@ -361,13 +361,13 @@ describe("Agent Compatibility: Full Hook Lifecycle", () => {
       const payload: PostToolInput = {
         ...CLAUDE_CODE_POSTTOOL_BASH,
         tool_response: {
-          output: "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nOTHER=safe",
+          output: "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\nOTHER=safe",
           error: "",
         },
       };
       const result = evaluateToolResponse(payload);
       expect(result.action).toBe("modify");
-      expect(result.tool_response!.output).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(result.tool_response!.output).not.toContain("AKIAIOSFODNN7ABCDEFG");
       expect(result.tool_response!.output).toContain("****");
     });
 
@@ -410,7 +410,7 @@ describe("Agent Compatibility: Full Hook Lifecycle", () => {
         tool_name: "Bash",
         tool_input: { command: "cat .env" },
         tool_response: {
-          output: "AKIAIOSFODNN7EXAMPLE1B",
+          output: "AKIAIOSFODNN7ABCDEFG1B",
           error: "permission warning",
         },
       };
@@ -482,13 +482,13 @@ describe("Agent Compatibility: Full Hook Lifecycle", () => {
       const payload: PostToolInput = {
         ...CODEX_POSTTOOL_BASH,
         tool_response: {
-          output: "SOME_KEY=AKIAIOSFODNN7EXAMPLE\nHOME=/home/user",
+          output: "SOME_KEY=AKIAIOSFODNN7ABCDEFG\nHOME=/home/user",
           error: "",
         },
       };
       const result = evaluateToolResponse(payload);
       expect(result.action).toBe("modify");
-      expect(result.tool_response!.output).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(result.tool_response!.output).not.toContain("AKIAIOSFODNN7ABCDEFG");
     });
 
     it("handles Codex session_id format in posttool", () => {
@@ -541,13 +541,13 @@ describe("Agent Compatibility: Full Hook Lifecycle", () => {
         tool_name: "Bash",
         tool_input: { command: "cat .env" },
         tool_response: {
-          output: "DB_HOST=localhost\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n",
+          output: "DB_HOST=localhost\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n",
           error: "",
         },
       });
       expect(postResult.action).toBe("modify");
       expect(postResult.tool_response!.output).toContain("DB_HOST=localhost");
-      expect(postResult.tool_response!.output).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(postResult.tool_response!.output).not.toContain("AKIAIOSFODNN7ABCDEFG");
     });
 
     it("Claude Code: deny at pretool → no posttool needed", () => {
@@ -590,12 +590,12 @@ describe("Agent Compatibility: Full Hook Lifecycle", () => {
         tool_name: "Bash",
         tool_input: { command: "cat config.yaml" },
         tool_response: {
-          output: "api_key: AKIAIOSFODNN7EXAMPLE\nregion: us-east-1",
+          output: "api_key: AKIAIOSFODNN7ABCDEFG\nregion: us-east-1",
           error: "",
         },
       });
       expect(postResult.action).toBe("modify");
-      expect(postResult.tool_response!.output).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(postResult.tool_response!.output).not.toContain("AKIAIOSFODNN7ABCDEFG");
       expect(postResult.tool_response!.output).toContain("region: us-east-1");
     });
 
@@ -934,7 +934,7 @@ describe("Cross-Agent Consistency", () => {
   ];
 
   const SECRET_STRINGS = [
-    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG",
     'ghp_ABCdef1234567890abcdefghijklmnopqrstuv',
     "AKIA1234567890ABCDEF",
   ];
