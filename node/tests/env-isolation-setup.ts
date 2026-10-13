@@ -17,9 +17,12 @@
  * it already sees the isolated values below.
  *
  * Opt out with RAFTER_TEST_LIVE_API=1 to run against the real machine config
- * and the real backend (e.g. a deliberate live/manual run — this is also
- * what node/tests/backend-api.test.ts's own API-key gate needs to see a real
- * RAFTER_API_KEY). Leave it unset for every normal test run.
+ * and the real backend (e.g. a deliberate live/manual run). Leave it unset for
+ * every normal test run.
+ *
+ * An API key exported as RAFTER_API_KEY (CI passes its secret this way) is
+ * moved to RAFTER_TEST_BACKEND_KEY, which only tests/backend-api.test.ts
+ * reads. A key stored in ~/.rafter/config.json is never picked up.
  */
 import fs from "fs";
 import os from "os";
@@ -42,8 +45,11 @@ if (!LIVE_OPT_IN) {
   process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-test-home-"));
 
   const originalApiUrl = process.env.RAFTER_API_URL;
+  if (process.env.RAFTER_API_KEY && !process.env.RAFTER_TEST_BACKEND_KEY) {
+    process.env.RAFTER_TEST_BACKEND_KEY = process.env.RAFTER_API_KEY;
+  }
   for (const key of Object.keys(process.env)) {
-    if (key.startsWith("RAFTER_") && key !== "RAFTER_TEST_REAL_HOME") {
+    if (key.startsWith("RAFTER_") && key !== "RAFTER_TEST_REAL_HOME" && key !== "RAFTER_TEST_BACKEND_KEY") {
       delete process.env[key];
     }
   }
