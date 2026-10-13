@@ -68,11 +68,16 @@ def load_policy() -> dict | None:
         if not raw or not isinstance(raw, dict):
             return None
         return _validate_policy(_map_policy(raw), raw)
-    except yaml.YAMLError as e:
-        print(f"Warning: Failed to parse policy file {path}: {e}", file=sys.stderr)
-        return None
     except OSError as e:
         print(f"Warning: Cannot read policy file {path}: {e}", file=sys.stderr)
+        return None
+    except Exception as e:
+        # Any failure to decode, parse or map the file — not just YAMLError —
+        # drops the WHOLE policy so the scan runs on defaults. Raising instead
+        # sent the pretool hook to its fail-open catch and let a staged secret
+        # through; keeping the parts that did parse could apply a garbled
+        # suppression. Matches the Node loader.
+        print(f"Warning: Failed to parse policy file {path}: {e}", file=sys.stderr)
         return None
 
 
