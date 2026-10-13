@@ -3,7 +3,7 @@ import { CommandInterceptor, CommandEvaluation } from "../../core/command-interc
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import os from "node:os";
-import { assessCommandRisk, modifiesRafterSecurityConfig } from "../../core/risk-rules.js";
+import { modifiesRafterSecurityConfig } from "../../core/risk-rules.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { getRafterDir } from "../../core/config-defaults.js";
 import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
@@ -123,54 +123,46 @@ export function createHookPretoolCommand(): Command {
     .option("--format <format>", "Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf", "claude")
     .action(async (opts) => {
       const format = (opts.format || "claude") as HookFormat;
-      let payload: HookInput | undefined;
+      let decision: HookDecision;
       try {
-        const input = await readStdin();
-        let raw: Record<string, any>;
-
-        try {
-          raw = JSON.parse(input);
-        } catch {
-          // Can't parse → fail open
-          writeDecision({ decision: "allow" }, format);
-          return;
-        }
-
-        // Validate payload is an object with expected shape
-        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-          writeDecision({ decision: "allow" }, format);
-          return;
-        }
-
-        payload = normalizeInput(raw, format);
-        const decision = evaluateToolCall(payload);
-        writeDecision(decision, format);
-      } catch {
-        // Unexpected error → fail open, so a hook bug cannot brick the agent,
-        // except for a Bash command that would have been denied anyway.
-        writeDecision(decisionOnError(payload), format);
+        decision = decidePretool(await readStdin(), format);
+      } catch (e) {
+        decision = denyOnError(e);
       }
+      writeDecision(decision, format);
     });
 }
 
 /**
- * Decision when evaluation threw. A high/critical Bash command, or a git
- * commit/push whose secret scan never ran, is denied; everything else is allowed.
+ * Decide one PreToolUse call from its raw stdin text. Input that is not a JSON
+ * object is allowed (nothing to evaluate). Any exception thrown while
+ * evaluating fails CLOSED: an unexpected error is not evidence the call is
+ * safe. Conditions the loaders already handle (a malformed .rafter.yml warns
+ * and falls back to defaults) never throw, so they do not reach this.
  */
-function decisionOnError(payload: HookInput | undefined): HookDecision {
-  const reason = "Rafter: the hook hit an internal error evaluating this command; " +
-    "blocked rather than allowed unchecked.";
+export function decidePretool(input: string, format: HookFormat): HookDecision {
+  let raw: Record<string, any>;
   try {
-    if (payload?.tool_name !== "Bash") return { decision: "allow" };
-    const command = String(payload.tool_input?.command ?? "");
-    const trimmed = command.trim();
-    if (trimmed.startsWith("git commit") || trimmed.startsWith("git push")) {
-      return { decision: "deny", reason };
-    }
-    const risk = assessCommandRisk(command);
-    if (risk === "high" || risk === "critical") return { decision: "deny", reason };
-  } catch { /* cannot classify: fall through to allow */ }
-  return { decision: "allow" };
+    raw = JSON.parse(input);
+  } catch {
+    return { decision: "allow" };
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { decision: "allow" };
+  }
+  try {
+    return evaluateToolCall(normalizeInput(raw, format));
+  } catch (e) {
+    return denyOnError(e);
+  }
+}
+
+function denyOnError(e: unknown): HookDecision {
+  const type = e instanceof Error ? e.constructor.name : typeof e;
+  const msg = e instanceof Error ? e.message : String(e);
+  const reason = `rafter hook error: ${type}: ${msg}; denying to be safe`;
+  console.error(reason);
+  return { decision: "deny", reason };
 }
 
 /**

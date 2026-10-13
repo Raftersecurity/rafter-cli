@@ -9,15 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.11.0] - 2026-10-13
 
-### Added
-
-- **`RAFTER_API_URL` overrides the API base URL.** It is accepted only over https, or over plain http to localhost; any other value is ignored with a warning, and a remote override prints a notice naming the host your API key is sent to. A project `.env` cannot set it.
-
 ### Security
 
-- **A failed audit-log write no longer turns a hook deny into an allow.** Every deny in the PreToolUse hook wrote to the audit log first, and a write that failed (an unwritable log path) reached the hook's error handler, which allowed the call. A repository could use this to let `rm -rf /` through by pointing the log at an unwritable path in its `.rafter.yml`. Audit-write failures are now caught and reported once on stderr, and the deny stands. If the hook hits any other unexpected error, it now blocks a Bash command rated high or critical, and a `git commit` or `git push`, instead of allowing it; other tool calls are still allowed.
+- **Upgrade now: a repository could turn off the command hook's blocking in rafter 0.7.2 through 0.10.6.** A `.rafter.yml` that pointed `audit.log_path` at an unwritable file made every hook deny fail, and the hook then allowed the call, including `rm -rf /`. Audit-write failures are now caught and reported once on stderr, and the deny stands. **Behavior change:** any other unexpected error in the PreToolUse hook now blocks the call for every tool, with `rafter hook error: <type>: <message>; denying to be safe` as the reason; it used to allow. A malformed `.rafter.yml` still produces a warning and the default settings, not a block.
 
-- **A project `.rafter.yml` can no longer set `audit.log_path`.** Letting a repository choose the file rafter appends to let it write command text into files such as `~/.bashrc` or `~/.ssh/authorized_keys`. The setting is ignored with a warning; set the location in `~/.rafter/config.json` (`agent.audit.logPath`). **Behavior change:** a project that set `audit.log_path` now logs to the global location.
+- **A project `.rafter.yml` can no longer set `audit.log_path`** (possible since 0.7.2). Letting a repository choose the file rafter appends to let it write command text into files such as `~/.bashrc` or `~/.ssh/authorized_keys`. The setting is ignored with a warning; set the location in `~/.rafter/config.json` (`agent.audit.logPath`). **Behavior change:** a project that set `audit.log_path` now logs to the global location.
 
 - **The commit hook and `rafter agent exec` now block a commit whose staged diff cannot be read** (#274). A staged diff over 1 MiB (a lockfile, a generated or vendored file) made the read fail, and the failure was treated as "no secrets", so the commit went through unscanned. Large diffs are now read in full, and any other failure to read the staged diff blocks the commit (`agent exec` exits 2) with a message saying the scan could not run. In Python, a staged diff that is not valid UTF-8 is now scanned rather than skipped.
 
@@ -34,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The approval hint now quotes the command it tells you to run** (#231). The suggested `rafter agent exec` line was printed unquoted, so pasting it could run a `$(…)` substitution inside the blocked command.
 
 - **The MCP `scan_secrets` tool now applies the project's suppressions.** `suppress_finding` wrote an ignore rule to `.rafter.yml`, but `scan_secrets` never applied it, so the next scan reported the same finding again. It now applies `.rafter.yml` ignore rules and `.rafterignore` as `rafter secrets` does.
+
+### Added
+
+- **`RAFTER_API_URL` overrides the API base URL.** It is accepted only over https, or over plain http to localhost; any other value is ignored with a warning, and a remote override prints a notice naming the host your API key is sent to. A project `.env` cannot set it.
 
 ### Fixed
 
