@@ -1125,6 +1125,10 @@ Start MCP server over stdio transport. Exposes 11 tools and 3 resources.
 - `path` (required) — file or directory path to scan
 - `engine` (optional) — `auto` (default), `betterleaks`, or `patterns`. As with the CLI, `auto` runs **both** engines and unions the findings (each match carries an `engines` attribution array); single-engine modes omit `engines`.
 
+**`scan_secrets` output:** the first content block is the JSON results array.
+Findings hidden by `.rafter.yml` `ignore:` rules or `.rafterignore` are dropped from it; when any were, a second content block carries `{"suppressed_count": N, "_suppressed": [...]}`, with the same per-finding fields as `rafter secrets --json` (`file`, `line`, `column`, `rule`, `severity`, `reason`, `source`) and no secret text.
+The block is absent when nothing was suppressed.
+
 **`evaluate_command` output schema:**
 ```json
 {
