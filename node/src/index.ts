@@ -24,6 +24,13 @@ import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 import { createRequire } from "module";
 
+// Commands call process.exit() right after writing results. When stdout is a
+// pipe, Node writes asynchronously and exit drops whatever is still queued, so
+// `rafter secrets --json . | jq` got only the first 64 KiB. Write synchronously.
+for (const stream of [process.stdout, process.stderr] as any[]) {
+  stream._handle?.setBlocking?.(true);
+}
+
 // A repo `.env` must not be able to set any RAFTER_* variable (key, token, disables).
 guardSecurityEnvFromDotenv(() => dotenv.config());
 
