@@ -464,7 +464,7 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
           },
           "line": 42,
           "column": 7,
-          "redacted": "AKIA************MPLE",
+          "redacted": "AKIA************DEFG",
           "engines": ["patterns"]
         }
       ]

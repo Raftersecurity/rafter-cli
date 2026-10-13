@@ -40,10 +40,10 @@ See what Rafter does before reading another word.
 
 ```sh
 # Drop a .env file with credentials in a test repo
-echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' > .env
+echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG' > .env
 
 rafter secrets .
-# → CRITICAL  .env:1  aws-access-key-id  AKIA***AMPLE
+# → CRITICAL  .env:1  aws-access-key-id  AKIA***DEFG
 # → exit 1
 ```
 

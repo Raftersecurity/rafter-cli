@@ -85,7 +85,7 @@ rafter secrets . --json --quiet
       {
         "pattern": { "name": "AWS Access Key", "severity": "critical" },
         "line": 42,
-        "redacted": "AKIA************MPLE"
+        "redacted": "AKIA************DEFG"
       }
     ]
   }
