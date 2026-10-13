@@ -50,10 +50,15 @@ const CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt";
  * `… | sh` and base64-into-shell still degrade to high via shellProgramFromStream.
  */
 const REVERSE_SHELL_PATTERN_SOURCES: string[] = [
-  // bash/zsh net redirect `>& /dev/tcp/host/port`. Anchored to a redirect or
-  // separator before `/dev/tcp` so it is the bash pseudo-device, not a real
-  // path component (`ls config/dev/tcp/` does not match).
-  `(^|[\\s<>&;|])/dev/(tcp|udp)/`,
+  // bash/zsh net redirect `>& /dev/tcp/host/port`: output to the socket or fd
+  // duplication onto it (`>`, `>&`, `&>`, `<>`, `<&`), or a shell reading its
+  // program from it (`bash < /dev/tcp/…`; `-c` excluded so the inlined
+  // payload is not mistaken for the shell's stdin). A read-only redirect —
+  // the wait-for-port idiom `bash -c '</dev/tcp/h/p'`, `cat < /dev/tcp/…` —
+  // and a path component (`ls config/dev/tcp/`) do not match.
+  `((>|<>|[<>]&)\\s*|\\b(ba|z|da|k|a)?sh(\\s+-[abd-z]+)*\\s*<\\s*)/dev/(tcp|udp)/`,
+  // …or an interactive shell anywhere beside the pseudo-device.
+  `^(?=[\\s\\S]*(^|[\\s<>&;|])/dev/(tcp|udp)/)(?=[\\s\\S]*\\b(ba|z|da|k|a)?sh\\s+-[a-z]*i)`,
   // netcat with an exec flag: `-e` anywhere in a short-flag cluster (`-e`,
   // `-ve`, `-nve`) or the long `--exec`/`--sh-exec`/`--lua-exec`. `-c` is
   // intentionally omitted — after lowercasing it is indistinguishable from

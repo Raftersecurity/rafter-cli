@@ -47,8 +47,9 @@ export function unionScanResults(
         const existing = fileMap.get(key);
         if (existing) {
           if (!existing.engines!.includes(engine)) existing.engines!.push(engine);
+          if (!existing.ruleNames!.includes(m.pattern.name)) existing.ruleNames!.push(m.pattern.name);
         } else {
-          fileMap.set(key, { ...m, engines: [engine] });
+          fileMap.set(key, { ...m, engines: [engine], ruleNames: [m.pattern.name] });
         }
       }
     }

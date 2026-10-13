@@ -130,6 +130,24 @@ describe("MCP Server — real stdio transport: scan_secrets", () => {
     expect(withMatches[0].matches[0]).toHaveProperty("redacted");
   });
 
+  // scanDirectory() on a file path returns [] instead of throwing, so a
+  // single-file scan used to report nothing.
+  it("should detect a planted key when path is a single file", async () => {
+    const file = path.join(tmpDir, "creds.env");
+    fs.writeFileSync(file, "AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n");
+
+    const result = await client.callTool({
+      name: "scan_secrets",
+      arguments: { path: file, engine: "patterns" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse((result.content as any)[0].text);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].file).toBe(file);
+    expect(parsed[0].matches.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("should scan a directory and find secrets", async () => {
     fs.writeFileSync(path.join(tmpDir, "clean.txt"), "nothing here\n");
     fs.writeFileSync(path.join(tmpDir, "secret.env"), "GITHUB_TOKEN=ghp_FAKEEFabcdef1234567890abcdef12345678\n");
@@ -181,6 +199,22 @@ describe("MCP Server — real stdio transport: scan_secrets after suppress_findi
       expect(await scan()).toHaveLength(1);
       await client.callTool({ name: "suppress_finding", arguments: { path: "test/fixtures/**", reason: "fixture" } });
       expect(await scan()).toEqual([]);
+
+      // What was dropped stays visible, so a cloned repo's `paths: ["**"]`
+      // cannot silently empty the results; the secret text never appears.
+      const content = (await client.callTool({
+        name: "scan_secrets", arguments: { path: project, engine: "patterns" },
+      })).content as Array<{ text: string }>;
+      expect(content).toHaveLength(2);
+      expect(content[1].text).not.toContain("AKIAIOSFODNN7ABCDEFG1");
+      const meta = JSON.parse(content[1].text);
+      expect(meta.suppressed_count).toBe(1);
+      expect(meta._suppressed[0]).toMatchObject({
+        file: path.join(project, "test", "fixtures", "creds.env"),
+        source: ".rafter.yml",
+        reason: "fixture",
+      });
+      expect(meta._suppressed[0].rule).toEqual(expect.any(String));
     } finally {
       await client.close();
       fs.rmSync(project, { recursive: true, force: true });

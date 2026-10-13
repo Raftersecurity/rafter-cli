@@ -58,8 +58,10 @@ def union_scan_results(
                 if existing is not None:
                     if engine not in existing.engines:
                         existing.engines.append(engine)
+                    if m.pattern.name not in existing.rule_names:
+                        existing.rule_names.append(m.pattern.name)
                 else:
-                    file_map[key] = dataclasses.replace(m, engines=[engine])
+                    file_map[key] = dataclasses.replace(m, engines=[engine], rule_names=[m.pattern.name])
 
     ingest(betterleaks, "betterleaks")
     ingest(patterns, "patterns")

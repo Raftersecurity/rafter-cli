@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync, spawnSync } from "child_process";
+import { execFileSync, spawn, spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -428,4 +428,30 @@ describe("CLI e2e — large JSON output through a pipe", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // A blocking stderr stalls the whole process once an MCP client that pipes
+  // stderr but never reads it lets the pipe buffer fill.
+  it("does not stall `mcp serve` when piped stderr is never read", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-stderr-"));
+    const preload = path.join(dir, "flood.cjs");
+    fs.writeFileSync(preload, `setTimeout(() => {
+      process.stderr.write("x".repeat(1 << 20));
+      process.stdout.write("AFTER_STDERR\\n");
+    }, 500);`);
+    const child = spawn("node", ["--require", preload, CLI, "mcp", "serve"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      const reached = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 8000);
+        child.stdout.on("data", (d) => {
+          if (String(d).includes("AFTER_STDERR")) { clearTimeout(timer); resolve(true); }
+        });
+      });
+      expect(reached).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15000);
 });
