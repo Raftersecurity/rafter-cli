@@ -572,7 +572,7 @@ describe("Scan — Error Paths", () => {
       const secretFile = path.join(tmpDir, "secrets.txt");
       fs.writeFileSync(
         secretFile,
-        'AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"\n',
+        'AWS_ACCESS_KEY = "AKIAIOSFODNN7ABCDEFG"\n',
       );
       const scanner = new RegexScanner();
       const result = scanner.scanFile(secretFile);
@@ -848,7 +848,7 @@ describe("Scan JSON Output — Schema Compliance", () => {
 
   it("redacted field never contains raw secret", () => {
     const secretFile = path.join(tmpDir, "rawcheck.txt");
-    const rawSecret = "AKIAIOSFODNN7EXAMPLE";
+    const rawSecret = "AKIAIOSFODNN7ABCDEFG";
     fs.writeFileSync(secretFile, `key = "${rawSecret}"\n`);
     const scanner = new RegexScanner();
     const result = scanner.scanFile(secretFile);

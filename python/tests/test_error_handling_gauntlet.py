@@ -320,7 +320,7 @@ class TestScannerErrors:
 
     def test_detects_secrets_with_correct_structure(self, tmp_path):
         secret_file = tmp_path / "secrets.txt"
-        secret_file.write_text('AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"\n')
+        secret_file.write_text('AWS_ACCESS_KEY = "AKIAIOSFODNN7ABCDEFG"\n')
         scanner = RegexScanner()
         result = scanner.scan_file(str(secret_file))
         assert result.file == str(secret_file)

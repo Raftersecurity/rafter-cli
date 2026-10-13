@@ -22,7 +22,7 @@ from rafter_cli.scanners.regex_scanner import RegexScanner
 
 # ── Fake but realistic-looking secrets ──────────────────────────────────
 
-FAKE_AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+FAKE_AWS_KEY = "AKIAIOSFODNN7ABCDEFG"
 FAKE_GITHUB_TOKEN = "ghp_FAKEEFabcdef1234567890abcdef12345678"
 FAKE_PRIVATE_KEY = """\
 -----BEGIN RSA PRIVATE KEY-----

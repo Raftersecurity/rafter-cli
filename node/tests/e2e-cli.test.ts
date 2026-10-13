@@ -127,14 +127,14 @@ describe("CLI e2e — rafter secrets (local secret scanning)", () => {
 
   it("exits 1 when secrets detected", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIAIOSFODNN7ABCDEFG\n");
     const r = rafter(`secrets ${f} --engine patterns --quiet`);
     expect(r.exitCode).toBe(1);
   }, 30000);
 
   it("--json outputs valid JSON", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "EXAMPLE\n");
+    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "ABCDEFG\n");
     const r = rafter(`secrets ${f} --engine patterns --json`);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
@@ -144,7 +144,7 @@ describe("CLI e2e — rafter secrets (local secret scanning)", () => {
 
   it("--json output includes scan-mode note (no agentic triage)", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "EXAMPLE\n");
+    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "ABCDEFG\n");
     const r = rafter(`secrets ${f} --engine patterns --json`);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
@@ -169,7 +169,7 @@ describe("CLI e2e — rafter secrets (local secret scanning)", () => {
 
   it("--format sarif outputs SARIF schema", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIAIOSFODNN7ABCDEFG\n");
     const r = rafter(`secrets ${f} --engine patterns --format sarif`);
     expect(r.exitCode).toBe(1);
     const sarif = JSON.parse(r.stdout);
@@ -182,7 +182,7 @@ describe("CLI e2e — rafter secrets (local secret scanning)", () => {
   it("scans directory recursively", () => {
     const sub = path.join(tmpDir, "src");
     fs.mkdirSync(sub);
-    fs.writeFileSync(path.join(sub, "config.ts"), "const key = '" + "AKIA" + "IOSFODNN7" + "EXAMPLE';\n");
+    fs.writeFileSync(path.join(sub, "config.ts"), "const key = '" + "AKIA" + "IOSFODNN7" + "ABCDEFG';\n");
     const r = rafter(`secrets ${tmpDir} --engine patterns --json`);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
@@ -227,7 +227,7 @@ describe("CLI e2e — `scan local` back-compat alias", () => {
 
   it("scan local produces identical JSON to secrets", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIAIOSFODNN7ABCDEFG\n");
     const canonical = rafter(`secrets ${f} --engine patterns --json`);
     const alias = rafter(`scan local ${f} --engine patterns --json`);
     expect(canonical.exitCode).toBe(1);

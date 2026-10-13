@@ -2,7 +2,7 @@
   {
     "label": "aws-key-20char",
     "input_length": 20,
-    "redacted": "AKIA************MPLE"
+    "redacted": "AKIA************DEFG"
   },
   {
     "label": "github-pat-40char",

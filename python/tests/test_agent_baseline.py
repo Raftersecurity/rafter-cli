@@ -70,7 +70,7 @@ class TestBaselineCreate:
 
         # Create a file with a fake secret
         secret_file = tmp_path / "secrets.txt"
-        secret_file.write_text("AKIAIOSFODNN7EXAMPLE = test\n")
+        secret_file.write_text("AKIAIOSFODNN7ABCDEFG = test\n")
 
         result = runner.invoke(agent_app, ["baseline", "create", str(secret_file), "--engine", "patterns"])
         assert result.exit_code == 0
