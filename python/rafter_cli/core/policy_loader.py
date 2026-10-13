@@ -149,6 +149,10 @@ def _map_policy(raw: dict) -> dict:
             if not isinstance(paths, list) or not paths:
                 print('Warning: skipping ignore entry — "paths" must be a non-empty array of strings.', file=sys.stderr)
                 continue
+            # Dropping a non-list `rules` would widen the entry to every pattern.
+            if "rules" in entry and not isinstance(entry["rules"], list):
+                print('Warning: skipping ignore entry — "rules" must be an array of strings.', file=sys.stderr)
+                continue
             rule: dict = {"paths": [str(p) for p in paths]}
             if isinstance(entry.get("rules"), list):
                 rule["rules"] = [str(r) for r in entry["rules"]]
