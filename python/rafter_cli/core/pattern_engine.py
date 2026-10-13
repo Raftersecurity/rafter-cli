@@ -164,4 +164,5 @@ class PatternEngine:
         if len(match) <= 8:
             return "*" * len(match)
         visible = 4
-        return match[:visible] + "*" * (len(match) - visible * 2) + match[-visible:]
+        # Cap the mask so a long token (a JWT) does not print a line of asterisks.
+        return match[:visible] + "*" * min(len(match) - visible * 2, 16) + match[-visible:]
