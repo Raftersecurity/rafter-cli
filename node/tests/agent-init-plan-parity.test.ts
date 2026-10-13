@@ -27,7 +27,9 @@ let home: string;
 let proj: string;
 
 beforeEach(() => {
-  home = path.join(os.tmpdir(), `rafter-plan-${Date.now()}-${randomBytes(4).toString("hex")}`);
+  // realpath: on macOS os.tmpdir() is under /var, a symlink to /private/var,
+  // and the CLI reports paths from its resolved cwd.
+  home = path.join(fs.realpathSync(os.tmpdir()), `rafter-plan-${Date.now()}-${randomBytes(4).toString("hex")}`);
   proj = path.join(home, "proj");
   fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
   fs.mkdirSync(proj, { recursive: true });
