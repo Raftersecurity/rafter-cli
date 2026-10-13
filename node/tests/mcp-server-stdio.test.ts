@@ -161,6 +161,33 @@ describe("MCP Server — real stdio transport: scan_secrets", () => {
   });
 });
 
+// The triage loop the suppress_finding description promises: once a finding
+// is suppressed, the next scan_secrets call must not report it again.
+describe("MCP Server — real stdio transport: scan_secrets after suppress_finding", () => {
+  it("does not report a finding the project has suppressed", async () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-stdio-sup-"));
+    fs.mkdirSync(path.join(project, "test", "fixtures"), { recursive: true });
+    fs.writeFileSync(path.join(project, "test", "fixtures", "creds.env"), "AWS_KEY=AKIAIOSFODNN7EXAMPLE1\n");
+    const transport = new StdioClientTransport({
+      command: "node", args: [NODE_ENTRY, "mcp", "serve"], cwd: project, stderr: "pipe",
+    });
+    const client = new Client({ name: "stdio-test-client", version: "1.0.0" });
+    await client.connect(transport);
+    try {
+      const scan = async () => JSON.parse(((await client.callTool({
+        name: "scan_secrets", arguments: { path: project, engine: "patterns" },
+      })).content as Array<{ text: string }>)[0].text);
+
+      expect(await scan()).toHaveLength(1);
+      await client.callTool({ name: "suppress_finding", arguments: { path: "test/fixtures/**", reason: "fixture" } });
+      expect(await scan()).toEqual([]);
+    } finally {
+      await client.close();
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("MCP Server — real stdio transport: evaluate_command", () => {
   let client: Client;
   let transport: StdioClientTransport;
