@@ -751,6 +751,45 @@ class TestDryRun:
         assert "betterleaks" in result.stdout
 
 
+# ── --all warnings (rafter-cli#231) ───────────────────────────────────
+
+
+class TestAllFlagUndetectedWarnings:
+    """`--all` means "install all DETECTED integrations" per its own
+    --help text, so an undetected platform shouldn't get an individual
+    "requested but not detected" warning just because --all was passed —
+    that noise buries the warnings that matter. An explicit
+    --with-<platform> on a platform that turns out to be missing should
+    still warn (rafter-cli#231)."""
+
+    def test_all_does_not_warn_about_undetected_platforms(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        # No platform directories created — every platform is undetected.
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--all"])
+        assert result.exit_code == 0, result.output
+        for label in (
+            "OpenClaw", "Claude Code", "Codex CLI", "Gemini CLI", "Cursor",
+            "Windsurf", "Continue.dev", "Aider", "Hermes", "OpenCode",
+        ):
+            assert f"{label} requested but not detected" not in result.output
+
+    def test_explicit_with_flag_still_warns_when_undetected(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--with-codex"])
+        assert result.exit_code == 0, result.output
+        assert "Codex CLI requested but not detected" in result.output
+
+
 # ── Codex skill installation tests ───────────────────────────────────
 
 from rafter_cli.commands.agent import _install_codex_skills

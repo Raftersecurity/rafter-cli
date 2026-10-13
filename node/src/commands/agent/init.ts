@@ -1357,17 +1357,22 @@ export function createInitCommand(): Command {
 
       // Warn about requested but undetected environments (user scope only —
       // in --local scope we create the directories in CWD as needed).
+      // Gated on the EXPLICIT --with-<platform> flag, not the resolved
+      // want* (which --all also sets): --all means "install all DETECTED
+      // integrations" per its own --help text, so an undetected platform
+      // under --all is normal and shouldn't warn individually — 9 such
+      // warnings buried the ones that actually matter (rafter-cli#231).
       if (scope === "user") {
-        if (wantOpenClaw && !hasOpenClaw) console.log(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"));
-        if (wantClaudeCode && !hasClaudeCode) console.log(fmt.warning("Claude Code requested but not detected (~/.claude not found)"));
-        if (wantCodex && !hasCodex) console.log(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"));
-        if (wantGemini && !hasGemini) console.log(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"));
-        if (wantCursor && !hasCursor) console.log(fmt.warning("Cursor requested but not detected (~/.cursor not found)"));
-        if (wantWindsurf && !hasWindsurf) console.log(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
-        if (wantContinue && !hasContinueDev) console.log(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
-        if (wantAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
-        if (wantHermes && !hasHermes) console.log(fmt.warning("Hermes requested but not detected (~/.hermes not found)"));
-        if (wantOpenCode && !hasOpenCode) console.log(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"));
+        if (opts.withOpenclaw && !hasOpenClaw) console.log(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"));
+        if (opts.withClaudeCode && !hasClaudeCode) console.log(fmt.warning("Claude Code requested but not detected (~/.claude not found)"));
+        if (opts.withCodex && !hasCodex) console.log(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"));
+        if (opts.withGemini && !hasGemini) console.log(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"));
+        if (opts.withCursor && !hasCursor) console.log(fmt.warning("Cursor requested but not detected (~/.cursor not found)"));
+        if (opts.withWindsurf && !hasWindsurf) console.log(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
+        if (opts.withContinue && !hasContinueDev) console.log(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
+        if (opts.withAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
+        if (opts.withHermes && !hasHermes) console.log(fmt.warning("Hermes requested but not detected (~/.hermes not found)"));
+        if (opts.withOpencode && !hasOpenCode) console.log(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"));
       }
 
       // --dry-run: print every file path the command would touch, then

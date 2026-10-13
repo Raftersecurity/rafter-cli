@@ -270,6 +270,19 @@ describe("agent init", () => {
     expect(r.stdout).not.toContain("OpenClaw (--with-openclaw):");
   });
 
+  it("--all does not warn individually about undetected platforms (rafter-cli#231)", () => {
+    // No platform directories exist in this fake HOME — every platform is
+    // undetected. --all means "install all DETECTED integrations" per its
+    // own --help text, so none of these should get an individual
+    // "requested but not detected" warning — that noise buried the ones
+    // that actually matter.
+    const r = runCli("agent init --all", home);
+    expect(r.exitCode).toBe(0);
+    for (const label of ["OpenClaw", "Claude Code", "Codex CLI", "Gemini CLI", "Cursor", "Windsurf", "Continue.dev", "Aider", "Hermes", "OpenCode"]) {
+      expect(r.stdout).not.toContain(`${label} requested but not detected`);
+    }
+  });
+
   it("--dry-run with --with-betterleaks lists the binary download", () => {
     // Keep a betterleaks on the developer's PATH out of view: the plan only
     // lists a download when the real run would perform one (#231).
@@ -858,6 +871,23 @@ describe("agent verify", () => {
     expect(fs.existsSync(auditPath)).toBe(true);
     const content = fs.readFileSync(auditPath, "utf-8");
     expect(content).toContain("rafter-probe-");
+  });
+
+  // ── rafter-cli#231 ──────────────────────────────────────────────────
+
+  it("counts only applicable checks as 'core', not every undetected optional integration (#231)", () => {
+    // A healthy install with ONLY Claude Code present: Config, Betterleaks,
+    // and Claude Code are the only checks that can even apply on this
+    // machine — the other 9 platforms (OpenClaw, Codex, Gemini, Cursor,
+    // Windsurf, Continue.dev, Aider, Hermes, OpenCode) simply aren't
+    // installed here. They must not inflate the "core checks" denominator,
+    // and must be reported as integrations that weren't detected rather than
+    // generic "optional checks not configured".
+    runCli("agent init --with-claude-code", home);
+    const r = runCli("agent verify", home);
+    expect(r.stdout).toMatch(/3\/3 core checks passed/);
+    expect(r.stdout).toContain("9 optional integrations not detected");
+    expect(r.stdout).not.toMatch(/3\/12 core checks passed/);
   });
 });
 
