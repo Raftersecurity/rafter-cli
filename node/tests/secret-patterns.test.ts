@@ -52,7 +52,7 @@ describe("Secret patterns — coverage matrix", () => {
 
   describe("AWS Access Key ID", () => {
     it("detects AKIA key", () => {
-      const r = scanString("AKIAIOSFODNN7EXAMPLE\n");
+      const r = scanString("AKIAIOSFODNN7ABCDEFG\n");
       expect(r.matches.length).toBeGreaterThan(0);
       expect(r.matches.some((m) => m.pattern.name.includes("AWS Access Key"))).toBe(true);
     });
@@ -65,6 +65,20 @@ describe("Secret patterns — coverage matrix", () => {
     it("ignores short strings starting with AKIA", () => {
       const r = scanString("AKIA is an AWS prefix\n");
       expect(r.matches.filter((m) => m.pattern.name.includes("AWS Access Key")).length).toBe(0);
+    });
+
+    // sable/#230: betterleaks skips the canonical AWS-docs example access
+    // key (it ends in EXAMPLE); the built-in regex engine disagreed and
+    // flagged it. Copy betterleaks' exemption so a Write containing the
+    // AWS docs sample isn't denied.
+    it("ignores the canonical AWS-docs example key (ends in EXAMPLE)", () => {
+      const r = scanString("AKIAIOSFODNN7EXAMPLE\n");
+      expect(r.matches.filter((m) => m.pattern.name.includes("AWS Access Key")).length).toBe(0);
+    });
+
+    it("still detects a plausible key that happens to share the EXAMPLE prefix but not the full EXAMPLE suffix", () => {
+      const r = scanString("AKIAQWERTYUIOPASDFGH\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("AWS Access Key"))).toBe(true);
     });
   });
 
@@ -391,7 +405,7 @@ describe("Multi-secret file scanning", () => {
 
   it("detects multiple different secret types in a single file", () => {
     const content = [
-      "AKIAIOSFODNN7EXAMPLE",
+      "AKIAIOSFODNN7ABCDEFG",
       "ghp_ABCDEFghijklmnopqrstuvwxyz0123456789",
       fakeSecret("sk_live_", "abcdefghijklmnopqrstuvwx"),
       "-----BEGIN RSA PRIVATE KEY-----",
@@ -411,7 +425,7 @@ describe("Multi-secret file scanning", () => {
   it("reports correct line numbers for each match", () => {
     const content = [
       "line 1: clean",
-      "line 2: AKIAIOSFODNN7EXAMPLE",
+      "line 2: AKIAIOSFODNN7ABCDEFG",
       "line 3: clean",
       "line 4: ghp_ABCDEFghijklmnopqrstuvwxyz0123456789",
     ].join("\n");
@@ -438,7 +452,7 @@ describe("RegexScanner utility methods", () => {
 
   describe("scanText", () => {
     it("scans raw text without a file", () => {
-      const matches = scanner.scanText("AKIAIOSFODNN7EXAMPLE");
+      const matches = scanner.scanText("AKIAIOSFODNN7ABCDEFG");
       expect(matches.length).toBeGreaterThan(0);
     });
 
@@ -450,7 +464,7 @@ describe("RegexScanner utility methods", () => {
 
   describe("hasSecrets", () => {
     it("returns true when secrets present", () => {
-      expect(scanner.hasSecrets("AKIAIOSFODNN7EXAMPLE")).toBe(true);
+      expect(scanner.hasSecrets("AKIAIOSFODNN7ABCDEFG")).toBe(true);
     });
 
     it("returns false for clean text", () => {
@@ -460,8 +474,8 @@ describe("RegexScanner utility methods", () => {
 
   describe("redact", () => {
     it("redacts secrets from text", () => {
-      const result = scanner.redact("key is AKIAIOSFODNN7EXAMPLE");
-      expect(result).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      const result = scanner.redact("key is AKIAIOSFODNN7ABCDEFG");
+      expect(result).not.toContain("AKIAIOSFODNN7ABCDEFG");
     });
   });
 });
@@ -484,7 +498,7 @@ describe("RegexScanner directory scanning", () => {
   it("scans nested directories", () => {
     const subDir = path.join(tmpDir, "src", "config");
     fs.mkdirSync(subDir, { recursive: true });
-    fs.writeFileSync(path.join(subDir, "env.ts"), "const key = 'AKIAIOSFODNN7EXAMPLE';\n");
+    fs.writeFileSync(path.join(subDir, "env.ts"), "const key = 'AKIAIOSFODNN7ABCDEFG';\n");
 
     const results = scanner.scanDirectory(tmpDir);
     expect(results.length).toBeGreaterThan(0);
@@ -493,14 +507,14 @@ describe("RegexScanner directory scanning", () => {
   it("skips excluded directories", () => {
     const nodeModules = path.join(tmpDir, "node_modules", "pkg");
     fs.mkdirSync(nodeModules, { recursive: true });
-    fs.writeFileSync(path.join(nodeModules, "secret.js"), "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(path.join(nodeModules, "secret.js"), "AKIAIOSFODNN7ABCDEFG\n");
 
     const results = scanner.scanDirectory(tmpDir);
     expect(results).toHaveLength(0);
   });
 
   it("skips binary files", () => {
-    fs.writeFileSync(path.join(tmpDir, "image.png"), "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(path.join(tmpDir, "image.png"), "AKIAIOSFODNN7ABCDEFG\n");
     const results = scanner.scanDirectory(tmpDir);
     expect(results).toHaveLength(0);
   });
@@ -508,7 +522,7 @@ describe("RegexScanner directory scanning", () => {
   it("respects custom excludePaths", () => {
     const vendorDir = path.join(tmpDir, "myvendor");
     fs.mkdirSync(vendorDir);
-    fs.writeFileSync(path.join(vendorDir, "lib.js"), "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(path.join(vendorDir, "lib.js"), "AKIAIOSFODNN7ABCDEFG\n");
 
     const results = scanner.scanDirectory(tmpDir, { excludePaths: ["myvendor"] });
     expect(results).toHaveLength(0);
@@ -517,7 +531,7 @@ describe("RegexScanner directory scanning", () => {
   it("respects maxDepth", () => {
     const deep = path.join(tmpDir, "a", "b", "c", "d");
     fs.mkdirSync(deep, { recursive: true });
-    fs.writeFileSync(path.join(deep, "secret.txt"), "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(path.join(deep, "secret.txt"), "AKIAIOSFODNN7ABCDEFG\n");
 
     const results = scanner.scanDirectory(tmpDir, { maxDepth: 2 });
     expect(results).toHaveLength(0);
@@ -526,7 +540,7 @@ describe("RegexScanner directory scanning", () => {
   it("scanFiles handles multiple files", () => {
     const f1 = path.join(tmpDir, "a.txt");
     const f2 = path.join(tmpDir, "b.txt");
-    fs.writeFileSync(f1, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f1, "AKIAIOSFODNN7ABCDEFG\n");
     fs.writeFileSync(f2, "no secrets\n");
 
     const results = scanner.scanFiles([f1, f2]);
