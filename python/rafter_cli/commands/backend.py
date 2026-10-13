@@ -385,7 +385,7 @@ def _warn_if_partial(data: dict) -> None:
         return
     code = data["warning_code"] if isinstance(data.get("warning_code"), str) else "SCAN_PARTIAL"
     missing = data.get("missing_scanners")
-    tail = f" Scanners that did not finish: {', '.join(missing)}." if isinstance(missing, list) and missing else ""
+    tail = f" Scanners that did not finish: {', '.join(map(str, missing))}." if isinstance(missing, list) and missing else ""
     print(
         f"Warning: Scan completed with gaps ({code}): some scanners did not finish, "
         f"so findings may be missing.{tail} Do not treat this result as clean.",
