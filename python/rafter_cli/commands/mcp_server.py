@@ -89,7 +89,8 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
             try:
                 bl_results = bl.scan_directory(path)
                 return report(union_scan_results(bl_results, run_patterns()))
-            except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
+            # The scanner raises RuntimeError for a timeout or a failed run (#262).
+            except (RuntimeError, subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
                 print(f"rafter: betterleaks scan failed, falling back to patterns: {exc}", file=sys.stderr)
                 # Fall through to patterns-only.
         return report(run_patterns())
