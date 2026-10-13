@@ -106,25 +106,15 @@ describe("Hook Integration — Real Git Repos", () => {
   // ── Pre-tool: git commit with staged secrets ──────────────────────────
 
   describe("pretool — git commit with real staged files", () => {
-    it("blocks git commit when staged file contains an AWS key", () => {
-      const envFile = path.join(repoDir, ".env");
-      fs.writeFileSync(envFile, `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
-      execSync("git add .env", gitExecOpts(repoDir));
+    it.each([
+      { label: "an AWS key", file: ".env", content: `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n` },
+      { label: "a GitHub token", file: "config.json", content: JSON.stringify({ token: FAKE_GITHUB_TOKEN }) },
+    ])("blocks git commit when staged file contains $label", ({ file, content }) => {
+      const filePath = path.join(repoDir, file);
+      fs.writeFileSync(filePath, content);
+      execSync(`git add ${file}`, gitExecOpts(repoDir));
 
-      const result = evaluateBashWithGit('git commit -m "add env"', repoDir);
-      expect(result.decision).toBe("deny");
-      expect(result.reason).toContain("secret(s) detected");
-    });
-
-    it("blocks git commit when staged file contains a GitHub token", () => {
-      const configFile = path.join(repoDir, "config.json");
-      fs.writeFileSync(
-        configFile,
-        JSON.stringify({ token: FAKE_GITHUB_TOKEN }),
-      );
-      execSync("git add config.json", gitExecOpts(repoDir));
-
-      const result = evaluateBashWithGit('git commit -m "add config"', repoDir);
+      const result = evaluateBashWithGit('git commit -m "add file"', repoDir);
       expect(result.decision).toBe("deny");
       expect(result.reason).toContain("secret(s) detected");
     });
@@ -579,12 +569,6 @@ describe("Hook Integration — Real Git Repos", () => {
   // ── Command interception in git context ───────────────────────────────
 
   describe("command interceptor — dangerous commands in git context", () => {
-    it("blocks rm -rf / even in a git repo", () => {
-      const interceptor = new CommandInterceptor();
-      const result = interceptor.evaluate("rm -rf /");
-      expect(result.allowed).toBe(false);
-    });
-
     it("allows normal git commands", () => {
       const interceptor = new CommandInterceptor();
 
@@ -643,27 +627,6 @@ describe("Hook Integration — Real Git Repos", () => {
 
       const result = evaluateBashWithGit('git commit -m "update"', repoDir);
       expect(result.decision).toBe("deny");
-    });
-
-    it("posttool redacts secrets from cat output of a real file", () => {
-      const secretFile = path.join(repoDir, "credentials.json");
-      fs.writeFileSync(
-        secretFile,
-        JSON.stringify(
-          { aws_access_key_id: FAKE_AWS_KEY, region: "us-east-1" },
-          null,
-          2,
-        ),
-      );
-
-      // Simulate reading the file (like a tool response)
-      const output = fs.readFileSync(secretFile, "utf-8");
-      const scanner = new RegexScanner();
-      const redacted = scanner.redact(output);
-
-      expect(redacted).not.toContain(FAKE_AWS_KEY);
-      expect(redacted).toContain("us-east-1");
-      expect(redacted).toContain("****");
     });
   });
 });

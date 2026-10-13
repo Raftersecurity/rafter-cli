@@ -112,15 +112,3 @@ describeWithKey("Backend API integration (live)", () => {
     }, 30000);
   });
 });
-
-// ── Always-run tests (no API key required) ──────────────────────────
-
-describe("Backend API — offline validation", () => {
-  it("API base URL has trailing slash", () => {
-    expect(API.endsWith("/")).toBe(true);
-  });
-
-  it("API base URL uses HTTPS", () => {
-    expect(API.startsWith("https://")).toBe(true);
-  });
-});

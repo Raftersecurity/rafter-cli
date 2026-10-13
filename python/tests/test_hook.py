@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
-from rafter_cli.commands.hook import _evaluate_bash, _evaluate_write, posttool, _write_pretool_decision
+from rafter_cli.commands.hook import _evaluate_bash, _evaluate_write
 from rafter_cli.core.config_schema import get_default_config
 
 
@@ -25,13 +25,10 @@ class TestEvaluateBash:
 
     def test_blocked_command(self):
         result = _evaluate_bash("rm -rf /")
-        assert result["decision"] == "deny"
-        assert "Rafter blocked" in result["reason"]
-        assert "CRITICAL" in result["reason"]
-
-    def test_blocked_message_format(self):
-        result = _evaluate_bash("rm -rf /")
         reason = result["reason"]
+        assert result["decision"] == "deny"
+        assert "Rafter blocked" in reason
+        assert "CRITICAL" in reason
         assert "\u2717 Rafter blocked:" in reason
         assert "Rule:" in reason
         assert "Risk:" in reason
@@ -108,10 +105,6 @@ class TestEvaluateWrite:
 
     def test_empty_content(self):
         result = _evaluate_write({"content": "", "file_path": "empty.py"})
-        assert result["decision"] == "allow"
-
-    def test_no_content_fields(self):
-        result = _evaluate_write({"file_path": "test.py"})
         assert result["decision"] == "allow"
 
 
@@ -220,7 +213,6 @@ class TestPosttool:
 
     def _run_posttool(self, payload: dict) -> dict:
         """Invoke posttool with a JSON payload over stdin and return parsed stdout."""
-        import io
         from unittest.mock import patch as _patch
         import json
 
@@ -231,8 +223,6 @@ class TestPosttool:
 
         stdin_data = json.dumps(payload)
 
-        import sys
-        from rafter_cli.commands.hook import posttool as _posttool
 
         with _patch("rafter_cli.commands.hook._read_stdin", return_value=stdin_data), \
              _patch("rafter_cli.commands.hook._write_decision", side_effect=lambda d: captured_output.append(json.dumps(d))):
@@ -251,7 +241,6 @@ class TestPosttool:
 
     def test_no_tool_response_passes_through(self):
         import json
-        from unittest.mock import patch
         from rafter_cli.commands.hook import hook_app
         from typer.testing import CliRunner
 

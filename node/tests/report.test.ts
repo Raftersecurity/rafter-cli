@@ -130,7 +130,7 @@ describe("rafter report", () => {
     expect(r.stdout).toContain("My Audit Report");
   });
 
-  it("shows severity breakdown correctly", () => {
+  it("shows severity breakdown and overall risk level", () => {
     const r = rafter(["report"], { input: sampleResults });
     expect(r.exitCode).toBe(0);
     // Should contain severity section
@@ -138,6 +138,8 @@ describe("rafter report", () => {
     expect(r.stdout).toContain("Critical");
     expect(r.stdout).toContain("High");
     expect(r.stdout).toContain("Medium");
+    // Risk level should be Critical since sampleResults includes a critical finding
+    expect(r.stdout).toContain("Overall Risk");
   });
 
   it("handles empty results gracefully", () => {
@@ -145,13 +147,6 @@ describe("rafter report", () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("<!DOCTYPE html>");
     expect(r.stdout).toContain("No Security Findings");
-  });
-
-  it("shows risk level as Critical when critical findings exist", () => {
-    const r = rafter(["report"], { input: sampleResults });
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("Critical");
-    expect(r.stdout).toContain("Overall Risk");
   });
 
   it("includes detailed findings table", () => {

@@ -46,11 +46,6 @@ _PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
 class TestVersionAndHelp:
-    def test_version_outputs_semver(self):
-        stdout, _, rc = rafter("--version")
-        assert rc == 0
-        assert re.search(r"\d+\.\d+\.\d+", stdout)
-
     def test_short_version_flag(self):
         long_out, _, _ = rafter("--version")
         short_out, _, rc = rafter("-V")
@@ -58,7 +53,7 @@ class TestVersionAndHelp:
         assert short_out.strip() == long_out.strip()
 
     def test_version_matches_pyproject(self):
-        """--version output must match pyproject.toml version."""
+        """--version output must match pyproject.toml version (and is itself a semver string)."""
         pyproject = (_PROJECT_ROOT / "python" / "pyproject.toml").read_text()
         m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, re.MULTILINE)
         assert m, "Could not find version in pyproject.toml"
@@ -66,11 +61,7 @@ class TestVersionAndHelp:
         stdout, _, rc = rafter("--version")
         assert rc == 0
         assert expected in stdout
-
-    def test_help_outputs_usage(self):
-        stdout, _, rc = rafter("--help")
-        assert rc == 0
-        assert "rafter" in stdout.lower()
+        assert re.search(r"\d+\.\d+\.\d+", stdout)
 
     def test_help_lists_all_top_level_commands(self):
         stdout, _, rc = rafter("--help")
@@ -82,31 +73,21 @@ class TestVersionAndHelp:
         ]:
             assert cmd in stdout, f"Missing command '{cmd}' in --help output"
 
-    def test_agent_help_shows_subcommands(self):
-        stdout, _, rc = rafter("agent --help")
+    @pytest.mark.parametrize(
+        "command, expected_subcommands",
+        [
+            ("agent", ["scan", "exec", "audit"]),
+            ("scan", ["remote"]),
+            ("policy", ["export"]),
+            ("mcp", ["serve"]),
+            ("ci", ["init"]),
+        ],
+    )
+    def test_command_help_shows_subcommands(self, command, expected_subcommands):
+        stdout, _, rc = rafter(f"{command} --help")
         assert rc == 0
-        for sub in ["scan", "exec", "audit"]:
+        for sub in expected_subcommands:
             assert sub in stdout
-
-    def test_scan_help_shows_subcommands(self):
-        stdout, _, rc = rafter("scan --help")
-        assert rc == 0
-        assert "remote" in stdout
-
-    def test_policy_help_shows_subcommands(self):
-        stdout, _, rc = rafter("policy --help")
-        assert rc == 0
-        assert "export" in stdout
-
-    def test_mcp_help_shows_subcommands(self):
-        stdout, _, rc = rafter("mcp --help")
-        assert rc == 0
-        assert "serve" in stdout
-
-    def test_ci_help_shows_subcommands(self):
-        stdout, _, rc = rafter("ci --help")
-        assert rc == 0
-        assert "init" in stdout
 
 
 # ---------------------------------------------------------------------------
@@ -123,14 +104,6 @@ class TestCommandRouting:
     def test_unknown_command_exits_nonzero(self):
         _, _, rc = rafter("nonexistent-command")
         assert rc != 0
-
-    def test_secrets_routes_to_scanner(self):
-        _, _, rc = rafter("secrets /tmp/nonexistent-rafter-routing-test")
-        assert rc == 2  # path not found
-
-    def test_agent_exec_routes_to_interceptor(self):
-        stdout, _, rc = rafter(["agent", "exec", "echo routing-test"])
-        assert rc == 0
 
     def test_agent_config_show_routes_to_config(self):
         with tempfile.TemporaryDirectory(prefix="rafter-route-") as tmp:

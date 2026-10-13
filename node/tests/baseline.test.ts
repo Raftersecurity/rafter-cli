@@ -108,51 +108,15 @@ describe("applyBaseline", () => {
 // ── pre-push hook template ────────────────────────────────────────────
 
 describe("pre-push hook template", () => {
-  it("exists at resources/pre-push-hook.sh", () => {
+  it("exists at resources/pre-push-hook.sh and has the expected shape", () => {
     const templatePath = path.resolve("resources", "pre-push-hook.sh");
     expect(fs.existsSync(templatePath)).toBe(true);
-  });
-
-  it("contains Rafter marker", () => {
-    const templatePath = path.resolve("resources", "pre-push-hook.sh");
     const content = fs.readFileSync(templatePath, "utf-8");
     expect(content).toContain("Rafter Security Pre-Push Hook");
-  });
-
-  it("calls rafter secrets", () => {
-    const templatePath = path.resolve("resources", "pre-push-hook.sh");
-    const content = fs.readFileSync(templatePath, "utf-8");
     expect(content).toContain("rafter secrets");
-  });
-
-  it("mentions --no-verify bypass", () => {
-    const templatePath = path.resolve("resources", "pre-push-hook.sh");
-    const content = fs.readFileSync(templatePath, "utf-8");
     expect(content).toContain("--no-verify");
-  });
-
-  it("reads from stdin (git pre-push protocol)", () => {
-    const templatePath = path.resolve("resources", "pre-push-hook.sh");
-    const content = fs.readFileSync(templatePath, "utf-8");
     expect(content).toContain("while read");
     expect(content).toContain("local_sha");
     expect(content).toContain("remote_sha");
-  });
-});
-
-// ── baseline JSON format ──────────────────────────────────────────────
-
-describe("baseline JSON format", () => {
-  it("has correct structure", () => {
-    const baseline = makeBaseline([
-      { file: "/repo/config.ts", line: 10, pattern: "AWS Access Key", addedAt: "2026-01-01T00:00:00Z" },
-    ]);
-    expect(baseline.version).toBe(1);
-    expect(baseline.entries).toHaveLength(1);
-    expect(baseline.entries[0]).toMatchObject({
-      file: expect.any(String),
-      line: expect.any(Number),
-      pattern: expect.any(String),
-    });
   });
 });

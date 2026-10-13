@@ -284,20 +284,15 @@ describe("E2E: edge cases", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("handles empty files gracefully", () => {
+  it("handles empty directories, empty files, and whitespace-only files", () => {
+    const scanner = new RegexScanner();
+    expect(scanner.scanDirectory(tmpDir).length).toBe(0);
+
     fs.writeFileSync(path.join(tmpDir, "empty.txt"), "");
+    expect(scanner.scanFile(path.join(tmpDir, "empty.txt")).matches.length).toBe(0);
 
-    const scanner = new RegexScanner();
-    const result = scanner.scanFile(path.join(tmpDir, "empty.txt"));
-    expect(result.matches.length).toBe(0);
-  });
-
-  it("handles files with only whitespace", () => {
     fs.writeFileSync(path.join(tmpDir, "whitespace.txt"), "   \n\n\t\t\n   ");
-
-    const scanner = new RegexScanner();
-    const result = scanner.scanFile(path.join(tmpDir, "whitespace.txt"));
-    expect(result.matches.length).toBe(0);
+    expect(scanner.scanFile(path.join(tmpDir, "whitespace.txt")).matches.length).toBe(0);
   });
 
   it("handles files with unicode content around secrets", () => {
@@ -351,12 +346,6 @@ aws_key = AKIAIOSFODNN7EXAMPLE
     const scanner = new RegexScanner();
     const result = scanner.scanFile("/tmp/nonexistent-rafter-file-99999.txt");
     expect(result.matches.length).toBe(0);
-  });
-
-  it("handles empty directory", () => {
-    const scanner = new RegexScanner();
-    const results = scanner.scanDirectory(tmpDir);
-    expect(results.length).toBe(0);
   });
 });
 

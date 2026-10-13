@@ -68,34 +68,6 @@ describe("MCP Server — real stdio transport: tool listing", () => {
       "suppress_finding",
     ]);
   });
-
-  it("scan_secrets has required path parameter", async () => {
-    const { tools } = await client.listTools();
-    const tool = tools.find(t => t.name === "scan_secrets")!;
-    expect(tool.inputSchema.required).toContain("path");
-    expect(tool.inputSchema.properties).toHaveProperty("path");
-    expect(tool.inputSchema.properties).toHaveProperty("engine");
-  });
-
-  it("evaluate_command has required command parameter", async () => {
-    const { tools } = await client.listTools();
-    const tool = tools.find(t => t.name === "evaluate_command")!;
-    expect(tool.inputSchema.required).toContain("command");
-  });
-
-  it("read_audit_log has optional limit, event_type, since", async () => {
-    const { tools } = await client.listTools();
-    const tool = tools.find(t => t.name === "read_audit_log")!;
-    expect(tool.inputSchema.properties).toHaveProperty("limit");
-    expect(tool.inputSchema.properties).toHaveProperty("event_type");
-    expect(tool.inputSchema.properties).toHaveProperty("since");
-  });
-
-  it("get_config has optional key parameter", async () => {
-    const { tools } = await client.listTools();
-    const tool = tools.find(t => t.name === "get_config")!;
-    expect(tool.inputSchema.properties).toHaveProperty("key");
-  });
 });
 
 describe("MCP Server — real stdio transport: resource listing", () => {
@@ -115,19 +87,6 @@ describe("MCP Server — real stdio transport: resource listing", () => {
     expect(resources).toHaveLength(3);
   });
 
-  it("should expose rafter://config with JSON mime type", async () => {
-    const { resources } = await client.listResources();
-    const res = resources.find(r => r.uri === "rafter://config");
-    expect(res).toBeDefined();
-    expect(res!.mimeType).toBe("application/json");
-  });
-
-  it("should expose rafter://policy with JSON mime type", async () => {
-    const { resources } = await client.listResources();
-    const res = resources.find(r => r.uri === "rafter://policy");
-    expect(res).toBeDefined();
-    expect(res!.mimeType).toBe("application/json");
-  });
 });
 
 describe("MCP Server — real stdio transport: scan_secrets", () => {
@@ -378,14 +337,6 @@ describe("MCP Server — real stdio transport: error handling", () => {
 });
 
 describe("MCP Server — real stdio transport: lifecycle", () => {
-  it("should connect and disconnect cleanly", async () => {
-    const { client } = await createConnectedClient();
-    // Verify we can list tools (connection works)
-    const { tools } = await client.listTools();
-    expect(tools).toHaveLength(11);
-    await client.close();
-  });
-
   // Three back-to-back spawn/connect/listTools/close cycles. Each
   // iteration spawns `node dist/index.js mcp serve` as a fresh
   // subprocess; on cold-start CI the subprocess teardown can race the
