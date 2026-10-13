@@ -3,7 +3,7 @@ import { CommandInterceptor, CommandEvaluation } from "../../core/command-interc
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import os from "node:os";
-import { modifiesRafterSecurityConfig } from "../../core/risk-rules.js";
+import { assessCommandRisk, modifiesRafterSecurityConfig } from "../../core/risk-rules.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { getRafterDir } from "../../core/config-defaults.js";
 import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
@@ -123,6 +123,7 @@ export function createHookPretoolCommand(): Command {
     .option("--format <format>", "Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf", "claude")
     .action(async (opts) => {
       const format = (opts.format || "claude") as HookFormat;
+      let payload: HookInput | undefined;
       try {
         const input = await readStdin();
         let raw: Record<string, any>;
@@ -141,14 +142,35 @@ export function createHookPretoolCommand(): Command {
           return;
         }
 
-        const payload = normalizeInput(raw, format);
+        payload = normalizeInput(raw, format);
         const decision = evaluateToolCall(payload);
         writeDecision(decision, format);
       } catch {
-        // Any unexpected error → fail open
-        writeDecision({ decision: "allow" }, format);
+        // Unexpected error → fail open, so a hook bug cannot brick the agent,
+        // except for a Bash command that would have been denied anyway.
+        writeDecision(decisionOnError(payload), format);
       }
     });
+}
+
+/**
+ * Decision when evaluation threw. A high/critical Bash command, or a git
+ * commit/push whose secret scan never ran, is denied; everything else is allowed.
+ */
+function decisionOnError(payload: HookInput | undefined): HookDecision {
+  const reason = "Rafter: the hook hit an internal error evaluating this command; " +
+    "blocked rather than allowed unchecked.";
+  try {
+    if (payload?.tool_name !== "Bash") return { decision: "allow" };
+    const command = String(payload.tool_input?.command ?? "");
+    const trimmed = command.trim();
+    if (trimmed.startsWith("git commit") || trimmed.startsWith("git push")) {
+      return { decision: "deny", reason };
+    }
+    const risk = assessCommandRisk(command);
+    if (risk === "high" || risk === "critical") return { decision: "deny", reason };
+  } catch { /* cannot classify: fall through to allow */ }
+  return { decision: "allow" };
 }
 
 /**

@@ -491,6 +491,7 @@ def pretool(
     format: str = typer.Option("claude", "--format", help="Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf"),
 ):
     """PreToolUse hook handler. Reads tool input JSON from stdin, writes decision to stdout."""
+    tool_name, tool_input = "", {}
     try:
         raw = _read_stdin()
 
@@ -530,8 +531,32 @@ def pretool(
 
         _write_pretool_decision(decision, format)
     except Exception:
-        # Any unexpected error -> fail open
-        _write_pretool_decision({"decision": "allow"}, format)
+        # Unexpected error -> fail open, so a hook bug cannot brick the agent,
+        # except for a Bash command that would have been denied anyway.
+        _write_pretool_decision(_decision_on_error(tool_name, tool_input), format)
+
+
+def _decision_on_error(tool_name: str, tool_input) -> dict:
+    """Decision when evaluation raised. A high/critical Bash command, or a git
+    commit/push whose secret scan never ran, is denied; everything else is allowed."""
+    reason = (
+        "Rafter: the hook hit an internal error evaluating this command; "
+        "blocked rather than allowed unchecked."
+    )
+    try:
+        if tool_name != "Bash" or not isinstance(tool_input, dict):
+            return {"decision": "allow"}
+        command = str(tool_input.get("command") or "")
+        trimmed = command.strip()
+        if trimmed.startswith("git commit") or trimmed.startswith("git push"):
+            return {"decision": "deny", "reason": reason}
+        from ..core.risk_rules import assess_command_risk
+
+        if assess_command_risk(command) in ("high", "critical"):
+            return {"decision": "deny", "reason": reason}
+    except Exception:
+        pass  # cannot classify: fall through to allow
+    return {"decision": "allow"}
 
 
 @hook_app.command(
