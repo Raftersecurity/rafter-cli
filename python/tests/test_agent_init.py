@@ -740,6 +740,9 @@ class TestDryRun:
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.chdir(tmp_path)
+        # Keep a betterleaks on the developer's PATH out of view: the plan only
+        # lists a download when the real run would perform one (#231).
+        monkeypatch.setenv("PATH", str(tmp_path / "emptybin"))
 
         runner = CliRunner()
         result = runner.invoke(app, ["agent", "init", "--with-betterleaks", "--dry-run"])
@@ -1065,7 +1068,8 @@ class TestGeminiWithSkillsEndToEnd:
 
         # One probe + one link per skill (3 skills)
         link_only = [c for c in link_calls if c[1:3] == ["skills", "link"]]
-        assert len(link_only) == 3
+        from rafter_cli.commands.agent import _AGENT_SKILLS
+        assert len(link_only) == len(_AGENT_SKILLS)
 
 
 class TestInstallClaudeCodeMcp:
