@@ -167,7 +167,7 @@ describe("MCP Server — real stdio transport: scan_secrets after suppress_findi
   it("does not report a finding the project has suppressed", async () => {
     const project = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-stdio-sup-"));
     fs.mkdirSync(path.join(project, "test", "fixtures"), { recursive: true });
-    fs.writeFileSync(path.join(project, "test", "fixtures", "creds.env"), "AWS_KEY=AKIAIOSFODNN7EXAMPLE1\n");
+    fs.writeFileSync(path.join(project, "test", "fixtures", "creds.env"), "AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n");
     const transport = new StdioClientTransport({
       command: "node", args: [NODE_ENTRY, "mcp", "serve"], cwd: project, stderr: "pipe",
     });

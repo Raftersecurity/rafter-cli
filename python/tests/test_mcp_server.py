@@ -270,7 +270,7 @@ def test_scan_secrets_does_not_report_a_suppressed_finding(tmp_path, monkeypatch
     from rafter_cli.commands.mcp_server import handle_suppress_finding
     monkeypatch.chdir(tmp_path)
     (tmp_path / "test" / "fixtures").mkdir(parents=True)
-    (tmp_path / "test" / "fixtures" / "creds.env").write_text("AWS_KEY=AKIAIOSFODNN7EXAMPLE1\n")
+    (tmp_path / "test" / "fixtures" / "creds.env").write_text("AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n")
     assert len(handle_scan_secrets(str(tmp_path), engine="patterns")) == 1
     handle_suppress_finding("test/fixtures/**", reason="fixture")
     assert handle_scan_secrets(str(tmp_path), engine="patterns") == []
