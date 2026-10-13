@@ -71,3 +71,14 @@ describe("BetterleaksScanner.parseResults", () => {
     expect(String(stderrSpy.mock.calls[0][0])).toContain("Failed to parse");
   });
 });
+
+describe("BetterleaksScanner.convertToPatternMatch", () => {
+  const convert = (scanner as any).convertToPatternMatch.bind(scanner);
+
+  // betterleaks 1.1.x reports StartColumn one past the 1-based column on every
+  // line but the first; the regex engine reports the true column.
+  it("reports the 1-based column on line 1 and on later lines", () => {
+    expect(convert({ RuleID: "jwt", Tags: [], StartLine: 1, StartColumn: 1, Secret: "eyJ" }).column).toBe(1);
+    expect(convert({ RuleID: "jwt", Tags: [], StartLine: 2, StartColumn: 6, Secret: "eyJ" }).column).toBe(5);
+  });
+});

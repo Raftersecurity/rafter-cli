@@ -1,7 +1,7 @@
 """Tests for the betterleaks+patterns union (sable-j85).
 
 Mirror of node/tests/union.test.ts — covers the dedup key
-(file, line, matched-text), engine attribution, and deterministic ordering.
+(file, line, column), engine attribution, and deterministic ordering.
 """
 from __future__ import annotations
 
@@ -61,6 +61,17 @@ def test_does_not_dedup_same_text_line_at_different_columns():
     out = union_scan_results(bl, pat)
 
     assert len(out[0].matches) == 2
+
+
+def test_dedups_one_secret_both_engines_start_at_same_position():
+    # betterleaks extracts a whole PEM block; the regex pattern only its header.
+    bl = [ScanResult(file="k.pem", matches=[_m("private-key", "-----BEGIN RSA PRIVATE KEY-----\nMIIE", 3, 5)])]
+    pat = [ScanResult(file="k.pem", matches=[_m("Private Key", "-----BEGIN RSA PRIVATE KEY-----", 3, 5)])]
+
+    out = union_scan_results(bl, pat)
+
+    assert len(out[0].matches) == 1
+    assert out[0].matches[0].engines == ["betterleaks", "patterns"]
 
 
 def test_merges_into_one_file_group_betterleaks_first():
