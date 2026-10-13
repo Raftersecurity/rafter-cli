@@ -637,6 +637,21 @@ class TestHandleScanStatusInteractive:
         assert "rafter run" in err
         assert json.loads(out)["error_code"] == "SCAN_STALLED"
 
+    @patch("rafter_cli.commands.backend.api_get")
+    def test_completed_partial_scan_warns_even_when_quiet(self, mock_get, capsys):
+        partial = {
+            "status": "completed", "partial": True, "warning_code": "SCAN_PARTIAL",
+            "missing_scanners": ["opengrep_rafter"], "vulnerabilities": [],
+        }
+        mock_get.return_value = _mock_response(200, json_body=partial)
+
+        result = _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "json", True)
+        assert result == EXIT_SUCCESS
+        out, err = capsys.readouterr()
+        assert "SCAN_PARTIAL" in err
+        assert "opengrep_rafter" in err
+        assert json.loads(out)["partial"] is True
+
     @patch("rafter_cli.commands.backend.time.sleep")
     @patch("rafter_cli.commands.backend.api_get")
     def test_multiple_polls_before_completion(self, mock_get, mock_sleep):

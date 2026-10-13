@@ -357,6 +357,7 @@ def _handle_scan_status_interactive(
             if status == "completed":
                 if not quiet:
                     print("Scan completed!", file=sys.stderr)
+                _warn_if_partial(data)
                 return write_payload(data, fmt, quiet)
             elif status == "failed":
                 _report_failed_scan(data, fmt)
@@ -365,6 +366,7 @@ def _handle_scan_status_interactive(
     elif status == "completed":
         if not quiet:
             print("Scan completed!", file=sys.stderr)
+        _warn_if_partial(data)
         return write_payload(data, fmt, quiet)
     elif status == "failed":
         _report_failed_scan(data, fmt)
@@ -372,7 +374,23 @@ def _handle_scan_status_interactive(
         if not quiet:
             print(f"Scan status: {status}", file=sys.stderr)
 
+    _warn_if_partial(data)
     return write_payload(data, fmt, quiet)
+
+
+def _warn_if_partial(data: dict) -> None:
+    """A completed scan the API marks partial (some scanners did not finish) is
+    not a clean result. Say so on stderr, even with --quiet."""
+    if data.get("partial") is not True and data.get("warning_code") != "SCAN_PARTIAL":
+        return
+    code = data["warning_code"] if isinstance(data.get("warning_code"), str) else "SCAN_PARTIAL"
+    missing = data.get("missing_scanners")
+    tail = f" Scanners that did not finish: {', '.join(missing)}." if isinstance(missing, list) and missing else ""
+    print(
+        f"Warning: Scan completed with gaps ({code}): some scanners did not finish, "
+        f"so findings may be missing.{tail} Do not treat this result as clean.",
+        file=sys.stderr,
+    )
 
 
 def _report_failed_scan(data: dict, fmt: str) -> None:
@@ -537,6 +555,7 @@ def register_backend_commands(app: typer.Typer) -> None:
             data = resp.json()
             if data.get("status") == "failed":
                 _report_failed_scan(data, fmt)
+            _warn_if_partial(data)
             return write_payload(data, fmt, quiet)
 
         _handle_scan_status_interactive(scan_id, headers, fmt, quiet)
