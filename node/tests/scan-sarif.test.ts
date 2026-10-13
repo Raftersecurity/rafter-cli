@@ -58,7 +58,7 @@ describe("scan --format sarif", () => {
     // Create a file with a known secret pattern
     fs.writeFileSync(
       path.join(tmpDir, "secrets.ts"),
-      'const key = "AKIAIOSFODNN7EXAMPLE";\n',
+      'const key = "AKIAIOSFODNN7ABCDEFG";\n',
     );
 
     const result = runScan(`${tmpDir} --format sarif --engine patterns`);

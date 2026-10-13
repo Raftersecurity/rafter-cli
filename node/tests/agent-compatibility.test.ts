@@ -292,7 +292,7 @@ describe("Agent Compatibility: Full Hook Lifecycle", () => {
         ...CLAUDE_CODE_PRETOOL_WRITE,
         tool_input: {
           file_path: "/tmp/config.env",
-          content: "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nSECRET=safe",
+          content: "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\nSECRET=safe",
         },
       };
       const result = evaluateToolCall(payload);
@@ -306,7 +306,7 @@ describe("Agent Compatibility: Full Hook Lifecycle", () => {
         tool_input: {
           file_path: "/tmp/config.ts",
           old_string: "const key = '';",
-          new_string: "const key = 'AKIAIOSFODNN7EXAMPLE';",
+          new_string: "const key = 'AKIAIOSFODNN7ABCDEFG';",
         },
       };
       const result = evaluateToolCall(payload);

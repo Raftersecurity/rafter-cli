@@ -24,7 +24,7 @@ describe("RegexScanner", () => {
       fs.mkdirSync(outsideDir);
       fs.writeFileSync(
         path.join(outsideDir, "secret.txt"),
-        "AKIAIOSFODNN7EXAMPLE\n"
+        "AKIAIOSFODNN7ABCDEFG\n"
       );
 
       // Create the scan target with a symlink pointing outside
@@ -43,7 +43,7 @@ describe("RegexScanner", () => {
       const outsideDir = path.join(tmpDir, "outside");
       fs.mkdirSync(outsideDir);
       const secretFile = path.join(outsideDir, "secret.txt");
-      fs.writeFileSync(secretFile, "AKIAIOSFODNN7EXAMPLE\n");
+      fs.writeFileSync(secretFile, "AKIAIOSFODNN7ABCDEFG\n");
 
       // Create the scan target with a symlink to the secret file
       const scanDir = path.join(tmpDir, "project");
@@ -60,7 +60,7 @@ describe("RegexScanner", () => {
     // Assemble the fixture key from characters at runtime so the literal
     // substring is not present in source — avoids self-tripping the
     // pre-commit scanner that this test is exercising.
-    const FAKE_AWS = ["A","K","I","A","I","O","S","F","O","D","N","N","7","E","X","A","M","P","L","E"].join("");
+    const FAKE_AWS = ["A","K","I","A","I","O","S","F","O","D","N","N","7","A","B","C","D","E","F","G"].join("");
     const SECRET_BODY = "AWS_KEY=" + FAKE_AWS + "\n";
 
     function setUpRepo(): { scanDir: string; visible: string; hidden: string } {

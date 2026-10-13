@@ -288,7 +288,7 @@ describe("MCP Server — tool execution end-to-end", () => {
         matches: [
           {
             pattern: { name: "aws-access-key", severity: "high", regex: "" },
-            match: "AKIAIOSFODNN7EXAMPLE1",
+            match: "AKIAIOSFODNN7ABCDEFG1",
             line: 1,
             redacted: "AKIA****",
           },

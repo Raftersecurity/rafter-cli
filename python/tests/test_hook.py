@@ -104,7 +104,7 @@ class TestEvaluateWrite:
 
     def test_secret_in_content(self):
         result = _evaluate_write({
-            "content": "AKIAIOSFODNN7EXAMPLE1",
+            "content": "AKIAIOSFODNN7ABCDEFG1",
             "file_path": "config.py",
         })
         assert result["decision"] == "deny"
@@ -290,7 +290,7 @@ class TestPosttool:
             "tool_name": "Bash",
             "tool_input": {"command": "cat .env"},
             "tool_response": {
-                "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nother stuff",
+                "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\nother stuff",
                 "error": "",
             },
         }
@@ -299,7 +299,7 @@ class TestPosttool:
         data = json.loads(result.output.strip())
         assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
         modified = data["hookSpecificOutput"]["modifiedToolResult"]
-        assert "AKIAIOSFODNN7EXAMPLE" not in modified["output"]
+        assert "AKIAIOSFODNN7ABCDEFG" not in modified["output"]
         assert "****" in modified["output"]
 
     def test_secret_in_content_is_redacted(self):
@@ -311,7 +311,7 @@ class TestPosttool:
             "tool_name": "Read",
             "tool_input": {"file_path": "config.json"},
             "tool_response": {
-                "content": '{"api_key": "AKIAIOSFODNN7EXAMPLE"}',
+                "content": '{"api_key": "AKIAIOSFODNN7ABCDEFG"}',
             },
         }
         runner = CliRunner(mix_stderr=False)
@@ -319,7 +319,7 @@ class TestPosttool:
         data = json.loads(result.output.strip())
         assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
         modified = data["hookSpecificOutput"]["modifiedToolResult"]
-        assert "AKIAIOSFODNN7EXAMPLE" not in modified["content"]
+        assert "AKIAIOSFODNN7ABCDEFG" not in modified["content"]
 
     def test_error_field_preserved_when_output_redacted(self):
         import json
@@ -330,7 +330,7 @@ class TestPosttool:
             "tool_name": "Bash",
             "tool_input": {"command": "cat secrets.txt"},
             "tool_response": {
-                "output": "AKIAIOSFODNN7EXAMPLE1B",
+                "output": "AKIAIOSFODNN7ABCDEFG1B",
                 "error": "some stderr message",
             },
         }
@@ -523,7 +523,7 @@ class TestCursorPosttool:
 
         payload = {
             "hook_event_name": "afterShellExecution",
-            "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nother stuff",
+            "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\nother stuff",
             "error": "",
         }
         runner = CliRunner(mix_stderr=False)
@@ -558,7 +558,7 @@ class TestGeminiPosttool:
         payload = {
             "tool_name": "Bash",
             "tool_response": {
-                "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nother stuff",
+                "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\nother stuff",
                 "error": "",
             },
         }

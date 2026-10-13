@@ -207,7 +207,7 @@ class TestScanSecrets:
     @pytest.mark.asyncio
     async def test_detects_planted_aws_key(self, tmp_path):
         secret_file = tmp_path / "creds.env"
-        secret_file.write_text("AWS_KEY=AKIAIOSFODNN7EXAMPLE1\n")
+        secret_file.write_text("AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n")
 
         result = await self.session.call_tool(
             "scan_secrets",

@@ -182,7 +182,7 @@ describeIfPython("parity: secrets", () => {
 
   it("both exit 1 when secrets detected", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIAIOSFODNN7ABCDEFG\n");
     const r = runBoth(["secrets", f, "--engine", "patterns", "--quiet"]);
     expect(r.node.exitCode).toBe(1);
     expect(r.python.exitCode).toBe(1);
@@ -204,7 +204,7 @@ describeIfPython("parity: secrets", () => {
 
   it("--json produces identical schema for AWS key", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIAIOSFODNN7ABCDEFG\n");
     const r = runBoth(["secrets", f, "--engine", "patterns", "--json"]);
 
     const nodeResults = parseResultsArray(r.node.stdout);
@@ -257,7 +257,7 @@ describeIfPython("parity: secrets", () => {
   it("directory recursive scan finds same secrets", () => {
     const sub = path.join(tmpDir, "src");
     fs.mkdirSync(sub);
-    fs.writeFileSync(path.join(sub, "config.ts"), "const key = 'AKIAIOSFODNN7EXAMPLE';\n");
+    fs.writeFileSync(path.join(sub, "config.ts"), "const key = 'AKIAIOSFODNN7ABCDEFG';\n");
     const r = runBoth(["secrets", tmpDir, "--engine", "patterns", "--json"]);
 
     expect(r.node.exitCode).toBe(1);
@@ -278,7 +278,7 @@ describeIfPython("parity: secrets", () => {
   it("multiple secrets in one file produce same count", () => {
     const f = path.join(tmpDir, "multi.txt");
     fs.writeFileSync(f, [
-      "aws_key=AKIAIOSFODNN7EXAMPLE",
+      "aws_key=AKIAIOSFODNN7ABCDEFG",
       "github_token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12",
       "stripe_key=" + fakeSecret("sk_live", "_ABCDEFGHIJKLMNOPQRSTuvwx"),
     ].join("\n") + "\n");
@@ -303,7 +303,7 @@ describeIfPython("parity: secrets", () => {
   it("redaction format matches between runtimes", () => {
     const f = path.join(tmpDir, "secrets.txt");
     // Long secret: first 4 + last 4 visible, middle masked
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIAIOSFODNN7ABCDEFG\n");
     const r = runBoth(["secrets", f, "--engine", "patterns", "--json"]);
 
     const nodeRedacted = parseResultsArray(r.node.stdout)[0].matches[0].redacted;
@@ -557,7 +557,7 @@ describeIfPython("parity: secret pattern detection", () => {
   });
 
   const testSecrets: Record<string, string> = {
-    "AWS Access Key ID": "AKIAIOSFODNN7EXAMPLE",
+    "AWS Access Key ID": "AKIAIOSFODNN7ABCDEFG",
     "GitHub Personal Access Token": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12",
     "Stripe Secret Key": fakeSecret("sk_live", "_ABCDEFGHIJKLMNOPQRSTuvwx"),
     "Slack Webhook URL": fakeSecret("https://hooks.slack", ".com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"),
@@ -604,7 +604,7 @@ describeIfPython("parity: stdout/stderr separation", () => {
 
   it("--json scan results go to stdout (not stderr) in both", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIAIOSFODNN7ABCDEFG\n");
 
     // Run node
     let nodeResult: CLIResult;

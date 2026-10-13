@@ -273,7 +273,7 @@ jobs:
 
       - name: Generate SARIF from fixture
         run: |
-          echo "AKIAIOSFODNN7EXAMPLE" > /tmp/test-secret.txt
+          echo "AKIAIOSFODNN7ABCDEFG" > /tmp/test-secret.txt
           node dist/index.js scan local /tmp/test-secret.txt --engine patterns --format sarif > /tmp/output.sarif || true
 
       - name: Validate SARIF structure

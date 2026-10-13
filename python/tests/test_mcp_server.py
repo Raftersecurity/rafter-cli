@@ -20,7 +20,7 @@ from rafter_cli.commands.mcp_server import (
 class TestScanSecrets:
     def test_scan_file_with_secret(self, tmp_path):
         f = tmp_path / "creds.txt"
-        f.write_text("aws_key = AKIAIOSFODNN7EXAMPLE1\n")
+        f.write_text("aws_key = AKIAIOSFODNN7ABCDEFG1\n")
         results = handle_scan_secrets(str(f), engine="patterns")
         assert len(results) == 1
         assert results[0]["file"] == str(f)
@@ -32,7 +32,7 @@ class TestScanSecrets:
 
     def test_scan_directory(self, tmp_path):
         (tmp_path / "clean.txt").write_text("nothing here\n")
-        (tmp_path / "secret.env").write_text("AWS_KEY=AKIAIOSFODNN7EXAMPLE2\n")
+        (tmp_path / "secret.env").write_text("AWS_KEY=AKIAIOSFODNN7ABCDEFG2\n")
         results = handle_scan_secrets(str(tmp_path), engine="patterns")
         files_with_matches = [r for r in results if r["matches"]]
         assert len(files_with_matches) >= 1
@@ -45,7 +45,7 @@ class TestScanSecrets:
 
     def test_betterleaks_not_available_falls_back(self, tmp_path):
         f = tmp_path / "test.txt"
-        f.write_text("AKIAIOSFODNN7EXAMPLE1\n")
+        f.write_text("AKIAIOSFODNN7ABCDEFG1\n")
         with patch("rafter_cli.commands.mcp_server.BetterleaksScanner") as mock_bl:
             mock_bl.return_value.is_available.return_value = False
             results = handle_scan_secrets(str(f), engine="auto")
@@ -80,7 +80,7 @@ class TestScanSecrets:
                 m("Private Key", "-----BEGIN PRIVATE KEY-----", 9, "critical"),
             ]),
             ScanResult(file="/tmp/creds.txt", matches=[
-                m("AWS Access Key ID", "AKIAIOSFODNN7EXAMPLE1", 1),
+                m("AWS Access Key ID", "AKIAIOSFODNN7ABCDEFG1", 1),
             ]),
         ]
 
@@ -112,7 +112,7 @@ class TestScanSecrets:
 
         pat_results = [ScanResult(file="/tmp/creds.txt", matches=[PatternMatch(
             pattern=Pattern(name="AWS Access Key ID", regex="", severity="high"),
-            match="AKIAIOSFODNN7EXAMPLE1", line=1, redacted="AKIA****",
+            match="AKIAIOSFODNN7ABCDEFG1", line=1, redacted="AKIA****",
         )])]
 
         with patch("rafter_cli.commands.mcp_server.BetterleaksScanner") as mock_bl, \

@@ -12,7 +12,7 @@ def scanner():
 
 def test_scan_file_with_secret(scanner, tmp_path):
     f = tmp_path / "secrets.txt"
-    f.write_text("my aws key is AKIAIOSFODNN7EXAMPLE\n")
+    f.write_text("my aws key is AKIAIOSFODNN7ABCDEFG\n")
     result = scanner.scan_file(str(f))
     assert len(result.matches) > 0
     assert any(m.pattern.name == "AWS Access Key ID" for m in result.matches)
@@ -89,7 +89,7 @@ def test_symlinks_not_followed(scanner, tmp_path):
     # Create an "outside" directory with a secret
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / "secret.txt").write_text("AKIAIOSFODNN7EXAMPLE\n")
+    (outside / "secret.txt").write_text("AKIAIOSFODNN7ABCDEFG\n")
 
     # Create the scan target with a symlink pointing outside
     scan_dir = tmp_path / "project"
@@ -107,7 +107,7 @@ def test_symlinked_file_not_followed(scanner, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     secret_file = outside / "secret.txt"
-    secret_file.write_text("AKIAIOSFODNN7EXAMPLE\n")
+    secret_file.write_text("AKIAIOSFODNN7ABCDEFG\n")
 
     scan_dir = tmp_path / "project"
     scan_dir.mkdir()

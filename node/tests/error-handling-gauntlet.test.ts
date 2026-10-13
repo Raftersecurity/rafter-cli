@@ -726,7 +726,7 @@ describe("Scan JSON Output — Schema Compliance", () => {
 
   it("redacted field never contains raw secret", () => {
     const secretFile = path.join(tmpDir, "rawcheck.txt");
-    const rawSecret = "AKIAIOSFODNN7EXAMPLE";
+    const rawSecret = "AKIAIOSFODNN7ABCDEFG";
     fs.writeFileSync(secretFile, `key = "${rawSecret}"\n`);
     const scanner = new RegexScanner();
     const result = scanner.scanFile(secretFile);

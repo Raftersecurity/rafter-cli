@@ -72,7 +72,7 @@ describe("secrets — agent mode vs human mode", () => {
   it("agent mode: findings use [WARN] prefix", () => {
     fs.writeFileSync(
       path.join(tmpDir, "leak.py"),
-      'AWS_SECRET_KEY = "AKIAIOSFODNN7EXAMPLE"\n',
+      'AWS_SECRET_KEY = "AKIAIOSFODNN7ABCDEFG"\n',
     );
     const r = rafter(["-a", "scan", "local", tmpDir]);
     const combined = r.stdout + r.stderr;
@@ -83,7 +83,7 @@ describe("secrets — agent mode vs human mode", () => {
   it("agent mode: severity levels use bracket notation", () => {
     fs.writeFileSync(
       path.join(tmpDir, "leak.py"),
-      'AWS_SECRET_KEY = "AKIAIOSFODNN7EXAMPLE"\n',
+      'AWS_SECRET_KEY = "AKIAIOSFODNN7ABCDEFG"\n',
     );
     const r = rafter(["-a", "scan", "local", tmpDir]);
     const combined = r.stdout + r.stderr;
@@ -94,7 +94,7 @@ describe("secrets — agent mode vs human mode", () => {
   it("human mode: findings use ⚠ warning indicator", () => {
     fs.writeFileSync(
       path.join(tmpDir, "leak.py"),
-      'AWS_SECRET_KEY = "AKIAIOSFODNN7EXAMPLE"\n',
+      'AWS_SECRET_KEY = "AKIAIOSFODNN7ABCDEFG"\n',
     );
     const r = rafter(["scan", "local", tmpDir]);
     const combined = r.stdout + r.stderr;
@@ -313,7 +313,7 @@ describe("agent mode output is ANSI- and emoji-free across commands", () => {
     try {
       fs.writeFileSync(
         path.join(scanDir, "leak.py"),
-        'AWS_SECRET_KEY = "AKIAIOSFODNN7EXAMPLE"\n',
+        'AWS_SECRET_KEY = "AKIAIOSFODNN7ABCDEFG"\n',
       );
 
       const auditPath = path.join(auditDir, "audit.jsonl");
