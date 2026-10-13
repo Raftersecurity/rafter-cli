@@ -25,6 +25,9 @@ class PatternMatch:
     # scan runs more than one engine (``auto`` mode → ``both``). Single-engine
     # scans leave it None — the engine is already implied by ``--engine``.
     engines: list[str] | None = None
+    # Every engine's rule name for a finding the union merged. ``pattern.name``
+    # shows only the betterleaks one, so suppression checks all of these.
+    rule_names: list[str] | None = None
 
 
 _GENERIC_PATTERN_NAMES = frozenset({"Generic API Key", "Generic Secret"})

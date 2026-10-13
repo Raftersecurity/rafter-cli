@@ -94,3 +94,25 @@ def test_does_not_mutate_input_matches():
     union_scan_results(bl, [])
     # dataclasses.replace must produce a copy — the original stays unattributed.
     assert src.engines is None
+
+
+def test_suppresses_merged_finding_only_when_every_engine_rule_is_suppressed():
+    """A rule-scoped suppression for the betterleaks name must not hide the
+    patterns-engine finding merged into the same position."""
+    from rafter_cli.core.custom_patterns import Suppression, apply_suppressions
+
+    merged = union_scan_results(
+        [ScanResult(file="a.env", matches=[_m("aws-access-token", "AKIA1", 1, 9)])],
+        [ScanResult(file="a.env", matches=[_m("AWS Access Key ID", "AKIA1", 1, 9)])],
+    )
+
+    def rule(name):
+        return Suppression(path_glob="**", pattern_name=name, source=".rafter.yml")
+
+    kept, suppressed = apply_suppressions(merged, [rule("aws-access-token")])
+    assert suppressed == []
+    assert len(kept[0].matches) == 1
+
+    kept, suppressed = apply_suppressions(merged, [rule("aws-access-token"), rule("AWS Access Key ID")])
+    assert kept == []
+    assert len(suppressed) == 1
