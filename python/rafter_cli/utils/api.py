@@ -4,11 +4,45 @@ from __future__ import annotations
 import json
 import os
 import sys
+from urllib.parse import urlparse
 
 import requests
 import typer
 
 API_BASE = "https://rafter.so/api/"
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_warned_api_override = False
+
+
+def _resolve_api_base() -> str:
+    """The API base in effect right now.
+
+    ``RAFTER_API_URL``, read fresh on every call rather than cached at import
+    time, overrides the production default. This is how the test suite points
+    the CLI at a local, non-routable port instead of the live backend — see
+    ``python/tests/conftest.py``. Production never sets the var, so this is a
+    no-op outside tests.
+
+    Every request carries the API key, so the override must be https, or plain
+    http to a loopback host. Anything else is ignored with a warning. A remote
+    https override is honored with a one-time notice, since the key goes there.
+    """
+    global _warned_api_override
+    override = os.environ.get("RAFTER_API_URL")
+    if not override:
+        return API_BASE
+    parsed = urlparse(override)
+    loopback = parsed.hostname in _LOOPBACK_HOSTS
+    allowed = (parsed.scheme == "https" and bool(parsed.hostname)) or (parsed.scheme == "http" and loopback)
+    if not loopback and not _warned_api_override:
+        _warned_api_override = True
+        if allowed:
+            print(f"rafter: RAFTER_API_URL is set; sending requests and your API key to "
+                  f"{parsed.scheme}://{parsed.netloc}", file=sys.stderr)
+        else:
+            print(f"rafter: ignoring RAFTER_API_URL (must be https, or http to localhost); "
+                  f"using {API_BASE}", file=sys.stderr)
+    return override if allowed else API_BASE
 
 # Exit codes
 EXIT_SUCCESS = 0
@@ -84,7 +118,7 @@ def api_url(path: str) -> str:
     to the single-slash form. That worked only because the client followed the
     redirect — so sable-2s6p's fix would have broken every core command.
     """
-    return f"{API_BASE.rstrip('/')}/{path.lstrip('/')}"
+    return f"{_resolve_api_base().rstrip('/')}/{path.lstrip('/')}"
 
 
 def api_request(method: str, url: str, **kwargs) -> "requests.Response":

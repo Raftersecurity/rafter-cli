@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { execFileSync, spawnSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import path from "path";
 
 const CLI = path.resolve(__dirname, "../dist/index.js");
@@ -215,6 +215,42 @@ describe("rafter skill — CYOA hierarchy", () => {
       expect(r.stdout).toContain(slug);
     }
   });
+});
+
+describe("shipped resource docs — no reference to the nonexistent 'rafter audit' command", () => {
+  // issue #231 item 4a: there is no top-level `rafter audit` command (it's
+  // `rafter agent audit`), and an unknown subcommand used to print general
+  // help rather than erroring, so a wrong hint here was easy to miss. Scans
+  // both runtimes' shipped resource trees — the node/python copies of these
+  // platform-rule files are kept byte-identical, so one guard covers both.
+  function walk(dir: string): string[] {
+    if (!existsSync(dir)) return [];
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...walk(full));
+      else if (/\.(md|mdc)$/.test(entry.name)) out.push(full);
+    }
+    return out;
+  }
+
+  const roots = [
+    path.resolve(__dirname, "../resources"),
+    path.resolve(__dirname, "../../python/rafter_cli/resources"),
+  ];
+
+  for (const root of roots) {
+    const files = walk(root);
+    it(`none of ${files.length} doc(s) under ${path.relative(path.resolve(__dirname, "../.."), root)} say the bare command`, () => {
+      const offenders = files.filter((f) =>
+        readFileSync(f, "utf-8").includes("`rafter audit`"),
+      );
+      expect(
+        offenders,
+        `these docs reference a nonexistent 'rafter audit' command (it's 'rafter agent audit'): ${offenders.join(", ")}`,
+      ).toEqual([]);
+    });
+  }
 });
 
 describe("brief command — error handling", () => {

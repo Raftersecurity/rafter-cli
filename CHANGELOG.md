@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-13
+
+### Security
+
+- **Upgrade now: a repository could turn off the command hook's blocking in rafter 0.7.2 through 0.10.6.** A `.rafter.yml` that pointed `audit.log_path` at an unwritable file made every hook deny fail, and the hook then allowed the call, including `rm -rf /`. Audit-write failures are now caught and reported once on stderr, and the deny stands. **Behavior change:** any other unexpected error in the PreToolUse hook now blocks the call for every tool, with `rafter hook error: <type>: <message>; denying to be safe` as the reason; it used to allow. A malformed `.rafter.yml` still produces a warning and the default settings, not a block.
+
+- **A project `.rafter.yml` can no longer set `audit.log_path`** (possible since 0.7.2). Letting a repository choose the file rafter appends to let it write command text into files such as `~/.bashrc` or `~/.ssh/authorized_keys`. The setting is ignored with a warning; set the location in `~/.rafter/config.json` (`agent.audit.logPath`). **Behavior change:** a project that set `audit.log_path` now logs to the global location.
+
+- **The commit hook and `rafter agent exec` now block a commit whose staged diff cannot be read** (#274). A staged diff over 1 MiB (a lockfile, a generated or vendored file) made the read fail, and the failure was treated as "no secrets", so the commit went through unscanned. Large diffs are now read in full, and any other failure to read the staged diff blocks the commit (`agent exec` exits 2) with a message saying the scan could not run. In Python, a staged diff that is not valid UTF-8 is now scanned rather than skipped.
+
+- **A `.rafter.yml` that cannot be loaded no longer changes whether a commit is scanned.** If the file cannot be read, decoded or parsed, the commit hook, `rafter secrets --staged` and `rafter agent scan --staged` print a warning naming the file and the error, then scan with the default settings. None of the file's settings apply, including its `ignore` rules, so a broken file cannot suppress a finding. Previously the Python CLI could allow a commit containing a secret when `.rafter.yml` held well-formed YAML it could not map (for example a `null` entry in `custom_patterns`), and `secrets --staged` crashed.
+
+- **An `ignore` entry whose `rules` is not a list is now skipped with a warning.** A value such as `rules: "AWS Access Key"` (a string, not a list) was dropped silently, which turned a rule meant for one pattern into one that suppressed every pattern in the listed paths.
+
+- **`evaluate_command` and the command hook now rate reverse shells as critical.** Standard reverse-shell forms (`bash -i >& /dev/tcp/…`, `nc -e`/`-ve`, `mkfifo` + `nc`, Python, Perl, Node and PowerShell socket shells) were rated low and allowed. They are now critical in both runtimes, including the order-independent Node form. A script that opens a socket and runs a subprocess without wiring the socket to it rates medium. A read-only `/dev/tcp` redirect, such as the wait-for-port idiom `timeout 1 bash -c '</dev/tcp/host/5432'`, is not a reverse shell and is not rated critical; writing to the socket, duplicating a descriptor onto it (`exec 3<>/dev/tcp/…`), feeding it to a shell, or pairing it with an interactive shell still is.
+
+- **`rafter agent init --with-codex` now installs the Codex hooks in the Python CLI** (#231). The Python installer never wrote `.codex/hooks.json`, so a Python install had no Codex command gate while `--dry-run` reported one. It now installs the same hooks as the Node CLI.
+
+- **`rafter secrets --engine betterleaks` no longer reports a scan that timed out as clean** (#262). In the Python CLI a betterleaks timeout returned an empty result. It now raises, and the scan falls back to the patterns engine in both runtimes, with a warning that names the cause (for example "timed out after 60s").
+
+- **The approval hint now quotes the command it tells you to run** (#231). The suggested `rafter agent exec` line was printed unquoted, so pasting it could run a `$(…)` substitution inside the blocked command.
+
+- **The MCP `scan_secrets` tool now applies the project's suppressions.** `suppress_finding` wrote an ignore rule to `.rafter.yml`, but `scan_secrets` never applied it, so the next scan reported the same finding again. It now applies `.rafter.yml` ignore rules and `.rafterignore` as `rafter secrets` does. When any finding is hidden, the result carries a second content block, `{"suppressed_count": N, "_suppressed": [...]}`, with the same per-finding metadata as `rafter secrets --json` and no secret text, so an `ignore` rule in a cloned repository cannot silently empty the scan.
+
+### Added
+
+- **`RAFTER_API_URL` overrides the API base URL.** It is accepted only over https, or over plain http to localhost; any other value is ignored with a warning, and a remote override prints a notice naming the host your API key is sent to. A project `.env` cannot set it.
+
+### Fixed
+
+- **The MCP `scan_secrets` tool scans a single file.** Given a file path rather than a directory, the Node server returned no findings.
+
+- **`rafter secrets --staged` no longer reports a scan that could not run as a finding** (#274). It used to crash with exit 1 on a staged diff over 1 MiB, the same code as a detected secret. Large diffs are now scanned, and a scan that cannot run exits 2 with an error message.
+
+- **The built-in AWS Access Key ID pattern no longer flags the canonical AWS-docs example key** (#230). `AKIAIOSFODNN7EXAMPLE` and its siblings (any `AKIA…`/`ASIA…`/etc. key ending in `EXAMPLE`) matched the regex engine but not betterleaks, so e.g. the hook's Write gate denied a write containing the well-known public non-secret while `rafter secrets` via betterleaks allowed it. The regex engine now carries the same exemption betterleaks already applies, in both Node and Python. **Behavior change:** a key ending in `EXAMPLE` is no longer reported as a finding by the patterns engine; any other 16-character suffix is still detected as before.
+
+- **The audit log's hash chain no longer breaks after an entry longer than 64 KB** (#271). The writer hashed only the last 64 KB of the previous line while `rafter agent audit --verify` hashed the whole line, so every long command produced a false tamper alarm. Existing logs keep reporting a break at the line written by the old code; new entries chain correctly.
+
+- **Betterleaks now respects `.gitignore`** (#262). `betterleaks dir` has no gitignore support, so gitignored files such as `.env` and build output were scanned and the walk could hit the 60-second timeout. Rafter now passes betterleaks git's list of non-ignored files (tracked, plus untracked files that are not ignored) and still applies your `.betterleaks.toml`. **Behavior change:** the MCP `scan_secrets` tool and `baseline` no longer report secrets in gitignored files when betterleaks runs.
+
+- **`rafter agent init --all` installs what it says it will** (#231). It now installs the `rafter-skill-review` skill its CLAUDE.md block refers to, and `--dry-run` matches the real run: no `~/.mcp.json` at user scope, no betterleaks download when an existing binary will be reused, and Claude Code included for `--with-claude-code` when `~/.claude` is missing. `rafter agent verify` counts only integrations that are present ("3/3 core checks passed" rather than "3/12"), and the shipped skills now say `rafter agent audit` instead of `rafter audit`.
+
+- **`rafter agent verify` no longer reports a working hook as inert at random.** A hook that exits without reading its input made the check fail on a few percent of runs.
+
+- **The Node CLI reads a config written by the Python CLI.** Both share `~/.rafter/config.json`, but Node did not read the Python CLI's snake_case keys, so a key or risk level set with `pip install rafter-cli` was ignored by the npm CLI.
+
+- **`rafter secrets` reports each secret once when both engines find it.** The merge of betterleaks and pattern results almost never matched, because the engines extract different text and betterleaks reported columns off by one. On 21 large repositories, duplicate reports fell from 1,466 to 76. Existing baselines still apply. A merged finding is suppressed only when an `ignore` rule covers every engine's rule name for it, so a rule naming only the betterleaks rule no longer hides what the patterns engine found at the same spot.
+
+- **Redacted secrets are capped at 16 masked characters.** A PEM block or a long JWT could print a line of more than a thousand asterisks.
+
+- **`rafter report` accepts the output of `rafter secrets --json`.** The pipe in its own help, `rafter secrets --json . | rafter report -o report.html`, failed in both runtimes.
+
+- **Piped JSON output from the Node CLI is no longer cut off at 64 KiB.** The CLI exited before Node finished writing to a pipe, so `rafter secrets --json . | rafter report` and `rafter get <id> -f json | jq` received truncated JSON. Output written to a file, and the Python CLI, were not affected.
+
+- **`rafter run` and `rafter get` say why a remote scan failed.** They now print the API's error code and message on stderr, suggest a re-run when the failure is retryable, and write the payload to stdout with `--format json`. **Behavior change:** `rafter get` now exits 1 for a failed scan, as `rafter run` already did.
+
+- **`rafter run` and `rafter get` warn when a completed scan is partial.** When some of the hosted scanners did not finish, the API marks the scan partial; the CLI now prints a warning on stderr, even with `--quiet`, and names the scanners that are missing. The exit code and payload are unchanged.
+
+- **Node and Python skip the same default directories when scanning for secrets.** The Python scanner did not skip `vendor/`, `.venv/`, `venv/`, `.tox/`, `.pytest_cache/`, `.terraform/`, `bower_components/` or `results/`, and Node did not skip `.ruff_cache/`. On a repository with a vendored AWS SDK, the Python CLI reported 19,920 findings against Node's 271. **Behavior change:** the Python CLI no longer scans those directories by default.
+
+### Performance
+
+- **The patterns engine compiles each secret pattern once instead of once per line.** On a 5,247-file repository, `rafter secrets --engine patterns` went from 27.8 s to 6.8 s in Node and from 139.5 s to 41.3 s in Python, with identical findings.
+
 ## [0.10.6] - 2026-10-02
 
 ### Security

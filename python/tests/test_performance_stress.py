@@ -12,14 +12,14 @@ from rafter_cli.scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
 from rafter_cli.core.command_interceptor import CommandInterceptor, CommandEvaluation
 
 FAKE_SECRETS = [
-    "AKIAIOSFODNN7EXAMPLE",
+    "AKIAIOSFODNN7ABCDEFG",
     "ghp_FAKEEFGHIJKLMNOPQRSTUVWXYZ0123456789",
     "glpat-xxxxxxxxxxxxxxxxxxxx",
     "sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "xoxb-0000000FAKE-0000000FAKE00-FAKEFAKEFAKEFAKEFAKEFAKEFA",
     "SG.xxxxxxxxxxxxxxxxxxxx.yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
     "ghp_FAKE456789ABCDEFGHIJKLMNOPQRSTUVWXYz",
-    "AKIAI44QH8DHBEXAMPLE",
+    "AKIAI44QH8DHBABCDEFG",
 ]
 
 
@@ -106,7 +106,7 @@ class TestLargeRepoScanning:
         # Plant secret at depth 4
         deep_dir = scan_dir / "dir_0" / "dir_0" / "dir_0" / "deep"
         deep_dir.mkdir(parents=True, exist_ok=True)
-        (deep_dir / "secret.py").write_text('k = "AKIAIOSFODNN7EXAMPLE"')
+        (deep_dir / "secret.py").write_text('k = "AKIAIOSFODNN7ABCDEFG"')
 
         shallow = scanner.scan_directory(str(scan_dir), max_depth=2)
         deep = scanner.scan_directory(str(scan_dir))
@@ -150,7 +150,7 @@ class TestManyFindings:
         lines = []
         for i in range(20000):
             if i % 200 == 0:
-                lines.append(f'key_{i} = "AKIAIOSFODNN7EXAMPLE"')
+                lines.append(f'key_{i} = "AKIAIOSFODNN7ABCDEFG"')
             else:
                 lines.append(f"# Line {i}: Lorem ipsum dolor sit amet, consectetur adipiscing elit.")
         fp.write_text("\n".join(lines))
@@ -256,7 +256,7 @@ class TestPatternEngineStress:
         engine = PatternEngine(list(DEFAULT_SECRET_PATTERNS))
 
         text = "\n".join([
-            "AWS_KEY=AKIAIOSFODNN7EXAMPLE",
+            "AWS_KEY=AKIAIOSFODNN7ABCDEFG",
             "GITHUB_TOKEN=ghp_FAKEEFGHIJKLMNOPQRSTUVWXYZ0123456789",
             "GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx",
             "SLACK_TOKEN=xoxb-0000000FAKE-0000000FAKE00-FAKEFAKEFAKEFAKEFAKEFAKEFA",
@@ -314,14 +314,14 @@ class TestEdgeCasesUnderLoad:
         extensions = [".jpg", ".png", ".exe", ".dll", ".zip", ".pdf"]
         for i in range(100):
             ext = extensions[i % len(extensions)]
-            (bin_dir / f"file_{i}{ext}").write_bytes(b"AKIAIOSFODNN7EXAMPLE")
+            (bin_dir / f"file_{i}{ext}").write_bytes(b"AKIAIOSFODNN7ABCDEFG")
 
         results = scanner.scan_directory(str(bin_dir))
         assert len(results) == 0
 
     def test_very_long_lines(self, scanner, tmp_path):
         fp = tmp_path / "long-lines.py"
-        content = "x" * 50000 + " AKIAIOSFODNN7EXAMPLE " + "y" * 50000
+        content = "x" * 50000 + " AKIAIOSFODNN7ABCDEFG " + "y" * 50000
         fp.write_text(content)
 
         start = time.perf_counter()
@@ -339,11 +339,11 @@ class TestEdgeCasesUnderLoad:
             d = scan_dir / name
             d.mkdir(parents=True, exist_ok=True)
             for i in range(20):
-                (d / f"secret_{i}.py").write_text('k = "AKIAIOSFODNN7EXAMPLE"')
+                (d / f"secret_{i}.py").write_text('k = "AKIAIOSFODNN7ABCDEFG"')
 
         src = scan_dir / "src"
         src.mkdir(parents=True, exist_ok=True)
-        (src / "config.py").write_text('k = "AKIAIOSFODNN7EXAMPLE"')
+        (src / "config.py").write_text('k = "AKIAIOSFODNN7ABCDEFG"')
 
         results = scanner.scan_directory(str(scan_dir))
 

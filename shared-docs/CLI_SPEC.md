@@ -126,6 +126,14 @@ Retrieve results from a scan.
 
 **Vulnerability levels (JSON output):** The `level` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
 
+#### Failed scans
+
+A scan whose status is `failed` exits `1` from `rafter run`, `rafter get` and `rafter get --interactive`. stderr names the API's `error_code` and `error` message, and adds a re-run hint when the payload says `retryable: true`. With `--format json` the failure payload is also written to stdout, so a consumer can read `error_code` and `retryable` itself. Both runtimes.
+
+#### Partial scans
+
+A completed scan that the API marks `partial: true` or `warning_code: "SCAN_PARTIAL"` (some scanners did not finish) still exits `0` with its payload on stdout, but stderr warns that findings may be missing, names `missing_scanners` when the API lists them, and says not to treat the result as clean. The warning prints even with `--quiet`. Both runtimes.
+
 #### Poll-loop retry contract
 
 A report is not necessarily durable the instant a scan flips to `completed`, so a poll can hit a 5xx on a scan that is readable seconds later. Both runtimes retry transient read failures instead of aborting. This applies to `rafter run`, `rafter get --interactive`, and plain `rafter get <scan_id>`:
@@ -436,7 +444,7 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
 - `--history` — scan the full git history for previously-committed secrets (requires `--engine betterleaks`; invokes `betterleaks git` against the repo history)
-- `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree.
+- `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree. Applies to both engines: the patterns engine filters its walk that way, and betterleaks is handed the list from `git ls-files --cached --others --exclude-standard` instead of the directory (plus `-c` for the target's own `.betterleaks.toml` / `.gitleaks.toml` when no `BETTERLEAKS_CONFIG*` / `GITLEAKS_CONFIG*` env var is set). A betterleaks failure or timeout falls back to patterns with the cause in the warning.
 - `--auto-update` / `--no-auto-update` — auto-update a **stale rafter-managed betterleaks binary** before scanning (default: on). A leftover binary from an older rafter (a gitleaks-8.x install from before the rename, or an older betterleaks) runs `version` fine but emits a JSON shape the current parser rejects, which would otherwise silently yield **zero findings** on the default engine. When the managed binary's version doesn't match the pinned one, rafter downloads the pinned version (prompting first in an interactive TTY). `--no-auto-update` (or `scan.auto_update_betterleaks: false`) skips the update and falls back to the **patterns** engine for that scan, printing a one-line CTA (`rafter agent update-betterleaks`) — never a silent zero. Only the rafter-managed binary at `~/.rafter/bin/betterleaks` is auto-updated; a binary on `PATH` is left untouched (a non-array parse there warns with the same CTA).
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
@@ -464,7 +472,7 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
           },
           "line": 42,
           "column": 7,
-          "redacted": "AKIA************MPLE",
+          "redacted": "AKIA************DEFG",
           "engines": ["patterns"]
         }
       ]
@@ -806,7 +814,9 @@ The audit log is written to `~/.rafter/audit.jsonl` as newline-delimited JSON (J
 | `gitRepo` | string | no | Absolute path to the enclosing git repository root, if any |
 | `prevHash` | string\|null | yes | SHA-256 of the prior line (or `null` for the first entry) — forms the tamper-evident hash chain verified by `rafter agent audit --verify` |
 
-**Log location:** Defaults to `~/.rafter/audit.jsonl`. Overridable per project via `.rafter.yml` → `agent.audit.logPath` (e.g. set to `.rafter/audit.jsonl` for a repo-local log that each contributor can verify independently).
+**Log location:** Defaults to `~/.rafter/audit.jsonl`. Overridable only in the global config, `~/.rafter/config.json` → `agent.audit.logPath`. A project `.rafter.yml` `audit.log_path` is ignored with a stderr warning: a repository choosing the file rafter appends to is a file-write primitive.
+
+**Write failures:** A failed audit write is reported once on stderr and never changes a hook decision.
 
 **`action` object (optional):**
 
@@ -1079,6 +1089,8 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 
 On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
 
+**Errors fail closed.** Input that is not a JSON object is allowed (there is nothing to evaluate). Any unexpected exception while evaluating a call, for any tool, returns `deny` with the reason `rafter hook error: <type>: <message>; denying to be safe`, also printed to stderr. Conditions the loaders handle (a malformed `.rafter.yml` warns and falls back to defaults) are not errors. A failed audit-log write never changes a decision.
+
 **Hook off-switch.** The hook can be disabled at runtime from **trusted sources only** — the `RAFTER_DISABLE_HOOKS` / `RAFTER_DISABLE_SECRET_SCAN` / `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on) and the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default is enabled; a corrupt config or unrecognized value fails safe to enabled. By design this is **never** read from project-local `.rafter.yml`, so a hostile repo cannot ship a config that silently disables a victim's hook. `rafter agent status` reports the effective state and its source. See `shared-docs/CONFIG.md` for the full configuration reference.
 
 **Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (`allow` / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
@@ -1116,6 +1128,10 @@ Start MCP server over stdio transport. Exposes 11 tools and 3 resources.
 **`scan_secrets` inputs:**
 - `path` (required) — file or directory path to scan
 - `engine` (optional) — `auto` (default), `betterleaks`, or `patterns`. As with the CLI, `auto` runs **both** engines and unions the findings (each match carries an `engines` attribution array); single-engine modes omit `engines`.
+
+**`scan_secrets` output:** the first content block is the JSON results array.
+Findings hidden by `.rafter.yml` `ignore:` rules or `.rafterignore` are dropped from it; when any were, a second content block carries `{"suppressed_count": N, "_suppressed": [...]}`, with the same per-finding fields as `rafter secrets --json` (`file`, `line`, `column`, `rule`, `severity`, `reason`, `source`) and no secret text.
+The block is absent when nothing was suppressed.
 
 **`evaluate_command` output schema:**
 ```json
@@ -1227,11 +1243,11 @@ Post scan results to Slack or Discord channels via webhooks.
 
 Generate a standalone HTML security report from scan results.
 
-- `[INPUT]` — path to JSON scan results (default: read from stdin)
+- `[INPUT]` — path to the JSON output of `rafter secrets --json` (default: read from stdin); a bare array of its `results` is also accepted
 - `-o, --output <path>` — output file path (default: stdout)
 - `--title <title>` — report title (default: "Rafter Security Report")
 
-Node only. Not yet implemented in Python.
+Remote scan results (`rafter run`/`rafter get --format json`) are rejected with exit `2`; render those with `rafter get <scan_id> --format md`. Both runtimes.
 
 ### rafter issues create SUBCOMMAND
 

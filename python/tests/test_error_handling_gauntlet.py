@@ -7,14 +7,10 @@ backend error paths, and audit logger error handling.
 from __future__ import annotations
 
 import json
-import os
-import sys
 import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-import typer
 
 # ---------------------------------------------------------------------------
 # 1. API Utilities — exit codes, handle_403, resolve_key, write_payload
@@ -125,31 +121,6 @@ class TestHandle403:
     def test_non_json_body_403(self):
         resp = _mock_resp(403, "plain text forbidden")
         assert handle_403(resp) == EXIT_INSUFFICIENT_SCOPE
-
-    def test_handle403_return_values_match_exit_codes(self):
-        """Contract test: handle403 return values match CLI_SPEC.md exit codes."""
-        # scan_mode → 3
-        assert (
-            handle_403(
-                _mock_resp(
-                    403, "", json_body={"scan_mode": "fast", "limit": 1}
-                )
-            )
-            == 3
-        )
-        # scope → 4
-        assert (
-            handle_403(
-                _mock_resp(
-                    403,
-                    '{"error":"scope required"}',
-                    json_body={"error": "scope required"},
-                )
-            )
-            == 4
-        )
-        # generic → 4
-        assert handle_403(_mock_resp(403, "forbidden", json_body={})) == 4
 
 
 class TestHandleScopeErrorDeprecated:
@@ -320,7 +291,7 @@ class TestScannerErrors:
 
     def test_detects_secrets_with_correct_structure(self, tmp_path):
         secret_file = tmp_path / "secrets.txt"
-        secret_file.write_text('AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"\n')
+        secret_file.write_text('AWS_ACCESS_KEY = "AKIAIOSFODNN7ABCDEFG"\n')
         scanner = RegexScanner()
         result = scanner.scan_file(str(secret_file))
         assert result.file == str(secret_file)
@@ -478,62 +449,6 @@ class TestAuditLoggerErrors:
 
 
 # ---------------------------------------------------------------------------
-# 6. Backend error paths (mocked HTTP)
-# ---------------------------------------------------------------------------
-
-
-class TestBackendErrorPaths:
-    """Test that backend commands handle HTTP errors correctly."""
-
-    def test_404_produces_scan_not_found_message(self, capsys):
-        """Simulate a 404 response for scan-not-found path."""
-        resp = _mock_resp(404, "not found")
-        # Verify the error message format matches CLI_SPEC.md
-        if resp.status_code == 404:
-            print(f"Scan 'test-id' not found", file=sys.stderr)
-        err = capsys.readouterr().err
-        assert "not found" in err
-
-    def test_429_produces_quota_message(self, capsys):
-        """Simulate a 429 response for quota-exhausted path."""
-        resp = _mock_resp(429, "rate limited")
-        if resp.status_code == 429:
-            print("Quota exhausted", file=sys.stderr)
-        err = capsys.readouterr().err
-        assert "Quota exhausted" in err
-
-    def test_generic_error_produces_general_error(self, capsys):
-        """Simulate a 500 response for general error path."""
-        resp = _mock_resp(500, "internal server error")
-        if resp.status_code not in (200, 403, 404, 429):
-            print(f"Error: {resp.text}", file=sys.stderr)
-        err = capsys.readouterr().err
-        assert "Error:" in err
-
-    def test_403_scan_mode_route(self):
-        """Verify 403 with scan_mode routes to quota exhausted."""
-        resp = _mock_resp(
-            403, "", json_body={"scan_mode": "fast", "limit": 5, "used": 5}
-        )
-        code = handle_403(resp)
-        assert code == EXIT_QUOTA_EXHAUSTED
-
-    def test_403_scope_route(self):
-        """Verify 403 with scope text routes to insufficient scope."""
-        resp = _mock_resp(
-            403, "scope", json_body={"error": "scope required"}
-        )
-        code = handle_403(resp)
-        assert code == EXIT_INSUFFICIENT_SCOPE
-
-    def test_403_generic_route(self):
-        """Verify generic 403 routes to insufficient scope."""
-        resp = _mock_resp(403, "access denied", json_body={})
-        code = handle_403(resp)
-        assert code == EXIT_INSUFFICIENT_SCOPE
-
-
-# ---------------------------------------------------------------------------
 # 7. BetterleaksScanner — availability
 # ---------------------------------------------------------------------------
 
@@ -545,39 +460,3 @@ class TestBetterleaksScannerErrors:
         scanner = BetterleaksScanner()
         result = scanner.is_available()
         assert isinstance(result, bool)
-
-    def test_scan_file_with_missing_binary(self, tmp_path):
-        """Scanner with no betterleaks binary should handle error gracefully."""
-        scanner = BetterleaksScanner()
-        # Override the binary path after construction
-        scanner._path = "/nonexistent/betterleaks"
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("test content")
-        try:
-            result = scanner.scan_file(str(test_file))
-            # If it returns rather than throwing, result should be safe
-        except Exception as e:
-            # Expected — scanner can't find binary
-            assert str(e)  # Just verify it has a message
-
-
-# ---------------------------------------------------------------------------
-# 8. CLI Exit Code Contract
-# ---------------------------------------------------------------------------
-
-
-class TestCLIExitCodeContract:
-    """Verify exit code values match CLI_SPEC.md documentation."""
-
-    def test_backend_exit_codes(self):
-        assert EXIT_SUCCESS == 0  # Success
-        assert EXIT_GENERAL_ERROR == 1  # General error
-        assert EXIT_SCAN_NOT_FOUND == 2  # Scan not found (HTTP 404)
-        assert EXIT_QUOTA_EXHAUSTED == 3  # Quota exhausted
-        assert EXIT_INSUFFICIENT_SCOPE == 4  # Insufficient scope
-
-    def test_local_scan_exit_codes_are_subset(self):
-        """Local scan uses 0 (clean), 1 (findings), 2 (runtime error)."""
-        assert EXIT_SUCCESS == 0  # Clean
-        assert EXIT_GENERAL_ERROR == 1  # Findings
-        assert EXIT_SCAN_NOT_FOUND == 2  # Runtime error

@@ -54,12 +54,11 @@ describe("secrets — agent mode vs human mode", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("agent mode: clean scan uses [OK] prefix, no ANSI", () => {
+  it("agent mode: clean scan uses [OK] prefix", () => {
     fs.writeFileSync(path.join(tmpDir, "safe.txt"), "nothing secret here\n");
     const r = rafter(["-a", "scan", "local", tmpDir]);
     const combined = r.stdout + r.stderr;
     expect(combined).toContain("[OK]");
-    expect(combined).toBe(stripAnsi(combined));
   });
 
   it("human mode: clean scan uses ✓ check mark", () => {
@@ -70,22 +69,21 @@ describe("secrets — agent mode vs human mode", () => {
     expect(raw).toContain("✓");
   });
 
-  it("agent mode: findings use [WARN] prefix, no ANSI", () => {
+  it("agent mode: findings use [WARN] prefix", () => {
     fs.writeFileSync(
       path.join(tmpDir, "leak.py"),
-      'AWS_SECRET_KEY = "AKIAIOSFODNN7EXAMPLE"\n',
+      'AWS_SECRET_KEY = "AKIAIOSFODNN7ABCDEFG"\n',
     );
     const r = rafter(["-a", "scan", "local", tmpDir]);
     const combined = r.stdout + r.stderr;
     expect(combined).toContain("[WARN]");
-    expect(combined).toBe(stripAnsi(combined));
     expect(r.exitCode).toBe(1);
   });
 
   it("agent mode: severity levels use bracket notation", () => {
     fs.writeFileSync(
       path.join(tmpDir, "leak.py"),
-      'AWS_SECRET_KEY = "AKIAIOSFODNN7EXAMPLE"\n',
+      'AWS_SECRET_KEY = "AKIAIOSFODNN7ABCDEFG"\n',
     );
     const r = rafter(["-a", "scan", "local", tmpDir]);
     const combined = r.stdout + r.stderr;
@@ -96,23 +94,13 @@ describe("secrets — agent mode vs human mode", () => {
   it("human mode: findings use ⚠ warning indicator", () => {
     fs.writeFileSync(
       path.join(tmpDir, "leak.py"),
-      'AWS_SECRET_KEY = "AKIAIOSFODNN7EXAMPLE"\n',
+      'AWS_SECRET_KEY = "AKIAIOSFODNN7ABCDEFG"\n',
     );
     const r = rafter(["scan", "local", tmpDir]);
     const combined = r.stdout + r.stderr;
     const raw = stripAnsi(combined);
     expect(raw).toContain("⚠");
     expect(r.exitCode).toBe(1);
-  });
-
-  it("agent mode: no emoji in findings output", () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "leak.py"),
-      'AWS_SECRET_KEY = "AKIAIOSFODNN7EXAMPLE"\n',
-    );
-    const r = rafter(["-a", "scan", "local", tmpDir]);
-    const combined = r.stdout + r.stderr;
-    expect(combined).not.toMatch(emojiRe);
   });
 });
 
@@ -140,18 +128,6 @@ describe("agent verify — agent mode vs human mode", () => {
       combined.includes("[WARN]") ||
       combined.includes("[ERROR]");
     expect(hasAgentIndicator).toBe(true);
-  });
-
-  it("agent mode: output is ANSI-free", () => {
-    const r = rafter(["-a", "agent", "verify"]);
-    const combined = r.stdout + r.stderr;
-    expect(combined).toBe(stripAnsi(combined));
-  });
-
-  it("agent mode: no emoji in verify output", () => {
-    const r = rafter(["-a", "agent", "verify"]);
-    const combined = r.stdout + r.stderr;
-    expect(combined).not.toMatch(emojiRe);
   });
 
   it("human mode: uses box-drawing header", () => {
@@ -182,12 +158,11 @@ describe("agent verify — agent mode vs human mode", () => {
 // ── agent exec: agent vs human mode ──────��───────────────────────────
 
 describe("agent exec — agent mode formatting", () => {
-  it("agent mode: blocked command uses [ERROR], no ANSI", () => {
+  it("agent mode: blocked command uses [ERROR]", () => {
     // Use a command that should be blocked (critical risk)
     const r = rafter(["-a", "agent", "exec", "rm -rf /"]);
     const combined = r.stdout + r.stderr;
     expect(combined).toContain("[ERROR]");
-    expect(combined).toBe(stripAnsi(combined));
     expect(r.exitCode).toBe(1);
   });
 
@@ -197,12 +172,6 @@ describe("agent exec — agent mode formatting", () => {
     const raw = stripAnsi(combined);
     expect(raw).toContain("✗");
     expect(r.exitCode).toBe(1);
-  });
-
-  it("agent mode: blocked output has no emoji", () => {
-    const r = rafter(["-a", "agent", "exec", "rm -rf /"]);
-    const combined = r.stdout + r.stderr;
-    expect(combined).not.toMatch(emojiRe);
   });
 });
 
@@ -261,22 +230,6 @@ describe("agent audit — event indicators", () => {
     expect(hasBracketIndicators).toBe(true);
   });
 
-  it("agent mode: no emoji in audit output", () => {
-    const r = rafter(["-a", "agent", "audit", "--last", "10"], {
-      env: { RAFTER_AUDIT_LOG: auditPath },
-    });
-    const combined = r.stdout + r.stderr;
-    expect(combined).not.toMatch(emojiRe);
-  });
-
-  it("agent mode: output is ANSI-free", () => {
-    const r = rafter(["-a", "agent", "audit", "--last", "10"], {
-      env: { RAFTER_AUDIT_LOG: auditPath },
-    });
-    const combined = r.stdout + r.stderr;
-    expect(combined).toBe(stripAnsi(combined));
-  });
-
   it("human mode: uses emoji indicators (🛡️, 🔑, 🔍)", () => {
     const r = rafter(["agent", "audit", "--last", "10"], {
       env: { RAFTER_AUDIT_LOG: auditPath },
@@ -309,13 +262,12 @@ describe("ci init — agent mode vs human mode", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("agent mode: success message uses [OK], no ANSI", () => {
+  it("agent mode: success message uses [OK]", () => {
     const r = rafter(["-a", "ci", "init", "--platform", "github"], {
       cwd: tmpDir,
     });
     const combined = r.stdout + r.stderr;
     expect(combined).toContain("[OK]");
-    expect(combined).toBe(stripAnsi(combined));
   });
 
   it("human mode: success message uses ✓", () => {
@@ -325,13 +277,12 @@ describe("ci init — agent mode vs human mode", () => {
     expect(raw).toContain("✓");
   });
 
-  it("agent mode: unknown platform error uses [ERROR], no ANSI", () => {
+  it("agent mode: unknown platform error uses [ERROR]", () => {
     const r = rafter(["-a", "ci", "init", "--platform", "nonexistent"], {
       cwd: tmpDir,
     });
     const combined = r.stdout + r.stderr;
     expect(combined).toContain("[ERROR]");
-    expect(combined).toBe(stripAnsi(combined));
   });
 });
 
@@ -342,13 +293,77 @@ describe("--agent flag positioning", () => {
     const r = rafter(["-a", "agent", "verify"]);
     const combined = r.stdout + r.stderr;
     expect(combined).toContain("===");
-    expect(combined).toBe(stripAnsi(combined));
   });
 
   it("--agent long form before subcommand works", () => {
     const r = rafter(["--agent", "agent", "verify"]);
     const combined = r.stdout + r.stderr;
     expect(combined).toContain("===");
-    expect(combined).toBe(stripAnsi(combined));
+  });
+});
+
+// ── consolidated ANSI/emoji-free check across commands ────────────────
+
+describe("agent mode output is ANSI- and emoji-free across commands", () => {
+  it("has no ANSI codes and no emoji for scan local, agent verify, agent exec, agent audit, and ci init", () => {
+    const scanDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-fmt-ansi-scan-"));
+    const auditDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-fmt-ansi-audit-"));
+    const ciDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-fmt-ansi-ci-"));
+
+    try {
+      fs.writeFileSync(
+        path.join(scanDir, "leak.py"),
+        'AWS_SECRET_KEY = "AKIAIOSFODNN7ABCDEFG"\n',
+      );
+
+      const auditPath = path.join(auditDir, "audit.jsonl");
+      fs.writeFileSync(
+        auditPath,
+        [
+          {
+            timestamp: new Date().toISOString(),
+            eventType: "command_intercepted",
+            agentType: "claude-code",
+            resolution: { actionTaken: "blocked" },
+            context: { command: "rm -rf /", riskLevel: "critical" },
+          },
+        ]
+          .map((e) => JSON.stringify(e))
+          .join("\n") + "\n",
+      );
+
+      fs.mkdirSync(path.join(ciDir, ".github"), { recursive: true });
+
+      const cases: Array<{
+        label: string;
+        args: string[];
+        opts?: { cwd?: string; env?: Record<string, string> };
+      }> = [
+        { label: "scan local", args: ["-a", "scan", "local", scanDir] },
+        { label: "agent verify", args: ["-a", "agent", "verify"] },
+        { label: "agent exec", args: ["-a", "agent", "exec", "rm -rf /"] },
+        {
+          label: "agent audit",
+          args: ["-a", "agent", "audit", "--last", "10"],
+          opts: { env: { RAFTER_AUDIT_LOG: auditPath } },
+        },
+        {
+          label: "ci init",
+          args: ["-a", "ci", "init", "--platform", "github"],
+          opts: { cwd: ciDir },
+        },
+      ];
+
+      for (const { label, args, opts } of cases) {
+        const r = rafter(args, opts);
+        const combined = r.stdout + r.stderr;
+        expect(combined, `${label}: expected ANSI-free output`).toBe(stripAnsi(combined));
+        expect(combined, `${label}: expected no emoji in output`).not.toMatch(emojiRe);
+      }
+    } finally {
+      fs.rmSync(scanDir, { recursive: true, force: true });
+      fs.rmSync(auditDir, { recursive: true, force: true });
+      fs.rmSync(ciDir, { recursive: true, force: true });
+    }
   });
 });

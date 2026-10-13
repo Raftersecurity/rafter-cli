@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import fs from "fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -15,6 +16,8 @@ import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager, redactConfigSecrets, isSecretConfigKey, maskSecretValue } from "../../core/config-manager.js";
 import { listDocs, resolveDocSelector, fetchDoc } from "../../core/docs-loader.js";
 import { writeSuppression } from "../../core/suppression-writer.js";
+import { applySuppressions } from "../../core/custom-patterns.js";
+import { collectSuppressions } from "../agent/scan.js";
 import { apiUrl, apiClient} from "../../utils/api.js";
 import { describeSitesError, resolveMcpApiKey } from "../sites/errors.js";
 import { createRequire } from "module";
@@ -67,7 +70,7 @@ export function createServer(): Server {
     tools: [
       {
         name: "scan_secrets",
-        description: "Scan files or directories for leaked secrets, API keys, tokens, passwords, and credentials. Use before pushing code, when handling config files, or when asked 'is this safe to commit?' or 'check for leaked keys'.",
+        description: "Scan files or directories for leaked secrets, API keys, tokens, passwords, and credentials. Use before pushing code, when handling config files, or when asked 'is this safe to commit?' or 'check for leaked keys'. Findings hidden by the project's .rafter.yml ignore rules or .rafterignore are dropped from the results; when any were, a second content block lists them as {suppressed_count, _suppressed: [{file, line, column, rule, severity, reason, source}]} (no secret text), so a blanket ignore rule cannot silently empty a scan.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -144,7 +147,7 @@ export function createServer(): Server {
       },
       {
         name: "suppress_finding",
-        description: "Triage a false positive by persisting a suppression rule into the project's .rafter.yml. Use when a scan_secrets finding (or a remote scan finding) is a confirmed false positive — e.g. a test fixture or sample credential. Suppressed findings still surface under '_suppressed' in scan output, so the decision is reviewable and version-controlled. Always include a reason.",
+        description: "Triage a false positive by persisting a suppression rule into the project's .rafter.yml. Use when a scan_secrets finding (or a remote scan finding) is a confirmed false positive — e.g. a test fixture or sample credential. scan_secrets stops reporting suppressed findings; `rafter secrets --json` lists them under '_suppressed', so the decision is reviewable and version-controlled. Always include a reason.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -222,18 +225,38 @@ export function createServer(): Server {
 
         const runPatterns = (): ScanResult[] => {
           const scanner = new RegexScanner();
-          try {
-            return scanner.scanDirectory(scanPath);
-          } catch {
-            return [scanner.scanFile(scanPath)];
+          // scanDirectory() on a file returns [] rather than throwing, so pick by type.
+          return fs.statSync(scanPath).isFile()
+            ? [scanner.scanFile(scanPath)]
+            : scanner.scanDirectory(scanPath);
+        };
+
+        // Honor the project's suppressions, as `rafter secrets` does, so a
+        // finding triaged with suppress_finding is not reported again.
+        const report = (results: ScanResult[]) => {
+          const suppressions = collectSuppressions(new ConfigManager().loadWithPolicy().agent?.scan?.ignore);
+          const applied = applySuppressions(results, suppressions);
+          // Drop only what was suppressed; a clean file keeps its empty entry.
+          const kept = new Map(applied.results.map((r) => [r.file, r]));
+          const out = textResult(formatScanResults(
+            results.filter((r) => r.matches.length === 0 || kept.has(r.file)).map((r) => kept.get(r.file) ?? r),
+          ));
+          // Say what was dropped (metadata only, no secret text), as
+          // `rafter secrets --json` does under `_suppressed`.
+          if (applied.suppressed.length > 0) {
+            out.content.push(textResult({
+              suppressed_count: applied.suppressed.length,
+              _suppressed: applied.suppressed,
+            }).content[0]);
           }
+          return out;
         };
 
         if (engine === "betterleaks") {
           const bl = new BetterleaksScanner();
           if (!(await bl.isAvailable())) return errorResult("Betterleaks not installed");
           try {
-            return textResult(formatScanResults(await bl.scanDirectory(scanPath)));
+            return report(await bl.scanDirectory(scanPath));
           } catch {
             return errorResult("Betterleaks scan failed");
           }
@@ -247,16 +270,16 @@ export function createServer(): Server {
           if (await bl.isAvailable()) {
             try {
               const blResults = await bl.scanDirectory(scanPath);
-              return textResult(formatScanResults(unionScanResults(blResults, runPatterns())));
+              return report(unionScanResults(blResults, runPatterns()));
             } catch {
               // betterleaks failed — fall through to patterns-only.
             }
           }
-          return textResult(formatScanResults(runPatterns()));
+          return report(runPatterns());
         }
 
         // patterns (and any unrecognized value — the tool schema enums this).
-        return textResult(formatScanResults(runPatterns()));
+        return report(runPatterns());
       }
 
       case "evaluate_command": {

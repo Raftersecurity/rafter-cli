@@ -88,6 +88,7 @@ const AGENT_SKILLS: { name: string; description: string }[] = [
   { name: "rafter", description: "Rafter Remote" },
   { name: "rafter-secure-design", description: "Rafter Secure Design" },
   { name: "rafter-code-review", description: "Rafter Code Review" },
+  { name: "rafter-skill-review", description: "Rafter Skill Review" },
 ];
 
 /**
@@ -111,7 +112,11 @@ function printDryRunPlan(plan: {
   wantHermes: boolean;
   wantOpenCode: boolean;
   wantBetterleaks: boolean;
+  /** Path of a betterleaks binary the real run would reuse instead of downloading. */
+  betterleaksExisting: string | null;
+  betterleaksSupported: boolean;
   wantSkillScanner: boolean;
+  claudeCodeMcpDisabled: boolean;
   riskLevel: string;
 }): void {
   const home = os.homedir();
@@ -129,6 +134,9 @@ function printDryRunPlan(plan: {
   const R = (p: string, note?: string) => {
     console.log(`  REMOVE    ${p}${note ? `   (${note})` : ""}`);
   };
+  const S = (p: string, note: string) => {
+    console.log(`  SKIP      ${p}   (${note})`);
+  };
 
   console.log();
   console.log(fmt.info("DRY RUN — no files will be created or modified."));
@@ -143,7 +151,13 @@ function printDryRunPlan(plan: {
   if (plan.wantBetterleaks) {
     console.log();
     console.log("Betterleaks (--with-betterleaks / --all):");
-    D(path.join(home, ".rafter", "bin", "betterleaks"), "binary, ~12MB from GitHub releases");
+    if (plan.betterleaksExisting) {
+      S(plan.betterleaksExisting, "betterleaks already present; no download");
+    } else if (!plan.betterleaksSupported) {
+      S(path.join(home, ".rafter", "bin", "betterleaks"), "no betterleaks build for this platform; pattern-based scanning");
+    } else {
+      D(path.join(home, ".rafter", "bin", "betterleaks"), "binary, ~12MB from GitHub releases");
+    }
   }
 
   if (plan.wantSkillScanner) {
@@ -156,12 +170,19 @@ function printDryRunPlan(plan: {
     console.log();
     console.log("Claude Code (--with-claude-code):");
     W(path.join(plan.root, ".claude", "settings.json"), "PreToolUse + PostToolUse hooks merged");
-    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
-      W(path.join(plan.root, ".claude", "skills", s, "SKILL.md"));
+    for (const s of AGENT_SKILLS) {
+      W(path.join(plan.root, ".claude", "skills", s.name, "SKILL.md"));
     }
     W(path.join(plan.root, ".claude", "agents", "rafter.md"), "sub-agent");
     W(path.join(plan.root, ".claude", "CLAUDE.md"), "rafter:start/end marker block");
-    W(path.join(plan.root, ".mcp.json"), "project-scope MCP config");
+    // .mcp.json is a project-scope file; the user-scope install never writes it.
+    if (plan.scope === "project") {
+      if (plan.claudeCodeMcpDisabled) {
+        S(path.join(plan.root, ".mcp.json"), "claude-code.mcp disabled");
+      } else {
+        W(path.join(plan.root, ".mcp.json"), "project-scope MCP config");
+      }
+    }
   }
 
   if (plan.wantCodex) {
@@ -1218,7 +1239,7 @@ export function createInitCommand(): Command {
     .option("--with-hermes", "Install Hermes integration")
     .option("--with-opencode", "Install OpenCode integration")
     .option("--with-betterleaks", "Download and install Betterleaks binary")
-    .option("--with-skill-scanner", "Install the optional skill-scanner deep engine (heavy; audit-skill --deep)")
+    .option("--with-skill-scanner", "Install the optional skill-scanner deep engine (heavy; skill review --deep)")
     .option("--all", "Install all detected integrations and download Betterleaks")
     .option("-i, --interactive", "Guided setup — prompts for each detected integration")
     .option("--update", "Re-download betterleaks and reinstall integrations without resetting config")
@@ -1336,17 +1357,22 @@ export function createInitCommand(): Command {
 
       // Warn about requested but undetected environments (user scope only —
       // in --local scope we create the directories in CWD as needed).
+      // Gated on the EXPLICIT --with-<platform> flag, not the resolved
+      // want* (which --all also sets): --all means "install all DETECTED
+      // integrations" per its own --help text, so an undetected platform
+      // under --all is normal and shouldn't warn individually — 9 such
+      // warnings buried the ones that actually matter (rafter-cli#231).
       if (scope === "user") {
-        if (wantOpenClaw && !hasOpenClaw) console.log(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"));
-        if (wantClaudeCode && !hasClaudeCode) console.log(fmt.warning("Claude Code requested but not detected (~/.claude not found)"));
-        if (wantCodex && !hasCodex) console.log(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"));
-        if (wantGemini && !hasGemini) console.log(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"));
-        if (wantCursor && !hasCursor) console.log(fmt.warning("Cursor requested but not detected (~/.cursor not found)"));
-        if (wantWindsurf && !hasWindsurf) console.log(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
-        if (wantContinue && !hasContinueDev) console.log(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
-        if (wantAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
-        if (wantHermes && !hasHermes) console.log(fmt.warning("Hermes requested but not detected (~/.hermes not found)"));
-        if (wantOpenCode && !hasOpenCode) console.log(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"));
+        if (opts.withOpenclaw && !hasOpenClaw) console.log(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"));
+        if (opts.withClaudeCode && !hasClaudeCode) console.log(fmt.warning("Claude Code requested but not detected (~/.claude not found)"));
+        if (opts.withCodex && !hasCodex) console.log(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"));
+        if (opts.withGemini && !hasGemini) console.log(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"));
+        if (opts.withCursor && !hasCursor) console.log(fmt.warning("Cursor requested but not detected (~/.cursor not found)"));
+        if (opts.withWindsurf && !hasWindsurf) console.log(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
+        if (opts.withContinue && !hasContinueDev) console.log(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
+        if (opts.withAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
+        if (opts.withHermes && !hasHermes) console.log(fmt.warning("Hermes requested but not detected (~/.hermes not found)"));
+        if (opts.withOpencode && !hasOpenCode) console.log(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"));
       }
 
       // --dry-run: print every file path the command would touch, then
@@ -1354,11 +1380,18 @@ export function createInitCommand(): Command {
       // built from the SAME resolved want* / has* booleans the install
       // path uses, so the listing mirrors what would actually run.
       if (opts.dryRun) {
+        const bm = new BinaryManager();
+        const betterleaksExisting = !wantBetterleaks || opts.update
+          ? null
+          : bm.isBetterleaksInstalled()
+            ? bm.getBetterleaksPath()
+            : bm.findBetterleaksOnPath();
+        const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
         printDryRunPlan({
           root,
           scope,
           wantOpenClaw: wantOpenClaw && (hasOpenClaw),
-          wantClaudeCode: wantClaudeCode && (hasClaudeCode || opts.local),
+          wantClaudeCode: wantClaudeCode && (hasClaudeCode || opts.withClaudeCode || opts.local),
           wantCodex: wantCodex && (hasCodex || opts.local),
           wantGemini: wantGemini && (hasGemini || opts.local),
           wantCursor: wantCursor && (hasCursor || opts.local),
@@ -1368,7 +1401,10 @@ export function createInitCommand(): Command {
           wantHermes: wantHermes && hasHermes,
           wantOpenCode: wantOpenCode && hasOpenCode,
           wantBetterleaks,
+          betterleaksExisting,
+          betterleaksSupported: bm.getPlatformInfo().supported,
           wantSkillScanner,
+          claudeCodeMcpDisabled: components["claude-code.mcp"]?.enabled === false,
           riskLevel: opts.riskLevel,
         });
         return;

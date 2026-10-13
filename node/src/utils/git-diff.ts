@@ -12,6 +12,18 @@ export interface AddedDiffLine {
   text: string;
 }
 
+/**
+ * `maxBuffer` for reading a `git diff` with execSync/execFileSync. Node's
+ * default (1 MiB) throws ENOBUFS on ordinary large diffs (lockfiles, generated
+ * or vendored files), which crashed the scan or made it skip silently (#274).
+ * 256 MiB is far above any real diff. RAFTER_GIT_DIFF_MAX_BUFFER (bytes)
+ * overrides it for constrained hosts or to exercise the error path in tests.
+ */
+export function gitDiffMaxBuffer(): number {
+  const raw = Number(process.env.RAFTER_GIT_DIFF_MAX_BUFFER);
+  return Number.isInteger(raw) && raw > 0 ? raw : 256 * 1024 * 1024;
+}
+
 const HUNK_HEADER_RE = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 const NO_NEWLINE_RE = /^\\ No newline at end of file$/;
 
