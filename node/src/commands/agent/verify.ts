@@ -39,14 +39,21 @@ export function runConfiguredHook(
   // is exercised the same way the editor would exercise it. Retry a transient
   // spawn failure (e.g. EAGAIN under process pressure) so a resource hiccup does
   // not get reported as an inert gate — a false alarm is worse than a slow check.
-  let result = spawnSync("sh", ["-c", command], { input: payload, encoding: "utf-8", timeout: 10_000 });
+  // A hook may exit without reading its payload; the stdin write then fails with
+  // EPIPE while status and stdout are intact. That is a hook that ran, not a
+  // spawn failure, so it must not be retried or reported as inert.
+  const run = () => {
+    const r = spawnSync("sh", ["-c", command], { input: payload, encoding: "utf-8", timeout: 10_000 });
+    return (r.error as NodeJS.ErrnoException | undefined)?.code === "EPIPE" ? { ...r, error: undefined } : r;
+  };
+  let result = run();
   // Retry a spawn-level error OR a signal kill: under the same process pressure
   // that produces EAGAIN, the OOM killer sends SIGKILL, which sets `signal` (not
   // `error`) with a null status — the identical false-alarm scenario by another
   // route (measured by achebe). A persistent failure still returns decision:null,
   // so a genuinely inert hook is still reported inert — no fail-open.
   for (let attempt = 0; attempt < 2 && (result.error || result.signal); attempt++) {
-    result = spawnSync("sh", ["-c", command], { input: payload, encoding: "utf-8", timeout: 10_000 });
+    result = run();
   }
   if (result.error) {
     return { status: null, decision: null, error: result.error.message, stdout: "" };
