@@ -106,7 +106,13 @@ class TestScanSecrets:
         assert creds[0]["pattern"] == "AWS Access Key ID"
         assert creds[0]["engines"] == ["patterns"]
 
-    def test_auto_degrades_to_patterns_when_betterleaks_errors(self):
+    # The scanner wraps a timeout or invocation failure in RuntimeError (#262);
+    # auto mode must still fall back to patterns, as Node does.
+    @pytest.mark.parametrize("error", [
+        OSError("boom"),
+        RuntimeError("Betterleaks scan failed (timed out after 120s)"),
+    ])
+    def test_auto_degrades_to_patterns_when_betterleaks_errors(self, error):
         from rafter_cli.core.pattern_engine import Pattern, PatternMatch
         from rafter_cli.scanners.regex_scanner import ScanResult
 
@@ -118,7 +124,7 @@ class TestScanSecrets:
         with patch("rafter_cli.commands.mcp_server.BetterleaksScanner") as mock_bl, \
              patch("rafter_cli.commands.mcp_server.RegexScanner") as mock_rx:
             mock_bl.return_value.is_available.return_value = True
-            mock_bl.return_value.scan_directory.side_effect = OSError("boom")
+            mock_bl.return_value.scan_directory.side_effect = error
             mock_rx.return_value.scan_directory.return_value = pat_results
 
             results = handle_scan_secrets("/tmp", engine="auto")
@@ -127,6 +133,35 @@ class TestScanSecrets:
         assert results[0]["matches"][0]["pattern"] == "AWS Access Key ID"
         # Single-engine fallback → no engine attribution.
         assert "engines" not in results[0]["matches"][0]
+
+
+class TestScanSecretsSuppressed:
+    def test_reports_what_suppressions_dropped(self, tmp_path, monkeypatch):
+        """A cloned repo's `ignore: paths ["**"]` must not silently empty results."""
+        import asyncio
+
+        (tmp_path / "creds.env").write_text("AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n")
+        (tmp_path / ".rafter.yml").write_text(
+            'ignore:\n  - paths: ["**"]\n    reason: fixture\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        assert handle_scan_secrets(str(tmp_path), engine="patterns") == []
+
+        result = asyncio.run(create_mcp_server().call_tool(
+            "scan_secrets", {"path": str(tmp_path), "engine": "patterns"},
+        ))
+        content = result[0] if isinstance(result, tuple) else result
+        assert len(content) == 2
+        assert json.loads(content[0].text) == []
+        assert "AKIAIOSFODNN7ABCDEFG1" not in content[1].text
+        meta = json.loads(content[1].text)
+        assert meta["suppressed_count"] == 1
+        item = meta["_suppressed"][0]
+        assert item["file"] == str(tmp_path / "creds.env")
+        assert item["source"] == ".rafter.yml"
+        assert item["reason"] == "fixture"
+        assert isinstance(item["rule"], str)
 
 
 class TestEvaluateCommand:

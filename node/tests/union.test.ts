@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { unionScanResults } from "../src/scanners/union.js";
 import { ScanResult } from "../src/scanners/regex-scanner.js";
+import { applySuppressions } from "../src/core/custom-patterns.js";
 
 // sable-j85 — auto mode unions betterleaks + patterns findings. These cover the
 // dedup key (file, line, matched-text), the engine attribution, and ordering.
@@ -74,6 +75,24 @@ describe("unionScanResults (sable-j85)", () => {
 
     expect(out).toHaveLength(1);
     expect(out[0].matches.map((m) => m.pattern.name)).toEqual(["bl-only", "pat-only"]);
+  });
+
+  // A merged finding keeps only the betterleaks rule name for display, so a
+  // suppression scoped to that rule must not also hide what patterns found.
+  it("suppresses a merged finding only when every engine's rule is suppressed", () => {
+    const merged = unionScanResults(
+      [{ file: "a.env", matches: [match("aws-access-token", "AKIA1", 1, 9)] }],
+      [{ file: "a.env", matches: [match("AWS Access Key ID", "AKIA1", 1, 9)] }],
+    );
+    const rule = (patternName: string) => ({ pathGlob: "**", patternName, source: ".rafter.yml" as const });
+
+    const one = applySuppressions(merged, [rule("aws-access-token")]);
+    expect(one.suppressed).toEqual([]);
+    expect(one.results[0].matches).toHaveLength(1);
+
+    const both = applySuppressions(merged, [rule("aws-access-token"), rule("AWS Access Key ID")]);
+    expect(both.results).toEqual([]);
+    expect(both.suppressed).toHaveLength(1);
   });
 
   it("returns empty when neither engine finds anything", () => {

@@ -218,7 +218,9 @@ export function applySuppressions<R extends { file: string; matches: PatternMatc
   for (const r of results) {
     const kept: PatternMatch[] = [];
     for (const m of r.matches) {
-      const hit = findSuppression(r.file, m.pattern.name, suppressions);
+      // A merged finding is suppressed only when every engine's rule is.
+      const hits = (m.ruleNames ?? [m.pattern.name]).map((n) => findSuppression(r.file, n, suppressions));
+      const hit = hits.every(Boolean) ? hits[0] : null;
       if (hit) {
         suppressed.push({
           file: r.file,

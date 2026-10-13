@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An `ignore` entry whose `rules` is not a list is now skipped with a warning.** A value such as `rules: "AWS Access Key"` (a string, not a list) was dropped silently, which turned a rule meant for one pattern into one that suppressed every pattern in the listed paths.
 
-- **`evaluate_command` and the command hook now rate reverse shells as critical.** Standard reverse-shell forms (`bash -i >& /dev/tcp/…`, `nc -e`/`-ve`, `mkfifo` + `nc`, Python, Perl, Node and PowerShell socket shells) were rated low and allowed. They are now critical in both runtimes, including the order-independent Node form. A script that opens a socket and runs a subprocess without wiring the socket to it rates medium.
+- **`evaluate_command` and the command hook now rate reverse shells as critical.** Standard reverse-shell forms (`bash -i >& /dev/tcp/…`, `nc -e`/`-ve`, `mkfifo` + `nc`, Python, Perl, Node and PowerShell socket shells) were rated low and allowed. They are now critical in both runtimes, including the order-independent Node form. A script that opens a socket and runs a subprocess without wiring the socket to it rates medium. A read-only `/dev/tcp` redirect, such as the wait-for-port idiom `timeout 1 bash -c '</dev/tcp/host/5432'`, is not a reverse shell and is not rated critical; writing to the socket, duplicating a descriptor onto it (`exec 3<>/dev/tcp/…`), feeding it to a shell, or pairing it with an interactive shell still is.
 
 - **`rafter agent init --with-codex` now installs the Codex hooks in the Python CLI** (#231). The Python installer never wrote `.codex/hooks.json`, so a Python install had no Codex command gate while `--dry-run` reported one. It now installs the same hooks as the Node CLI.
 
@@ -29,9 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The approval hint now quotes the command it tells you to run** (#231). The suggested `rafter agent exec` line was printed unquoted, so pasting it could run a `$(…)` substitution inside the blocked command.
 
-- **The MCP `scan_secrets` tool now applies the project's suppressions.** `suppress_finding` wrote an ignore rule to `.rafter.yml`, but `scan_secrets` never applied it, so the next scan reported the same finding again. It now applies `.rafter.yml` ignore rules and `.rafterignore` as `rafter secrets` does.
+- **The MCP `scan_secrets` tool now applies the project's suppressions.** `suppress_finding` wrote an ignore rule to `.rafter.yml`, but `scan_secrets` never applied it, so the next scan reported the same finding again. It now applies `.rafter.yml` ignore rules and `.rafterignore` as `rafter secrets` does. When any finding is hidden, the result carries a second content block, `{"suppressed_count": N, "_suppressed": [...]}`, with the same per-finding metadata as `rafter secrets --json` and no secret text, so an `ignore` rule in a cloned repository cannot silently empty the scan.
 
 ### Fixed
+
+- **The MCP `scan_secrets` tool scans a single file.** Given a file path rather than a directory, the Node server returned no findings.
 
 - **`rafter secrets --staged` no longer reports a scan that could not run as a finding** (#274). It used to crash with exit 1 on a staged diff over 1 MiB, the same code as a detected secret. Large diffs are now scanned, and a scan that cannot run exits 2 with an error message.
 
@@ -47,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Node CLI reads a config written by the Python CLI.** Both share `~/.rafter/config.json`, but Node did not read the Python CLI's snake_case keys, so a key or risk level set with `pip install rafter-cli` was ignored by the npm CLI.
 
-- **`rafter secrets` reports each secret once when both engines find it.** The merge of betterleaks and pattern results almost never matched, because the engines extract different text and betterleaks reported columns off by one. On 21 large repositories, duplicate reports fell from 1,466 to 76. Existing baselines still apply.
+- **`rafter secrets` reports each secret once when both engines find it.** The merge of betterleaks and pattern results almost never matched, because the engines extract different text and betterleaks reported columns off by one. On 21 large repositories, duplicate reports fell from 1,466 to 76. Existing baselines still apply. A merged finding is suppressed only when an `ignore` rule covers every engine's rule name for it, so a rule naming only the betterleaks rule no longer hides what the patterns engine found at the same spot.
 
 - **Redacted secrets are capped at 16 masked characters.** A PEM block or a long JWT could print a line of more than a thousand asterisks.
 

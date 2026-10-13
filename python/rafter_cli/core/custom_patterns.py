@@ -195,7 +195,9 @@ def apply_suppressions(results, suppressions: list[Suppression]):
     for r in results:
         kept = []
         for m in r.matches:
-            hit = find_suppression(r.file, m.pattern.name, suppressions)
+            # A merged finding is suppressed only when every engine's rule is.
+            hits = [find_suppression(r.file, n, suppressions) for n in (m.rule_names or [m.pattern.name])]
+            hit = hits[0] if all(h is not None for h in hits) else None
             if hit is not None:
                 suppressed.append(SuppressedFinding(
                     file=r.file,

@@ -573,6 +573,12 @@ class TestHandleScanStatusInteractive:
         assert "opengrep_rafter" in err
         assert json.loads(out)["partial"] is True
 
+    def test_partial_warning_tolerates_non_string_scanner_names(self, capsys):
+        from rafter_cli.commands.backend import _warn_if_partial
+
+        _warn_if_partial({"partial": True, "missing_scanners": ["opengrep_rafter", 7, None]})
+        assert "opengrep_rafter, 7, None" in capsys.readouterr().err
+
     @patch("rafter_cli.commands.backend.time.sleep")
     @patch("rafter_cli.commands.backend.api_get")
     def test_multiple_polls_before_completion(self, mock_get, mock_sleep):

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import os from "os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -297,7 +298,7 @@ describe("MCP Server — tool execution end-to-end", () => {
     ]);
     (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
 
-    const result = await client.callTool({ name: "scan_secrets", arguments: { path: "/tmp/dir" } });
+    const result = await client.callTool({ name: "scan_secrets", arguments: { path: os.tmpdir() } });
 
     expect(result.isError).toBeFalsy();
     const content = result.content as Array<{ type: string; text: string }>;
