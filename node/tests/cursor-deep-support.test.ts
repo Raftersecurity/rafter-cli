@@ -103,7 +103,7 @@ describe("Cursor deep support — rf-cia (rf-svn3)", () => {
       );
       for (const ev of ["preToolUse", "postToolUse", "beforeShellExecution"]) {
         const rafterHooks = config.hooks[ev].filter((e: any) =>
-          e.command?.includes("rafter"),
+          /\bhook (pretool|posttool)\b/.test(e.command ?? ""),
         );
         expect(rafterHooks, `event ${ev}`).toHaveLength(1);
       }
