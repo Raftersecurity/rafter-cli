@@ -98,6 +98,15 @@ describe("rafter report", () => {
     expect(r.stdout).toContain("3"); // total findings
   });
 
+  it("renders the output of `rafter secrets --json` piped into it", () => {
+    fs.writeFileSync(path.join(tmpDir, "creds.env"), "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n");
+    const scan = rafter(["secrets", "--json", "--engine", "patterns", tmpDir]);
+    const r = rafter(["report"], { input: scan.stdout });
+    expect(r.stderr).toBe("");
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("AWS Access Key ID");
+  });
+
   it("generates HTML from a JSON file argument", () => {
     const inputFile = path.join(tmpDir, "scan.json");
     fs.writeFileSync(inputFile, sampleResults, "utf-8");
