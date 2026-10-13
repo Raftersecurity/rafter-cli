@@ -189,6 +189,22 @@ describe("audit-skill default (no --deep)", () => {
 
 // ── Installer argv ──────────────────────────────────────────────────────
 
+describe("skill-scanner help text — points at 'skill review --deep', not deprecated audit-skill", () => {
+  // issue #231 item 4b: `agent audit-skill` is deprecated in favour of
+  // `rafter skill review`; the install flags' help text still pointed at it.
+  it("`agent init --help` describes --with-skill-scanner via skill review --deep", () => {
+    const r = runCli(["agent", "init", "--help"]);
+    expect(r.stdout).toContain("skill review --deep");
+    expect(r.stdout).not.toContain("audit-skill --deep");
+  });
+
+  it("`agent update-skill-scanner --help` describes itself via skill review --deep", () => {
+    const r = runCli(["agent", "update-skill-scanner", "--help"]);
+    expect(r.stdout).toContain("skill review --deep");
+    expect(r.stdout).not.toContain("audit-skill --deep");
+  });
+});
+
 describe("SkillScannerInstaller.buildInstall", () => {
   it("uses uv tool install with a pinned version when uv is present", () => {
     const { cmd, argv } = SkillScannerInstaller.buildInstall(SKILL_SCANNER_VERSION, "/usr/bin/uv");

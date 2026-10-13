@@ -228,12 +228,12 @@ export function createScanCommand(): Command {
 
       if (stats.isDirectory()) {
         if (!opts.quiet) {
-          console.error(`Scanning directory: ${resolvedPath} (${engine})`);
+          console.error(`Scanning directory: ${resolvedPath} (${engineLabel(engine)})`);
         }
         results = await scanDirectory(resolvedPath, engine, scanCfg, opts.history, opts.gitignore);
       } else {
         if (!opts.quiet) {
-          console.error(`Scanning file: ${resolvedPath} (${engine})`);
+          console.error(`Scanning file: ${resolvedPath} (${engineLabel(engine)})`);
         }
         results = await scanFile(resolvedPath, engine, scanCfg);
       }
@@ -560,6 +560,12 @@ async function runGitAddedLineScan(
  * `auto` mode, never typed by a user. */
 type ResolvedEngine = "betterleaks" | "patterns" | "both";
 
+/** Self-explanatory display label for a resolved engine — "both" alone
+ * doesn't say which two engines ran (issue #231 item 6). */
+export function engineLabel(engine: ResolvedEngine): string {
+  return engine === "both" ? "both: betterleaks + patterns" : engine;
+}
+
 /**
  * Select scan engine based on availability and user preference.
  *
@@ -804,7 +810,7 @@ async function watchAndScan(
   const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
 
   if (!opts.quiet) {
-    console.error(fmt.info(`Watching ${watchPath} for changes (${engine}). Press Ctrl+C to exit.`));
+    console.error(fmt.info(`Watching ${watchPath} for changes (${engineLabel(engine)}). Press Ctrl+C to exit.`));
   }
 
   // Do an initial scan

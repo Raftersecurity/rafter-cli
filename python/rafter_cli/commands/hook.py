@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -67,7 +68,11 @@ def _format_approval_message(command: str, evaluation) -> str:
         f"  Rule: {rule}\n"
         f"  Risk: {label}\u2014{desc}\n"
         f"\n"
-        f'To approve: a person must run `rafter agent exec "{command}"` at an\n'
+        # The command is echoed into a suggested shell invocation, so it must
+        # be quoted as data, not interpolated raw into a double-quoted string
+        # \u2014 that lets a command containing `"`, `$`, or a backtick break out
+        # of the quoting or get shell-expanded when pasted (issue #231 item 5).
+        f"To approve: a person must run `rafter agent exec {shlex.quote(command)}` at an\n"
         f"            interactive terminal and confirm. There is no flag that\n"
         f"            skips the prompt."
     )

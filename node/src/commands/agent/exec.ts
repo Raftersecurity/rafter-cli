@@ -151,7 +151,7 @@ export function joinCommandParts(parts: string[]): string {
   return parts.map(shellQuote).join(" ");
 }
 
-function shellQuote(token: string): string {
+export function shellQuote(token: string): string {
   if (token === "") return "''";
   if (/^[A-Za-z0-9_\/:=@.,+%-]+$/.test(token)) return token;
   return `'${token.replace(/'/g, `'\\''`)}'`;

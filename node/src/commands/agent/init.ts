@@ -1239,7 +1239,7 @@ export function createInitCommand(): Command {
     .option("--with-hermes", "Install Hermes integration")
     .option("--with-opencode", "Install OpenCode integration")
     .option("--with-betterleaks", "Download and install Betterleaks binary")
-    .option("--with-skill-scanner", "Install the optional skill-scanner deep engine (heavy; audit-skill --deep)")
+    .option("--with-skill-scanner", "Install the optional skill-scanner deep engine (heavy; skill review --deep)")
     .option("--all", "Install all detected integrations and download Betterleaks")
     .option("-i, --interactive", "Guided setup — prompts for each detected integration")
     .option("--update", "Re-download betterleaks and reinstall integrations without resetting config")
