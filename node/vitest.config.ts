@@ -6,5 +6,6 @@ export default defineConfig({
     hookTimeout: 15_000,
     fileParallelism: true,
     globalSetup: "./tests/global-setup.ts",
+    setupFiles: ["./tests/env-isolation-setup.ts"],
   },
 });

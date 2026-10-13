@@ -40,7 +40,7 @@ import { runSitesCreate } from "../src/commands/sites/create.js";
 import { runSitesScan } from "../src/commands/sites/scan.js";
 import { runSitesList } from "../src/commands/sites/list.js";
 import { runSitesGet } from "../src/commands/sites/get.js";
-import { EXIT_SUCCESS, EXIT_GENERAL_ERROR, EXIT_INSUFFICIENT_SCOPE, EXIT_SCAN_NOT_FOUND, EXIT_QUOTA_EXHAUSTED } from "../src/utils/api.js";
+import { EXIT_SUCCESS, EXIT_GENERAL_ERROR, EXIT_INSUFFICIENT_SCOPE, EXIT_SCAN_NOT_FOUND, EXIT_QUOTA_EXHAUSTED, apiUrl } from "../src/utils/api.js";
 
 // The code calls `apiClient` — the instance `create()` returns.
 const mockedAxios = vi.mocked((axios as any).create(), true);
@@ -66,7 +66,7 @@ describe("sites create", () => {
 
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      "https://rafter.so/api/static/sites",
+      apiUrl("static/sites"),
       { url: "https://example.com" },
       { headers: { "x-api-key": "test-key" } }
     );
@@ -114,7 +114,7 @@ describe("sites scan", () => {
     const code = await runSitesScan("proj-123", opts);
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      "https://rafter.so/api/static/sites/scan",
+      apiUrl("static/sites/scan"),
       { projectId: "proj-123" },
       expect.anything()
     );
@@ -125,7 +125,7 @@ describe("sites scan", () => {
     const code = await runSitesScan("https://example.com", opts);
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      "https://rafter.so/api/static/sites/scan",
+      apiUrl("static/sites/scan"),
       { url: "https://example.com" },
       expect.anything()
     );
@@ -183,7 +183,7 @@ describe("sites list", () => {
     const code = await runSitesList({ ...opts, limit: 10, offset: 5, includeArchived: true });
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.get).toHaveBeenCalledWith(
-      "https://rafter.so/api/static/sites",
+      apiUrl("static/sites"),
       { params: { limit: "10", offset: "5", include_archived: "true" }, headers: { "x-api-key": "test-key" } }
     );
   });
@@ -211,7 +211,7 @@ describe("sites get", () => {
     const code = await runSitesGet("p1", opts);
     expect(code).toBe(EXIT_SUCCESS);
     expect(mockedAxios.get).toHaveBeenCalledWith(
-      "https://rafter.so/api/static/sites/p1",
+      apiUrl("static/sites/p1"),
       { headers: { "x-api-key": "test-key" } }
     );
   });

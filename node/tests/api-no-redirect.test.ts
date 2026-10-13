@@ -117,9 +117,34 @@ describe("API URL construction (sable-2s6p)", () => {
   });
 
   it("apiUrl joins cleanly regardless of slashes", async () => {
-    const { apiUrl, API } = await import("../src/utils/api.js");
-    expect(apiUrl("static/scan")).toBe("https://rafter.so/api/static/scan");
-    expect(apiUrl("/static/scan")).toBe("https://rafter.so/api/static/scan");
-    expect(API.endsWith("/")).toBe(true); // the trap this guards against
+    // The test suite redirects RAFTER_API_URL away from production (see
+    // env-isolation-setup.ts); unset it here to exercise the real default
+    // this test is actually about.
+    const savedApiUrl = process.env.RAFTER_API_URL;
+    delete process.env.RAFTER_API_URL;
+    try {
+      const { apiUrl, API } = await import("../src/utils/api.js");
+      expect(apiUrl("static/scan")).toBe("https://rafter.so/api/static/scan");
+      expect(apiUrl("/static/scan")).toBe("https://rafter.so/api/static/scan");
+      expect(API.endsWith("/")).toBe(true); // the trap this guards against
+    } finally {
+      if (savedApiUrl !== undefined) process.env.RAFTER_API_URL = savedApiUrl;
+    }
+  });
+
+  it("RAFTER_API_URL never sends the key over plain http to a remote host", async () => {
+    const savedApiUrl = process.env.RAFTER_API_URL;
+    try {
+      const { apiUrl } = await import("../src/utils/api.js");
+      process.env.RAFTER_API_URL = "http://evil.example/api/";
+      expect(apiUrl("static/scan")).toBe("https://rafter.so/api/static/scan");
+      process.env.RAFTER_API_URL = "http://localhost:8080/api/";
+      expect(apiUrl("static/scan")).toBe("http://localhost:8080/api/static/scan");
+      process.env.RAFTER_API_URL = "https://staging.example/api/";
+      expect(apiUrl("static/scan")).toBe("https://staging.example/api/static/scan");
+    } finally {
+      if (savedApiUrl === undefined) delete process.env.RAFTER_API_URL;
+      else process.env.RAFTER_API_URL = savedApiUrl;
+    }
   });
 });

@@ -19,6 +19,10 @@ function fakeSecret(prefix: string, body: string): string {
   return prefix + body;
 }
 const REPO_ROOT = path.resolve(__dirname, "../..");
+// The test suite overrides HOME for isolation (see env-isolation-setup.ts),
+// but site-packages discovery below must use the REAL HOME — that's where
+// the dependencies are actually installed.
+const REAL_HOME = process.env.RAFTER_TEST_REAL_HOME || os.homedir();
 // Preserve real user site-packages so overriding HOME doesn't break Python imports
 let PYTHON_USER_SITE = "";
 let PYTHON_AVAILABLE = false;
@@ -26,6 +30,7 @@ try {
   PYTHON_USER_SITE = execSync("python3 -c \"import site; print(site.getusersitepackages())\"", {
     encoding: "utf-8",
     timeout: 5000,
+    env: { ...process.env, HOME: REAL_HOME },
   }).trim();
   // Verify typer (core dependency) is importable
   execSync("python3 -c \"import typer\"", {
