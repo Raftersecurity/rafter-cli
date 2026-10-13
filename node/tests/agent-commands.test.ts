@@ -883,8 +883,18 @@ describe("agent verify", () => {
     // installed here. They must not inflate the "core checks" denominator,
     // and must be reported as integrations that weren't detected rather than
     // generic "optional checks not configured".
-    runCli("agent init --with-claude-code", home);
-    const r = runCli("agent verify", home);
+    //
+    // Betterleaks is one of the three, so the test supplies a stand-in at the
+    // managed path and hides any real one on PATH. Without that the result
+    // depends on the machine: a box with betterleaks installed prints 3/3, a
+    // CI runner without it prints 2/3.
+    const binDir = path.join(home, ".rafter", "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeBetterleaks = path.join(binDir, "betterleaks");
+    fs.writeFileSync(fakeBetterleaks, "#!/bin/sh\necho 'betterleaks version 1.0.0'\n", { mode: 0o755 });
+    const env = { PATH: [path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter) };
+    runCli("agent init --with-claude-code", home, env);
+    const r = runCli("agent verify", home, env);
     expect(r.stdout).toMatch(/3\/3 core checks passed/);
     expect(r.stdout).toContain("9 optional integrations not detected");
     expect(r.stdout).not.toMatch(/3\/12 core checks passed/);
