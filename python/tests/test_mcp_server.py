@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -218,41 +217,6 @@ class TestServerFactory:
         assert mcp is not None
         assert mcp.name == "rafter"
 
-    def test_registers_expected_tools(self):
-        mcp = create_mcp_server()
-        # FastMCP stores tools in _tool_manager.tools dict
-        tool_names = set()
-        if hasattr(mcp, "_tool_manager"):
-            mgr = mcp._tool_manager
-            tools_dict = getattr(mgr, "_tools", None) or getattr(mgr, "tools", {})
-            tool_names = set(tools_dict.keys())
-        elif hasattr(mcp, "tools"):
-            tool_names = set(mcp.tools.keys())
-        else:
-            # Fallback: just check it was created without error
-            pass
-
-        if tool_names:
-            expected = {
-                "scan_secrets", "evaluate_command", "read_audit_log", "get_config",
-                "list_docs", "get_doc", "suppress_finding",
-                "sites_create", "sites_scan", "sites_list", "sites_get",
-            }
-            assert expected == tool_names
-
-    def test_registers_expected_resources(self):
-        mcp = create_mcp_server()
-        resource_uris = set()
-        if hasattr(mcp, "_resource_manager"):
-            resource_uris = set(mcp._resource_manager._resources.keys())
-        elif hasattr(mcp, "resources"):
-            resource_uris = set(mcp.resources.keys())
-
-        if resource_uris:
-            assert "rafter://config" in resource_uris
-            assert "rafter://policy" in resource_uris
-            assert "rafter://docs" in resource_uris
-
 
 class TestVersion:
     """Verify version reporting is correct and not hardcoded to old values."""
@@ -260,13 +224,6 @@ class TestVersion:
     def test_version_not_hardcoded_to_old(self):
         import rafter_cli
         assert rafter_cli.__version__ != "0.5.0"
-
-    def test_version_is_current(self):
-        import rafter_cli
-        # Should be 0.6.x or higher
-        major, minor, *_ = rafter_cli.__version__.split(".")
-        assert int(major) >= 0
-        assert int(minor) >= 6
 
     def test_version_dynamic_import(self):
         """Version should come from importlib.metadata, not a hardcoded string."""

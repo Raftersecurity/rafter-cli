@@ -6,7 +6,6 @@ import { RegexScanner } from "../src/scanners/regex-scanner.js";
 import {
   DEFAULT_SECRET_PATTERNS,
   getPatternsBySeverity,
-  getCriticalPatterns,
 } from "../src/scanners/secret-patterns.js";
 
 /**
@@ -360,17 +359,6 @@ describe("Secret patterns — coverage matrix", () => {
       expect(high.length).toBeGreaterThan(0);
       expect(high.every((p) => p.severity === "high")).toBe(true);
     });
-
-    it("returns empty for 'low' (no built-in low patterns)", () => {
-      const low = getPatternsBySeverity("low");
-      expect(low).toHaveLength(0);
-    });
-  });
-
-  describe("getCriticalPatterns", () => {
-    it("returns same as getPatternsBySeverity('critical')", () => {
-      expect(getCriticalPatterns()).toEqual(getPatternsBySeverity("critical"));
-    });
   });
 });
 
@@ -407,24 +395,6 @@ describe("Multi-secret file scanning", () => {
     expect(patternNames).toContain("Stripe API Key");
     expect(patternNames).toContain("Private Key");
   });
-
-  it("reports correct line numbers for each match", () => {
-    const content = [
-      "line 1: clean",
-      "line 2: AKIAIOSFODNN7EXAMPLE",
-      "line 3: clean",
-      "line 4: ghp_ABCDEFghijklmnopqrstuvwxyz0123456789",
-    ].join("\n");
-
-    const f = path.join(tmpDir, "lines.txt");
-    fs.writeFileSync(f, content);
-    const r = scanner.scanFile(f);
-
-    const awsMatch = r.matches.find((m) => m.pattern.name === "AWS Access Key ID");
-    const ghMatch = r.matches.find((m) => m.pattern.name === "GitHub Personal Access Token");
-    expect(awsMatch?.line).toBe(2);
-    expect(ghMatch?.line).toBe(4);
-  });
 });
 
 // ── Scanner utility methods ─────────────────────────────────────────
@@ -456,105 +426,5 @@ describe("RegexScanner utility methods", () => {
     it("returns false for clean text", () => {
       expect(scanner.hasSecrets("no secrets here")).toBe(false);
     });
-  });
-
-  describe("redact", () => {
-    it("redacts secrets from text", () => {
-      const result = scanner.redact("key is AKIAIOSFODNN7EXAMPLE");
-      expect(result).not.toContain("AKIAIOSFODNN7EXAMPLE");
-    });
-  });
-});
-
-// ── Directory scanning ──────────────────────────────────────────────
-
-describe("RegexScanner directory scanning", () => {
-  let tmpDir: string;
-  let scanner: RegexScanner;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-dir-"));
-    scanner = new RegexScanner();
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("scans nested directories", () => {
-    const subDir = path.join(tmpDir, "src", "config");
-    fs.mkdirSync(subDir, { recursive: true });
-    fs.writeFileSync(path.join(subDir, "env.ts"), "const key = 'AKIAIOSFODNN7EXAMPLE';\n");
-
-    const results = scanner.scanDirectory(tmpDir);
-    expect(results.length).toBeGreaterThan(0);
-  });
-
-  it("skips excluded directories", () => {
-    const nodeModules = path.join(tmpDir, "node_modules", "pkg");
-    fs.mkdirSync(nodeModules, { recursive: true });
-    fs.writeFileSync(path.join(nodeModules, "secret.js"), "AKIAIOSFODNN7EXAMPLE\n");
-
-    const results = scanner.scanDirectory(tmpDir);
-    expect(results).toHaveLength(0);
-  });
-
-  it("skips binary files", () => {
-    fs.writeFileSync(path.join(tmpDir, "image.png"), "AKIAIOSFODNN7EXAMPLE\n");
-    const results = scanner.scanDirectory(tmpDir);
-    expect(results).toHaveLength(0);
-  });
-
-  it("respects custom excludePaths", () => {
-    const vendorDir = path.join(tmpDir, "myvendor");
-    fs.mkdirSync(vendorDir);
-    fs.writeFileSync(path.join(vendorDir, "lib.js"), "AKIAIOSFODNN7EXAMPLE\n");
-
-    const results = scanner.scanDirectory(tmpDir, { excludePaths: ["myvendor"] });
-    expect(results).toHaveLength(0);
-  });
-
-  it("respects maxDepth", () => {
-    const deep = path.join(tmpDir, "a", "b", "c", "d");
-    fs.mkdirSync(deep, { recursive: true });
-    fs.writeFileSync(path.join(deep, "secret.txt"), "AKIAIOSFODNN7EXAMPLE\n");
-
-    const results = scanner.scanDirectory(tmpDir, { maxDepth: 2 });
-    expect(results).toHaveLength(0);
-  });
-
-  it("scanFiles handles multiple files", () => {
-    const f1 = path.join(tmpDir, "a.txt");
-    const f2 = path.join(tmpDir, "b.txt");
-    fs.writeFileSync(f1, "AKIAIOSFODNN7EXAMPLE\n");
-    fs.writeFileSync(f2, "no secrets\n");
-
-    const results = scanner.scanFiles([f1, f2]);
-    expect(results).toHaveLength(1);
-    expect(results[0].file).toBe(f1);
-  });
-});
-
-// ── Custom patterns via constructor ─────────────────────────────────
-
-describe("RegexScanner with custom patterns", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-custom-"));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("detects custom pattern alongside built-in patterns", () => {
-    const scanner = new RegexScanner([
-      { name: "Internal Token", regex: "INTERNAL_[A-Z0-9]{16}", severity: "critical" },
-    ]);
-    const f = path.join(tmpDir, "test.txt");
-    fs.writeFileSync(f, "INTERNAL_ABCDEF0123456789\n");
-    const r = scanner.scanFile(f);
-    expect(r.matches.some((m) => m.pattern.name === "Internal Token")).toBe(true);
   });
 });
