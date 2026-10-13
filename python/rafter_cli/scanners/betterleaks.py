@@ -301,6 +301,12 @@ class BetterleaksScanner:
         rule_id = result.get("RuleID", result.get("Description", "unknown"))
         severity = BetterleaksScanner._get_severity(rule_id, result.get("Tags", []))
         secret = result.get("Secret", result.get("Match", ""))
+        # betterleaks 1.1.x reports StartColumn one past the 1-based column on
+        # every line but the first. Report the true column, as the regex engine
+        # does, so the union can merge the two engines' findings.
+        line, column = result.get("StartLine"), result.get("StartColumn")
+        if line is not None and column is not None and line > 1 and column > 1:
+            column -= 1
         return PatternMatch(
             pattern=Pattern(
                 name=rule_id,
@@ -309,8 +315,8 @@ class BetterleaksScanner:
                 description=result.get("Description", ""),
             ),
             match=secret,
-            line=result.get("StartLine"),
-            column=result.get("StartColumn"),
+            line=line,
+            column=column,
             redacted=BetterleaksScanner._redact(secret),
         )
 
