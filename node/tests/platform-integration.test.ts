@@ -1109,7 +1109,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
 
       // Verify hook uses --format cursor
       const hook = config.hooks.beforeShellExecution.find(
-        (e: any) => e.command?.includes("rafter")
+        (e: any) => /\bhook (pretool|posttool)\b/.test(e.command ?? "")
       );
       expect(hook).toBeDefined();
       expect(hook.command).toContain("--format cursor");
@@ -1143,7 +1143,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
         fs.readFileSync(path.join(testHomeDir, ".cursor", "hooks.json"), "utf-8")
       );
       const rafterHooks = config.hooks.beforeShellExecution.filter(
-        (e: any) => e.command?.includes("rafter")
+        (e: any) => /\bhook (pretool|posttool)\b/.test(e.command ?? "")
       );
       expect(rafterHooks).toHaveLength(1);
     });
