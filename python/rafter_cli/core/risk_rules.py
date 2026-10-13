@@ -31,9 +31,15 @@ _CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt"
 # the quoted-operand forms of php -r, socat exec:'/bin/sh', gawk, telnet, rcat.
 # `... | sh` and base64-into-shell still degrade to high via shell_program_from_stream.
 _REVERSE_SHELL_PATTERNS: list[str] = [
-    # bash/zsh net redirect `>& /dev/tcp/host/port`, anchored to a redirect or
-    # separator so it is the pseudo-device, not a path (`ls config/dev/tcp/`)
-    r"(^|[\s<>&;|])/dev/(tcp|udp)/",
+    # bash/zsh net redirect `>& /dev/tcp/host/port`: output to the socket or
+    # fd duplication onto it (`>`, `>&`, `&>`, `<>`, `<&`), or a shell reading
+    # its program from it (`bash < /dev/tcp/...`; `-c` excluded so the inlined
+    # payload is not mistaken for the shell's stdin). A read-only redirect (the
+    # wait-for-port idiom `bash -c '</dev/tcp/h/p'`, `cat < /dev/tcp/...`) and a
+    # path component (`ls config/dev/tcp/`) do not match.
+    r"((>|<>|[<>]&)\s*|\b(ba|z|da|k|a)?sh(\s+-[abd-z]+)*\s*<\s*)/dev/(tcp|udp)/",
+    # ...or an interactive shell anywhere beside the pseudo-device.
+    r"^(?=[\s\S]*(^|[\s<>&;|])/dev/(tcp|udp)/)(?=[\s\S]*\b(ba|z|da|k|a)?sh\s+-[a-z]*i)",
     # netcat exec flag: `-e` anywhere in a short cluster (`-e`/`-ve`/`-nve`) or
     # long `--exec`/`--sh-exec`/`--lua-exec`. `-c` omitted: after case-folding it
     # collides with OpenBSD `nc -C` (CRLF); no benign nc cluster carries `e`.
