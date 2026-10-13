@@ -1,4 +1,4 @@
-import { execFile } from "child_process";
+import { execFile, spawnSync } from "child_process";
 import { promisify } from "util";
 import { BinaryManager } from "../utils/binary-manager.js";
 import { PatternMatch } from "../core/pattern-engine.js";
@@ -7,6 +7,72 @@ import os from "os";
 import path from "path";
 
 const execFileAsync = promisify(execFile);
+
+/** Per-invocation timeout for the betterleaks subprocess. */
+const SCAN_TIMEOUT_MS = 60_000;
+
+/**
+ * Budget for the path arguments of one `betterleaks dir` call. Windows caps a
+ * whole command line at 32,767 characters; elsewhere the limit is far larger.
+ */
+const ARG_CHARS_PER_CALL = process.platform === "win32" ? 24_000 : 500_000;
+
+/** Config env vars betterleaks consults before the target's own .toml. */
+const CONFIG_ENV_VARS = [
+  "BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG", "BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML",
+];
+
+/**
+ * Files under `dirPath` that git does not ignore (tracked, plus untracked and
+ * not ignored), as absolute paths. Returns null when `dirPath` is not inside a
+ * git work tree or git is unavailable, so the caller scans the directory whole.
+ */
+export function gitVisibleFiles(dirPath: string): string[] | null {
+  const r = spawnSync(
+    "git",
+    ["-C", dirPath, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000, maxBuffer: 256 * 1024 * 1024 },
+  );
+  if (r.status !== 0 || typeof r.stdout !== "string") return null;
+  const files = new Set<string>();
+  for (const rel of r.stdout.split("\0")) {
+    if (!rel) continue;
+    const abs = path.join(dirPath, rel);
+    try {
+      // Skip deleted-but-tracked paths, submodule dirs and symlinks (betterleaks
+      // does not follow symlinks by default either).
+      if (fs.lstatSync(abs).isFile()) files.add(abs);
+    } catch {
+      // deleted from the work tree
+    }
+  }
+  return [...files];
+}
+
+/** Split `paths` into groups whose joined length stays under `budget` chars. */
+function chunkByLength(paths: string[], budget: number): string[][] {
+  const chunks: string[][] = [];
+  let cur: string[] = [];
+  let len = 0;
+  for (const p of paths) {
+    if (cur.length > 0 && len + p.length + 1 > budget) {
+      chunks.push(cur);
+      cur = [];
+      len = 0;
+    }
+    cur.push(p);
+    len += p.length + 1;
+  }
+  if (cur.length > 0) chunks.push(cur);
+  return chunks;
+}
+
+/** Name why a betterleaks subprocess failed: a timeout reads differently from a crash. */
+function describeFailure(e: any): string {
+  if (e?.killed && e?.signal) return `timed out after ${SCAN_TIMEOUT_MS / 1000}s`;
+  if (typeof e?.code === "number") return `exit ${e.code}`;
+  return e?.message ?? String(e);
+}
 
 /**
  * Subset of betterleaks JSON report fields we actually consume.
@@ -96,7 +162,7 @@ export class BetterleaksScanner {
       // `--` ensures a target path beginning with `-` isn't parsed as a flag by betterleaks.
       await execFileAsync(
         blPath, ["dir", "-f", "json", "--report-path", tmpReport, "--", filePath],
-        { timeout: 60000 }
+        { timeout: SCAN_TIMEOUT_MS }
       );
 
       if (!fs.existsSync(tmpReport)) {
@@ -152,42 +218,79 @@ export class BetterleaksScanner {
   /**
    * Scan a directory. With useGit=true, scans git history (`betterleaks git`);
    * otherwise scans the filesystem (`betterleaks dir`).
+   *
+   * `betterleaks dir` has no notion of .gitignore, so given a directory it
+   * walks node_modules, build output and local secret stores (.env) alike:
+   * slow enough to hit the timeout on an ordinary checkout, and noisy (#262).
+   * With respectGitignore (the default, matching the patterns engine) and a
+   * target inside a git work tree, it is handed git's own list of non-ignored
+   * files instead.
    */
-  async scanDirectory(dirPath: string, opts?: { useGit?: boolean }): Promise<BetterleaksScanResult[]> {
+  async scanDirectory(
+    dirPath: string,
+    opts?: { useGit?: boolean; respectGitignore?: boolean },
+  ): Promise<BetterleaksScanResult[]> {
     const blPath = await this.resolveBinary();
     if (!blPath) {
       throw new Error("Betterleaks not available");
     }
 
+    if (opts?.useGit) {
+      return this.groupByFile(await this.runDir(blPath, "git", [dirPath], []));
+    }
+
+    const files = opts?.respectGitignore === false ? null : gitVisibleFiles(dirPath);
+    if (files === null) {
+      return this.groupByFile(await this.runDir(blPath, "dir", [dirPath], []));
+    }
+
+    // Given file paths instead of a directory, betterleaks no longer finds the
+    // target's own .betterleaks.toml / .gitleaks.toml, so pass it explicitly
+    // unless an env var already chooses the config (it outranks the file).
+    const configArgs: string[] = [];
+    if (!CONFIG_ENV_VARS.some((v) => process.env[v])) {
+      const cfg = [".betterleaks.toml", ".gitleaks.toml"]
+        .map((n) => path.join(dirPath, n))
+        .find((p) => fs.existsSync(p));
+      if (cfg) configArgs.push("-c", cfg);
+    }
+
+    const findings: BetterleaksResult[] = [];
+    for (const chunk of chunkByLength(files, ARG_CHARS_PER_CALL)) {
+      findings.push(...(await this.runDir(blPath, "dir", chunk, configArgs)));
+    }
+    return this.groupByFile(findings);
+  }
+
+  /** One betterleaks invocation; returns its findings or throws with the cause. */
+  private async runDir(
+    blPath: string,
+    subcommand: "dir" | "git",
+    targets: string[],
+    extraArgs: string[],
+  ): Promise<BetterleaksResult[]> {
     // Private 0700 dir, atomically created — see scanFile for the TOCTOU rationale (CWE-367).
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "betterleaks-"));
     const tmpReport = path.join(tmpDir, "report.json");
-    const subcommand = opts?.useGit ? "git" : "dir";
 
     try {
       // `--` ensures a target path beginning with `-` isn't parsed as a flag by betterleaks.
       await execFileAsync(
-        blPath, [subcommand, "-f", "json", "--report-path", tmpReport, "--", dirPath],
-        { timeout: 60000 }
+        blPath,
+        [subcommand, ...extraArgs, "-f", "json", "--report-path", tmpReport, "--", ...targets],
+        { timeout: SCAN_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 }
       );
 
       if (!fs.existsSync(tmpReport)) {
         return [];
       }
-
-      const results = this.parseResults(tmpReport);
-
-      return this.groupByFile(results);
+      return this.parseResults(tmpReport);
     } catch (e: any) {
-      if (fs.existsSync(tmpReport)) {
-        const results = this.parseResults(tmpReport);
-
-        if (e.code === 1) {
-          return this.groupByFile(results);
-        }
+      if (e.code === 1 && fs.existsSync(tmpReport)) {
+        return this.parseResults(tmpReport);
       }
 
-      throw new Error(`Betterleaks scan failed: ${e.message}`);
+      throw new Error(`Betterleaks scan failed (${describeFailure(e)})`);
     } finally {
       // Best-effort cleanup — a cleanup failure must never mask the scan's
       // real result or its original error.
