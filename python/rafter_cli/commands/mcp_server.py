@@ -57,6 +57,11 @@ def _format_scan_results(results: list[ScanResult]) -> list[dict]:
 
 def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
     """Scan files or directories for hardcoded secrets."""
+    return scan_secrets_with_suppressed(path, engine)[0]
+
+
+def scan_secrets_with_suppressed(path: str, engine: str = "auto") -> tuple[list[dict], list[dict]]:
+    """Scan for secrets; return (results, suppressed-finding metadata)."""
     def run_patterns() -> list[ScanResult]:
         scanner = RegexScanner()
         try:
@@ -64,15 +69,17 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
         except NotADirectoryError:
             return [scanner.scan_file(path)]
 
-    def report(results: list[ScanResult]) -> list[dict]:
+    def report(results: list[ScanResult]) -> tuple[list[dict], list[dict]]:
         # Honor the project's suppressions, as `rafter secrets` does, so a
         # finding triaged with suppress_finding is not reported again.
         from ..core.custom_patterns import apply_suppressions, load_suppressions, policy_ignore_to_suppressions
         scan_cfg = ConfigManager().load_with_policy().agent.scan
         suppressions = policy_ignore_to_suppressions(scan_cfg.ignore) + load_suppressions()
         # Drop only what was suppressed; a clean file keeps its empty entry.
-        kept = {r.file: r for r in apply_suppressions(results, suppressions)[0]}
-        return _format_scan_results([kept.get(r.file, r) for r in results if not r.matches or r.file in kept])
+        kept_results, suppressed = apply_suppressions(results, suppressions)
+        kept = {r.file: r for r in kept_results}
+        formatted = _format_scan_results([kept.get(r.file, r) for r in results if not r.matches or r.file in kept])
+        return formatted, [asdict(f) for f in suppressed]
 
     if engine == "betterleaks":
         bl = BetterleaksScanner()
@@ -303,14 +310,26 @@ def create_mcp_server():
     mcp = FastMCP("rafter")
 
     @mcp.tool()
-    def scan_secrets(path: str, engine: str = "auto") -> str:
+    def scan_secrets(path: str, engine: str = "auto") -> list[str]:
         """Scan files or directories for hardcoded secrets and credentials.
+
+        Findings hidden by the project's .rafter.yml ignore rules or
+        .rafterignore are dropped from the results; when any were, a second
+        content block lists them as {suppressed_count, _suppressed: [{file,
+        line, column, rule, severity, reason, source}]} (no secret text), so a
+        blanket ignore rule cannot silently empty a scan.
 
         Args:
             path: File or directory path to scan.
             engine: Scan engine — auto (default), betterleaks, or patterns.
         """
-        return json.dumps(handle_scan_secrets(path, engine))
+        results, suppressed = scan_secrets_with_suppressed(path, engine)
+        out = [json.dumps(results)]
+        # Say what was dropped (metadata only, no secret text), as
+        # `rafter secrets --json` does under `_suppressed`.
+        if suppressed:
+            out.append(json.dumps({"suppressed_count": len(suppressed), "_suppressed": suppressed}))
+        return out
 
     @mcp.tool()
     def evaluate_command(command: str) -> str:

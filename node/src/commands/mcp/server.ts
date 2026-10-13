@@ -70,7 +70,7 @@ export function createServer(): Server {
     tools: [
       {
         name: "scan_secrets",
-        description: "Scan files or directories for leaked secrets, API keys, tokens, passwords, and credentials. Use before pushing code, when handling config files, or when asked 'is this safe to commit?' or 'check for leaked keys'.",
+        description: "Scan files or directories for leaked secrets, API keys, tokens, passwords, and credentials. Use before pushing code, when handling config files, or when asked 'is this safe to commit?' or 'check for leaked keys'. Findings hidden by the project's .rafter.yml ignore rules or .rafterignore are dropped from the results; when any were, a second content block lists them as {suppressed_count, _suppressed: [{file, line, column, rule, severity, reason, source}]} (no secret text), so a blanket ignore rule cannot silently empty a scan.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -235,11 +235,21 @@ export function createServer(): Server {
         // finding triaged with suppress_finding is not reported again.
         const report = (results: ScanResult[]) => {
           const suppressions = collectSuppressions(new ConfigManager().loadWithPolicy().agent?.scan?.ignore);
+          const applied = applySuppressions(results, suppressions);
           // Drop only what was suppressed; a clean file keeps its empty entry.
-          const kept = new Map(applySuppressions(results, suppressions).results.map((r) => [r.file, r]));
-          return textResult(formatScanResults(
+          const kept = new Map(applied.results.map((r) => [r.file, r]));
+          const out = textResult(formatScanResults(
             results.filter((r) => r.matches.length === 0 || kept.has(r.file)).map((r) => kept.get(r.file) ?? r),
           ));
+          // Say what was dropped (metadata only, no secret text), as
+          // `rafter secrets --json` does under `_suppressed`.
+          if (applied.suppressed.length > 0) {
+            out.content.push(textResult({
+              suppressed_count: applied.suppressed.length,
+              _suppressed: applied.suppressed,
+            }).content[0]);
+          }
+          return out;
         };
 
         if (engine === "betterleaks") {

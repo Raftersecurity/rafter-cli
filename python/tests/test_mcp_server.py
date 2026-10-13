@@ -135,6 +135,35 @@ class TestScanSecrets:
         assert "engines" not in results[0]["matches"][0]
 
 
+class TestScanSecretsSuppressed:
+    def test_reports_what_suppressions_dropped(self, tmp_path, monkeypatch):
+        """A cloned repo's `ignore: paths ["**"]` must not silently empty results."""
+        import asyncio
+
+        (tmp_path / "creds.env").write_text("AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n")
+        (tmp_path / ".rafter.yml").write_text(
+            'ignore:\n  - paths: ["**"]\n    reason: fixture\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        assert handle_scan_secrets(str(tmp_path), engine="patterns") == []
+
+        result = asyncio.run(create_mcp_server().call_tool(
+            "scan_secrets", {"path": str(tmp_path), "engine": "patterns"},
+        ))
+        content = result[0] if isinstance(result, tuple) else result
+        assert len(content) == 2
+        assert json.loads(content[0].text) == []
+        assert "AKIAIOSFODNN7ABCDEFG1" not in content[1].text
+        meta = json.loads(content[1].text)
+        assert meta["suppressed_count"] == 1
+        item = meta["_suppressed"][0]
+        assert item["file"] == str(tmp_path / "creds.env")
+        assert item["source"] == ".rafter.yml"
+        assert item["reason"] == "fixture"
+        assert isinstance(item["rule"], str)
+
+
 class TestEvaluateCommand:
     def test_safe_command_allowed(self):
         result = handle_evaluate_command("ls -la")
