@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -1430,24 +1431,26 @@ class TestSkillScannerHelpText:
     """issue #231 item 4b: `agent audit-skill` is deprecated in favour of
     `rafter skill review`; the install flags' help text still pointed at it."""
 
-    def test_init_help_describes_with_skill_scanner_via_skill_review(self):
+    @staticmethod
+    def _flat_help(args: list[str]) -> str:
         from typer.testing import CliRunner
         from rafter_cli.__main__ import app
 
-        runner = CliRunner()
-        result = runner.invoke(app, ["agent", "init", "--help"])
-        # Rich wraps help text to terminal width, so collapse whitespace
-        # before checking rather than matching the exact rendered line.
-        flat = " ".join(result.stdout.split())
+        # Typer forces Rich colour when GITHUB_ACTIONS/FORCE_COLOR is set, and
+        # Rich styles "-" and "-deep" separately, so the raw text never holds
+        # "--deep". Strip the escapes, then collapse whitespace, since Rich
+        # also wraps to terminal width.
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 0, result.output
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+        return " ".join(plain.split())
+
+    def test_init_help_describes_with_skill_scanner_via_skill_review(self):
+        flat = self._flat_help(["agent", "init", "--help"])
         assert "skill review --deep" in flat
         assert "audit-skill --deep" not in flat
 
     def test_update_skill_scanner_help_describes_via_skill_review(self):
-        from typer.testing import CliRunner
-        from rafter_cli.__main__ import app
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["agent", "update-skill-scanner", "--help"])
-        flat = " ".join(result.stdout.split())
+        flat = self._flat_help(["agent", "update-skill-scanner", "--help"])
         assert "skill review --deep" in flat
         assert "audit-skill --deep" not in flat
