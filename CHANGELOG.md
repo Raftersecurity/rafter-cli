@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The built-in AWS Access Key ID pattern no longer flags the canonical AWS-docs example key** (#230). `AKIAIOSFODNN7EXAMPLE` and its siblings (any `AKIA…`/`ASIA…`/etc. key ending in `EXAMPLE`) matched the regex engine but not betterleaks, so e.g. the hook's Write gate denied a write containing the well-known public non-secret while `rafter secrets` via betterleaks allowed it. The regex engine now carries the same exemption betterleaks already applies, in both Node and Python. **Behavior change:** a key ending in `EXAMPLE` is no longer reported as a finding by the patterns engine; any other 16-character suffix is still detected as before.
+
 ## [0.10.6] - 2026-10-02
 
 ### Security
