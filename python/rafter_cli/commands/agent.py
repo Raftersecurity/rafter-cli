@@ -1166,7 +1166,7 @@ def _install_opencode_mcp(root: Path) -> bool:
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
     with_betterleaks: bool = typer.Option(False, "--with-betterleaks", help="Download and install Betterleaks binary"),
-    with_skill_scanner: bool = typer.Option(False, "--with-skill-scanner", help="Install the optional skill-scanner deep engine (heavy; audit-skill --deep)"),
+    with_skill_scanner: bool = typer.Option(False, "--with-skill-scanner", help="Install the optional skill-scanner deep engine (heavy; skill review --deep)"),
     with_openclaw: bool = typer.Option(False, "--with-openclaw", help="Install OpenClaw integration"),
     with_claude_code: bool = typer.Option(False, "--with-claude-code", help="Install Claude Code integration"),
     with_codex: bool = typer.Option(False, "--with-codex", help="Install Codex CLI integration"),
@@ -1699,6 +1699,12 @@ def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> st
     return "both" if usable == "betterleaks" else "patterns"
 
 
+def _engine_label(engine: str) -> str:
+    """Self-explanatory display label for a resolved engine — "both" alone
+    doesn't say which two engines ran (issue #231 item 6)."""
+    return "both: betterleaks + patterns" if engine == "both" else engine
+
+
 def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
     """sable-o4k — guard against a stale rafter-managed betterleaks binary
     silently returning zero findings (a leftover binary from an older rafter
@@ -2096,7 +2102,7 @@ def _watch_and_scan(
     eng = _select_engine(engine, quiet, auto_update)
 
     if not quiet:
-        print_stderr(fmt.info(f"Watching {watch_path} for changes ({eng}). Press Ctrl+C to exit."))
+        print_stderr(fmt.info(f"Watching {watch_path} for changes ({_engine_label(eng)}). Press Ctrl+C to exit."))
 
     # Initial scan
     if os.path.isdir(watch_path):
@@ -2304,11 +2310,11 @@ def scan(
 
     if os.path.isdir(resolved_path):
         if not quiet:
-            print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
+            print(f"Scanning directory: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
         results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
     else:
         if not quiet:
-            print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
+            print(f"Scanning file: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
         results = _scan_file(resolved_path, eng, custom_patterns)
 
     filtered = _apply_baseline(results, baseline_entries)
@@ -3652,7 +3658,7 @@ def update_skill_scanner(
         help="skill-scanner version to install (default: pinned version)",
     ),
 ):
-    """Install or update the optional `skill-scanner` deep engine (audit-skill --deep).
+    """Install or update the optional `skill-scanner` deep engine (skill review --deep).
 
     Installs Cisco AI Defense's skill-scanner in an isolated environment (uv tool,
     or pip --user fallback). This is a heavy third-party package and its

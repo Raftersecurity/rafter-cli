@@ -1421,3 +1421,33 @@ class TestInstallClaudeCodeSubAgents:
         content = (agents_dir / "rafter.md").read_text()
         assert content != "stale content from previous version"
         assert "name: rafter" in content
+
+
+# ── Help text points at the current skill-review command ─────────────────
+
+
+class TestSkillScannerHelpText:
+    """issue #231 item 4b: `agent audit-skill` is deprecated in favour of
+    `rafter skill review`; the install flags' help text still pointed at it."""
+
+    def test_init_help_describes_with_skill_scanner_via_skill_review(self):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--help"])
+        # Rich wraps help text to terminal width, so collapse whitespace
+        # before checking rather than matching the exact rendered line.
+        flat = " ".join(result.stdout.split())
+        assert "skill review --deep" in flat
+        assert "audit-skill --deep" not in flat
+
+    def test_update_skill_scanner_help_describes_via_skill_review(self):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "update-skill-scanner", "--help"])
+        flat = " ".join(result.stdout.split())
+        assert "skill review --deep" in flat
+        assert "audit-skill --deep" not in flat
