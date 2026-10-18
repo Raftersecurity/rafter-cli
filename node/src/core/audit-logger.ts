@@ -282,7 +282,7 @@ export class AuditLogger {
 
   /**
    * Log an audit event. Never throws: an audit failure must not change the
-   * decision of the caller (a hook deny that throws here would fail open).
+   * decision of the caller.
    */
   log(entry: Omit<AuditLogEntry, "timestamp" | "sessionId">): void {
     try {

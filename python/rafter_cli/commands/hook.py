@@ -308,7 +308,7 @@ def _scan_staged_files() -> dict:
     repo_root = rev.stdout.strip() or os.getcwd()
     try:
         # surrogateescape: a non-UTF-8 diff is still scanned instead of raising
-        # into the pretool's fail-open catch.
+        # into the pretool's outer error-handling catch.
         diff = subprocess.run(
             ["git", "diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
             capture_output=True, text=True, encoding="utf-8", errors="surrogateescape",

@@ -188,8 +188,7 @@ class AuditLogger:
     def log(self, entry: dict[str, Any]) -> None:
         """Append an audit entry (JSONL).
 
-        Never raises: an audit failure must not change the caller's decision
-        (a hook deny that raised here would fail open).
+        Never raises: an audit failure must not change the caller's decision.
         """
         try:
             self._write_entry(entry)

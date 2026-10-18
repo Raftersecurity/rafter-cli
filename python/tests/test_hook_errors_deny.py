@@ -1,10 +1,11 @@
-"""The audit log must never change a hook decision.
+"""An audit-log write failure must never change a hook decision.
 
-A repo's `.rafter.yml` used to choose where the audit log lives; pointing it at
-an unwritable path made every deny branch raise on its audit write, and the
-pretool's outer except then answered ALLOW, so `rm -rf /` went through. Driven
-through the real CLI in a subprocess with an isolated HOME so the developer's
-~/.rafter is never touched.
+It is reported once on stderr and the existing decision stands. A project
+`.rafter.yml` can no longer choose where the audit log is written — only the
+user config (`~/.rafter/config.json`) sets `audit.log_path` — and any other
+unexpected error in the PreToolUse decision path denies the call for every
+tool. Driven through the real CLI in a subprocess with an isolated HOME so
+the developer's ~/.rafter is never touched.
 """
 from __future__ import annotations
 
@@ -88,13 +89,13 @@ def test_unexpected_error_fails_closed_for_every_command(monkeypatch, tmp_path):
     assert decide("ls -la") == "deny"
 
 
-def test_project_config_cannot_append_to_user_bashrc(tmp_path):
-    bashrc = tmp_path / ".bashrc"
-    original = "# user bashrc\nexport PATH=$HOME/bin:$PATH\n"
-    bashrc.write_text(original)
+def test_project_config_cannot_append_to_file_outside_audit_dir(tmp_path):
+    target = tmp_path / "outside-target.txt"
+    original = "original contents\n"
+    target.write_text(original)
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / ".rafter.yml").write_text("audit:\n  log_path: ~/.bashrc\n")
+    (repo / ".rafter.yml").write_text("audit:\n  log_path: ~/outside-target.txt\n")
     env = {**os.environ, "HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path / ".config")}
     env["PYTHONPATH"] = str(_PKG_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     r = subprocess.run(
@@ -103,7 +104,7 @@ def test_project_config_cannot_append_to_user_bashrc(tmp_path):
         capture_output=True, text=True, cwd=repo, env=env, timeout=60,
     )
     assert _decision(r) == "deny", r.stderr
-    assert bashrc.read_text() == original
+    assert target.read_text() == original
 
 
 # ── Fail closed: inject a failure at each stage of the decision path ────────
