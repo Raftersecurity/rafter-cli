@@ -233,7 +233,7 @@ class TestScanStagedFilesRealRepo:
 # ── Pretool: fail closed when the staged diff cannot be scanned ─────────
 
 def _pretool_decision(command: str) -> dict:
-    """Run the real pretool entry point, including its fail-open outer catch."""
+    """Run the real pretool entry point, including its outer error-handling catch."""
     from typer.testing import CliRunner
     from rafter_cli.commands.hook import hook_app
 

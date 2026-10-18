@@ -407,10 +407,8 @@ export class ConfigManager {
       if (policy.audit.logLevel) {
         config.agent.audit.logLevel = policy.audit.logLevel as any;
       }
-      // audit.log_path is honored only from the global config. A repo choosing
-      // where rafter APPENDS lines is a file-write primitive (~/.bashrc,
-      // ~/.ssh/authorized_keys), and an unwritable target used to turn every
-      // hook deny into an allow.
+      // audit.log_path is honored only from the global config; a project
+      // value is ignored, with a warning, logged once per process.
       if (policy.audit.logPath && !warnedProjectLogPath) {
         warnedProjectLogPath = true;
         console.error(

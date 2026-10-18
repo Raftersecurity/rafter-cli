@@ -814,7 +814,7 @@ The audit log is written to `~/.rafter/audit.jsonl` as newline-delimited JSON (J
 | `gitRepo` | string | no | Absolute path to the enclosing git repository root, if any |
 | `prevHash` | string\|null | yes | SHA-256 of the prior line (or `null` for the first entry) — forms the tamper-evident hash chain verified by `rafter agent audit --verify` |
 
-**Log location:** Defaults to `~/.rafter/audit.jsonl`. Overridable only in the global config, `~/.rafter/config.json` → `agent.audit.logPath`. A project `.rafter.yml` `audit.log_path` is ignored with a stderr warning: a repository choosing the file rafter appends to is a file-write primitive.
+**Log location:** Defaults to `~/.rafter/audit.jsonl`. Overridable only in the global config, `~/.rafter/config.json` → `agent.audit.logPath`. A project `.rafter.yml` `audit.log_path` is ignored with a stderr warning.
 
 **Write failures:** A failed audit write is reported once on stderr and never changes a hook decision.
 

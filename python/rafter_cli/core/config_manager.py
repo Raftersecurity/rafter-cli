@@ -331,10 +331,8 @@ class ConfigManager:
                 config.agent.audit.retention_days = audit["retention_days"]
             if audit.get("log_level"):
                 config.agent.audit.log_level = audit["log_level"]
-            # audit.log_path is honored only from the global config. A repo
-            # choosing where rafter APPENDS lines is a file-write primitive
-            # (~/.bashrc, ~/.ssh/authorized_keys), and an unwritable target used
-            # to turn every hook deny into an allow.
+            # audit.log_path is honored only from the global config; a project
+            # value is ignored, with a warning, printed once per process.
             global _warned_project_log_path
             if audit.get("log_path") and not _warned_project_log_path:
                 _warned_project_log_path = True
