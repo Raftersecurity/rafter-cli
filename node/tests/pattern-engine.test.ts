@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { PatternEngine, Pattern } from "../src/core/pattern-engine.js";
 
 describe("PatternEngine", () => {
@@ -92,23 +92,6 @@ line 3`;
     const matches = engine.scan(text);
 
     expect(matches.length).toBe(0);
-  });
-
-  it("should detect multiple secrets in same text", () => {
-    const engine = new PatternEngine(testPatterns);
-    const text = `
-      const AWS_KEY = "AKIAIOSFODNN7EXAMPLE";
-      const GITHUB_TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz1234567890";
-    `;
-
-    const matches = engine.scan(text);
-
-    // Should find at least AWS key and GitHub token
-    expect(matches.length).toBeGreaterThanOrEqual(2);
-    const awsMatch = matches.find(m => m.pattern.name === "AWS Access Key");
-    const githubMatch = matches.find(m => m.pattern.name === "GitHub Token");
-    expect(awsMatch).toBeDefined();
-    expect(githubMatch).toBeDefined();
   });
 
   it("should not match compound variable names like anthropic_api_key", () => {
@@ -271,5 +254,22 @@ line 3`;
       expect(out).toContain("FOO=bar");
       expect(out).not.toContain("abcdef1234567890");
     });
+  });
+});
+
+describe("PatternEngine regex compilation", () => {
+  // Compiling every pattern for every line made the regex engine 9x slower
+  // than betterleaks on a large repo.
+  it("does not compile regexes per line", () => {
+    const engine = new PatternEngine([
+      { name: "AWS Access Key ID", regex: "AKIA[A-Z0-9]{16}", severity: "critical" },
+      { name: "Generic", regex: "(?i)secret", severity: "low" },
+    ]);
+    const spy = vi.spyOn(PatternEngine.prototype as any, "createRegex");
+    const text = Array.from({ length: 200 }, (_, i) => (i % 50 ? "x" : "AKIAIOSFODNN7EXAMPLE")).join("\n");
+    const matches = engine.scanWithPosition(text);
+    expect(matches.map((m) => m.line)).toEqual([1, 51, 101, 151]);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

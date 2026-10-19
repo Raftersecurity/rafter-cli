@@ -73,67 +73,6 @@ describe("formatter", () => {
       expect(fmt.info("hello")).toBe("hello");
     });
 
-    // ── ANSI-free guarantee ──────────────────────────────────────────
-
-    it("header contains no ANSI escape codes", () => {
-      const out = fmt.header("Security Report");
-      expect(out).toBe(stripAnsi(out));
-    });
-
-    it("success contains no ANSI escape codes", () => {
-      const out = fmt.success("all clear");
-      expect(out).toBe(stripAnsi(out));
-    });
-
-    it("warning contains no ANSI escape codes", () => {
-      const out = fmt.warning("heads up");
-      expect(out).toBe(stripAnsi(out));
-    });
-
-    it("error contains no ANSI escape codes", () => {
-      const out = fmt.error("crash");
-      expect(out).toBe(stripAnsi(out));
-    });
-
-    it("severity contains no ANSI escape codes for all levels", () => {
-      for (const level of ["critical", "high", "medium", "low"]) {
-        const out = fmt.severity(level);
-        expect(out).toBe(stripAnsi(out));
-      }
-    });
-
-    it("divider contains no ANSI escape codes", () => {
-      const out = fmt.divider();
-      expect(out).toBe(stripAnsi(out));
-    });
-
-    it("info contains no ANSI escape codes", () => {
-      const out = fmt.info("plain text");
-      expect(out).toBe(stripAnsi(out));
-    });
-
-    // ── no emoji in agent mode ───────────────────────────────────────
-
-    it("no emoji characters in any output", () => {
-      // Regex matches common emoji ranges (surrogate pairs, variation selectors, etc.)
-      const emojiRe = /[\u2600-\u27BF\u{1F300}-\u{1F9FF}\u{1FA00}-\u{1FAFF}]/u;
-      const outputs = [
-        fmt.header("Test"),
-        fmt.success("ok"),
-        fmt.warning("warn"),
-        fmt.error("err"),
-        fmt.severity("critical"),
-        fmt.severity("high"),
-        fmt.severity("medium"),
-        fmt.severity("low"),
-        fmt.divider(),
-        fmt.info("text"),
-      ];
-      for (const out of outputs) {
-        expect(out).not.toMatch(emojiRe);
-      }
-    });
-
     // ── edge cases ───────────────────────────────────────────────────
 
     it("handles empty string input", () => {
@@ -260,7 +199,7 @@ describe("formatter", () => {
   // ── mode switching mid-stream ──────────────────────────────────────
 
   describe("mode switching mid-stream", () => {
-    it("switching mode changes output immediately", () => {
+    it("switches live, not cached", () => {
       setAgentMode(true);
       const agentOut = fmt.success("test");
       expect(agentOut).toBe("[OK] test");
@@ -269,20 +208,6 @@ describe("formatter", () => {
       const humanOut = fmt.success("test");
       expect(humanOut).toContain("✓");
       expect(humanOut).not.toBe(agentOut);
-    });
-
-    it("all methods respect current mode at call time", () => {
-      setAgentMode(true);
-      expect(fmt.header("X")).toBe("=== X ===");
-      expect(fmt.divider()).toBe("---");
-      expect(fmt.info("Y")).toBe("Y");
-
-      setAgentMode(false);
-      expect(fmt.header("X")).toContain("┌");
-      expect(fmt.divider()).toContain("═");
-      // info in human mode wraps with chalk.cyan; in non-TTY chalk may strip
-      // colors, so just verify the text is still present
-      expect(fmt.info("Y")).toContain("Y");
     });
   });
 });

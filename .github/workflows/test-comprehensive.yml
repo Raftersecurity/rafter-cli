@@ -153,7 +153,10 @@ jobs:
       # ~95% of the count on 2026-09-02 (2099 executed); lower it in the same
       # PR that removes tests, so a shrink is a reviewed decision.
       - name: Assert the suite actually ran
-        run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "test-node (vitest)"
+        # backend-api.test.ts needs the RAFTER_API_KEY secret, which is not set
+        # on this repo (see the backend-api job), so all of its tests skip.
+        # Remove the exception once the secret exists.
+        run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "test-node (vitest)" --allow-all-skipped tests/backend-api.test.ts
 
       # The battery is the gate that catches a MISSING fix; the differential
       # cannot, because a fix absent on both sides is not a permissive move.
@@ -273,7 +276,7 @@ jobs:
 
       - name: Generate SARIF from fixture
         run: |
-          echo "AKIAIOSFODNN7EXAMPLE" > /tmp/test-secret.txt
+          echo "AKIAIOSFODNN7ABCDEFG" > /tmp/test-secret.txt
           node dist/index.js scan local /tmp/test-secret.txt --engine patterns --format sarif > /tmp/output.sarif || true
 
       - name: Validate SARIF structure

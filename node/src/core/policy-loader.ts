@@ -190,6 +190,11 @@ function mapPolicy(raw: Record<string, any>): PolicyFile {
         console.error(`Warning: skipping ignore entry — "paths" must be a non-empty array of strings.`);
         continue;
       }
+      // Dropping a non-list `rules` would widen the entry to every pattern.
+      if ("rules" in entry && !Array.isArray(entry.rules)) {
+        console.error(`Warning: skipping ignore entry — "rules" must be an array of strings.`);
+        continue;
+      }
       const rule: PolicyIgnoreRule = { paths: paths.map((p: any) => String(p)) };
       if (Array.isArray(entry.rules)) {
         rule.rules = entry.rules.map((r: any) => String(r));

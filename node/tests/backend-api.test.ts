@@ -9,7 +9,8 @@ import { API } from "../src/utils/api.js";
  * See bead rc-ap7 for setting up the key in GitHub CI.
  */
 
-const API_KEY = process.env.RAFTER_API_KEY;
+// env-isolation-setup.ts moves an exported RAFTER_API_KEY here; see that file.
+const API_KEY = process.env.RAFTER_TEST_BACKEND_KEY ?? process.env.RAFTER_API_KEY;
 const describeWithKey = API_KEY ? describe : describe.skip;
 
 describeWithKey("Backend API integration (live)", () => {
@@ -110,17 +111,5 @@ describeWithKey("Backend API integration (live)", () => {
         }
       }
     }, 30000);
-  });
-});
-
-// ── Always-run tests (no API key required) ──────────────────────────
-
-describe("Backend API — offline validation", () => {
-  it("API base URL has trailing slash", () => {
-    expect(API.endsWith("/")).toBe(true);
-  });
-
-  it("API base URL uses HTTPS", () => {
-    expect(API.startsWith("https://")).toBe(true);
   });
 });

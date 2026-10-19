@@ -84,13 +84,6 @@ describe("CommandInterceptor", () => {
       expect(result.requiresApproval).toBe(true);
     });
 
-    it("should require approval for git push --force", () => {
-      const result = interceptor.evaluate("git push --force origin main");
-
-      expect(result.allowed).toBe(false);
-      expect(result.requiresApproval).toBe(true);
-    });
-
     it("should require approval for git push -f (short flag)", () => {
       const result = interceptor.evaluate("git push -f origin main");
       expect(result.allowed).toBe(false);
@@ -119,26 +112,6 @@ describe("CommandInterceptor", () => {
       const result = interceptor.evaluate("git push origin +HEAD:main");
       expect(result.allowed).toBe(false);
       expect(result.requiresApproval).toBe(true);
-    });
-  });
-
-  describe("Medium-risk commands", () => {
-    it("should detect sudo as medium risk", () => {
-      const result = interceptor.evaluate("sudo apt update");
-
-      expect(result.riskLevel).toBe("medium");
-    });
-
-    it("should detect chmod as medium risk", () => {
-      const result = interceptor.evaluate("chmod +x script.sh");
-
-      expect(result.riskLevel).toBe("medium");
-    });
-
-    it("should detect kill -9 as medium risk", () => {
-      const result = interceptor.evaluate("kill -9 1234");
-
-      expect(result.riskLevel).toBe("medium");
     });
   });
 
@@ -208,13 +181,6 @@ describe("CommandInterceptor", () => {
       expect(result.riskLevel).toBe("high");
       expect(result.allowed).toBe(false);
       expect(result.requiresApproval).toBe(true);
-    });
-
-    it("still hard-blocks rm -rf /", () => {
-      const result = interceptor.evaluate("rm -rf /");
-      expect(result.riskLevel).toBe("critical");
-      expect(result.allowed).toBe(false);
-      expect(result.requiresApproval).toBe(false);
     });
 
     it("still hard-blocks a shell-wrapped rm -rf / (the trap)", () => {

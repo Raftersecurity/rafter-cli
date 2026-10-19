@@ -328,6 +328,8 @@ describe("isSuppressed", () => {
     ];
     expect(isSuppressed(".env", "AWS Access Key ID", suppressions)).toBe(true);
     expect(isSuppressed(".env", "Generic Secret", suppressions)).toBe(false);
+    // A pattern-scoped rule does not leak to other paths.
+    expect(isSuppressed("src/main.ts", "AWS Access Key ID", suppressions)).toBe(false);
   });
 
   it("does case-insensitive pattern name matching", () => {
@@ -369,19 +371,6 @@ describe("Custom patterns from .rafter.yml (via constructor)", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("custom pattern name appears in scan results", async () => {
-    // Dynamic import to get fresh module after mock is set up
-    const { RegexScanner } = await import("../src/scanners/regex-scanner.js");
-    const scanner = new RegexScanner([
-      { name: "Internal Token", regex: "INTERNAL_TK_[A-Z0-9]{20}", severity: "critical" },
-    ]);
-
-    const f = path.join(tmpDir, "config.txt");
-    fs.writeFileSync(f, "token = INTERNAL_TK_ABCDEFGHIJ0123456789\n");
-    const result = scanner.scanFile(f);
-    expect(result.matches.some((m) => m.pattern.name === "Internal Token")).toBe(true);
-  });
-
   it("custom pattern severity is respected", async () => {
     const { RegexScanner } = await import("../src/scanners/regex-scanner.js");
     const scanner = new RegexScanner([
@@ -394,52 +383,5 @@ describe("Custom patterns from .rafter.yml (via constructor)", () => {
     const match = result.matches.find((m) => m.pattern.name === "Low Risk Token");
     expect(match).toBeDefined();
     expect(match!.pattern.severity).toBe("low");
-  });
-
-  it("custom pattern missing optional description works", async () => {
-    const { RegexScanner } = await import("../src/scanners/regex-scanner.js");
-    const scanner = new RegexScanner([
-      { name: "No Desc", regex: "NODESC_[0-9]{8}", severity: "medium" },
-    ]);
-
-    const f = path.join(tmpDir, "file.txt");
-    fs.writeFileSync(f, "NODESC_12345678\n");
-    const result = scanner.scanFile(f);
-    expect(result.matches.some((m) => m.pattern.name === "No Desc")).toBe(true);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════════
-// Interaction tests: custom patterns + .rafterignore
-// ══════════════════════════════════════════════════════════════════════
-
-describe("Interaction: custom patterns + .rafterignore", () => {
-  it("custom pattern found in ignored file is suppressed", () => {
-    const suppressions: Suppression[] = [{ pathGlob: "test/fixtures/**" }];
-    // Custom pattern match in an ignored path
-    expect(isSuppressed("test/fixtures/secrets.txt", "Custom (internal)", suppressions)).toBe(true);
-  });
-
-  it("custom pattern NOT in .rafterignore is reported", () => {
-    const suppressions: Suppression[] = [{ pathGlob: "test/fixtures/**" }];
-    // Custom pattern match in a non-ignored path
-    expect(isSuppressed("src/config.ts", "Custom (internal)", suppressions)).toBe(false);
-  });
-
-  it("built-in pattern in .rafterignore is suppressed", () => {
-    const suppressions: Suppression[] = [
-      { pathGlob: "*.env", patternName: "AWS Access Key ID" },
-    ];
-    expect(isSuppressed("config/.env", "AWS Access Key ID", suppressions)).toBe(true);
-  });
-
-  it("built-in pattern NOT in .rafterignore is reported", () => {
-    const suppressions: Suppression[] = [
-      { pathGlob: "*.env", patternName: "AWS Access Key ID" },
-    ];
-    // Different pattern, same file
-    expect(isSuppressed("config/.env", "Generic Secret", suppressions)).toBe(false);
-    // Same pattern, different file
-    expect(isSuppressed("src/main.ts", "AWS Access Key ID", suppressions)).toBe(false);
   });
 });

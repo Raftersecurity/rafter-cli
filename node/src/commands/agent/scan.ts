@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
-import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
+import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import { BetterleaksScanner } from "../../scanners/betterleaks.js";
 import { unionScanResults } from "../../scanners/union.js";
 import { BinaryManager, BETTERLEAKS_VERSION } from "../../utils/binary-manager.js";
@@ -228,12 +228,12 @@ export function createScanCommand(): Command {
 
       if (stats.isDirectory()) {
         if (!opts.quiet) {
-          console.error(`Scanning directory: ${resolvedPath} (${engine})`);
+          console.error(`Scanning directory: ${resolvedPath} (${engineLabel(engine)})`);
         }
         results = await scanDirectory(resolvedPath, engine, scanCfg, opts.history, opts.gitignore);
       } else {
         if (!opts.quiet) {
-          console.error(`Scanning file: ${resolvedPath} (${engine})`);
+          console.error(`Scanning file: ${resolvedPath} (${engineLabel(engine)})`);
         }
         results = await scanFile(resolvedPath, engine, scanCfg);
       }
@@ -493,6 +493,11 @@ async function runGitAddedLineScan(
       encoding: "utf-8",
       cwd,
       stdio: ["pipe", "pipe", "ignore"],
+      // The default 1 MiB cap makes `git diff` throw ENOBUFS on ordinary large
+      // staged diffs (lockfiles, generated or vendored files). That crash used
+      // to exit 1 — indistinguishable from a real finding, so a commit gate
+      // reported a broken scan as a possible secret (#274). Read the whole diff.
+      maxBuffer: gitDiffMaxBuffer(),
     });
 
     if (!patch.trim()) {
@@ -537,7 +542,16 @@ async function runGitAddedLineScan(
       console.error(errorOpts?.notRepoMessage ?? "Error: Not in a git repository or invalid ref");
       process.exit(2);
     }
-    throw error;
+    // A scan that could not run is a scan ERROR, never a finding. Exit 2 (per
+    // CLI_SPEC: invalid input / scan error) so a commit gate keying on the exit
+    // code never mistakes a broken scan for a detected secret (#274). ENOBUFS is
+    // the known case (a diff past the buffer), but any failure to read/parse the
+    // diff belongs here rather than surfacing as exit 1.
+    const detail = error?.code === "ENOBUFS"
+      ? "staged diff too large for the scanner to read"
+      : (error?.message ?? String(error));
+    console.error(`Error: secret scan could not run (${detail}); no scan was performed`);
+    process.exit(2);
   }
 }
 
@@ -545,6 +559,12 @@ async function runGitAddedLineScan(
  * patterns and unions the findings; it is only ever produced internally by
  * `auto` mode, never typed by a user. */
 type ResolvedEngine = "betterleaks" | "patterns" | "both";
+
+/** Self-explanatory display label for a resolved engine — "both" alone
+ * doesn't say which two engines ran (issue #231 item 6). */
+export function engineLabel(engine: ResolvedEngine): string {
+  return engine === "both" ? "both: betterleaks + patterns" : engine;
+}
 
 /**
  * Select scan engine based on availability and user preference.
@@ -707,6 +727,11 @@ async function scanFile(
   return runPatterns();
 }
 
+/** An engine failure's message, e.g. "Betterleaks scan failed (timed out after 60s)". */
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 /**
  * Scan a directory with selected engine
  */
@@ -717,9 +742,9 @@ async function scanDirectory(
   history?: boolean,
   respectGitignore?: boolean,
 ): Promise<ScanResult[]> {
-  // respectGitignore default is true. The patterns engine honors it via
-  // RegexScanner.scanDirectory; betterleaks honors it natively (gitleaks
-  // ancestry — reads .gitignore unless --no-git is set).
+  // respectGitignore default is true. Both engines honor it: the patterns
+  // engine via RegexScanner.scanDirectory, betterleaks by scanning only the
+  // files git does not ignore (BetterleaksScanner.scanDirectory, #262).
   const runPatterns = (): ScanResult[] => {
     const scanner = new RegexScanner(scanCfg?.customPatterns);
     return scanner.scanDirectory(dirPath, {
@@ -735,9 +760,9 @@ async function scanDirectory(
     // exclude-paths post-filter below applies to the merged set.
     const blPromise = (async (): Promise<ScanResult[]> => {
       try {
-        return await new BetterleaksScanner().scanDirectory(dirPath, { useGit: history ?? false });
-      } catch {
-        console.error(fmt.warning("Betterleaks scan failed, using patterns only for this run"));
+        return await new BetterleaksScanner().scanDirectory(dirPath, { useGit: history ?? false, respectGitignore });
+      } catch (e) {
+        console.error(fmt.warning(`${errorText(e)}; using patterns only for this run`));
         return [];
       }
     })();
@@ -746,9 +771,9 @@ async function scanDirectory(
   } else if (engine === "betterleaks") {
     try {
       const bl = new BetterleaksScanner();
-      results = await bl.scanDirectory(dirPath, { useGit: history ?? false });
+      results = await bl.scanDirectory(dirPath, { useGit: history ?? false, respectGitignore });
     } catch (e) {
-      console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
+      console.error(fmt.warning(`${errorText(e)}; falling back to patterns`));
       results = runPatterns();
     }
   } else {
@@ -785,7 +810,7 @@ async function watchAndScan(
   const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
 
   if (!opts.quiet) {
-    console.error(fmt.info(`Watching ${watchPath} for changes (${engine}). Press Ctrl+C to exit.`));
+    console.error(fmt.info(`Watching ${watchPath} for changes (${engineLabel(engine)}). Press Ctrl+C to exit.`));
   }
 
   // Do an initial scan

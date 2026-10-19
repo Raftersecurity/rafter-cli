@@ -23,7 +23,9 @@ beforeAll(() => {
 
 describe.skipIf(process.platform === "win32")("agent init --local --with-gemini", () => {
   it("passes a working-directory path with shell syntax to gemini literally", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gemini-link-"));
+    // realpath: on macOS os.tmpdir() is under /var, a symlink to /private/var,
+    // and the CLI passes gemini its resolved cwd.
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gemini-link-")));
     try {
       const bin = path.join(root, "bin");
       const log = path.join(root, "calls.log");

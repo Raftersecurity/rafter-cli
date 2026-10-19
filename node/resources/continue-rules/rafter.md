@@ -1,6 +1,6 @@
 ---
 name: rafter
-description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter audit`, policy checks, or command-risk evaluation. If a task is security-relevant and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on security-relevant work is not done."
+description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter agent audit`, policy checks, or command-risk evaluation. If a task is security-relevant and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on security-relevant work is not done."
 alwaysApply: false
 ---
 
