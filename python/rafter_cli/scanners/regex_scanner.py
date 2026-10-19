@@ -27,10 +27,13 @@ BINARY_EXTENSIONS = frozenset([
     ".pyc", ".class", ".o", ".a",
 ])
 
+# Keep in step with the default exclude list in node/src/scanners/regex-scanner.ts.
 DEFAULT_EXCLUDE = [
     "node_modules", ".git", "dist", "build",
     ".next", "coverage", ".vscode", ".idea",
-    "__pycache__", ".mypy_cache", ".ruff_cache",
+    # Vendored / virtual-env / generated dirs that cause false positives
+    "vendor", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache",
+    ".pytest_cache", ".ruff_cache", "results", ".terraform", "bower_components",
 ]
 
 

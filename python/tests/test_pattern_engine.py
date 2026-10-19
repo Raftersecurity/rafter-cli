@@ -1,4 +1,6 @@
 """Tests for pattern engine and all 21 secret patterns."""
+import pytest
+
 from rafter_cli.core.pattern_engine import PatternEngine
 from rafter_cli.scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
 
@@ -10,7 +12,20 @@ def _engine():
 # -- AWS ------------------------------------------------------------------
 
 def test_aws_access_key_id():
+    matches = _engine().scan("AKIAIOSFODNN7ABCDEFG")
+    assert any(m.pattern.name == "AWS Access Key ID" for m in matches)
+
+
+# sable/#230: betterleaks skips the canonical AWS-docs example access key (it
+# ends in EXAMPLE); the built-in regex engine disagreed and flagged it. Copy
+# betterleaks' exemption so a Write containing the AWS docs sample isn't denied.
+def test_aws_access_key_id_ignores_docs_example():
     matches = _engine().scan("AKIAIOSFODNN7EXAMPLE")
+    assert not any(m.pattern.name == "AWS Access Key ID" for m in matches)
+
+
+def test_aws_access_key_id_detects_plausible_non_example_key():
+    matches = _engine().scan("AKIAQWERTYUIOPASDFGH")
     assert any(m.pattern.name == "AWS Access Key ID" for m in matches)
 
 
@@ -85,137 +100,58 @@ def test_twilio_api_key():
     assert any(m.pattern.name == "Twilio API Key" for m in matches)
 
 
-# -- Generic --------------------------------------------------------------
+# -- Generic ---------------------------------------------------------------
 
-def test_generic_api_key():
-    matches = _engine().scan('api_key="a1b2c3d4e5f6g7h8i9j0"')
+@pytest.mark.parametrize("text", [
+    'api_key="a1b2c3d4e5f6g7h8i9j0"',
+    'api_key = "a1b2c3d4e5f6g7h8"',  # standalone api_key, quoted value (rc-0as)
+    'api_key = "aB3xY9kL2mN5pQ8r"',  # real key, mixed case (rc-1qd)
+])
+def test_generic_api_key_matches(text):
+    matches = _engine().scan(text)
     assert any(m.pattern.name == "Generic API Key" for m in matches)
 
 
-def test_generic_secret():
-    matches = _engine().scan("password='MyS3cretP@ss!'")
+@pytest.mark.parametrize("text", [
+    "password='MyS3cretP@ss!'",
+    'password = "Sup3rS3cr3t!"',  # standalone password, quoted value (rc-0as)
+    'password = "P@ssw0rd!XyZ"',  # real secret with special chars (rc-1qd)
+])
+def test_generic_secret_matches(text):
+    matches = _engine().scan(text)
     assert any(m.pattern.name == "Generic Secret" for m in matches)
 
 
-# -- False positive tests (rc-0as) -------------------------------------------
+# -- False positive guards ---------------------------------------------------
+# rc-0as: compound variable names and unquoted values.
+# rc-uos: env-var names / identifiers as the value.
+# rc-1qd: variable names containing digits.
 
-def test_no_false_positive_anthropic_api_key():
-    """Variable names containing api_key should not trigger generic detection."""
-    matches = _engine().scan('anthropic_api_key = "sk-ant-something"')
-    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
-    assert len(generic) == 0
-
-
-def test_no_false_positive_settings_password():
-    """Compound variable names containing password should not trigger generic detection."""
-    matches = _engine().scan('settings.user_password = get_password()')
-    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
-    assert len(generic) == 0
-
-
-def test_no_false_positive_unquoted_api_key():
-    """Unquoted values assigned to api_key should not match (likely variable refs)."""
-    matches = _engine().scan("api_key = some_variable_name")
-    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
-    assert len(generic) == 0
+@pytest.mark.parametrize("text", [
+    'anthropic_api_key = "sk-ant-something"',  # rc-0as compound var name
+    "api_key = some_variable_name",            # rc-0as unquoted value
+    "api_key = 'ANTHROPIC_API_KEY'",           # rc-uos env var name as value
+    "api_key: 'GOOGLE_PLACES_API_KEY'",        # rc-uos colon form
+    'api_key = "abcdefghijklmnopqrstuv"',      # rc-uos all letters, no entropy
+    "api_key = 'OPENAI_API_KEY_V2'",           # rc-1qd env var name with digit
+    "api_key = 'my_app_api_key_v2'",           # rc-1qd lowercase identifier
+])
+def test_generic_api_key_no_false_positive(text):
+    matches = _engine().scan(text)
+    assert not any(m.pattern.name == "Generic API Key" for m in matches)
 
 
-def test_no_false_positive_compound_secret():
-    """my_secret_value should not trigger the generic secret pattern."""
-    matches = _engine().scan('app_secret = "not-a-real-secret"')
-    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
-    assert len(generic) == 0
-
-
-def test_generic_api_key_still_matches_standalone():
-    """Standalone api_key with quoted value should still match."""
-    matches = _engine().scan('api_key = "a1b2c3d4e5f6g7h8"')
-    assert any(m.pattern.name == "Generic API Key" for m in matches)
-
-
-def test_generic_secret_still_matches_standalone():
-    """Standalone password with quoted value should still match."""
-    matches = _engine().scan('password = "Sup3rS3cr3t!"')
-    assert any(m.pattern.name == "Generic Secret" for m in matches)
-
-
-# -- False positive tests: env var name values (rc-uos) ----------------------
-
-def test_no_false_positive_env_var_name_as_api_key_value():
-    """api_key = 'ANTHROPIC_API_KEY' should not match (value is an env var name)."""
-    matches = _engine().scan("api_key = 'ANTHROPIC_API_KEY'")
-    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
-    assert len(generic) == 0
-
-
-def test_no_false_positive_env_var_name_as_api_key_value_colon():
-    """api_key: 'GOOGLE_PLACES_API_KEY' should not match."""
-    matches = _engine().scan("api_key: 'GOOGLE_PLACES_API_KEY'")
-    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
-    assert len(generic) == 0
-
-
-def test_no_false_positive_env_var_name_as_secret_value():
-    """password = 'DATABASE_PASSWORD' should not match (value is a name, not a secret)."""
-    matches = _engine().scan("password = 'DATABASE_PASSWORD'")
-    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
-    assert len(generic) == 0
-
-
-def test_no_false_positive_identifier_as_secret_value():
-    """secret = 'my_app_secret_key' should not match (value looks like an identifier)."""
-    matches = _engine().scan("secret = 'my_app_secret_key'")
-    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
-    assert len(generic) == 0
-
-
-def test_generic_api_key_all_letters_no_match():
-    """api_key with all-letter value should not match (no entropy indicators)."""
-    matches = _engine().scan('api_key = "abcdefghijklmnopqrstuv"')
-    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
-    assert len(generic) == 0
-
-
-# -- False positive tests: variable names with digits (rc-1qd) ----------------
-
-def test_no_false_positive_env_var_name_with_digits():
-    """api_key = 'OPENAI_API_KEY_V2' should not match (env var name with digit)."""
-    matches = _engine().scan("api_key = 'OPENAI_API_KEY_V2'")
-    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
-    assert len(generic) == 0
-
-
-def test_no_false_positive_uppercase_secret_var_name():
-    """password = 'DATABASE_PASSWORD_1' should not match (env var name with digit)."""
-    matches = _engine().scan("password = 'DATABASE_PASSWORD_1'")
-    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
-    assert len(generic) == 0
-
-
-def test_no_false_positive_lowercase_ident_with_digits():
-    """api_key = 'my_app_api_key_v2' should not match (lowercase identifier)."""
-    matches = _engine().scan("api_key = 'my_app_api_key_v2'")
-    generic = [m for m in matches if m.pattern.name == "Generic API Key"]
-    assert len(generic) == 0
-
-
-def test_no_false_positive_lowercase_secret_ident():
-    """secret = 'app_secret_token_1' should not match (lowercase identifier)."""
-    matches = _engine().scan("secret = 'app_secret_token_1'")
-    generic = [m for m in matches if m.pattern.name == "Generic Secret"]
-    assert len(generic) == 0
-
-
-def test_real_key_still_matches_mixed_case():
-    """api_key = 'aB3xY9kL2mN5pQ8r' should still match (real key, mixed case)."""
-    matches = _engine().scan('api_key = "aB3xY9kL2mN5pQ8r"')
-    assert any(m.pattern.name == "Generic API Key" for m in matches)
-
-
-def test_real_secret_with_special_chars_still_matches():
-    """password = 'P@ssw0rd!XyZ' should still match (real secret)."""
-    matches = _engine().scan('password = "P@ssw0rd!XyZ"')
-    assert any(m.pattern.name == "Generic Secret" for m in matches)
+@pytest.mark.parametrize("text", [
+    "settings.user_password = get_password()",  # rc-0as compound var name
+    'app_secret = "not-a-real-secret"',         # rc-0as compound var name
+    "password = 'DATABASE_PASSWORD'",           # rc-uos env var name as value
+    "secret = 'my_app_secret_key'",             # rc-uos identifier as value
+    "password = 'DATABASE_PASSWORD_1'",         # rc-1qd env var name with digit
+    "secret = 'app_secret_token_1'",            # rc-1qd lowercase identifier
+])
+def test_generic_secret_no_false_positive(text):
+    matches = _engine().scan(text)
+    assert not any(m.pattern.name == "Generic Secret" for m in matches)
 
 
 def test_no_false_positive_redact_preserves_var_names():
@@ -329,3 +265,19 @@ def test_env_redaction_only_touches_secret_assignment_in_mixed_command():
     out = _engine().redact_text("FOO=bar SECRET_TOKEN=abcdef1234567890 rafter")
     assert "FOO=bar" in out
     assert "abcdef1234567890" not in out
+
+
+def test_does_not_compile_regexes_per_line(monkeypatch):
+    # Compiling every pattern for every line made the regex engine 45x slower
+    # than betterleaks on a large repo.
+    from rafter_cli.core.pattern_engine import Pattern
+    engine = PatternEngine([
+        Pattern(name="AWS Access Key ID", regex="AKIA[A-Z0-9]{16}", severity="critical"),
+        Pattern(name="Generic", regex="(?i)secret", severity="low"),
+    ])
+    calls = []
+    original = PatternEngine._compile
+    monkeypatch.setattr(PatternEngine, "_compile", staticmethod(lambda r: calls.append(r) or original(r)))
+    text = "\n".join("x" if i % 50 else "AKIAIOSFODNN7EXAMPLE" for i in range(200))
+    assert [m.line for m in engine.scan_with_position(text)] == [1, 51, 101, 151]
+    assert calls == []

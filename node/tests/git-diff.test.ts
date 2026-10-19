@@ -34,12 +34,12 @@ describe("parseUnifiedDiffAddedLines", () => {
       "--- a/src/config.ts",
       "+++ b/src/config.ts",
       "@@ -0,0 +1,2 @@",
-      "+const key = 'AKIAIOSFODNN7EXAMPLE';",
+      "+const key = 'AKIAIOSFODNN7ABCDEFG';",
       "+export {};",
     ].join("\n");
 
     expect(parseUnifiedDiffAddedLines(patch)).toEqual([
-      { file: "src/config.ts", line: 1, text: "const key = 'AKIAIOSFODNN7EXAMPLE';" },
+      { file: "src/config.ts", line: 1, text: "const key = 'AKIAIOSFODNN7ABCDEFG';" },
       { file: "src/config.ts", line: 2, text: "export {};" },
     ]);
   });
@@ -165,12 +165,12 @@ describe("parseUnifiedDiffAddedLines", () => {
       "--- a/c.ts",
       "+++ b/c.ts",
       "@@ -0,0 +1,2 @@",
-      "+++counter AKIAIOSFODNN7EXAMPLE",
-      "++ spaced AKIAIOSFODNN7EXAMPLE",
+      "+++counter AKIAIOSFODNN7ABCDEFG",
+      "++ spaced AKIAIOSFODNN7ABCDEFG",
     ].join("\n");
     expect(parseUnifiedDiffAddedLines(patch)).toEqual([
-      { file: "c.ts", line: 1, text: "++counter AKIAIOSFODNN7EXAMPLE" },
-      { file: "c.ts", line: 2, text: "+ spaced AKIAIOSFODNN7EXAMPLE" },
+      { file: "c.ts", line: 1, text: "++counter AKIAIOSFODNN7ABCDEFG" },
+      { file: "c.ts", line: 2, text: "+ spaced AKIAIOSFODNN7ABCDEFG" },
     ]);
   });
 
@@ -180,10 +180,10 @@ describe("parseUnifiedDiffAddedLines", () => {
       "--- a/w.ts",
       "+++ b/w.ts",
       "@@ -0,0 +1 @@",
-      "+const k = 'AKIAIOSFODNN7EXAMPLE';",
+      "+const k = 'AKIAIOSFODNN7ABCDEFG';",
     ].join("\r\n");
     expect(parseUnifiedDiffAddedLines(patch)).toEqual([
-      { file: "w.ts", line: 1, text: "const k = 'AKIAIOSFODNN7EXAMPLE';" },
+      { file: "w.ts", line: 1, text: "const k = 'AKIAIOSFODNN7ABCDEFG';" },
     ]);
   });
 
@@ -205,10 +205,10 @@ describe("parseUnifiedDiffAddedLines", () => {
       "--- a/f.ts",
       "+++ b/f.ts",
       "@@ -0,0 +1 @@",
-      "+SECRET=\fAKIAIOSFODNN7EXAMPLE",
+      "+SECRET=\fAKIAIOSFODNN7ABCDEFG",
     ].join("\n");
     expect(parseUnifiedDiffAddedLines(patch)).toEqual([
-      { file: "f.ts", line: 1, text: "SECRET=\fAKIAIOSFODNN7EXAMPLE" },
+      { file: "f.ts", line: 1, text: "SECRET=\fAKIAIOSFODNN7ABCDEFG" },
     ]);
   });
 });
@@ -216,7 +216,7 @@ describe("parseUnifiedDiffAddedLines", () => {
 describe("scanAddedDiffLines", () => {
   it("reports findings with absolute file paths and line numbers", () => {
     const added: AddedDiffLine[] = [
-      { file: "secrets.ts", line: 42, text: "const k = 'AKIAIOSFODNN7EXAMPLE';" },
+      { file: "secrets.ts", line: 42, text: "const k = 'AKIAIOSFODNN7ABCDEFG';" },
     ];
     const results = scanAddedDiffLines(added, "/repo/root");
     expect(results).toHaveLength(1);
@@ -233,7 +233,7 @@ describe("scanAddedDiffLines", () => {
   it("groups multiple findings in the same file", () => {
     const ghp = "ghp_123456789012345678901234567890123456";
     const added: AddedDiffLine[] = [
-      { file: "a.ts", line: 1, text: "const k = 'AKIAIOSFODNN7EXAMPLE';" },
+      { file: "a.ts", line: 1, text: "const k = 'AKIAIOSFODNN7ABCDEFG';" },
       { file: "a.ts", line: 2, text: `const t = '${ghp}';` },
     ];
     const results = scanAddedDiffLines(added, "/repo");

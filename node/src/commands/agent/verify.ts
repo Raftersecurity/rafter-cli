@@ -39,14 +39,21 @@ export function runConfiguredHook(
   // is exercised the same way the editor would exercise it. Retry a transient
   // spawn failure (e.g. EAGAIN under process pressure) so a resource hiccup does
   // not get reported as an inert gate — a false alarm is worse than a slow check.
-  let result = spawnSync("sh", ["-c", command], { input: payload, encoding: "utf-8", timeout: 10_000 });
+  // A hook may exit without reading its payload; the stdin write then fails with
+  // EPIPE while status and stdout are intact. That is a hook that ran, not a
+  // spawn failure, so it must not be retried or reported as inert.
+  const run = () => {
+    const r = spawnSync("sh", ["-c", command], { input: payload, encoding: "utf-8", timeout: 10_000 });
+    return (r.error as NodeJS.ErrnoException | undefined)?.code === "EPIPE" ? { ...r, error: undefined } : r;
+  };
+  let result = run();
   // Retry a spawn-level error OR a signal kill: under the same process pressure
   // that produces EAGAIN, the OOM killer sends SIGKILL, which sets `signal` (not
   // `error`) with a null status — the identical false-alarm scenario by another
   // route (measured by achebe). A persistent failure still returns decision:null,
   // so a genuinely inert hook is still reported inert — no fail-open.
   for (let attempt = 0; attempt < 2 && (result.error || result.signal); attempt++) {
-    result = spawnSync("sh", ["-c", command], { input: payload, encoding: "utf-8", timeout: 10_000 });
+    result = run();
   }
   if (result.error) {
     return { status: null, decision: null, error: result.error.message, stdout: "" };
@@ -67,6 +74,11 @@ interface CheckResult {
   passed: boolean;
   detail: string;
   optional?: boolean;  // optional checks warn but don't fail exit code
+  // True only for an optional check whose platform/integration isn't present
+  // on this machine at all (e.g. ~/.cursor doesn't exist). Distinguishes "not
+  // applicable here" from "present but misconfigured" so the summary line
+  // doesn't count every uninstalled editor as a "core check" (rafter-cli#231).
+  notDetected?: boolean;
 }
 
 async function checkBetterleaks(): Promise<CheckResult> {
@@ -126,7 +138,7 @@ function checkClaudeCode(): CheckResult {
   const claudeDir = path.join(homeDir, ".claude");
 
   if (!fs.existsSync(claudeDir)) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-claude-code' to enable` };
+    return { name, passed: false, optional: true, notDetected: true, detail: `Not detected — run 'rafter agent init --with-claude-code' to enable` };
   }
 
   const settingsPath = path.join(claudeDir, "settings.json");
@@ -210,7 +222,7 @@ function checkOpenClaw(): CheckResult {
   const skillManager = new SkillManager();
 
   if (!skillManager.isOpenClawInstalled()) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-openclaw' to enable` };
+    return { name, passed: false, optional: true, notDetected: true, detail: `Not detected — run 'rafter agent init --with-openclaw' to enable` };
   }
 
   if (!skillManager.isRafterSkillInstalled()) {
@@ -237,7 +249,7 @@ function checkCodex(): CheckResult {
   const codexDir = path.join(homeDir, ".codex");
 
   if (!fs.existsSync(codexDir)) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-codex' to enable` };
+    return { name, passed: false, optional: true, notDetected: true, detail: `Not detected — run 'rafter agent init --with-codex' to enable` };
   }
 
   const skillPath = path.join(homeDir, ".agents", "skills", "rafter", "SKILL.md");
@@ -254,7 +266,7 @@ function checkGemini(): CheckResult {
   const geminiDir = path.join(homeDir, ".gemini");
 
   if (!fs.existsSync(geminiDir)) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-gemini' to enable` };
+    return { name, passed: false, optional: true, notDetected: true, detail: `Not detected — run 'rafter agent init --with-gemini' to enable` };
   }
 
   const settingsPath = path.join(geminiDir, "settings.json");
@@ -280,7 +292,7 @@ function checkCursor(): CheckResult {
   const cursorDir = path.join(homeDir, ".cursor");
 
   if (!fs.existsSync(cursorDir)) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-cursor' to enable` };
+    return { name, passed: false, optional: true, notDetected: true, detail: `Not detected — run 'rafter agent init --with-cursor' to enable` };
   }
 
   const mcpPath = path.join(cursorDir, "mcp.json");
@@ -306,7 +318,7 @@ function checkWindsurf(): CheckResult {
   const windsurfDir = path.join(homeDir, ".codeium", "windsurf");
 
   if (!fs.existsSync(windsurfDir)) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-windsurf' to enable` };
+    return { name, passed: false, optional: true, notDetected: true, detail: `Not detected — run 'rafter agent init --with-windsurf' to enable` };
   }
 
   const mcpPath = path.join(windsurfDir, "mcp_config.json");
@@ -332,7 +344,7 @@ function checkContinueDev(): CheckResult {
   const continueDir = path.join(homeDir, ".continue");
 
   if (!fs.existsSync(continueDir)) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-continue' to enable` };
+    return { name, passed: false, optional: true, notDetected: true, detail: `Not detected — run 'rafter agent init --with-continue' to enable` };
   }
 
   const configPath = path.join(continueDir, "config.json");
@@ -371,7 +383,7 @@ function checkAider(): CheckResult {
     : fs.existsSync(userConf) ? userConf
     : null;
   if (!conf) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-aider' to enable` };
+    return { name, passed: false, optional: true, notDetected: true, detail: `Not detected — run 'rafter agent init --with-aider' to enable` };
   }
 
   let raw = "";
@@ -418,7 +430,7 @@ function checkHermes(): CheckResult {
   const hermesDir = path.join(homeDir, ".hermes");
 
   if (!fs.existsSync(hermesDir)) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-hermes' to enable` };
+    return { name, passed: false, optional: true, notDetected: true, detail: `Not detected — run 'rafter agent init --with-hermes' to enable` };
   }
 
   const configPath = path.join(hermesDir, "config.yaml");
@@ -449,7 +461,7 @@ function checkOpenCode(): CheckResult {
   const openCodeDir = path.join(homeDir, ".config", "opencode");
 
   if (!fs.existsSync(openCodeDir)) {
-    return { name, passed: false, optional: true, detail: `Not detected — run 'rafter agent init --with-opencode' to enable` };
+    return { name, passed: false, optional: true, notDetected: true, detail: `Not detected — run 'rafter agent init --with-opencode' to enable` };
   }
 
   const configPath = path.join(openCodeDir, "opencode.json");
@@ -632,11 +644,28 @@ export function createVerifyCommand(): Command {
         }
 
         console.log();
+        // "Core checks" excludes optional integrations that simply aren't
+        // present on this machine — those were never candidates to pass, so
+        // counting them in the denominator (and calling them "core" in the
+        // same breath as "optional") misrepresents a healthy install as a
+        // mostly-failing one (rafter-cli#231). An optional check that IS
+        // applicable here but still failed (e.g. hooks installed but
+        // disabled) still counts as core: it's a real, actionable warning.
+        const notApplicable = results.filter((r) => !r.passed && r.optional && r.notDetected);
+        const coreResults = results.filter((r) => !(r.optional && r.notDetected));
+        const coreWarned = coreResults.filter((r) => !r.passed && r.optional);
         if (hardFailed.length === 0) {
-          const warnNote = warned.length > 0 ? ` (${warned.length} optional check${warned.length > 1 ? "s" : ""} not configured)` : "";
-          console.log(fmt.success(`${passed.length}/${results.length} core checks passed${warnNote}`));
+          const notes: string[] = [];
+          if (coreWarned.length > 0) {
+            notes.push(`${coreWarned.length} optional check${coreWarned.length > 1 ? "s" : ""} not configured`);
+          }
+          if (notApplicable.length > 0) {
+            notes.push(`${notApplicable.length} optional integration${notApplicable.length > 1 ? "s" : ""} not detected`);
+          }
+          const warnNote = notes.length > 0 ? ` (${notes.join(", ")})` : "";
+          console.log(fmt.success(`${passed.length}/${coreResults.length} core checks passed${warnNote}`));
         } else {
-          console.log(fmt.error(`${passed.length}/${results.length} checks passed — ${hardFailed.length} failed`));
+          console.log(fmt.error(`${passed.length}/${coreResults.length} checks passed — ${hardFailed.length} failed`));
         }
         console.log();
       }

@@ -134,6 +134,7 @@ _AGENT_SKILLS: list[dict[str, str]] = [
     {"name": "rafter", "description": "Rafter Remote"},
     {"name": "rafter-secure-design", "description": "Rafter Secure Design"},
     {"name": "rafter-code-review", "description": "Rafter Code Review"},
+    {"name": "rafter-skill-review", "description": "Rafter Skill Review"},
 ]
 
 
@@ -271,6 +272,9 @@ def _print_dry_run_plan(
     want_betterleaks: bool,
     want_skill_scanner: bool,
     risk_level: str,
+    betterleaks_existing: Path | None = None,
+    betterleaks_supported: bool = True,
+    claude_code_mcp_disabled: bool = False,
 ) -> None:
     """Print every file path the install would touch — without writing anything (rf-hrtd).
 
@@ -298,6 +302,9 @@ def _print_dry_run_plan(
         suffix = f"   ({note})" if note else ""
         print(f"  REMOVE    {p}{suffix}")
 
+    def S(p: Path, note: str) -> None:
+        print(f"  SKIP      {p}   ({note})")
+
     rprint()
     rprint(fmt.info("DRY RUN — no files will be created or modified."))
     scope_note = f" (cwd: {root})" if scope == "project" else ""
@@ -312,7 +319,12 @@ def _print_dry_run_plan(
     if want_betterleaks:
         print()
         print("Betterleaks (--with-betterleaks / --all):")
-        D(home / ".rafter" / "bin" / "betterleaks", "binary, ~12MB from GitHub releases")
+        if betterleaks_existing:
+            S(betterleaks_existing, "betterleaks already present; no download")
+        elif not betterleaks_supported:
+            S(home / ".rafter" / "bin" / "betterleaks", "no betterleaks build for this platform; pattern-based scanning")
+        else:
+            D(home / ".rafter" / "bin" / "betterleaks", "binary, ~12MB from GitHub releases")
 
     if want_skill_scanner:
         print()
@@ -323,11 +335,16 @@ def _print_dry_run_plan(
         print()
         print("Claude Code (--with-claude-code):")
         W(root / ".claude" / "settings.json", "PreToolUse + PostToolUse hooks merged")
-        for s in ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"):
-            W(root / ".claude" / "skills" / s / "SKILL.md")
+        for s in _AGENT_SKILLS:
+            W(root / ".claude" / "skills" / s["name"] / "SKILL.md")
         W(root / ".claude" / "agents" / "rafter.md", "sub-agent")
         W(root / ".claude" / "CLAUDE.md", "rafter:start/end marker block")
-        W(root / ".mcp.json", "project-scope MCP config")
+        # .mcp.json is a project-scope file; the user-scope install never writes it.
+        if scope == "project":
+            if claude_code_mcp_disabled:
+                S(root / ".mcp.json", "claude-code.mcp disabled")
+            else:
+                W(root / ".mcp.json", "project-scope MCP config")
 
     if want_codex:
         print()
@@ -708,6 +725,42 @@ _CURSOR_RULE_SKILLS: tuple[str, ...] = (
     "rafter-code-review",
     "rafter-skill-review",
 )
+
+
+def _install_codex_hooks(root: Path) -> None:
+    """Install Rafter PreToolUse/PostToolUse hooks into <root>/.codex/hooks.json.
+
+    Mirrors Node's installCodexHooks: Codex uses the Claude Code hook protocol,
+    and Bash + apply_patch are the tools Codex documents hook support for.
+    """
+    codex_dir = root / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    hooks_path = codex_dir / "hooks.json"
+
+    config: dict[str, Any] = {}
+    if hooks_path.exists():
+        try:
+            config = json.loads(hooks_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            rprint(fmt.warning("Existing Codex hooks.json was unreadable, creating new one"))
+
+    hooks = config.setdefault("hooks", {})
+    rafter_bin = _resolve_rafter_path()
+    for event, sub in (("PreToolUse", "pretool"), ("PostToolUse", "posttool")):
+        entries = hooks.get(event) or []
+        entries = [
+            e for e in entries
+            if not any(f"hook {sub}" in h.get("command", "") for h in (e.get("hooks") or []))
+        ]
+        entries.append({
+            "matcher": "Bash|apply_patch",
+            "hooks": [{"type": "command", "command": f"{rafter_bin} hook {sub}"}],
+        })
+        hooks[event] = entries
+
+    hooks_path.write_text(json.dumps(config, indent=2))
+    rprint(fmt.success(f"Installed PreToolUse hooks to {hooks_path}"))
+    rprint(fmt.success(f"Installed PostToolUse hooks to {hooks_path}"))
 
 
 def _install_cursor_hooks(root: Path) -> None:
@@ -1113,7 +1166,7 @@ def _install_opencode_mcp(root: Path) -> bool:
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
     with_betterleaks: bool = typer.Option(False, "--with-betterleaks", help="Download and install Betterleaks binary"),
-    with_skill_scanner: bool = typer.Option(False, "--with-skill-scanner", help="Install the optional skill-scanner deep engine (heavy; audit-skill --deep)"),
+    with_skill_scanner: bool = typer.Option(False, "--with-skill-scanner", help="Install the optional skill-scanner deep engine (heavy; skill review --deep)"),
     with_openclaw: bool = typer.Option(False, "--with-openclaw", help="Install OpenClaw integration"),
     with_claude_code: bool = typer.Option(False, "--with-claude-code", help="Install Claude Code integration"),
     with_codex: bool = typer.Option(False, "--with-codex", help="Install Codex CLI integration"),
@@ -1228,37 +1281,48 @@ def init(
 
     # Warn about requested but undetected environments (user scope only —
     # in --local scope we create the directories in CWD as needed).
+    # Gated on the EXPLICIT --with-<platform> flag, not the resolved want_*
+    # (which --all also sets): --all means "install all DETECTED
+    # integrations" per its own --help text, so an undetected platform
+    # under --all is normal and shouldn't warn individually — 9 such
+    # warnings buried the ones that actually matter (rafter-cli#231).
     if scope == "user":
-        if want_openclaw and not has_openclaw:
+        if with_openclaw and not has_openclaw:
             rprint(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"))
-        if want_claude_code and not has_claude_code:
+        if with_claude_code and not has_claude_code:
             rprint(fmt.warning("Claude Code requested but not detected (~/.claude not found)"))
-        if want_codex and not has_codex:
+        if with_codex and not has_codex:
             rprint(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"))
-        if want_gemini and not has_gemini:
+        if with_gemini and not has_gemini:
             rprint(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"))
-        if want_cursor and not has_cursor:
+        if with_cursor and not has_cursor:
             rprint(fmt.warning("Cursor requested but not detected (~/.cursor not found)"))
-        if want_windsurf and not has_windsurf:
+        if with_windsurf and not has_windsurf:
             rprint(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"))
-        if want_continue and not has_continue_dev:
+        if with_continue and not has_continue_dev:
             rprint(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
-        if want_aider and not has_aider:
+        if with_aider and not has_aider:
             rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
-        if want_hermes and not has_hermes:
+        if with_hermes and not has_hermes:
             rprint(fmt.warning("Hermes requested but not detected (~/.hermes not found)"))
-        if want_opencode and not has_opencode:
+        if with_opencode and not has_opencode:
             rprint(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"))
 
     # --dry-run: print every file path the command would touch, then exit
     # before any filesystem write happens (rf-hrtd). Built from the same
     # resolved want_* / has_* booleans the install path uses.
     if dry_run:
+        _bl_existing: Path | None = None
+        if want_betterleaks and not update:
+            _bl_which = shutil.which("betterleaks")
+            _bl_local = Path.home() / ".rafter" / "bin" / ("betterleaks.exe" if sys.platform == "win32" else "betterleaks")
+            _bl_existing = Path(_bl_which) if _bl_which else (_bl_local if _bl_local.exists() else None)
+        _components = manager.get("agent.components") or {}
         _print_dry_run_plan(
             root=root,
             scope=scope,
             want_openclaw=want_openclaw and has_openclaw,
-            want_claude_code=want_claude_code and (has_claude_code or local),
+            want_claude_code=want_claude_code and (has_claude_code or with_claude_code or local),
             want_codex=want_codex and (has_codex or local),
             want_gemini=want_gemini and (has_gemini or local),
             want_cursor=want_cursor and (has_cursor or local),
@@ -1270,6 +1334,9 @@ def init(
             want_betterleaks=want_betterleaks,
             want_skill_scanner=want_skill_scanner,
             risk_level=risk_level,
+            betterleaks_existing=_bl_existing,
+            betterleaks_supported=BinaryManager().is_platform_supported(),
+            claude_code_mcp_disabled=_components.get("claude-code.mcp", {}).get("enabled") is False,
         )
         return
 
@@ -1398,6 +1465,7 @@ def init(
     if (has_codex or (local and want_codex)) and want_codex:
         try:
             ok, error = _install_codex_skills(root)
+            _install_codex_hooks(root)
             codex_ok = ok
             if ok and scope == "user":
                 manager.set("agent.environments.codex.enabled", True)
@@ -1629,6 +1697,12 @@ def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> st
         return "patterns"
     usable = _ensure_betterleaks_usable(quiet, auto_update)
     return "both" if usable == "betterleaks" else "patterns"
+
+
+def _engine_label(engine: str) -> str:
+    """Self-explanatory display label for a resolved engine — "both" alone
+    doesn't say which two engines ran (issue #231 item 6)."""
+    return "both: betterleaks + patterns" if engine == "both" else engine
 
 
 def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
@@ -1901,16 +1975,20 @@ def _scan_directory(
         bl_results: list[ScanResult] = []
         try:
             bl = BetterleaksScanner()
-            bl_results = [ScanResult(file=r.file, matches=r.matches) for r in bl.scan_directory(dir_path, use_git=history)]
-        except Exception:
-            print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
+            bl_results = [
+                ScanResult(file=r.file, matches=r.matches)
+                for r in bl.scan_directory(dir_path, use_git=history, respect_gitignore=respect_gitignore)
+            ]
+        except Exception as exc:
+            print_stderr(fmt.warning(f"{exc}; using patterns only for this run"))
         results = union_scan_results(bl_results, run_patterns())
     elif engine == "betterleaks":
         try:
             bl = BetterleaksScanner()
-            results = bl.scan_directory(dir_path, use_git=history)
+            results = bl.scan_directory(dir_path, use_git=history, respect_gitignore=respect_gitignore)
             results = [ScanResult(file=r.file, matches=r.matches) for r in results]
-        except Exception:
+        except Exception as exc:
+            print_stderr(fmt.warning(f"{exc}; falling back to patterns"))
             results = run_patterns()
     else:
         results = run_patterns()
@@ -2024,7 +2102,7 @@ def _watch_and_scan(
     eng = _select_engine(engine, quiet, auto_update)
 
     if not quiet:
-        print_stderr(fmt.info(f"Watching {watch_path} for changes ({eng}). Press Ctrl+C to exit."))
+        print_stderr(fmt.info(f"Watching {watch_path} for changes ({_engine_label(eng)}). Press Ctrl+C to exit."))
 
     # Initial scan
     if os.path.isdir(watch_path):
@@ -2232,11 +2310,11 @@ def scan(
 
     if os.path.isdir(resolved_path):
         if not quiet:
-            print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
+            print(f"Scanning directory: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
         results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
     else:
         if not quiet:
-            print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
+            print(f"Scanning file: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
         results = _scan_file(resolved_path, eng, custom_patterns)
 
     filtered = _apply_baseline(results, baseline_entries)
@@ -2503,23 +2581,30 @@ def exec_cmd(
     # Pre-exec scan for git commands (+ lines in staged diff only)
     if not skip_scan and command.strip().startswith(("git commit", "git push")):
         try:
+            rev = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+            )
+        except FileNotFoundError:
+            rev = None
+        # Outside a git repo there is nothing staged to scan.
+        if rev is not None and rev.returncode == 0:
             from ..utils.git_diff import parse_unified_diff_added_lines
             from ..scanners.git_diff_scan import scan_added_diff_lines
 
-            patch = subprocess.run(
+            # surrogateescape: a non-UTF-8 diff is still scanned, not a crash.
+            diff = subprocess.run(
                 ["git", "diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
-                capture_output=True,
-                text=True,
-            ).stdout
-            if patch.strip():
-                repo_root = subprocess.run(
-                    ["git", "rev-parse", "--show-toplevel"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                ).stdout.strip()
-                added = parse_unified_diff_added_lines(patch)
-                results = scan_added_diff_lines(added, repo_root)
+                capture_output=True, text=True, encoding="utf-8", errors="surrogateescape",
+            )
+            if diff.returncode != 0:
+                # A scan that could not run is a scan error (exit 2), never a pass.
+                detail = diff.stderr.strip() or f"git diff exited {diff.returncode}"
+                print(f"Error: secret scan could not run ({detail}); command blocked", file=sys.stderr)
+                interceptor.log_evaluation(evaluation, "blocked")
+                raise typer.Exit(code=2)
+            if diff.stdout.strip():
+                added = parse_unified_diff_added_lines(diff.stdout)
+                results = scan_added_diff_lines(added, rev.stdout.strip())
                 total = sum(len(r.matches) for r in results)
                 if results:
                     rprint(f"\n{fmt.warning('Secrets detected in staged files!')}\n")
@@ -2527,8 +2612,6 @@ def exec_cmd(
                     rprint(f"\nRun 'rafter secrets' for details.\n")
                     interceptor.log_evaluation(evaluation, "blocked")
                     raise typer.Exit(code=1)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
 
     # Requires approval — only a person at a terminal can give it.
     if evaluation.requires_approval:
@@ -2687,6 +2770,11 @@ class _CheckResult:
     passed: bool
     detail: str
     optional: bool = False  # optional checks warn but don't fail exit code
+    # True only for an optional check whose platform/integration isn't present
+    # on this machine at all (e.g. ~/.cursor doesn't exist). Distinguishes "not
+    # applicable here" from "present but misconfigured" so the summary line
+    # doesn't count every uninstalled editor as a "core check" (rafter-cli#231).
+    not_detected: bool = False
 
 
 def _check_betterleaks() -> _CheckResult:
@@ -2749,7 +2837,7 @@ def _check_claude_code() -> _CheckResult:
     claude_dir = home / ".claude"
 
     if not claude_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-claude-code' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-claude-code' to enable", optional=True, not_detected=True)
 
     settings_path = claude_dir / "settings.json"
     if not settings_path.exists():
@@ -2785,7 +2873,7 @@ def _check_openclaw() -> _CheckResult:
     openclaw_root = home / ".openclaw"
 
     if not openclaw_root.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-openclaw' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-openclaw' to enable", optional=True, not_detected=True)
 
     skill_path = openclaw_root / "workspace" / "skills" / "rafter-security" / "SKILL.md"
     if not skill_path.exists():
@@ -2818,7 +2906,7 @@ def _check_codex() -> _CheckResult:
     home = Path.home()
 
     if not (home / ".codex").exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-codex' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-codex' to enable", optional=True, not_detected=True)
 
     skill_path = home / ".agents" / "skills" / "rafter" / "SKILL.md"
     if not skill_path.exists():
@@ -2834,7 +2922,7 @@ def _check_gemini() -> _CheckResult:
     gemini_dir = home / ".gemini"
 
     if not gemini_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-gemini' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-gemini' to enable", optional=True, not_detected=True)
 
     settings_path = gemini_dir / "settings.json"
     if not settings_path.exists():
@@ -2857,7 +2945,7 @@ def _check_cursor() -> _CheckResult:
     cursor_dir = home / ".cursor"
 
     if not cursor_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-cursor' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-cursor' to enable", optional=True, not_detected=True)
 
     mcp_path = cursor_dir / "mcp.json"
     if not mcp_path.exists():
@@ -2880,7 +2968,7 @@ def _check_windsurf() -> _CheckResult:
     windsurf_dir = home / ".codeium" / "windsurf"
 
     if not windsurf_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-windsurf' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-windsurf' to enable", optional=True, not_detected=True)
 
     mcp_path = windsurf_dir / "mcp_config.json"
     if not mcp_path.exists():
@@ -2903,7 +2991,7 @@ def _check_continue_dev() -> _CheckResult:
     continue_dir = home / ".continue"
 
     if not continue_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-continue' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-continue' to enable", optional=True, not_detected=True)
 
     config_path = continue_dir / "config.json"
     if not config_path.exists():
@@ -2939,7 +3027,7 @@ def _check_aider() -> _CheckResult:
 
     conf = project_conf if project_conf.exists() else user_conf if user_conf.exists() else None
     if conf is None:
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-aider' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-aider' to enable", optional=True, not_detected=True)
 
     try:
         raw = conf.read_text()
@@ -2980,7 +3068,7 @@ def _check_hermes() -> _CheckResult:
     hermes_dir = home / ".hermes"
 
     if not hermes_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-hermes' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-hermes' to enable", optional=True, not_detected=True)
 
     config_path = hermes_dir / "config.yaml"
     if not config_path.exists():
@@ -3008,7 +3096,7 @@ def _check_opencode() -> _CheckResult:
     opencode_dir = home / ".config" / "opencode"
 
     if not opencode_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-opencode' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-opencode' to enable", optional=True, not_detected=True)
 
     config_path = opencode_dir / "opencode.json"
     if not config_path.exists():
@@ -3167,9 +3255,24 @@ def verify(
                 rprint(fmt.error(f"{r.name}: FAIL — {r.detail}"))
 
         rprint()
+        # "Core checks" excludes optional integrations that simply aren't
+        # present on this machine — those were never candidates to pass, so
+        # counting them in the denominator (and calling them "core" in the
+        # same breath as "optional") misrepresents a healthy install as a
+        # mostly-failing one (rafter-cli#231). An optional check that IS
+        # applicable here but still failed (e.g. hooks installed but
+        # disabled) still counts as core: it's a real, actionable warning.
+        not_applicable = [r for r in results if not r.passed and r.optional and r.not_detected]
+        core_results = [r for r in results if not (r.optional and r.not_detected)]
+        core_warned = [r for r in core_results if not r.passed and r.optional]
         if not hard_failed:
-            warn_note = f" ({len(warned)} optional check{'s' if len(warned) != 1 else ''} not configured)" if warned else ""
-            rprint(fmt.success(f"{len(passed)}/{len(results)} core checks passed{warn_note}"))
+            notes = []
+            if core_warned:
+                notes.append(f"{len(core_warned)} optional check{'s' if len(core_warned) != 1 else ''} not configured")
+            if not_applicable:
+                notes.append(f"{len(not_applicable)} optional integration{'s' if len(not_applicable) != 1 else ''} not detected")
+            warn_note = f" ({', '.join(notes)})" if notes else ""
+            rprint(fmt.success(f"{len(passed)}/{len(core_results)} core checks passed{warn_note}"))
         else:
             rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
         rprint()
@@ -3555,7 +3658,7 @@ def update_skill_scanner(
         help="skill-scanner version to install (default: pinned version)",
     ),
 ):
-    """Install or update the optional `skill-scanner` deep engine (audit-skill --deep).
+    """Install or update the optional `skill-scanner` deep engine (skill review --deep).
 
     Installs Cisco AI Defense's skill-scanner in an isolated environment (uv tool,
     or pip --user fallback). This is a heavy third-party package and its

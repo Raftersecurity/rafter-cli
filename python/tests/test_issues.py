@@ -18,6 +18,7 @@ from rafter_cli.commands.issues.dedup import (
     fingerprint,
 )
 from rafter_cli.commands.issues.github_client import GitHubIssue
+from rafter_cli.commands.issues.issues_app import _parse_natural_text
 from rafter_cli.commands.issues.issue_builder import (
     BackendVulnerability,
     IssueDraft,
@@ -54,10 +55,6 @@ class TestFingerprint:
         fp = fingerprint("src/path with spaces/file.ts", "rule:special/chars")
         assert len(fp) == 12
         assert all(c in "0123456789abcdef" for c in fp)
-
-    def test_consistent_across_calls(self):
-        results = [fingerprint("src/auth.ts", "sql-injection") for _ in range(5)]
-        assert len(set(results)) == 1
 
 
 class TestEmbedExtractFingerprint:
@@ -399,13 +396,6 @@ class TestDeduplicationFlow:
         filtered = [d for d in [d1, d2] if d.fingerprint not in dupes]
         assert len(filtered) == 0
 
-    def test_no_dedup_keeps_all(self):
-        """Simulates --no-dedup: skip findDuplicates entirely."""
-        d1 = self._make_draft("a.ts", "AWS_KEY")
-        d2 = self._make_draft("b.ts", "DB_PASS")
-        drafts = [d1, d2]  # No filtering applied
-        assert len(drafts) == 2
-
 
 # ── from-scan: dry-run output ─────────────────────────────────────────
 
@@ -449,85 +439,38 @@ class TestFromScanDryRun:
 
 
 class TestParseNaturalText:
-    """Mirrors _parse_natural_text from issues_app.py."""
-
-    def _parse(self, text: str) -> dict:
-        """Inline mirror of _parse_natural_text."""
-        import re
-        lines = text.strip().split("\n")
-        issue_labels: list[str] = []
-        title = ""
-        body_start = 0
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped:
-                title = re.sub(r"^#+\s*", "", stripped).strip()
-                body_start = i + 1
-                break
-        if not title:
-            title = "Security issue reported via Rafter CLI"
-        if len(title) > 120:
-            title = title[:117] + "..."
-        body_lines = lines[body_start:]
-        body = "\n".join(body_lines).strip() or text.strip()
-        text_lower = text.lower()
-        if "critical" in text_lower or "p0" in text_lower:
-            issue_labels.append("severity:critical")
-        elif "high severity" in text_lower or "high risk" in text_lower or "p1" in text_lower:
-            issue_labels.append("severity:high")
-        elif "medium" in text_lower or "p2" in text_lower:
-            issue_labels.append("severity:medium")
-        elif "low" in text_lower or "p3" in text_lower:
-            issue_labels.append("severity:low")
-        security_keywords = [
-            "security", "vulnerability", "cve", "cwe", "owasp",
-            "secret", "credential", "token", "password", "injection",
-            "xss", "csrf", "ssrf", "exploit",
-        ]
-        if any(kw in text_lower for kw in security_keywords):
-            issue_labels.append("security")
-        file_refs = re.findall(
-            r"(?:^|\s)([a-zA-Z0-9_./-]+\.[a-zA-Z]{1,10})(?::(\d+))?", text
-        )
-        if file_refs:
-            files = [f[0].strip() for f in file_refs if "/" in f[0] or "." in f[0]]
-            if files:
-                body += "\n\n### Referenced Files\n\n"
-                for f in files[:10]:
-                    body += f"- `{f}`\n"
-        body += "\n\n---\n*Created by [Rafter CLI](https://rafter.so) — security for AI builders*\n"
-        return {"title": title, "body": body, "labels": list(set(issue_labels))}
+    """Exercises the real _parse_natural_text from issues_app.py."""
 
     def test_extracts_first_line_as_title(self):
-        result = self._parse("SQL injection in login form\nDetails here")
+        result = _parse_natural_text("SQL injection in login form\nDetails here")
         assert result["title"] == "SQL injection in login form"
 
     def test_strips_markdown_headers(self):
-        result = self._parse("## Security Bug\nBody text")
+        result = _parse_natural_text("## Security Bug\nBody text")
         assert result["title"] == "Security Bug"
 
     def test_truncates_long_titles(self):
-        result = self._parse("A" * 150)
+        result = _parse_natural_text("A" * 150)
         assert len(result["title"]) <= 120
         assert result["title"].endswith("...")
 
     def test_default_title_for_blank_input(self):
-        result = self._parse("   \n   \n   ")
+        result = _parse_natural_text("   \n   \n   ")
         assert result["title"] == "Security issue reported via Rafter CLI"
 
     def test_single_line_uses_as_both_title_and_body(self):
-        result = self._parse("Single line issue")
+        result = _parse_natural_text("Single line issue")
         assert result["title"] == "Single line issue"
         assert "Single line issue" in result["body"]
 
     def test_adds_rafter_footer(self):
-        result = self._parse("Some issue")
+        result = _parse_natural_text("Some issue")
         assert "Rafter CLI" in result["body"]
 
 
 class TestFromTextSeverityDetection:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_critical(self):
         assert "severity:critical" in self._parse("Critical vulnerability")["labels"]
@@ -563,7 +506,7 @@ class TestFromTextSeverityDetection:
 
 class TestFromTextSecurityDetection:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     @pytest.mark.parametrize("keyword", [
         "security", "vulnerability", "cve", "cwe", "owasp",
@@ -581,7 +524,7 @@ class TestFromTextSecurityDetection:
 
 class TestFromTextFileExtraction:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_extracts_file_with_line_number(self):
         result = self._parse("Bug in src/auth/login.ts:42 causes crash")
@@ -607,7 +550,7 @@ class TestFromTextFileExtraction:
 
 class TestFromTextLabelsFlag:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_appends_extra_labels(self):
         parsed = self._parse("Critical security bug")
@@ -632,7 +575,7 @@ class TestFromTextLabelsFlag:
 
 class TestFromTextTitleOverride:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_title_override(self):
         parsed = self._parse("Original title\nBody text")
@@ -642,7 +585,7 @@ class TestFromTextTitleOverride:
 
 class TestFromTextDryRun:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_parsed_serializes_to_json(self):
         parsed = self._parse("XSS vulnerability in comments\nDetails")
@@ -653,7 +596,7 @@ class TestFromTextDryRun:
 
 class TestFromTextFileInput:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_reads_from_file(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -678,7 +621,7 @@ class TestFromTextFileInput:
 
 class TestFromTextLabelDedup:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_labels_are_unique(self):
         result = self._parse("Critical security vulnerability with credentials and tokens")
