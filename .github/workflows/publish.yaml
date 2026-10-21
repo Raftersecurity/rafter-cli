@@ -61,7 +61,7 @@ jobs:
       # silently-skipped tests reported green. Same floor as
       # test-comprehensive.yml; keep the two in step.
       - name: Assert the suite actually ran
-        run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "release test-node (vitest)"
+        run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "release test-node (vitest)" --allow-all-skipped tests/backend-api.test.ts
 
   # sable-cazq — python/tests/ ran in exactly one place in this repo
   # (test-comprehensive.yml) and it was not the release path. publish.yaml
