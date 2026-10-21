@@ -9,8 +9,9 @@ import { getRafterDir } from "../../core/config-defaults.js";
 import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
 import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
+import { shellQuote } from "../agent/exec.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
-import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
+import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
 import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
 import fs from "fs";
@@ -99,12 +100,16 @@ function formatBlockedMessage(command: string, evaluation: CommandEvaluation): s
   return `\u2717 Rafter blocked: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}`;
 }
 
-function formatApprovalMessage(command: string, evaluation: CommandEvaluation): string {
+export function formatApprovalMessage(command: string, evaluation: CommandEvaluation): string {
   const cmdDisplay = command.length > 60 ? command.slice(0, 60) + "..." : command;
   const rule = evaluation.matchedPattern ?? "policy match";
   const label = RISK_LABELS[evaluation.riskLevel] ?? evaluation.riskLevel.toUpperCase();
   const desc = RISK_DESCRIPTIONS[evaluation.riskLevel] ?? "";
-  return `\u26a0 Rafter: approval required\n  Command: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}\n\nTo approve: a person must run \`rafter agent exec "${command}"\` at an\n            interactive terminal and confirm. There is no flag that\n            skips the prompt.`;
+  // The command is echoed into a suggested shell invocation, so it must be
+  // quoted as data, not interpolated raw \u2014 a raw double-quoted echo lets a
+  // command containing `"`, `$`, or a backtick break out of the quoting or
+  // get shell-expanded when pasted (rf issue #231 item 5).
+  return `\u26a0 Rafter: approval required\n  Command: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}\n\nTo approve: a person must run \`rafter agent exec ${shellQuote(command)}\` at an\n            interactive terminal and confirm. There is no flag that\n            skips the prompt.`;
 }
 
 export function createHookPretoolCommand(): Command {
@@ -118,32 +123,46 @@ export function createHookPretoolCommand(): Command {
     .option("--format <format>", "Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf", "claude")
     .action(async (opts) => {
       const format = (opts.format || "claude") as HookFormat;
+      let decision: HookDecision;
       try {
-        const input = await readStdin();
-        let raw: Record<string, any>;
-
-        try {
-          raw = JSON.parse(input);
-        } catch {
-          // Can't parse → fail open
-          writeDecision({ decision: "allow" }, format);
-          return;
-        }
-
-        // Validate payload is an object with expected shape
-        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-          writeDecision({ decision: "allow" }, format);
-          return;
-        }
-
-        const payload = normalizeInput(raw, format);
-        const decision = evaluateToolCall(payload);
-        writeDecision(decision, format);
-      } catch {
-        // Any unexpected error → fail open
-        writeDecision({ decision: "allow" }, format);
+        decision = decidePretool(await readStdin(), format);
+      } catch (e) {
+        decision = denyOnError(e);
       }
+      writeDecision(decision, format);
     });
+}
+
+/**
+ * Decide one PreToolUse call from its raw stdin text. Input that is not a JSON
+ * object is allowed (nothing to evaluate). Any exception thrown while
+ * evaluating fails CLOSED: an unexpected error is not evidence the call is
+ * safe. Conditions the loaders already handle (a malformed .rafter.yml warns
+ * and falls back to defaults) never throw, so they do not reach this.
+ */
+export function decidePretool(input: string, format: HookFormat): HookDecision {
+  let raw: Record<string, any>;
+  try {
+    raw = JSON.parse(input);
+  } catch {
+    return { decision: "allow" };
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { decision: "allow" };
+  }
+  try {
+    return evaluateToolCall(normalizeInput(raw, format));
+  } catch (e) {
+    return denyOnError(e);
+  }
+}
+
+function denyOnError(e: unknown): HookDecision {
+  const type = e instanceof Error ? e.constructor.name : typeof e;
+  const msg = e instanceof Error ? e.message : String(e);
+  const reason = `rafter hook error: ${type}: ${msg}; denying to be safe`;
+  console.error(reason);
+  return { decision: "deny", reason };
 }
 
 /**
@@ -250,6 +269,14 @@ function evaluateBash(command: string, control: HookControl): HookDecision {
   const trimmed = command.trim();
   if (control.secretScanEnabled && (trimmed.startsWith("git commit") || trimmed.startsWith("git push"))) {
     const scanResult = scanStagedFiles();
+    if (scanResult.scanError) {
+      audit.logCommandIntercepted(command, false, "blocked", `secret scan could not run: ${scanResult.scanError}`);
+      return {
+        decision: "deny",
+        reason: `Rafter: secret scan of the staged diff could not run (${scanResult.scanError}); ` +
+          "commit blocked rather than allowed unscanned. Run 'rafter secrets --staged' to investigate.",
+      };
+    }
     if (scanResult.secretsFound) {
       // Audit per file so the log records WHICH file + pattern, not a bare count.
       for (const r of scanResult.findings) {
@@ -353,6 +380,8 @@ interface StagedScanResult {
   findings: ScanResult[];
   /** Repo root, for rendering finding paths relative to the user's tree. */
   repoRoot: string;
+  /** Set when the staged diff could not be read; the commit gate must deny. */
+  scanError?: string;
 }
 
 /**
@@ -375,12 +404,18 @@ export function scanStagedFiles(cwd: string = process.cwd()): StagedScanResult {
   const empty: StagedScanResult = {
     secretsFound: false, count: 0, files: 0, findings: [], repoRoot: cwd,
   };
+  let repoRoot: string;
   try {
-    const repoRoot = execSync("git rev-parse --show-toplevel", gitOpts).trim() || cwd;
-
+    repoRoot = execSync("git rev-parse --show-toplevel", gitOpts).trim() || cwd;
+  } catch {
+    return empty; // Not a git repo: no staged files to scan.
+  }
+  try {
+    // At the default 1 MiB buffer a larger staged diff threw ENOBUFS, the catch
+    // below returned "no secrets", and the commit skipped the scan (#274).
     const patch = execSync(
       "git diff -U0 --no-color --cached --diff-filter=ACM",
-      gitOpts,
+      { ...gitOpts, maxBuffer: gitDiffMaxBuffer() },
     ).trim();
     if (!patch) {
       return { ...empty, repoRoot };
@@ -405,8 +440,12 @@ export function scanStagedFiles(cwd: string = process.cwd()): StagedScanResult {
       findings: kept,
       repoRoot,
     };
-  } catch {
-    return empty;
+  } catch (error: any) {
+    // Inside a repo, a scan that could not run must not read as "no secrets".
+    const scanError = error?.code === "ENOBUFS"
+      ? "staged diff too large for the scanner to read"
+      : (error?.message ?? String(error));
+    return { ...empty, repoRoot, scanError };
   }
 }
 

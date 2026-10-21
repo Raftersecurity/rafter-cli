@@ -14,7 +14,7 @@ const FIXTURES: Record<string, string> = {
     "# AWS Configuration",
     "# This file contains fake AWS credentials for testing",
     "",
-    "aws_access_key_id = AKIAIOSFODNN7EXAMPLE",
+    "aws_access_key_id = AKIAIOSFODNN7ABCDEFG",
     "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     "",
   ].join("\n"),
@@ -33,7 +33,7 @@ const FIXTURES: Record<string, string> = {
     "// File with mixed severity patterns",
     "const config = {",
     "  // Critical: AWS key",
-    '  awsKey: "AKIAIOSFODNN7EXAMPLE",',
+    '  awsKey: "AKIAIOSFODNN7ABCDEFG",',
     "  // High: generic API key",
     '  api_key: "sk_' + 'test_BQokikJOvBiI2HlWgH4olfQ2",',
     "  // High: bearer token",
@@ -160,7 +160,7 @@ describe("Snapshot/Golden File Tests", () => {
   describe("redaction accuracy", () => {
     it("matches golden file for redaction samples", () => {
       const samples = [
-        { input: "AKIAIOSFODNN7EXAMPLE", label: "aws-key-20char" },
+        { input: "AKIAIOSFODNN7ABCDEFG", label: "aws-key-20char" },
         { input: "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij", label: "github-pat-40char" },
         { input: "sk_" + "live_abcdefghijklmnopqrstuvwx", label: "stripe-30char" },
         { input: "xoxb-12", label: "short-token-7char" },

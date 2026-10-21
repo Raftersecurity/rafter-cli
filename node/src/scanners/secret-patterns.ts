@@ -8,7 +8,11 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   // AWS
   {
     name: "AWS Access Key ID",
-    regex: "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}",
+    // Negative lookahead excludes the canonical AWS-docs example key
+    // (AKIAIOSFODNN7EXAMPLE and its siblings, which all end in EXAMPLE).
+    // betterleaks skips these too (sable/#230); matching that keeps the two
+    // engines from disagreeing on a well-known public non-secret.
+    regex: "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)(?![A-Z0-9]{9}EXAMPLE)[A-Z0-9]{16}",
     severity: "critical",
     description: "AWS Access Key ID detected"
   },

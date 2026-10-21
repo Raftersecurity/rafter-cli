@@ -15,6 +15,57 @@ import re
 # Directories where `rm -rf /<dir>` is catastrophic (data loss / unbootable).
 _CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt"
 
+# Reverse shells -- an interactive shell handed to an attacker over a socket. In
+# an agent-security product these must never rate low/allowed (sable-0ki7:
+# evaluate_command rated them low). Folded into CRITICAL so they are hard-blocked
+# with no policy opt-out. Matched against the sanitized command (see
+# assess_command_risk), so an eval's -c/-e argument is inlined and quoted prose is
+# redacted. Parity with the Node sources in node/src/core/risk-rules.ts; benign
+# look-alikes (nc -z, OpenBSD nc -C host 25, socat - TCP:h:p, docker.socket,
+# --socket-path ... /bin/bash, trace=socket /bin/sh, ls config/dev/tcp/,
+# `import socket; print(...)`) covered with no false positive by the test suite.
+# Known limits fail OPEN because the payload is unreadable after sanitization, not
+# because a pattern is loose (tracked for follow-up, not papered over with a broad
+# rule that would hard-block benign commands): a payload piped into a non-shell
+# interpreter (`echo '<code>' | python3`); a variable-split or base64/$() blob;
+# the quoted-operand forms of php -r, socat exec:'/bin/sh', gawk, telnet, rcat.
+# `... | sh` and base64-into-shell still degrade to high via shell_program_from_stream.
+_REVERSE_SHELL_PATTERNS: list[str] = [
+    # bash/zsh net redirect `>& /dev/tcp/host/port`: output to the socket or
+    # fd duplication onto it (`>`, `>&`, `&>`, `<>`, `<&`), or a shell reading
+    # its program from it (`bash < /dev/tcp/...`; `-c` excluded so the inlined
+    # payload is not mistaken for the shell's stdin). A read-only redirect (the
+    # wait-for-port idiom `bash -c '</dev/tcp/h/p'`, `cat < /dev/tcp/...`) and a
+    # path component (`ls config/dev/tcp/`) do not match.
+    r"((>|<>|[<>]&)\s*|\b(ba|z|da|k|a)?sh(\s+-[abd-z]+)*\s*<\s*)/dev/(tcp|udp)/",
+    # ...or an interactive shell anywhere beside the pseudo-device.
+    r"^(?=[\s\S]*(^|[\s<>&;|])/dev/(tcp|udp)/)(?=[\s\S]*\b(ba|z|da|k|a)?sh\s+-[a-z]*i)",
+    # netcat exec flag: `-e` anywhere in a short cluster (`-e`/`-ve`/`-nve`) or
+    # long `--exec`/`--sh-exec`/`--lua-exec`. `-c` omitted: after case-folding it
+    # collides with OpenBSD `nc -C` (CRLF); no benign nc cluster carries `e`.
+    r"\b(nc|ncat|netcat)\b[^|;&]*\s(-[a-z]*e\b|--(sh-|lua-)?exec\b)",
+    # named-pipe relay: fifo AND netcat AND a shell (any order); a fifo beside a
+    # benign `nc -z`/`nc -l` health check lacks the shell and does not match
+    r"^(?=[\s\S]*\b(mkfifo|mknod)\b)(?=[\s\S]*\b(nc|ncat|netcat)\b)(?=[\s\S]*(/bin/(ba)?sh|\b(ba)?sh\b[^\n]*-i))",
+    # socat with a program endpoint (`EXEC:`/`SYSTEM:`); not a plain relay
+    r"\bsocat\b[\s\S]*\b(exec|system):",
+    # interpreter socket one-liner, part A: a socket *call* (not the bare word,
+    # in --socket-path/docker.socket/trace=socket) + a spawn that NAMES a shell.
+    # Order-independent anchored lookaheads: catches the socket-after-spawn
+    # (canonical Node.js) form, and linear (no prefix[\s\S]*suffix backtracking).
+    r"""^(?=[\s\S]*(socket\.socket|\bsocket\s*\(|tcpsocket\.|io::socket|pf_inet|sock_stream|net\.socket))(?=[\s\S]*(pty\.spawn|/bin/(ba)?sh|(os\.system|system|exec|popen|spawnsync|spawn|subprocess\.(call|run|popen|check_output|check_call))\s*[\s(\[{"']*/?(bin/)?(ba|z|da|a|k)?sh\b))""",
+    # interpreter socket one-liner, part B: a socket call + a generic exec/system
+    # + socket-fd wiring (dup2/fileno/pipe/redirect/read-loop). Catches forms
+    # whose shell name arrives from the socket at runtime (perl `system $_ while
+    # <$s>`, a node `.pipe()` bridge) without hard-blocking a benign socket
+    # script that merely shells out (which has no such wiring).
+    r"^(?=[\s\S]*(socket\.socket|\bsocket\s*\(|tcpsocket\.|io::socket|pf_inet|sock_stream|net\.socket))(?=[\s\S]*(\bexec\b|\bsystem\b|os\.system|subprocess\.|\bpopen\s*\(|\bspawn\s*\())(?=[\s\S]*(dup2|fileno|\.pipe\s*\(|<&|>&|fdopen|while\s*<))",
+    # zsh TCP-module reverse shell (`zmodload zsh/net/tcp; ztcp host port; ...`)
+    r"\bzmodload\b[\s\S]*zsh/net/tcp",
+    # powershell/pwsh TCPClient reverse shell (cross-platform pwsh on Linux too)
+    r"system\.net\.sockets\.tcpclient",
+]
+
 # Catastrophic, irreversible commands. Hard-blocked unconditionally — no policy,
 # mode, or deny-list can opt out of them.
 CRITICAL_PATTERNS: list[str] = [
@@ -30,6 +81,7 @@ CRITICAL_PATTERNS: list[str] = [
     r"mkfs",
     r"fdisk",
     r"parted",
+    *_REVERSE_SHELL_PATTERNS,
 ]
 
 HIGH_PATTERNS: list[str] = [

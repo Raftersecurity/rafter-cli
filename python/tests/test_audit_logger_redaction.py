@@ -111,6 +111,14 @@ def test_verify_returns_no_breaks_on_pristine_chain(audit_path, enabled_config):
     assert logger.verify() == []
 
 
+def test_verify_passes_after_entry_longer_than_read_chunk(audit_path, enabled_config):
+    logger = AuditLogger(log_path=audit_path)
+    logger.log_command_intercepted("echo 1", passed=True, action_taken="allowed")
+    logger.log_command_intercepted("x" * 140_000, passed=True, action_taken="allowed")
+    logger.log_command_intercepted("echo 3", passed=True, action_taken="allowed")
+    assert logger.verify() == []
+
+
 def test_verify_detects_edited_entry(audit_path, enabled_config):
     logger = AuditLogger(log_path=audit_path)
     logger.log_command_intercepted("echo 1", passed=True, action_taken="allowed")

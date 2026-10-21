@@ -44,9 +44,13 @@ def report_main(
         raise typer.Exit(code=2)
 
     try:
-        results = json.loads(json_data)
+        parsed = json.loads(json_data)
+        # `rafter secrets --json` wraps its results in an object.
+        results = parsed if isinstance(parsed, list) else (parsed.get("results") if isinstance(parsed, dict) else None)
         if not isinstance(results, list):
-            raise ValueError("Expected a JSON array of scan results")
+            if isinstance(parsed, dict) and isinstance(parsed.get("vulnerabilities"), list):
+                raise ValueError("this is a remote scan result; render it with `rafter get <scan_id> --format md`")
+            raise ValueError("Expected the JSON output of `rafter secrets --json`")
     except (json.JSONDecodeError, ValueError) as exc:
         typer.echo(f"Error: Invalid JSON input — {exc}", err=True)
         raise typer.Exit(code=2)

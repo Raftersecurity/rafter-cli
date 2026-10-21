@@ -23,6 +23,16 @@ def write_report(tmp_path):
     return _write
 
 
+def test_redaction_of_a_long_secret_is_bounded():
+    # betterleaks returns whole PEM blocks as the secret; one finding must not
+    # print a 1,700-character run of asterisks.
+    from rafter_cli.scanners.betterleaks import BetterleaksScanner
+    pem = "-----BEGIN RSA PRIVATE KEY-----" + "A" * 1600 + "-----END RSA PRIVATE KEY-----"
+    r = BetterleaksScanner._convert({"RuleID": "private-key", "StartLine": 1, "StartColumn": 1, "Secret": pem}).redacted
+    assert len(r) <= 24
+    assert r.startswith("----") and r.endswith("----")
+
+
 class TestParseReport:
     # #217 — betterleaks >=1.1.2 writes the literal `null` for a clean scan via
     # the `dir`/`git` subcommands. Regression guard: this is an empty result,
@@ -57,3 +67,11 @@ class TestParseReport:
     def test_malformed_json_still_warns(self, write_report, capsys):
         assert BetterleaksScanner._parse_report(write_report("{not json")) == []
         assert "Failed to parse" in capsys.readouterr().err
+
+
+def test_convert_reports_1_based_column_on_every_line():
+    # betterleaks 1.1.x reports StartColumn one past the 1-based column on every
+    # line but the first; the regex engine reports the true column.
+    from rafter_cli.scanners.betterleaks import BetterleaksScanner
+    assert BetterleaksScanner._convert({"RuleID": "jwt", "StartLine": 1, "StartColumn": 1, "Secret": "eyJ"}).column == 1
+    assert BetterleaksScanner._convert({"RuleID": "jwt", "StartLine": 2, "StartColumn": 6, "Secret": "eyJ"}).column == 5

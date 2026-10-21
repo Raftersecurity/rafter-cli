@@ -74,6 +74,7 @@ export class RegexScanner {
      */
     respectGitignore?: boolean;
   }): ScanResult[] {
+    // Keep in step with DEFAULT_EXCLUDE in python/rafter_cli/scanners/regex_scanner.py.
     const exclude = options?.exclude || [
       "node_modules",
       ".git",
@@ -91,6 +92,7 @@ export class RegexScanner {
       ".tox",
       ".mypy_cache",
       ".pytest_cache",
+      ".ruff_cache",
       "results",
       ".terraform",
       "bower_components"

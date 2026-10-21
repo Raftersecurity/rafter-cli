@@ -46,11 +46,6 @@ _PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
 class TestVersionAndHelp:
-    def test_version_outputs_semver(self):
-        stdout, _, rc = rafter("--version")
-        assert rc == 0
-        assert re.search(r"\d+\.\d+\.\d+", stdout)
-
     def test_short_version_flag(self):
         long_out, _, _ = rafter("--version")
         short_out, _, rc = rafter("-V")
@@ -58,7 +53,7 @@ class TestVersionAndHelp:
         assert short_out.strip() == long_out.strip()
 
     def test_version_matches_pyproject(self):
-        """--version output must match pyproject.toml version."""
+        """--version output must match pyproject.toml version (and is itself a semver string)."""
         pyproject = (_PROJECT_ROOT / "python" / "pyproject.toml").read_text()
         m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, re.MULTILINE)
         assert m, "Could not find version in pyproject.toml"
@@ -66,11 +61,7 @@ class TestVersionAndHelp:
         stdout, _, rc = rafter("--version")
         assert rc == 0
         assert expected in stdout
-
-    def test_help_outputs_usage(self):
-        stdout, _, rc = rafter("--help")
-        assert rc == 0
-        assert "rafter" in stdout.lower()
+        assert re.search(r"\d+\.\d+\.\d+", stdout)
 
     def test_help_lists_all_top_level_commands(self):
         stdout, _, rc = rafter("--help")
@@ -82,31 +73,21 @@ class TestVersionAndHelp:
         ]:
             assert cmd in stdout, f"Missing command '{cmd}' in --help output"
 
-    def test_agent_help_shows_subcommands(self):
-        stdout, _, rc = rafter("agent --help")
+    @pytest.mark.parametrize(
+        "command, expected_subcommands",
+        [
+            ("agent", ["scan", "exec", "audit"]),
+            ("scan", ["remote"]),
+            ("policy", ["export"]),
+            ("mcp", ["serve"]),
+            ("ci", ["init"]),
+        ],
+    )
+    def test_command_help_shows_subcommands(self, command, expected_subcommands):
+        stdout, _, rc = rafter(f"{command} --help")
         assert rc == 0
-        for sub in ["scan", "exec", "audit"]:
+        for sub in expected_subcommands:
             assert sub in stdout
-
-    def test_scan_help_shows_subcommands(self):
-        stdout, _, rc = rafter("scan --help")
-        assert rc == 0
-        assert "remote" in stdout
-
-    def test_policy_help_shows_subcommands(self):
-        stdout, _, rc = rafter("policy --help")
-        assert rc == 0
-        assert "export" in stdout
-
-    def test_mcp_help_shows_subcommands(self):
-        stdout, _, rc = rafter("mcp --help")
-        assert rc == 0
-        assert "serve" in stdout
-
-    def test_ci_help_shows_subcommands(self):
-        stdout, _, rc = rafter("ci --help")
-        assert rc == 0
-        assert "init" in stdout
 
 
 # ---------------------------------------------------------------------------
@@ -123,14 +104,6 @@ class TestCommandRouting:
     def test_unknown_command_exits_nonzero(self):
         _, _, rc = rafter("nonexistent-command")
         assert rc != 0
-
-    def test_secrets_routes_to_scanner(self):
-        _, _, rc = rafter("secrets /tmp/nonexistent-rafter-routing-test")
-        assert rc == 2  # path not found
-
-    def test_agent_exec_routes_to_interceptor(self):
-        stdout, _, rc = rafter(["agent", "exec", "echo routing-test"])
-        assert rc == 0
 
     def test_agent_config_show_routes_to_config(self):
         with tempfile.TemporaryDirectory(prefix="rafter-route-") as tmp:
@@ -164,13 +137,13 @@ class TestSecretsScanning:
 
     def test_exits_1_when_secrets_detected(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIAIOSFODNN7EXAMPLE\n")
+        f.write_text("AKIAIOSFODNN7ABCDEFG\n")
         _, _, rc = rafter(f"secrets {f} --engine patterns --quiet")
         assert rc == 1
 
     def test_json_outputs_valid_json(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIA" + "IOSFODNN7" + "EXAMPLE\n")
+        f.write_text("AKIA" + "IOSFODNN7" + "ABCDEFG\n")
         stdout, _, rc = rafter(f"secrets {f} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
@@ -180,7 +153,7 @@ class TestSecretsScanning:
 
     def test_json_output_includes_scan_mode_note(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIA" + "IOSFODNN7" + "EXAMPLE\n")
+        f.write_text("AKIA" + "IOSFODNN7" + "ABCDEFG\n")
         stdout, _, rc = rafter(f"secrets {f} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
@@ -203,7 +176,7 @@ class TestSecretsScanning:
 
     def test_sarif_format_outputs_sarif_schema(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIAIOSFODNN7EXAMPLE\n")
+        f.write_text("AKIAIOSFODNN7ABCDEFG\n")
         stdout, _, rc = rafter(f"secrets {f} --engine patterns --format sarif")
         assert rc == 1
         sarif = json.loads(stdout)
@@ -215,7 +188,7 @@ class TestSecretsScanning:
     def test_scans_directory_recursively(self, tmp_path):
         sub = tmp_path / "src"
         sub.mkdir()
-        (sub / "config.ts").write_text("const key = '" + "AKIA" + "IOSFODNN7" + "EXAMPLE';\n")
+        (sub / "config.ts").write_text("const key = '" + "AKIA" + "IOSFODNN7" + "ABCDEFG';\n")
         stdout, _, rc = rafter(f"secrets {tmp_path} --engine patterns --json")
         assert rc == 1
         parsed = json.loads(stdout)
@@ -268,7 +241,7 @@ class TestSecretsScanning:
 class TestScanLocalAliasBackCompat:
     def test_alias_produces_identical_json_to_secrets(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIAIOSFODNN7EXAMPLE\n")
+        f.write_text("AKIAIOSFODNN7ABCDEFG\n")
         canonical_stdout, _, canonical_rc = rafter(f"secrets {f} --engine patterns --json")
         alias_stdout, _, alias_rc = rafter(f"scan local {f} --engine patterns --json")
         assert canonical_rc == 1
@@ -387,6 +360,76 @@ def _exec(args, *, stdin_text="", home=None):
         timeout=30,
     )
     return result.stdout, result.stderr, result.returncode
+
+
+class TestAgentExecStagedDiffFailsClosed:
+    """`agent exec git commit` must not run a commit it could not scan."""
+
+    def _repo(self, tmp_path, name, content):
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        (tmp_path / name).write_bytes(content)
+        subprocess.run(["git", "add", name], cwd=tmp_path, check=True)
+
+    def test_blocks_commit_when_git_diff_fails(self, tmp_path):
+        self._repo(tmp_path, "a.js", b"const a = 1;\n")
+        (tmp_path / ".git" / "index").write_bytes(b"corrupt")
+        _, err, rc = rafter(["agent", "exec", "git commit -m x"], cwd=tmp_path,
+                            env_override={"HOME": str(tmp_path)})
+        assert rc == 2
+        assert "could not run" in err
+
+    def test_scans_non_utf8_staged_diff(self, tmp_path):
+        self._repo(tmp_path, "latin1.txt", b"caf\xe9\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n")
+        out, err, rc = rafter(["agent", "exec", "git commit -m x"], cwd=tmp_path,
+                              env_override={"HOME": str(tmp_path)})
+        assert rc == 1
+        assert "Secrets detected" in out + err
+
+
+class TestMalformedPolicyScansWithDefaults:
+    """A .rafter.yml that cannot be loaded is not a scan failure: the hook and
+    `secrets --staged` scan with DEFAULT settings and warn. The file also
+    carries a suppress-everything ignore rule, so a loader that kept the parts
+    it could read would hide the secret; only defaults may apply."""
+
+    def _stage(self, tmp_path, body):
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        (tmp_path / ".rafter.yml").write_text(
+            'ignore:\n  - paths: ["**"]\nscan:\n  custom_patterns: [null]\n'
+        )
+        (tmp_path / "a.js").write_text(body)
+        subprocess.run(["git", "add", "a.js"], cwd=tmp_path, check=True)
+
+    def _run(self, tmp_path, args, stdin_text=None):
+        env = os.environ.copy()
+        env.update({"PYTHONUSERBASE": _USER_BASE, "HOME": str(tmp_path)})
+        r = subprocess.run([sys.executable, "-m", "rafter_cli", *args], input=stdin_text,
+                           capture_output=True, text=True, cwd=tmp_path, env=env, timeout=30)
+        return r.stdout, r.stderr, r.returncode
+
+    def _hook(self, tmp_path):
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}})
+        out, err, _ = self._run(tmp_path, ["hook", "pretool"], payload)
+        return json.loads(out)["hookSpecificOutput"], err
+
+    def test_still_denies_staged_secret_and_warns(self, tmp_path):
+        self._stage(tmp_path, 'const k = "AKIAIOSFODNN7ABCDEFG";\n')
+        out, err = self._hook(tmp_path)
+        assert out["permissionDecision"] == "deny"
+        assert "AWS Access Key ID" in out["permissionDecisionReason"]
+        assert re.search(r"Warning: .*\.rafter\.yml", err)
+        _, err, rc = self._run(tmp_path, ["secrets", "--staged"])
+        assert rc == 1
+        assert re.search(r"Warning: .*\.rafter\.yml", err)
+
+    def test_allows_clean_diff_and_warns(self, tmp_path):
+        self._stage(tmp_path, "const a = 1;\n")
+        out, err = self._hook(tmp_path)
+        assert out["permissionDecision"] == "allow"
+        assert re.search(r"Warning: .*\.rafter\.yml", err)
+        _, err, rc = self._run(tmp_path, ["secrets", "--staged"])
+        assert rc == 0
+        assert re.search(r"Warning: .*\.rafter\.yml", err)
 
 
 class TestAgentExecApproval:

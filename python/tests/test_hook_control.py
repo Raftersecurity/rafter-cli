@@ -84,7 +84,7 @@ def test_env_disable_overrides_global_enable():
 
 
 # ── End-to-end via the real CLI (security property) ───────────────────────
-SECRET_WRITE = json.dumps({"tool_name": "Write", "tool_input": {"content": "aws_key = AKIAIOSFODNN7EXAMPLE"}})
+SECRET_WRITE = json.dumps({"tool_name": "Write", "tool_input": {"content": "aws_key = AKIAIOSFODNN7ABCDEFG"}})
 
 
 _PKG_ROOT = str(Path(__file__).resolve().parent.parent)
