@@ -177,6 +177,29 @@ describe("MCP Server — real stdio transport: scan_secrets", () => {
     // scanFiles only returns entries with matches, so clean dir → empty array
     expect(parsed).toHaveLength(0);
   });
+
+  // sable-ilbx — a permission-denied file must surface as unreadable, not be
+  // reported as a clean, empty scan.
+  it("reports an unreadable file in a separate block", async () => {
+    const f = path.join(tmpDir, "secret.env");
+    fs.writeFileSync(f, "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdef1234567890ABCDEFGHIJKL\n");
+    fs.chmodSync(f, 0o000);
+    try {
+      const result = await client.callTool({
+        name: "scan_secrets",
+        arguments: { path: f, engine: "patterns" },
+      });
+      expect(result.isError).toBeFalsy();
+      const content = result.content as Array<{ text: string }>;
+      expect(JSON.parse(content[0].text)).toHaveLength(0);
+      const meta = content.map((c) => JSON.parse(c.text)).find((o) => o.unreadable);
+      expect(meta).toBeTruthy();
+      expect(meta.unreadable_count).toBe(1);
+      expect(meta.unreadable[0].file).toBe(f);
+    } finally {
+      fs.chmodSync(f, 0o644);
+    }
+  });
 });
 
 // The triage loop the suppress_finding description promises: once a finding

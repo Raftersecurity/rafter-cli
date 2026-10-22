@@ -129,3 +129,31 @@ def test_skips_the_same_default_directories_as_the_node_cli(scanner, tmp_path):
     (tmp_path / "creds.env").write_text("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n")
     results = scanner.scan_directory(str(tmp_path), respect_gitignore=False)
     assert [os.path.relpath(r.file, tmp_path) for r in results] == ["creds.env"]
+
+
+# sable-ilbx — a file that cannot be read is not a clean scan. The scanner
+# swallowed the read error and returned nothing, so a permission-denied file
+# looked identical to one with no secrets.
+def test_scan_file_surfaces_read_error(scanner, tmp_path):
+    f = tmp_path / "secret.env"
+    f.write_text("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdef1234567890ABCDEFGHIJKL\n")
+    f.chmod(0o000)
+    try:
+        result = scanner.scan_file(str(f))
+        assert result.read_error
+        assert len(result.matches) == 0
+    finally:
+        f.chmod(0o644)
+
+
+def test_scan_directory_reports_unreadable_file(scanner, tmp_path):
+    f = tmp_path / "secret.env"
+    f.write_text("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdef1234567890ABCDEFGHIJKL\n")
+    f.chmod(0o000)
+    try:
+        results = scanner.scan_directory(str(tmp_path), respect_gitignore=False)
+        unreadable = [r for r in results if r.read_error]
+        assert len(unreadable) == 1
+        assert unreadable[0].file == str(f)
+    finally:
+        f.chmod(0o644)

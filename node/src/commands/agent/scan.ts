@@ -143,7 +143,9 @@ function applyBaseline(results: ScanResult[], entries: BaselineEntry[]): ScanRes
           ),
       ),
     }))
-    .filter((r) => r.matches.length > 0);
+    // Keep a read-error entry even with no matches (sable-ilbx), so an
+    // unreadable file survives a baseline filter.
+    .filter((r) => r.matches.length > 0 || r.readError);
 }
 
 export function createScanCommand(): Command {
@@ -269,7 +271,7 @@ export function collectSuppressions(policyIgnore?: ScanIgnoreRule[]): Suppressio
 /**
  * Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration
  */
-function outputSarif(results: ScanResult[]): void {
+function outputSarif(results: ScanResult[], emptyExitCode: number = 0): void {
   const rules = new Map<string, { id: string; name: string; shortDescription: string }>();
   const sarifResults: object[] = [];
 
@@ -318,7 +320,9 @@ function outputSarif(results: ScanResult[]): void {
   };
 
   console.log(JSON.stringify(sarif, null, 2));
-  process.exit(results.length > 0 ? 1 : 0);
+  // A read error (sable-ilbx) makes an otherwise-empty scan non-clean; the
+  // caller passes that exit code in.
+  process.exit(results.length > 0 ? 1 : emptyExitCode);
 }
 
 /**
@@ -338,12 +342,30 @@ function outputScanResults(
     process.exit(2);
   }
 
+  // Partition off files that could not be read (sable-ilbx). A read failure is
+  // not a finding and not a clean pass — surface it so "no secrets detected"
+  // cannot stand in for "could not open". Warn on stderr (so stdout stays
+  // parseable), report it in the JSON/text body, and let it set the exit code.
+  const readErrors = results
+    .filter((r) => r.readError)
+    .map((r) => ({ file: r.file, error: r.readError! }));
+  const scanResults = results.filter((r) => !r.readError);
+  if (readErrors.length > 0 && !opts.quiet) {
+    console.error(
+      fmt.warning(`Could not read ${readErrors.length} file(s); results may be incomplete.`),
+    );
+  }
+
   // Split suppressed findings off the main result list. Both engines feed
   // through here, so policy-driven suppression applies regardless of source.
-  const { results: keptResults, suppressed } = applySuppressions(results, suppressions);
+  const { results: keptResults, suppressed } = applySuppressions(scanResults, suppressions);
+
+  // Exit code: findings dominate (1); otherwise an unreadable file is a scan
+  // that could not complete cleanly (2); a clean, complete scan is 0.
+  const scanExitCode = keptResults.length > 0 ? 1 : readErrors.length > 0 ? 2 : 0;
 
   if (format === "sarif") {
-    outputSarif(keptResults);
+    outputSarif(keptResults, scanExitCode);
     return;
   }
 
@@ -360,7 +382,7 @@ function outputScanResults(
         ...(m.engines ? { engines: m.engines } : {}),
       })),
     }));
-    const out: { _note: string; scan_mode: string; triage_applied: boolean; results: typeof filesOut; _suppressed?: SuppressedFinding[] } = {
+    const out: { _note: string; scan_mode: string; triage_applied: boolean; results: typeof filesOut; _suppressed?: SuppressedFinding[]; unreadable?: Array<{ file: string; error: string }> } = {
       _note:
         "Local-only scan: pattern-based detection without agentic-intelligence triage. " +
         "Findings have not been evaluated for context (public exposure, key validity, " +
@@ -373,8 +395,13 @@ function outputScanResults(
     if (suppressed.length > 0) {
       out._suppressed = suppressed;
     }
+    // Files that could not be read (sable-ilbx) — a reader can tell an empty
+    // `results` from an incomplete scan.
+    if (readErrors.length > 0) {
+      out.unreadable = readErrors;
+    }
     console.log(JSON.stringify(out, null, 2));
-    if (exitOnFindings) process.exit(keptResults.length > 0 ? 1 : 0);
+    if (exitOnFindings) process.exit(scanExitCode);
     return;
   }
 
@@ -384,11 +411,18 @@ function outputScanResults(
   }
 
   if (keptResults.length === 0) {
-    if (!opts.quiet) {
+    if (readErrors.length > 0) {
+      // Not a clean pass — the scan could not read some files (sable-ilbx).
+      if (!opts.quiet) {
+        console.log(`\n${fmt.warning(`${readErrors.length} file(s) could not be read:`)}`);
+        for (const re of readErrors) console.log(`  ${re.file} (${re.error})`);
+        console.log();
+      }
+    } else if (!opts.quiet) {
       const msg = context ? `No secrets detected in ${context}` : "No secrets detected";
       console.log(`\n${fmt.success(msg)}\n`);
     }
-    if (exitOnFindings) process.exit(0);
+    if (exitOnFindings) process.exit(scanExitCode);
     return;
   }
 
@@ -413,13 +447,19 @@ function outputScanResults(
 
   console.log(`\n${fmt.warning(`Total: ${totalMatches} secret(s) detected in ${keptResults.length} file(s)`)}\n`);
 
+  if (readErrors.length > 0 && !opts.quiet) {
+    console.log(`${fmt.warning(`${readErrors.length} file(s) could not be read:`)}`);
+    for (const re of readErrors) console.log(`  ${re.file} (${re.error})`);
+    console.log();
+  }
+
   if (context === "staged files") {
     console.log(`${fmt.error("Commit blocked. Remove secrets before committing.")}\n`);
   } else if (exitOnFindings) {
     console.log(`Run 'rafter agent audit' to see the security log.\n`);
   }
 
-  if (exitOnFindings) process.exit(1);
+  if (exitOnFindings) process.exit(scanExitCode);
 }
 
 /**
@@ -694,7 +734,9 @@ async function scanFile(
   const runPatterns = (): ScanResult[] => {
     const scanner = new RegexScanner(scanCfg?.customPatterns);
     const result = scanner.scanFile(filePath);
-    return result.matches.length > 0 ? [result] : [];
+    // Keep the result when it has findings OR could not be read (sable-ilbx),
+    // so a permission-denied file is not reported as a clean scan.
+    return result.matches.length > 0 || result.readError ? [result] : [];
   };
 
   if (engine === "both") {

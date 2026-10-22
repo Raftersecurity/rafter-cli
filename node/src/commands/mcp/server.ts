@@ -249,12 +249,18 @@ export function createServer(): Server {
         // Honor the project's suppressions, as `rafter secrets` does, so a
         // finding triaged with suppress_finding is not reported again.
         const report = (results: ScanResult[]) => {
+          // Partition off files that could not be read (sable-ilbx), so an
+          // unreadable file is not reported as a clean, empty entry.
+          const readErrors = results
+            .filter((r) => r.readError)
+            .map((r) => ({ file: r.file, error: r.readError! }));
+          const scanResults = results.filter((r) => !r.readError);
           const suppressions = collectSuppressions(new ConfigManager().loadWithPolicy().agent?.scan?.ignore);
-          const applied = applySuppressions(results, suppressions);
+          const applied = applySuppressions(scanResults, suppressions);
           // Drop only what was suppressed; a clean file keeps its empty entry.
           const kept = new Map(applied.results.map((r) => [r.file, r]));
           const out = textResult(formatScanResults(
-            results.filter((r) => r.matches.length === 0 || kept.has(r.file)).map((r) => kept.get(r.file) ?? r),
+            scanResults.filter((r) => r.matches.length === 0 || kept.has(r.file)).map((r) => kept.get(r.file) ?? r),
           ));
           // Say what was dropped (metadata only, no secret text), as
           // `rafter secrets --json` does under `_suppressed`.
@@ -262,6 +268,14 @@ export function createServer(): Server {
             out.content.push(textResult({
               suppressed_count: applied.suppressed.length,
               _suppressed: applied.suppressed,
+            }).content[0]);
+          }
+          // Say what could not be read (metadata only, no secret text), so a
+          // caller can tell an empty result from an incomplete scan.
+          if (readErrors.length > 0) {
+            out.content.push(textResult({
+              unreadable_count: readErrors.length,
+              unreadable: readErrors,
             }).content[0]);
           }
           return out;

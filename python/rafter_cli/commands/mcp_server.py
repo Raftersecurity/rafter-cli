@@ -60,8 +60,10 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
     return scan_secrets_with_suppressed(path, engine)[0]
 
 
-def scan_secrets_with_suppressed(path: str, engine: str = "auto") -> tuple[list[dict], list[dict]]:
-    """Scan for secrets; return (results, suppressed-finding metadata)."""
+def scan_secrets_with_suppressed(
+    path: str, engine: str = "auto"
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Scan for secrets; return (results, suppressed metadata, unreadable files)."""
     def run_patterns() -> list[ScanResult]:
         scanner = RegexScanner()
         try:
@@ -69,17 +71,21 @@ def scan_secrets_with_suppressed(path: str, engine: str = "auto") -> tuple[list[
         except NotADirectoryError:
             return [scanner.scan_file(path)]
 
-    def report(results: list[ScanResult]) -> tuple[list[dict], list[dict]]:
+    def report(results: list[ScanResult]) -> tuple[list[dict], list[dict], list[dict]]:
+        # Partition off files that could not be read (sable-ilbx), so an
+        # unreadable file is not reported as a clean, empty entry.
+        read_errors = [{"file": r.file, "error": r.read_error} for r in results if r.read_error]
+        scan_results = [r for r in results if not r.read_error]
         # Honor the project's suppressions, as `rafter secrets` does, so a
         # finding triaged with suppress_finding is not reported again.
         from ..core.custom_patterns import apply_suppressions, load_suppressions, policy_ignore_to_suppressions
         scan_cfg = ConfigManager().load_with_policy().agent.scan
         suppressions = policy_ignore_to_suppressions(scan_cfg.ignore) + load_suppressions()
         # Drop only what was suppressed; a clean file keeps its empty entry.
-        kept_results, suppressed = apply_suppressions(results, suppressions)
+        kept_results, suppressed = apply_suppressions(scan_results, suppressions)
         kept = {r.file: r for r in kept_results}
-        formatted = _format_scan_results([kept.get(r.file, r) for r in results if not r.matches or r.file in kept])
-        return formatted, [asdict(f) for f in suppressed]
+        formatted = _format_scan_results([kept.get(r.file, r) for r in scan_results if not r.matches or r.file in kept])
+        return formatted, [asdict(f) for f in suppressed], read_errors
 
     if engine == "betterleaks":
         bl = BetterleaksScanner()
@@ -323,12 +329,16 @@ def create_mcp_server():
             path: File or directory path to scan.
             engine: Scan engine — auto (default), betterleaks, or patterns.
         """
-        results, suppressed = scan_secrets_with_suppressed(path, engine)
+        results, suppressed, unreadable = scan_secrets_with_suppressed(path, engine)
         out = [json.dumps(results)]
         # Say what was dropped (metadata only, no secret text), as
         # `rafter secrets --json` does under `_suppressed`.
         if suppressed:
             out.append(json.dumps({"suppressed_count": len(suppressed), "_suppressed": suppressed}))
+        # Say what could not be read (metadata only, no secret text), so a
+        # caller can tell an empty result from an incomplete scan (sable-ilbx).
+        if unreadable:
+            out.append(json.dumps({"unreadable_count": len(unreadable), "unreadable": unreadable}))
         return out
 
     @mcp.tool()

@@ -1760,7 +1760,9 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
     def run_patterns() -> list[ScanResult]:
         scanner = RegexScanner(custom_patterns)
         r = scanner.scan_file(file_path)
-        return [r] if r.matches else []
+        # Keep the result when it has findings OR could not be read
+        # (sable-ilbx), so a permission-denied file is not reported as clean.
+        return [r] if (r.matches or r.read_error) else []
 
     if engine == "both":
         # sable-j85 — run both engines and union. A betterleaks failure
@@ -2028,10 +2030,24 @@ def _output_scan_results(
 ) -> None:
     from ..core.custom_patterns import apply_suppressions
     suppressions = suppressions or []
-    kept_results, suppressed = apply_suppressions(results, suppressions)
+
+    # Partition off files that could not be read (sable-ilbx). A read failure is
+    # not a finding and not a clean pass — surface it so "no secrets detected"
+    # cannot stand in for "could not open". Warn on stderr (so stdout stays
+    # parseable), report it in the JSON/text body, and let it set the exit code.
+    read_errors = [{"file": r.file, "error": r.read_error} for r in results if r.read_error]
+    scan_results = [r for r in results if not r.read_error]
+    if read_errors and not quiet:
+        print_stderr(fmt.warning(f"Could not read {len(read_errors)} file(s); results may be incomplete."))
+
+    kept_results, suppressed = apply_suppressions(scan_results, suppressions)
+
+    # Exit code: findings dominate (1); otherwise an unreadable file is a scan
+    # that could not complete cleanly (2); a clean, complete scan is 0.
+    scan_exit_code = 1 if kept_results else (2 if read_errors else 0)
 
     if format == "sarif":
-        _output_sarif(kept_results)
+        _output_sarif(kept_results, scan_exit_code)
         return
 
     if json_output or format == "json":
@@ -2059,20 +2075,31 @@ def _output_scan_results(
         if suppressed:
             from dataclasses import asdict
             out["_suppressed"] = [asdict(s) for s in suppressed]
+        # Files that could not be read (sable-ilbx) — a reader can tell an empty
+        # `results` from an incomplete scan.
+        if read_errors:
+            out["unreadable"] = read_errors
         print(json.dumps(out, indent=2))
         if exit_on_findings:
-            raise typer.Exit(code=1 if kept_results else 0)
+            raise typer.Exit(code=scan_exit_code)
         return
 
     if suppressed and not quiet:
         print(f"({len(suppressed)} finding(s) hidden by .rafter.yml)", file=sys.stderr)
 
     if not kept_results:
-        if not quiet:
+        if read_errors:
+            # Not a clean pass — the scan could not read some files (sable-ilbx).
+            if not quiet:
+                rprint(f"\n{fmt.warning(f'{len(read_errors)} file(s) could not be read:')}")
+                for re in read_errors:
+                    rprint(f"  {re['file']} ({re['error']})")
+                rprint()
+        elif not quiet:
             msg = f"No secrets detected in {context}" if context else "No secrets detected"
             rprint(f"\n{fmt.success(msg)}\n")
         if exit_on_findings:
-            raise typer.Exit(code=0)
+            raise typer.Exit(code=scan_exit_code)
         return
 
     rprint(f"\n{fmt.warning(f'Found secrets in {len(kept_results)} file(s):')}\n")
@@ -2091,13 +2118,19 @@ def _output_scan_results(
 
     rprint(f"\n{fmt.warning(f'Total: {total} secret(s) detected in {len(kept_results)} file(s)')}\n")
 
+    if read_errors and not quiet:
+        rprint(f"{fmt.warning(f'{len(read_errors)} file(s) could not be read:')}")
+        for re in read_errors:
+            rprint(f"  {re['file']} ({re['error']})")
+        rprint()
+
     if context == "staged files":
         rprint(f"{fmt.error('Commit blocked. Remove secrets before committing.')}\n")
     elif exit_on_findings:
         rprint("Run 'rafter agent audit' to see the security log.\n")
 
     if exit_on_findings:
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=scan_exit_code)
 
 
 def _watch_and_scan(
@@ -2195,7 +2228,7 @@ def _log_watch_findings(logger: AuditLogger, results: list[ScanResult]) -> None:
             )
 
 
-def _output_sarif(results: list[ScanResult]) -> None:
+def _output_sarif(results: list[ScanResult], empty_exit_code: int = 0) -> None:
     """Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration."""
     rules: dict[str, dict] = {}
     sarif_results = []
@@ -2235,7 +2268,9 @@ def _output_sarif(results: list[ScanResult]) -> None:
         }],
     }
     print(json.dumps(sarif, indent=2))
-    raise typer.Exit(code=1 if results else 0)
+    # A read error (sable-ilbx) makes an otherwise-empty scan non-clean; the
+    # caller passes that exit code in.
+    raise typer.Exit(code=1 if results else empty_exit_code)
 
 
 @agent_app.command()
@@ -4071,6 +4106,9 @@ def _apply_baseline(results: list[ScanResult], entries: list[dict]) -> list[Scan
         ]
         if kept:
             filtered.append(ScanResult(file=r.file, matches=kept))
+        elif r.read_error:
+            # Keep an unreadable file across a baseline filter (sable-ilbx).
+            filtered.append(ScanResult(file=r.file, matches=[], read_error=r.read_error))
     return filtered
 
 
