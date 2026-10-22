@@ -274,6 +274,9 @@ rafter agent exec "rm -rf /"                       # critical → blocked
 | Medium | Approval on moderate+ | `sudo`, `chmod`, `kill -9`, `systemctl` |
 | Low | Allowed | `npm install`, `git commit`, `ls`, `cat` |
 
+Approval needs a person at an interactive terminal.
+The agent hook (PreToolUse) cannot prompt, so it denies an approval-required command such as `curl … | sh` outright, and its reason tells a person to run `rafter agent exec '<command>'` to approve it.
+
 For git commands (`git commit`, `git push`), Rafter scans staged files for secrets before execution and blocks if any are found.
 
 ### Skills — Install, Audit, Manage

@@ -1087,6 +1087,8 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 
 - `--format <format>` — output format: `claude` (default, also works for Codex/Continue), `cursor`, `gemini`, `windsurf`
 
+**Approval-required commands are denied, not asked.** A Bash command the policy marks as requiring approval (for example `curl … | sh`, which is high risk) gets `deny`, the same decision as a blocked command; the hook never returns `ask`. The reason says a person must run `rafter agent exec '<command>'` at an interactive terminal to approve it (see the approval model under `rafter agent exec`). Both runtimes.
+
 On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
 
 **Errors fail closed.** Input that is not a JSON object is allowed (there is nothing to evaluate). Any unexpected exception while evaluating a call, for any tool, returns `deny` with the reason `rafter hook error: <type>: <message>; denying to be safe`, also printed to stderr. Conditions the loaders handle (a malformed `.rafter.yml` warns and falls back to defaults) are not errors. A failed audit-log write never changes a decision.
