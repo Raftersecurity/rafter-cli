@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The README quickstart now installs the pre-commit hook with `rafter agent install-hook`.** It said `rafter agent init --all` installs the hook, and the npm postinstall message said the same. `init --all` sets up detected agent integrations and Betterleaks; it has never installed a git hook.
 
 - **The MCP server returns a clean error when a tool call omits a required argument.** A call missing a required field — for example `evaluate_command` with no `command` — reached the handler and failed with an internal protocol error. The server now checks each required `inputSchema` field before dispatch and returns a tool error naming the missing field, matching the Python server.
+
+- **`agent exec` no longer records a secret in the audit log when a `NAME=VALUE` argument is shell-quoted.** The audit redactor matched an environment assignment only after whitespace or the start of the line, so a quote inserted by argument quoting (`env 'SECRET_TOKEN=…' …`) left the value in the clear. The match now also accepts a leading quote, so the value is redacted before it is written.
 ### Changed
 
 - **Minimum supported Node.js is now 22.** Node 18 and 20 are no longer supported; both reached end of life (2025-04-30 and 2026-04-30). CI now tests against Node 22 and 24 instead of 18 and 20. **Behavior change:** the CLI may no longer run under Node 18 or 20 — upgrade to Node 22 or later.
