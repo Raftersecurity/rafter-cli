@@ -131,8 +131,9 @@
   "devDependencies": {
     "@types/node": "^20.11.30",
     "@types/vscode": "^1.85.0",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.4.5",
-    "vitest": "^4.1.0"
+    "vite": "^7.3.7",
+    "vitest": "^4.1.12"
   }
 }

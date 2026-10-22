@@ -340,7 +340,7 @@ describe("test-comprehensive.yml — CI matrix", () => {
   it("cross-platform job tests multiple Node versions", () => {
     const matrix = workflow.jobs["cross-platform"].strategy.matrix;
     expect(matrix.node.length).toBeGreaterThanOrEqual(2);
-    expect(matrix.node).toContain("20");
+    expect(matrix.node).toContain("22");
   });
 
   it("test-node job uses pnpm", () => {
@@ -526,7 +526,7 @@ describe("cross-workflow consistency", () => {
       }
     }
     // Primary node version should be consistent (cross-platform matrix may differ)
-    expect(nodeVersions.has("20")).toBe(true);
+    expect(nodeVersions.has("22")).toBe(true);
   });
 
   it("all workflows checking out code use actions/checkout", () => {
