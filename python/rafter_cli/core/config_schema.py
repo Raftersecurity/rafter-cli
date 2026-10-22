@@ -106,6 +106,12 @@ class ScanConfig:
     # a gate the machine owner enabled globally. YAML key:
     # ``scan.plus_requires_approval``.
     plus_requires_approval: bool = False
+    # Absolute directory the policy's ``ignore`` globs are relative to — the
+    # directory holding the ``.rafter.yml`` they came from (sable-lu0j). A
+    # runtime field set by ``load_with_policy``, never read from YAML. Ignore
+    # globs anchor to this so a rule cannot match files outside the policy's
+    # own tree.
+    ignore_base_dir: str | None = None
 
 
 @dataclass

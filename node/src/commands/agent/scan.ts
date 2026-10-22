@@ -188,11 +188,20 @@ export function createScanCommand(): Command {
           "Warning: rafter agent scan is deprecated and will be removed in a future major version. Use rafter secrets instead.\n"
         );
       }
-      // Load policy-merged config for excludePaths/customPatterns/ignore
+      // Load policy-merged config for excludePaths/customPatterns/ignore.
+      // Discover and anchor the policy from the scan TARGET, not the process
+      // cwd (sable-lu0j), so an ambient `.rafter.yml` in cwd cannot suppress
+      // real secrets in a scan of a different tree. For `--staged`/`--diff` the
+      // default target is "." (cwd), which is the repo the command runs in.
+      const scanBase = path.resolve(scanPath);
+      const rafterignoreDir =
+        fs.existsSync(scanBase) && fs.statSync(scanBase).isDirectory()
+          ? scanBase
+          : path.dirname(scanBase);
       const manager = new ConfigManager();
-      const cfg = manager.loadWithPolicy();
+      const cfg = manager.loadWithPolicy(scanBase);
       const scanCfg = cfg.agent?.scan;
-      const suppressions = collectSuppressions(scanCfg?.ignore);
+      const suppressions = collectSuppressions(scanCfg?.ignore, scanCfg?.ignoreBaseDir, rafterignoreDir);
 
       const baselineEntries = opts.baseline ? loadBaselineEntries() : [];
 
@@ -264,8 +273,18 @@ export function createSecretsCommand(): Command {
  * Order matters — first match wins, and policy rules are checked first so an
  * explicit reason wins over a bare .rafterignore line covering the same finding.
  */
-export function collectSuppressions(policyIgnore?: ScanIgnoreRule[]): Suppression[] {
-  return [...policyIgnoreToSuppressions(policyIgnore), ...loadSuppressions()];
+export function collectSuppressions(
+  policyIgnore?: ScanIgnoreRule[],
+  policyBaseDir?: string,
+  rafterignoreDir: string = process.cwd(),
+): Suppression[] {
+  // Anchor policy globs to the `.rafter.yml`'s directory and `.rafterignore`
+  // globs to the scanned tree (sable-lu0j), so neither can suppress findings in
+  // a different tree.
+  return [
+    ...policyIgnoreToSuppressions(policyIgnore, policyBaseDir),
+    ...loadSuppressions(rafterignoreDir),
+  ];
 }
 
 /**

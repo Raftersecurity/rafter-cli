@@ -271,12 +271,19 @@ class ConfigManager:
     # Policy-merged config
     # ------------------------------------------------------------------
 
-    def load_with_policy(self) -> RafterConfig:
-        """Load config merged with .rafter.yml policy (policy wins)."""
-        from .policy_loader import load_policy
+    def load_with_policy(self, base_dir: str | None = None) -> RafterConfig:
+        """Load config merged with .rafter.yml policy (policy wins).
+
+        ``base_dir`` is the scan target: the policy and its ignore globs are
+        discovered and anchored from there, not the process cwd (sable-lu0j),
+        so an ambient ``.rafter.yml`` in cwd cannot govern a scan of a different
+        tree. Defaults to cwd, which is correct for ``--staged``/hook runs that
+        scan the repo the command runs in.
+        """
+        from .policy_loader import find_policy_file, load_policy
 
         config = self.load()
-        policy = load_policy()
+        policy = load_policy(base_dir)
         if not policy:
             return config
 
@@ -324,6 +331,14 @@ class ConfigManager:
                 )
                 for r in policy["ignore"]
             ]
+            # Record the directory the globs are relative to (the .rafter.yml's
+            # own directory) so they anchor to the policy's tree, not an
+            # absolute path anywhere on disk (sable-lu0j).
+            policy_path = find_policy_file(base_dir)
+            if policy_path:
+                import os
+
+                config.agent.scan.ignore_base_dir = os.path.dirname(str(policy_path))
 
         audit = policy.get("audit")
         if audit:

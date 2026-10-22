@@ -77,10 +77,19 @@ def scan_secrets_with_suppressed(
         read_errors = [{"file": r.file, "error": r.read_error} for r in results if r.read_error]
         scan_results = [r for r in results if not r.read_error]
         # Honor the project's suppressions, as `rafter secrets` does, so a
-        # finding triaged with suppress_finding is not reported again.
+        # finding triaged with suppress_finding is not reported again. Discover
+        # and anchor the policy from the scan TARGET, not the MCP server's cwd
+        # (sable-lu0j).
+        import os
+
         from ..core.custom_patterns import apply_suppressions, load_suppressions, policy_ignore_to_suppressions
-        scan_cfg = ConfigManager().load_with_policy().agent.scan
-        suppressions = policy_ignore_to_suppressions(scan_cfg.ignore) + load_suppressions()
+        scan_base = os.path.abspath(path)
+        rafterignore_dir = scan_base if os.path.isdir(scan_base) else os.path.dirname(scan_base)
+        scan_cfg = ConfigManager().load_with_policy(scan_base).agent.scan
+        suppressions = (
+            policy_ignore_to_suppressions(scan_cfg.ignore, scan_cfg.ignore_base_dir)
+            + load_suppressions(rafterignore_dir)
+        )
         # Drop only what was suppressed; a clean file keeps its empty entry.
         kept_results, suppressed = apply_suppressions(scan_results, suppressions)
         kept = {r.file: r for r in kept_results}

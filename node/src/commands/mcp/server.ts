@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import fs from "fs";
+import path from "path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -255,7 +256,15 @@ export function createServer(): Server {
             .filter((r) => r.readError)
             .map((r) => ({ file: r.file, error: r.readError! }));
           const scanResults = results.filter((r) => !r.readError);
-          const suppressions = collectSuppressions(new ConfigManager().loadWithPolicy().agent?.scan?.ignore);
+          // Discover and anchor the policy from the scan TARGET, not the MCP
+          // server's cwd (sable-lu0j).
+          const scanBase = path.resolve(scanPath);
+          const rafterignoreDir =
+            fs.existsSync(scanBase) && fs.statSync(scanBase).isDirectory()
+              ? scanBase
+              : path.dirname(scanBase);
+          const policyCfg = new ConfigManager().loadWithPolicy(scanBase).agent?.scan;
+          const suppressions = collectSuppressions(policyCfg?.ignore, policyCfg?.ignoreBaseDir, rafterignoreDir);
           const applied = applySuppressions(scanResults, suppressions);
           // Drop only what was suppressed; a clean file keeps its empty entry.
           const kept = new Map(applied.results.map((r) => [r.file, r]));
