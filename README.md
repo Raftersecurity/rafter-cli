@@ -50,18 +50,22 @@ rafter secrets .
 **2. Install the pre-commit hook**
 
 ```sh
-rafter agent init --all
-# → Installs all detected integrations
-# → Downloads Betterleaks (or falls back to built-in scanner)
+rafter agent install-hook
+# → Writes .git/hooks/pre-commit in the current repo
+# → Add --global to apply it to every repo via core.hooksPath
 ```
+
+`rafter agent init --all` is a separate step: it wires up every detected agent (hooks, skills, MCP) and downloads Betterleaks.
+It does not install a git hook.
 
 **3. Try to commit—hook blocks it**
 
 ```sh
 git add . && git commit -m 'add config'
-# → [rafter] Scanning staged files for secrets...
-# → CRITICAL  .env:1  aws-access-key-id
-# → Commit blocked. Remove secrets or use git commit --no-verify to bypass.
+# → Rafter: Scanning staged files for secrets...
+# → CRITICAL  AWS Access Key ID  (.env, line 1)
+# → Commit blocked. Remove secrets before committing.
+# → To bypass (NOT recommended): git commit --no-verify
 ```
 
 **4. Review the audit log**

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The README quickstart now installs the pre-commit hook with `rafter agent install-hook`.** It said `rafter agent init --all` installs the hook, and the npm postinstall message said the same. `init --all` sets up detected agent integrations and Betterleaks; it has never installed a git hook.
+
 ## [0.11.0] - 2026-10-13
 
 ### Added
