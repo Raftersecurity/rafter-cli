@@ -51,7 +51,7 @@ scan:
 ignore:                           # suppress findings (top-level, NOT under scan:)
   - paths: ["tests/fixtures/**"]
     rules: ["AWS Access Key ID"]  # omit to suppress all rules for those paths
-    reason: "test fixtures, not real keys"
+    reason: "test fixtures, not real keys"  # needed to suppress a secret/must-fix finding remotely
 audit:
   retentionDays: 30
   logLevel: info                  # debug | info | warn | error
@@ -60,8 +60,15 @@ docs: [ ... ]                     # repo security docs (see CLI_SPEC)
 ```
 
 Backend-compatibility: top-level `exclude_paths:` / `custom_patterns:` (the flat
-shape the cloud scanner reads from `.rafter/config.yml`) are also accepted; nested
-`scan.*` wins on collision. Keys accept either `camelCase` or `snake_case`.
+snake_case shape the hosted scanner also reads — it looks for `.rafter.yml` first,
+then `.rafter/config.yml`) are also accepted; nested `scan.*` wins on collision.
+Keys accept either `camelCase` or `snake_case` on every engine. The hosted scanner
+honours `scan.excludePaths` and `ignore:`. An ignore rule with a non-empty
+`reason:` may hide even a must-fix or secret-scanner finding; one without a reason
+still hides ordinary findings but is held at the floor for protected ones. Every
+protected suppression, everything else hidden, everything held, and every
+selector that matched nothing is written to `suppressed.json` beside the scan's
+`findings.json` (see CLI_SPEC, *Ignore rules*).
 
 > `.rafter.yml` does **not** contain `environments`, `components`, `outputFiltering`,
 > `skills`, `notifications`, or `hooks` — those are global-only (by design for `hooks`).
