@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Minimum supported Node.js is now 22.** Node 18 and 20 are no longer supported; both reached end of life (2025-04-30 and 2026-04-30). CI now tests against Node 22 and 24 instead of 18 and 20. **Behavior change:** the CLI may no longer run under Node 18 or 20 — upgrade to Node 22 or later.
+
+- **Minimum supported Python is now 3.11.** Python 3.10 is no longer supported; it reached end of life on 2026-10-01. **Behavior change:** installing on Python 3.10 or earlier is no longer supported — upgrade to Python 3.11 or later.
+
 ## [0.11.0] - 2026-10-13
 
 ### Added
