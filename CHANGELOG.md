@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The docs now say the PreToolUse hook denies a command that requires approval, such as `curl … | sh`.** README, SKILL.md, the bundled skills and CLI_SPEC described it as prompting for approval; the hook has no way to prompt, and its deny reason tells a person to approve the command with `rafter agent exec` at a terminal. The Python package's copies of the `rafter` skill's `guardrails.md` and `cli-reference.md` were also brought in line with the Node copies.
 
 - **The README quickstart now installs the pre-commit hook with `rafter agent install-hook`.** It said `rafter agent init --all` installs the hook, and the npm postinstall message said the same. `init --all` sets up detected agent integrations and Betterleaks; it has never installed a git hook.
+### Changed
+
+- **Minimum supported Node.js is now 22.** Node 18 and 20 are no longer supported; both reached end of life (2025-04-30 and 2026-04-30). CI now tests against Node 22 and 24 instead of 18 and 20. **Behavior change:** the CLI may no longer run under Node 18 or 20 — upgrade to Node 22 or later.
+
+- **Minimum supported Python is now 3.11.** Python 3.10 is no longer supported; it reached end of life on 2026-10-01. **Behavior change:** installing on Python 3.10 or earlier is no longer supported — upgrade to Python 3.11 or later.
 
 ## [0.11.0] - 2026-10-13
 

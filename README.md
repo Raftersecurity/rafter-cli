@@ -111,7 +111,7 @@ pnpm add -g @rafter-security/cli
 pip install rafter-cli
 ```
 
-Requires Python 3.10+. Full feature parity with Node.js including local security toolkit and MCP server.
+Requires Python 3.11+. Full feature parity with Node.js including local security toolkit and MCP server.
 
 ---
 
