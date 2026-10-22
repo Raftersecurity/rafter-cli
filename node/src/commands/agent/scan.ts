@@ -35,6 +35,7 @@ interface ScanOpts {
   engine?: string;
   staged?: boolean;
   diff?: string;
+  range?: string;
   baseline?: boolean;
   watch?: boolean;
   history?: boolean;
@@ -157,6 +158,7 @@ export function createScanCommand(): Command {
     .option("--format <format>", "Output format: text, json, sarif", "text")
     .option("--staged", "Scan only git staged files")
     .option("--diff <ref>", "Scan files changed since a git ref")
+    .option("--range <range>", "Scan only files changed in a git commit range, e.g. main..HEAD")
     .option("--engine <engine>", "Scan engine: betterleaks or patterns", "auto")
     .option("--baseline", "Filter findings present in the saved baseline")
     .option("--watch", "Watch for file changes and re-scan on change")
@@ -211,6 +213,13 @@ export function createScanCommand(): Command {
         return;
       }
 
+      // Handle --range flag (a commit range a..b; reuses the diff plumbing so a
+      // user can scope the scan to the changed files on a huge repo).
+      if (opts.range) {
+        await scanRangeFiles(opts.range, opts, scanCfg, baselineEntries, path.resolve(scanPath), suppressions);
+        return;
+      }
+
       // Handle --staged flag
       if (opts.staged) {
         await scanStagedFiles(opts, scanCfg, baselineEntries, path.resolve(scanPath), suppressions);
@@ -232,7 +241,12 @@ export function createScanCommand(): Command {
       }
 
       // Determine scan engine
-      const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
+      const requestedEngine = opts.engine || "auto";
+      const selected = await selectEngine(requestedEngine, opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
+      const engine = selected.engine;
+      // Threaded through the scan so a scan-time fall-back (e.g. a betterleaks
+      // timeout) updates it before the output reports the engine actually used.
+      const report = buildEngineReport(requestedEngine, engine, selected.reason);
 
       // Determine if path is file or directory
       const stats = fs.statSync(resolvedPath);
@@ -242,15 +256,15 @@ export function createScanCommand(): Command {
         if (!opts.quiet) {
           console.error(`Scanning directory: ${resolvedPath} (${engineLabel(engine)})`);
         }
-        results = await scanDirectory(resolvedPath, engine, scanCfg, opts.history, opts.gitignore);
+        results = await scanDirectory(resolvedPath, engine, scanCfg, opts.history, opts.gitignore, report);
       } else {
         if (!opts.quiet) {
           console.error(`Scanning file: ${resolvedPath} (${engineLabel(engine)})`);
         }
-        results = await scanFile(resolvedPath, engine, scanCfg);
+        results = await scanFile(resolvedPath, engine, scanCfg, report);
       }
 
-      outputScanResults(applyBaseline(results, baselineEntries), opts, undefined, true, suppressions);
+      outputScanResults(applyBaseline(results, baselineEntries), opts, undefined, true, suppressions, report);
     });
 }
 
@@ -353,6 +367,7 @@ function outputScanResults(
   context?: string,
   exitOnFindings: boolean = true,
   suppressions: Suppression[] = [],
+  report?: EngineReport,
 ): void {
   const format = opts.format ?? (opts.json ? "json" : "text");
 
@@ -372,6 +387,19 @@ function outputScanResults(
   if (readErrors.length > 0 && !opts.quiet) {
     console.error(
       fmt.warning(`Could not read ${readErrors.length} file(s); results may be incomplete.`),
+    );
+  }
+
+  // No silent downgrade (sable-jiqb): when betterleaks was requested/auto but
+  // patterns ran instead, say so on stderr so it is visible in every format
+  // without corrupting a JSON/SARIF stdout payload. The JSON body below also
+  // carries it as structured fields.
+  if (report?.degraded && !opts.quiet) {
+    console.error(
+      fmt.warning(
+        `Engine: requested ${report.requested}, used ${engineLabel(report.used)}` +
+          (report.reason ? ` (${report.reason})` : ""),
+      ),
     );
   }
 
@@ -401,7 +429,18 @@ function outputScanResults(
         ...(m.engines ? { engines: m.engines } : {}),
       })),
     }));
-    const out: { _note: string; scan_mode: string; triage_applied: boolean; results: typeof filesOut; _suppressed?: SuppressedFinding[]; unreadable?: Array<{ file: string; error: string }> } = {
+    const out: {
+      _note: string;
+      scan_mode: string;
+      triage_applied: boolean;
+      engine_requested?: string;
+      engine_used?: ResolvedEngine;
+      degraded?: boolean;
+      degraded_reason?: string;
+      results: typeof filesOut;
+      _suppressed?: SuppressedFinding[];
+      unreadable?: Array<{ file: string; error: string }>;
+    } = {
       _note:
         "Local-only scan: pattern-based detection without agentic-intelligence triage. " +
         "Findings have not been evaluated for context (public exposure, key validity, " +
@@ -411,6 +450,14 @@ function outputScanResults(
       triage_applied: false,
       results: filesOut,
     };
+    // sable-jiqb — report the engine actually used and any fall-back, so a
+    // json/MCP/CI consumer is never left thinking betterleaks ran when it did not.
+    if (report) {
+      out.engine_requested = report.requested;
+      out.engine_used = report.used;
+      out.degraded = report.degraded;
+      if (report.degraded && report.reason) out.degraded_reason = report.reason;
+    }
     if (suppressed.length > 0) {
       out._suppressed = suppressed;
     }
@@ -510,6 +557,40 @@ async function scanDiffFiles(
 }
 
 /**
+ * Scan only the files changed in a git commit range (e.g. `main..HEAD`).
+ *
+ * sable-jiqb — on a repo large enough that a full betterleaks scan is slow, a
+ * user can scope the scan to a range's changed files. Reuses the `--diff`
+ * added-line plumbing (patterns engine; git line scope is incompatible with
+ * betterleaks' whole-file `dir` scan), with the range passed to `git diff` as a
+ * single revision argument.
+ */
+async function scanRangeFiles(
+  range: string,
+  opts: ScanOpts,
+  scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; ignore?: ScanIgnoreRule[]; autoUpdateBetterleaks?: boolean },
+  baselineEntries: BaselineEntry[] = [],
+  scanPath?: string,
+  suppressions: Suppression[] = [],
+): Promise<void> {
+  // git would parse a leading "-" as one of its own options, not a revision range.
+  if (range.startsWith("-")) {
+    console.error(`Error: invalid range "${range}" (a git range cannot start with "-")`);
+    process.exit(2);
+  }
+  await runGitAddedLineScan(
+    ["diff", "-U0", "--no-color", "--diff-filter=ACM", range],
+    opts,
+    scanCfg,
+    baselineEntries,
+    scanPath,
+    suppressions,
+    `files changed in ${range}`,
+    `No files changed in ${range}`,
+  );
+}
+
+/**
  * Scan git staged files for secrets (+ lines only in the staged diff).
  */
 async function scanStagedFiles(
@@ -548,6 +629,7 @@ async function runGitAddedLineScan(
   errorOpts?: { notRepoMessage?: string },
 ): Promise<void> {
   const cwd = scanPath && fs.existsSync(scanPath) && fs.statSync(scanPath).isDirectory() ? scanPath : undefined;
+  const diffReport = diffModeReport(opts);
   try {
     const patch = execFileSync("git", gitArgs, {
       encoding: "utf-8",
@@ -566,7 +648,7 @@ async function runGitAddedLineScan(
         // --json, and outputScanResults owns the single stdout success line.
         console.error(fmt.success(emptyMessage));
       }
-      outputScanResults([], opts, contextLabel, true, suppressions);
+      outputScanResults([], opts, contextLabel, true, suppressions, diffReport);
       return;
     }
 
@@ -577,7 +659,7 @@ async function runGitAddedLineScan(
         // --json, and outputScanResults owns the single stdout success line.
         console.error(fmt.success(emptyMessage));
       }
-      outputScanResults([], opts, contextLabel, true, suppressions);
+      outputScanResults([], opts, contextLabel, true, suppressions, diffReport);
       return;
     }
 
@@ -596,7 +678,7 @@ async function runGitAddedLineScan(
 
     const allResults = scanAddedDiffLines(addedLines, repoRoot, scanCfg?.customPatterns);
     const filtered = applyExcludePaths(allResults, scanCfg?.excludePaths, repoRoot);
-    outputScanResults(applyBaseline(filtered, baselineEntries), opts, contextLabel, true, suppressions);
+    outputScanResults(applyBaseline(filtered, baselineEntries), opts, contextLabel, true, suppressions, diffReport);
   } catch (error: any) {
     if (error.status === 128) {
       console.error(errorOpts?.notRepoMessage ?? "Error: Not in a git repository or invalid ref");
@@ -627,6 +709,73 @@ export function engineLabel(engine: ResolvedEngine): string {
 }
 
 /**
+ * What engine the user asked for, what actually ran, and whether that was a
+ * downgrade (sable-jiqb). Threaded through the scan so both the text and the
+ * JSON output can report it: betterleaks timing out or being unavailable used
+ * to drop the scan silently to the patterns engine with nothing in the JSON to
+ * say so, leaving json/MCP/CI consumers unaware the stronger engine never ran.
+ */
+export interface EngineReport {
+  /** The `--engine` value as requested: "auto" | "betterleaks" | "patterns". */
+  requested: string;
+  /** The engine whose findings are in this result. */
+  used: ResolvedEngine;
+  /** betterleaks was wanted (auto or explicit) but did not contribute. */
+  degraded: boolean;
+  /** Why it degraded (unavailable, stale, timed out, crashed). */
+  reason?: string;
+}
+
+/**
+ * Build the initial engine report from the requested engine and the engine
+ * `selectEngine` resolved to. A resolution of `patterns` when betterleaks was
+ * wanted (explicit or via `auto`) is a degradation; `selectReason` explains it.
+ * Scan-time failures (a timeout mid-scan) further mutate this report in the
+ * scanners below.
+ */
+export function buildEngineReport(
+  requested: string,
+  resolved: ResolvedEngine,
+  selectReason: string | null = null,
+): EngineReport {
+  const wantedBetterleaks = requested === "auto" || requested === "betterleaks";
+  const degraded = wantedBetterleaks && resolved === "patterns";
+  return {
+    requested,
+    used: resolved,
+    degraded,
+    reason: degraded ? (selectReason ?? "betterleaks unavailable; used the patterns engine") : undefined,
+  };
+}
+
+/** Record a scan-time fall-back to the patterns engine on the report. */
+function markDegraded(report: EngineReport | undefined, reason: string): void {
+  if (!report) return;
+  report.used = "patterns";
+  report.degraded = true;
+  report.reason = reason;
+}
+
+/**
+ * The engine report for the git-diff modes (`--diff` / `--range` / `--staged`),
+ * which scan added lines with the patterns engine by design (betterleaks'
+ * whole-file `dir` scan is incompatible with a line scope). Only an explicit
+ * `--engine betterleaks` is a degradation here; `auto` is satisfied by patterns.
+ */
+function diffModeReport(opts: ScanOpts): EngineReport {
+  const requested = opts.engine || "auto";
+  const degraded = requested === "betterleaks";
+  return {
+    requested,
+    used: "patterns",
+    degraded,
+    reason: degraded
+      ? "diff/range/staged modes scan changed lines with the patterns engine"
+      : undefined,
+  };
+}
+
+/**
  * Select scan engine based on availability and user preference.
  *
  * `auto` (the default) resolves to `both` whenever betterleaks is available
@@ -646,9 +795,9 @@ async function selectEngine(
   preference: string,
   quiet: boolean,
   autoUpdate = true,
-): Promise<ResolvedEngine> {
+): Promise<{ engine: ResolvedEngine; reason: string | null }> {
   if (preference === "patterns") {
-    return "patterns";
+    return { engine: "patterns", reason: null };
   }
 
   if (preference === "betterleaks") {
@@ -658,7 +807,7 @@ async function selectEngine(
       if (!quiet) {
         console.error(fmt.warning("Betterleaks requested but not available, using patterns"));
       }
-      return "patterns";
+      return { engine: "patterns", reason: "betterleaks requested but not available" };
     }
     return ensureBetterleaksUsable(quiet, autoUpdate);
   }
@@ -671,10 +820,12 @@ async function selectEngine(
   // Auto mode: run BOTH engines when betterleaks is usable; otherwise patterns.
   const bl = new BetterleaksScanner();
   const available = await bl.isAvailable();
-  if (!available) return "patterns";
+  if (!available) return { engine: "patterns", reason: "betterleaks not available" };
 
   const usable = await ensureBetterleaksUsable(quiet, autoUpdate);
-  return usable === "betterleaks" ? "both" : "patterns";
+  return usable.engine === "betterleaks"
+    ? { engine: "both", reason: null }
+    : { engine: "patterns", reason: usable.reason };
 }
 
 /**
@@ -691,9 +842,9 @@ async function selectEngine(
 async function ensureBetterleaksUsable(
   quiet: boolean,
   autoUpdate: boolean,
-): Promise<"betterleaks" | "patterns"> {
+): Promise<{ engine: "betterleaks" | "patterns"; reason: string | null }> {
   const bm = new BinaryManager();
-  if (!(await bm.isManagedBetterleaksStale())) return "betterleaks";
+  if (!(await bm.isManagedBetterleaksStale())) return { engine: "betterleaks", reason: null };
 
   const current = await bm.getBetterleaksVersion();
   const cta = "Fix manually with: rafter agent update-betterleaks";
@@ -703,7 +854,7 @@ async function ensureBetterleaksUsable(
     if (!quiet) {
       console.error(fmt.warning(`${stale}. Auto-update is off — using the patterns engine for this scan. ${cta}`));
     }
-    return "patterns";
+    return { engine: "patterns", reason: `${stale}; auto-update off` };
   }
 
   // Only prompt when there's a human at a TTY; otherwise auto-update proceeds
@@ -712,7 +863,7 @@ async function ensureBetterleaksUsable(
     const ok = await askYesNo(`${stale}. Update it now?`, true);
     if (!ok) {
       console.error(fmt.warning(`Skipped — using the patterns engine for this scan. ${cta}`));
-      return "patterns";
+      return { engine: "patterns", reason: `${stale}; update declined` };
     }
   }
 
@@ -720,13 +871,13 @@ async function ensureBetterleaksUsable(
   try {
     await bm.downloadBetterleaks((m) => { if (!quiet) console.error(`   ${m}`); }, BETTERLEAKS_VERSION);
     if (!quiet) console.error(fmt.success(`Betterleaks updated to v${BETTERLEAKS_VERSION}.`));
-    return "betterleaks";
+    return { engine: "betterleaks", reason: null };
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     if (!quiet) {
-      const msg = e instanceof Error ? e.message : String(e);
       console.error(fmt.warning(`Betterleaks update failed (${msg}) — using the patterns engine for this scan. ${cta}`));
     }
-    return "patterns";
+    return { engine: "patterns", reason: `betterleaks update failed (${msg})` };
   }
 }
 
@@ -749,6 +900,7 @@ async function scanFile(
   filePath: string,
   engine: ResolvedEngine,
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; autoUpdateBetterleaks?: boolean },
+  report?: EngineReport,
 ): Promise<ScanResult[]> {
   const runPatterns = (): ScanResult[] => {
     const scanner = new RegexScanner(scanCfg?.customPatterns);
@@ -766,8 +918,9 @@ async function scanFile(
       try {
         const result = await new BetterleaksScanner().scanFile(filePath);
         return result.matches.length > 0 ? [result] : [];
-      } catch {
+      } catch (e) {
         console.error(fmt.warning("Betterleaks scan failed, using patterns only for this run"));
+        markDegraded(report, errorText(e));
         return [];
       }
     })();
@@ -782,6 +935,7 @@ async function scanFile(
       return result.matches.length > 0 ? [result] : [];
     } catch (e) {
       console.error(fmt.warning("Betterleaks scan failed, falling back to patterns"));
+      markDegraded(report, errorText(e));
       return runPatterns();
     }
   }
@@ -803,6 +957,7 @@ async function scanDirectory(
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; autoUpdateBetterleaks?: boolean },
   history?: boolean,
   respectGitignore?: boolean,
+  report?: EngineReport,
 ): Promise<ScanResult[]> {
   // respectGitignore default is true. Both engines honor it: the patterns
   // engine via RegexScanner.scanDirectory, betterleaks by scanning only the
@@ -848,6 +1003,7 @@ async function scanDirectory(
     // applies to the merged set.
     const blPromise = runBetterleaks().catch((e): ScanResult[] => {
       console.error(fmt.warning(`${errorText(e)}; using patterns only for this run`));
+      markDegraded(report, errorText(e));
       return [];
     });
     const patternsResults = await runPatterns();
@@ -857,6 +1013,7 @@ async function scanDirectory(
       results = await runBetterleaks();
     } catch (e) {
       console.error(fmt.warning(`${errorText(e)}; falling back to patterns`));
+      markDegraded(report, errorText(e));
       results = await runPatterns();
     }
   } else {
@@ -890,7 +1047,7 @@ async function watchAndScan(
   const { watch } = await import("chokidar");
   const logger = new AuditLogger();
 
-  const engine = await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
+  const engine = (await selectEngine(opts.engine || "auto", opts.quiet || false, autoUpdateEnabled(opts, scanCfg))).engine;
 
   if (!opts.quiet) {
     console.error(fmt.info(`Watching ${watchPath} for changes (${engineLabel(engine)}). Press Ctrl+C to exit.`));
