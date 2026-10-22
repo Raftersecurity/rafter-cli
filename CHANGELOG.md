@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`rafter secrets --range <a>..<b>` scans only the files changed in a git commit range.** Same scope and patterns-engine semantics as `--diff`, so a large repo can be scanned for secrets introduced by a range of commits without walking the whole tree. A range git would read as an option (leading `-`) exits 2.
+
+- **The scan JSON now reports which engine ran.** `rafter secrets --json` carries `engine_requested`, `engine_used`, and `degraded` (plus `degraded_reason` when degraded). A consumer can now tell when betterleaks was requested or implied by `auto` but the patterns engine was used instead; text output notes the same on stderr. Documented in CLI_SPEC.
+
 ### Fixed
+
+- **betterleaks no longer times out and silently falls back to patterns on a large repo.** betterleaks' run time scales with the length of the explicit git-tracked file list it is handed, so a few-hundred-file repo exceeded the per-invocation timeout and the scan dropped to the patterns engine with nothing to say so. The file list is now scanned in bounded batches (at most 64 files per invocation), each well under the timeout, and their findings are unioned by file; `.gitignore` is still honored and the per-invocation timeout is kept as a floor. When a fall-back does happen (betterleaks unavailable, stale, or a scan-time failure) it is now reported in the text and JSON output rather than being silent.
 
 - **`rafter secrets --history` now scans history with both engines.** Only betterleaks read the history; the patterns engine scanned the working tree. A secret in a deleted file was found only if a betterleaks rule matched it, and without betterleaks `--history` reported history it never read as clean. The patterns engine now streams `git log -p` over every ref, and `auto` unions it with betterleaks as in a directory scan. History findings are reported as absolute paths under the repository root, for both engines (betterleaks paths were relative). `--history` outside a git repository exits 2.
 

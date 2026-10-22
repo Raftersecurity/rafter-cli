@@ -1659,8 +1659,9 @@ def init(
 # ── scan ─────────────────────────────────────────────────────────────
 
 
-def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> str:
-    """Return 'betterleaks', 'patterns', or 'both'.
+def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> tuple[str, str | None]:
+    """Return ``(engine, reason)`` where engine is 'betterleaks', 'patterns', or
+    'both' and reason explains a degradation from a wanted betterleaks to patterns.
 
     ``auto`` (the default) resolves to ``both`` whenever betterleaks is
     available and usable — rafter then runs both engines and unions their
@@ -1681,7 +1682,7 @@ def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> st
         raise typer.Exit(code=2)
 
     if preference == "patterns":
-        return "patterns"
+        return "patterns", None
 
     scanner = BetterleaksScanner()
     available = scanner.is_available()
@@ -1690,14 +1691,14 @@ def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> st
         if not available:
             if not quiet:
                 print_stderr(fmt.warning("Betterleaks requested but not available, using patterns"))
-            return "patterns"
+            return "patterns", "betterleaks requested but not available"
         return _ensure_betterleaks_usable(quiet, auto_update)
 
     # auto — run BOTH engines when betterleaks is usable; otherwise patterns.
     if not available:
-        return "patterns"
-    usable = _ensure_betterleaks_usable(quiet, auto_update)
-    return "both" if usable == "betterleaks" else "patterns"
+        return "patterns", "betterleaks not available"
+    engine, reason = _ensure_betterleaks_usable(quiet, auto_update)
+    return ("both", None) if engine == "betterleaks" else ("patterns", reason)
 
 
 def _engine_label(engine: str) -> str:
@@ -1706,7 +1707,59 @@ def _engine_label(engine: str) -> str:
     return "both: betterleaks + patterns" if engine == "both" else engine
 
 
-def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
+@dataclass
+class EngineReport:
+    """What engine the user asked for, what actually ran, and whether that was a
+    downgrade (sable-jiqb). Threaded through the scan so both the text and the
+    JSON output can report it: betterleaks timing out or being unavailable used
+    to drop the scan silently to the patterns engine with nothing in the JSON to
+    say so. Mirrors EngineReport in node/src/commands/agent/scan.ts.
+    """
+    requested: str          # "auto" | "betterleaks" | "patterns"
+    used: str               # the engine whose findings are in this result
+    degraded: bool          # betterleaks was wanted but did not contribute
+    reason: str | None = None
+
+
+def _build_engine_report(requested: str, resolved: str, select_reason: str | None = None) -> EngineReport:
+    """Initial report from the requested engine and the resolved engine. A
+    resolution to ``patterns`` when betterleaks was wanted (explicit or via
+    ``auto``) is a degradation; scan-time failures mutate this further below.
+    """
+    wanted_betterleaks = requested in ("auto", "betterleaks")
+    degraded = wanted_betterleaks and resolved == "patterns"
+    return EngineReport(
+        requested=requested,
+        used=resolved,
+        degraded=degraded,
+        reason=(select_reason or "betterleaks unavailable; used the patterns engine") if degraded else None,
+    )
+
+
+def _mark_degraded(report: EngineReport | None, reason: str) -> None:
+    """Record a scan-time fall-back to the patterns engine on the report."""
+    if report is None:
+        return
+    report.used = "patterns"
+    report.degraded = True
+    report.reason = reason
+
+
+def _diff_mode_report(engine_pref: str) -> EngineReport:
+    """Report for the git-diff modes (``--diff`` / ``--range`` / ``--staged``),
+    which scan added lines with the patterns engine by design. Only an explicit
+    ``--engine betterleaks`` is a degradation; ``auto`` is satisfied by patterns.
+    """
+    degraded = engine_pref == "betterleaks"
+    return EngineReport(
+        requested=engine_pref or "auto",
+        used="patterns",
+        degraded=degraded,
+        reason="diff/range/staged modes scan changed lines with the patterns engine" if degraded else None,
+    )
+
+
+def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> tuple[str, str | None]:
     """sable-o4k — guard against a stale rafter-managed betterleaks binary
     silently returning zero findings (a leftover binary from an older rafter
     parses fine with ``version`` but emits a JSON shape the current parser
@@ -1721,7 +1774,7 @@ def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
     """
     bm = BinaryManager()
     if not bm.is_managed_betterleaks_stale():
-        return "betterleaks"
+        return "betterleaks", None
 
     current = bm.get_betterleaks_version()
     cta = "Fix manually with: rafter agent update-betterleaks"
@@ -1730,7 +1783,7 @@ def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
     if not auto_update:
         if not quiet:
             print_stderr(fmt.warning(f"{stale}. Auto-update is off — using the patterns engine for this scan. {cta}"))
-        return "patterns"
+        return "patterns", f"{stale}; auto-update off"
 
     # Only prompt when there's a human at a TTY; otherwise auto-update proceeds
     # (default on) so non-interactive runs aren't left with a broken engine.
@@ -1738,7 +1791,7 @@ def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
         answer = input(f"  {stale}. Update it now? [Y/n] ").strip().lower()
         if answer not in ("", "y", "yes"):
             print_stderr(fmt.warning(f"Skipped — using the patterns engine for this scan. {cta}"))
-            return "patterns"
+            return "patterns", f"{stale}; update declined"
 
     if not quiet:
         print_stderr(fmt.info(f"Updating betterleaks to v{BETTERLEAKS_VERSION}..."))
@@ -1749,14 +1802,14 @@ def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
         )
         if not quiet:
             print_stderr(fmt.success(f"Betterleaks updated to v{BETTERLEAKS_VERSION}."))
-        return "betterleaks"
+        return "betterleaks", None
     except Exception as exc:  # noqa: BLE001 — degrade to patterns on any failure
         if not quiet:
             print_stderr(fmt.warning(f"Betterleaks update failed ({exc}) — using the patterns engine for this scan. {cta}"))
-        return "patterns"
+        return "patterns", f"betterleaks update failed ({exc})"
 
 
-def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanResult]:
+def _scan_file(file_path: str, engine: str, custom_patterns=None, report: EngineReport | None = None) -> list[ScanResult]:
     def run_patterns() -> list[ScanResult]:
         scanner = RegexScanner(custom_patterns)
         r = scanner.scan_file(file_path)
@@ -1771,8 +1824,9 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
             result = bl.scan_file(file_path)
             if result.matches:
                 bl_results = [ScanResult(file=result.file, matches=result.matches)]
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
+            _mark_degraded(report, str(exc))
         return union_scan_results(bl_results, run_patterns())
 
     if engine == "betterleaks":
@@ -1780,7 +1834,8 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
             bl = BetterleaksScanner()
             result = bl.scan_file(file_path)
             return [ScanResult(file=result.file, matches=result.matches)] if result.matches else []
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            _mark_degraded(report, str(exc))
             return run_patterns()
 
     return run_patterns()
@@ -1793,6 +1848,7 @@ def _output_empty_diff_scan(
     context_label: str,
     format: str,
     suppressions,
+    report: EngineReport | None = None,
 ) -> None:
     """Emit the result of a diff scan that had no files to scan.
 
@@ -1807,7 +1863,7 @@ def _output_empty_diff_scan(
         # would emit literally as "[green]...[/green]".
         rprint(fmt.success(empty_message), file=sys.stderr)
     _output_scan_results(
-        [], json_output, quiet, context_label, format=format, suppressions=suppressions
+        [], json_output, quiet, context_label, format=format, suppressions=suppressions, report=report
     )
 
 
@@ -1832,10 +1888,13 @@ def _run_git_added_line_scan(
     quiet: bool,
     format: str,
     not_repo_message: str = "Error: Not in a git repository or invalid ref",
+    engine_pref: str = "auto",
 ) -> None:
     """Parse a unified diff for + lines and scan with the patterns engine."""
     from ..utils.git_diff import parse_unified_diff_added_lines
     from ..scanners.git_diff_scan import scan_added_diff_lines
+
+    report = _diff_mode_report(engine_pref)
 
     try:
         patch = subprocess.run(
@@ -1851,14 +1910,14 @@ def _run_git_added_line_scan(
 
     if not patch.strip():
         _output_empty_diff_scan(
-            empty_message, json_output, quiet, context_label, format, suppressions
+            empty_message, json_output, quiet, context_label, format, suppressions, report
         )
         raise typer.Exit(code=0)
 
     added = parse_unified_diff_added_lines(patch)
     if not added:
         _output_empty_diff_scan(
-            empty_message, json_output, quiet, context_label, format, suppressions
+            empty_message, json_output, quiet, context_label, format, suppressions, report
         )
         raise typer.Exit(code=0)
 
@@ -1886,7 +1945,7 @@ def _run_git_added_line_scan(
     all_results = _apply_exclude_paths(all_results, exclude, repo_root)
     filtered = _apply_baseline(all_results, baseline_entries)
     _output_scan_results(
-        filtered, json_output, quiet, context_label, format=format, suppressions=suppressions
+        filtered, json_output, quiet, context_label, format=format, suppressions=suppressions, report=report
     )
 
 
@@ -1959,6 +2018,7 @@ def _scan_directory(
     *,
     history: bool = False,
     respect_gitignore: bool = True,
+    report: EngineReport | None = None,
 ) -> list[ScanResult]:
     custom = None
     exclude = None
@@ -2004,12 +2064,14 @@ def _scan_directory(
             bl_results = run_betterleaks()
         except Exception as exc:
             print_stderr(fmt.warning(f"{exc}; using patterns only for this run"))
+            _mark_degraded(report, str(exc))
         results = union_scan_results(bl_results, run_patterns())
     elif engine == "betterleaks":
         try:
             results = run_betterleaks()
         except Exception as exc:
             print_stderr(fmt.warning(f"{exc}; falling back to patterns"))
+            _mark_degraded(report, str(exc))
             results = run_patterns()
     else:
         results = run_patterns()
@@ -2025,10 +2087,20 @@ def _output_scan_results(
     format: str = "text",
     exit_on_findings: bool = True,
     suppressions: list | None = None,
+    report: EngineReport | None = None,
 ) -> None:
     from ..core.custom_patterns import apply_suppressions
     suppressions = suppressions or []
     kept_results, suppressed = apply_suppressions(results, suppressions)
+
+    # No silent downgrade (sable-jiqb): when betterleaks was requested/auto but
+    # patterns ran instead, say so on stderr (visible in every format without
+    # corrupting a JSON/SARIF stdout payload). The JSON body also carries it.
+    if report is not None and report.degraded and not quiet:
+        reason = f" ({report.reason})" if report.reason else ""
+        print_stderr(fmt.warning(
+            f"Engine: requested {report.requested}, used {_engine_label(report.used)}{reason}"
+        ))
 
     if format == "sarif":
         _output_sarif(kept_results)
@@ -2056,6 +2128,14 @@ def _output_scan_results(
             "triage_applied": False,
             "results": files_out,
         }
+        # sable-jiqb — report the engine actually used and any fall-back, so a
+        # json/MCP/CI consumer is never left thinking betterleaks ran when it did not.
+        if report is not None:
+            out["engine_requested"] = report.requested
+            out["engine_used"] = report.used
+            out["degraded"] = report.degraded
+            if report.degraded and report.reason:
+                out["degraded_reason"] = report.reason
         if suppressed:
             from dataclasses import asdict
             out["_suppressed"] = [asdict(s) for s in suppressed]
@@ -2120,7 +2200,7 @@ def _watch_and_scan(
         raise typer.Exit(code=2)
 
     logger = AuditLogger()
-    eng = _select_engine(engine, quiet, auto_update)
+    eng, _ = _select_engine(engine, quiet, auto_update)
 
     if not quiet:
         print_stderr(fmt.info(f"Watching {watch_path} for changes ({_engine_label(eng)}). Press Ctrl+C to exit."))
@@ -2246,6 +2326,7 @@ def scan(
     format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
     staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
     diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
+    range_: str = typer.Option(None, "--range", help="Scan only files changed in a git commit range, e.g. main..HEAD"),
     engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
@@ -2295,6 +2376,27 @@ def scan(
             json_output=json_output,
             quiet=quiet,
             format=format,
+            engine_pref=engine,
+        )
+        return
+
+    # --range (a commit range a..b; reuses the diff plumbing so a user can scope
+    # the scan to the changed files on a huge repo)
+    if range_:
+        _reject_option_like_ref(range_)
+        _run_git_added_line_scan(
+            ["diff", "-U0", "--no-color", "--diff-filter=ACM", range_],
+            git_cwd,
+            custom_patterns,
+            scan_cfg,
+            baseline_entries,
+            suppressions,
+            f"files changed in {range_}",
+            f"No files changed in {range_}",
+            json_output=json_output,
+            quiet=quiet,
+            format=format,
+            engine_pref=engine,
         )
         return
 
@@ -2313,6 +2415,7 @@ def scan(
             quiet=quiet,
             format=format,
             not_repo_message="Error: Not in a git repository",
+            engine_pref=engine,
         )
         return
 
@@ -2327,19 +2430,20 @@ def scan(
         _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
-    eng = _select_engine(engine, quiet, auto_update_enabled)
+    eng, select_reason = _select_engine(engine, quiet, auto_update_enabled)
+    report = _build_engine_report(engine, eng, select_reason)
 
     if os.path.isdir(resolved_path):
         if not quiet:
             print(f"Scanning directory: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
+        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore, report=report)
     else:
         if not quiet:
             print(f"Scanning file: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
-        results = _scan_file(resolved_path, eng, custom_patterns)
+        results = _scan_file(resolved_path, eng, custom_patterns, report=report)
 
     filtered = _apply_baseline(results, baseline_entries)
-    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions)
+    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions, report=report)
 
 
 # ── audit ────────────────────────────────────────────────────────────
@@ -4092,7 +4196,7 @@ def baseline_create(
 
     print(f"Scanning {resolved} to build baseline...", file=sys.stderr)
 
-    eng = _select_engine(engine, quiet=False, auto_update=scan_cfg.auto_update_betterleaks)
+    eng, _ = _select_engine(engine, quiet=False, auto_update=scan_cfg.auto_update_betterleaks)
     if os.path.isdir(resolved):
         results = _scan_directory(resolved, eng, scan_cfg)
     else:

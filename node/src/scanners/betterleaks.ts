@@ -17,6 +17,20 @@ const SCAN_TIMEOUT_MS = 60_000;
  */
 const ARG_CHARS_PER_CALL = process.platform === "win32" ? 24_000 : 500_000;
 
+/**
+ * Maximum number of file paths handed to one `betterleaks dir` invocation.
+ *
+ * sable-jiqb — betterleaks' run time scales with the length of the explicit
+ * file list it is given (measured ~0.2s/file: 50 files ~10s, 300 files ~60s),
+ * not with the size of the files. A whole git-tracked list on a few-hundred-file
+ * repo therefore exceeds SCAN_TIMEOUT_MS in a single call and the engine falls
+ * back to patterns. Capping each call at this many files keeps every invocation
+ * well under the timeout (~0.2s * 64 ~= 13s, roughly a fifth of the 60s floor,
+ * leaving headroom on a loaded box); the full tree is covered across as many
+ * sequential calls as it takes, and their findings are unioned by file.
+ */
+export const MAX_FILES_PER_CALL = 64;
+
 /** Config env vars betterleaks consults before the target's own .toml. */
 const CONFIG_ENV_VARS = [
   "BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG", "BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML",
@@ -49,13 +63,18 @@ export function gitVisibleFiles(dirPath: string): string[] | null {
   return [...files];
 }
 
-/** Split `paths` into groups whose joined length stays under `budget` chars. */
-function chunkByLength(paths: string[], budget: number): string[][] {
+/**
+ * Split `paths` into groups that stay within both bounds: at most `maxCount`
+ * paths per group (sable-jiqb — betterleaks' cost scales with the file count,
+ * so this is what keeps each invocation under the timeout) and a joined length
+ * under `budget` chars (the OS command-line cap, the original #262 constraint).
+ */
+function chunkFiles(paths: string[], budget: number, maxCount: number): string[][] {
   const chunks: string[][] = [];
   let cur: string[] = [];
   let len = 0;
   for (const p of paths) {
-    if (cur.length > 0 && len + p.length + 1 > budget) {
+    if (cur.length > 0 && (cur.length >= maxCount || len + p.length + 1 > budget)) {
       chunks.push(cur);
       cur = [];
       len = 0;
@@ -256,7 +275,7 @@ export class BetterleaksScanner {
     }
 
     const findings: BetterleaksResult[] = [];
-    for (const chunk of chunkByLength(files, ARG_CHARS_PER_CALL)) {
+    for (const chunk of chunkFiles(files, ARG_CHARS_PER_CALL, MAX_FILES_PER_CALL)) {
       findings.push(...(await this.runDir(blPath, "dir", chunk, configArgs)));
     }
     return this.groupByFile(findings);

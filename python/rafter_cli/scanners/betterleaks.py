@@ -20,6 +20,18 @@ SCAN_TIMEOUT_S = 60
 # whole command line at 32,767 characters; elsewhere the limit is far larger.
 ARG_CHARS_PER_CALL = 24_000 if sys.platform == "win32" else 500_000
 
+# Maximum number of file paths handed to one `betterleaks dir` invocation.
+#
+# sable-jiqb — betterleaks' run time scales with the length of the explicit file
+# list it is given (measured ~0.2s/file: 50 files ~10s, 300 files ~60s), not with
+# the size of the files. A whole git-tracked list on a few-hundred-file repo
+# therefore exceeds SCAN_TIMEOUT_S in a single call and the engine falls back to
+# patterns. Capping each call at this many files keeps every invocation well under
+# the timeout (~0.2s * 64 ~= 13s, roughly a fifth of the 60s floor, with headroom
+# on a loaded box); the full tree is covered across sequential calls, unioned by
+# file. Mirrors MAX_FILES_PER_CALL in node/src/scanners/betterleaks.ts.
+MAX_FILES_PER_CALL = 64
+
 # Config env vars betterleaks consults before the target's own .toml.
 CONFIG_ENV_VARS = (
     "BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG", "BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML",
@@ -54,13 +66,17 @@ def git_visible_files(dir_path: str) -> list[str] | None:
     return list(files)
 
 
-def _chunk_by_length(paths: list[str], budget: int) -> list[list[str]]:
-    """Split ``paths`` into groups whose joined length stays under ``budget``."""
+def _chunk_files(paths: list[str], budget: int, max_count: int) -> list[list[str]]:
+    """Split ``paths`` into groups within both bounds: at most ``max_count``
+    paths per group (sable-jiqb — betterleaks' cost scales with the file count,
+    so this is what keeps each invocation under the timeout) and a joined length
+    under ``budget`` chars (the OS command-line cap, the original #262 constraint).
+    """
     chunks: list[list[str]] = []
     cur: list[str] = []
     length = 0
     for p in paths:
-        if cur and length + len(p) + 1 > budget:
+        if cur and (len(cur) >= max_count or length + len(p) + 1 > budget):
             chunks.append(cur)
             cur, length = [], 0
         cur.append(p)
@@ -199,7 +215,7 @@ class BetterleaksScanner:
                         config_args = ["-c", cfg]
                         break
             results = []
-            for chunk in _chunk_by_length(files, ARG_CHARS_PER_CALL):
+            for chunk in _chunk_files(files, ARG_CHARS_PER_CALL, MAX_FILES_PER_CALL):
                 results.extend(self._run_scan(chunk, extra_args=config_args))
         grouped: dict[str, list[PatternMatch]] = {}
         for r in results:
