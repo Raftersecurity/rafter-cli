@@ -50,18 +50,22 @@ rafter secrets .
 **2. Install the pre-commit hook**
 
 ```sh
-rafter agent init --all
-# → Installs all detected integrations
-# → Downloads Betterleaks (or falls back to built-in scanner)
+rafter agent install-hook
+# → Writes .git/hooks/pre-commit in the current repo
+# → Add --global to apply it to every repo via core.hooksPath
 ```
+
+`rafter agent init --all` is a separate step: it wires up every detected agent (hooks, skills, MCP) and downloads Betterleaks.
+It does not install a git hook.
 
 **3. Try to commit—hook blocks it**
 
 ```sh
 git add . && git commit -m 'add config'
-# → [rafter] Scanning staged files for secrets...
-# → CRITICAL  .env:1  aws-access-key-id
-# → Commit blocked. Remove secrets or use git commit --no-verify to bypass.
+# → Rafter: Scanning staged files for secrets...
+# → CRITICAL  AWS Access Key ID  (.env, line 1)
+# → Commit blocked. Remove secrets before committing.
+# → To bypass (NOT recommended): git commit --no-verify
 ```
 
 **4. Review the audit log**
@@ -199,7 +203,7 @@ rafter secrets .              # scan directory
 rafter secrets ./config.js    # scan specific file
 rafter secrets --staged       # scan git staged files only
 rafter secrets --diff HEAD~1  # scan files changed since a git ref
-rafter secrets --history      # scan full git history (requires betterleaks engine)
+rafter secrets --history      # scan every commit on every ref (both engines)
 rafter secrets --json         # structured output
 rafter secrets --quiet        # silent unless secrets found (CI-friendly)
 ```
@@ -269,6 +273,9 @@ rafter agent exec "rm -rf /"                       # critical → blocked
 | High | Approval required | `rm -rf`, `sudo rm`, `chmod 777`, `curl\|sh`, `git push --force`, `npm publish` |
 | Medium | Approval on moderate+ | `sudo`, `chmod`, `kill -9`, `systemctl` |
 | Low | Allowed | `npm install`, `git commit`, `ls`, `cat` |
+
+Approval needs a person at an interactive terminal.
+The agent hook (PreToolUse) cannot prompt, so it denies an approval-required command such as `curl … | sh` outright, and its reason tells a person to run `rafter agent exec '<command>'` to approve it.
 
 For git commands (`git commit`, `git push`), Rafter scans staged files for secrets before execution and blocks if any are found.
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`rafter secrets --history` now scans history with both engines.** Only betterleaks read the history; the patterns engine scanned the working tree. A secret in a deleted file was found only if a betterleaks rule matched it, and without betterleaks `--history` reported history it never read as clean. The patterns engine now streams `git log -p` over every ref, and `auto` unions it with betterleaks as in a directory scan. History findings are reported as absolute paths under the repository root, for both engines (betterleaks paths were relative). `--history` outside a git repository exits 2.
+
+- **The docs now say the PreToolUse hook denies a command that requires approval, such as `curl … | sh`.** README, SKILL.md, the bundled skills and CLI_SPEC described it as prompting for approval; the hook has no way to prompt, and its deny reason tells a person to approve the command with `rafter agent exec` at a terminal. The Python package's copies of the `rafter` skill's `guardrails.md` and `cli-reference.md` were also brought in line with the Node copies.
+
+- **The README quickstart now installs the pre-commit hook with `rafter agent install-hook`.** It said `rafter agent init --all` installs the hook, and the npm postinstall message said the same. `init --all` sets up detected agent integrations and Betterleaks; it has never installed a git hook.
+
 ## [0.11.0] - 2026-10-13
 
 ### Added

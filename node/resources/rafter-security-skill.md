@@ -98,6 +98,8 @@ rafter agent exec <command>
 - **Medium** (approval on moderate+): sudo, chmod, kill -9
 - **Low** (allowed): npm install, git commit, ls
 
+Under the PreToolUse hook, "approval required" means the call is denied: the hook cannot prompt, so `curl | bash` is refused, not asked. Do not retry it in another form; tell the user, who can approve it by running `rafter agent exec '<command>'` at an interactive terminal.
+
 ---
 
 ### /rafter-audit-skill

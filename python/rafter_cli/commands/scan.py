@@ -101,7 +101,7 @@ def scan_local(
     engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
-    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
+    history: bool = typer.Option(False, "--history", help="Scan every commit on every ref instead of the working tree"),
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
     auto_update: bool = typer.Option(True, "--auto-update/--no-auto-update", help="Auto-update a stale managed betterleaks binary; --no-auto-update falls back to the patterns engine instead (default: on)"),
 ):
@@ -233,7 +233,7 @@ def secrets(
     engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
-    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
+    history: bool = typer.Option(False, "--history", help="Scan every commit on every ref instead of the working tree"),
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
     auto_update: bool = typer.Option(True, "--auto-update/--no-auto-update", help="Auto-update a stale managed betterleaks binary; --no-auto-update falls back to the patterns engine instead (default: on)"),
 ):

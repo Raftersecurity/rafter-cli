@@ -33,6 +33,7 @@ from ..core.config_manager import (
 )
 from ..core.pattern_engine import PatternEngine
 from ..scanners.betterleaks import BetterleaksScanner
+from ..scanners.git_history_scan import git_repo_root, scan_git_history
 from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
 from ..scanners.union import union_scan_results
@@ -1965,28 +1966,48 @@ def _scan_directory(
         custom = [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns] if scan_cfg.custom_patterns else None
         exclude = scan_cfg.exclude_paths or None
 
+    # sable-28lv — with --history BOTH engines read the commit history. The
+    # patterns engine used to scan the working tree instead, so without
+    # betterleaks `--history` reported a clean history it had never read.
+    repo_root: str | None = None
+    if history:
+        try:
+            repo_root = git_repo_root(dir_path)
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise typer.Exit(code=2)
+
     def run_patterns() -> list[ScanResult]:
-        scanner = RegexScanner(custom)
-        return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+        if not history:
+            scanner = RegexScanner(custom)
+            return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+        try:
+            return scan_git_history(dir_path, custom)
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise typer.Exit(code=2)
+
+    def run_betterleaks() -> list[ScanResult]:
+        # `betterleaks git` reports paths relative to the repo root; make them
+        # absolute like every other scan, so the union merges the two engines.
+        found = BetterleaksScanner().scan_directory(dir_path, use_git=history, respect_gitignore=respect_gitignore)
+        return [
+            ScanResult(file=os.path.join(repo_root, r.file) if repo_root else r.file, matches=r.matches)
+            for r in found
+        ]
 
     if engine == "both":
         # sable-j85 — run both engines and union; the exclude-paths post-filter
         # below applies to the merged set.
         bl_results: list[ScanResult] = []
         try:
-            bl = BetterleaksScanner()
-            bl_results = [
-                ScanResult(file=r.file, matches=r.matches)
-                for r in bl.scan_directory(dir_path, use_git=history, respect_gitignore=respect_gitignore)
-            ]
+            bl_results = run_betterleaks()
         except Exception as exc:
             print_stderr(fmt.warning(f"{exc}; using patterns only for this run"))
         results = union_scan_results(bl_results, run_patterns())
     elif engine == "betterleaks":
         try:
-            bl = BetterleaksScanner()
-            results = bl.scan_directory(dir_path, use_git=history, respect_gitignore=respect_gitignore)
-            results = [ScanResult(file=r.file, matches=r.matches) for r in results]
+            results = run_betterleaks()
         except Exception as exc:
             print_stderr(fmt.warning(f"{exc}; falling back to patterns"))
             results = run_patterns()
@@ -2228,7 +2249,7 @@ def scan(
     engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
-    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
+    history: bool = typer.Option(False, "--history", help="Scan every commit on every ref instead of the working tree"),
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
     auto_update: bool = typer.Option(True, "--auto-update/--no-auto-update", help="Auto-update a stale managed betterleaks binary; --no-auto-update falls back to the patterns engine instead (default: on)"),
 ):
