@@ -203,7 +203,7 @@ rafter secrets .              # scan directory
 rafter secrets ./config.js    # scan specific file
 rafter secrets --staged       # scan git staged files only
 rafter secrets --diff HEAD~1  # scan files changed since a git ref
-rafter secrets --history      # scan full git history (requires betterleaks engine)
+rafter secrets --history      # scan every commit on every ref (both engines)
 rafter secrets --json         # structured output
 rafter secrets --quiet        # silent unless secrets found (CI-friendly)
 ```

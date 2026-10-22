@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
+import { gitRepoRoot, scanGitHistory } from "../../scanners/git-history-scan.js";
 import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import { BetterleaksScanner } from "../../scanners/betterleaks.js";
 import { unionScanResults } from "../../scanners/union.js";
@@ -157,7 +158,7 @@ export function createScanCommand(): Command {
     .option("--engine <engine>", "Scan engine: betterleaks or patterns", "auto")
     .option("--baseline", "Filter findings present in the saved baseline")
     .option("--watch", "Watch for file changes and re-scan on change")
-    .option("--history", "Scan git history for secrets (requires betterleaks engine)")
+    .option("--history", "Scan every commit on every ref instead of the working tree")
     .option("--no-gitignore", "Scan files even if .gitignore would exclude them (default: respect .gitignore)")
     .option("--no-auto-update", "Do not auto-update a stale managed betterleaks binary; fall back to the patterns engine instead")
     .action(async (scanPath, opts: ScanOpts) => {
@@ -745,39 +746,60 @@ async function scanDirectory(
   // respectGitignore default is true. Both engines honor it: the patterns
   // engine via RegexScanner.scanDirectory, betterleaks by scanning only the
   // files git does not ignore (BetterleaksScanner.scanDirectory, #262).
-  const runPatterns = (): ScanResult[] => {
-    const scanner = new RegexScanner(scanCfg?.customPatterns);
-    return scanner.scanDirectory(dirPath, {
-      excludePaths: scanCfg?.excludePaths,
-      respectGitignore,
-    });
+  // sable-28lv — with --history BOTH engines read the commit history. The
+  // patterns engine used to scan the working tree instead, so without
+  // betterleaks `--history` reported a clean history it had never read.
+  let repoRoot: string | null = null;
+  if (history) {
+    try {
+      repoRoot = gitRepoRoot(dirPath);
+    } catch (e) {
+      console.error(`Error: ${errorText(e)}`);
+      process.exit(2);
+    }
+  }
+
+  const runPatterns = async (): Promise<ScanResult[]> => {
+    if (!history) {
+      return new RegexScanner(scanCfg?.customPatterns).scanDirectory(dirPath, {
+        excludePaths: scanCfg?.excludePaths,
+        respectGitignore,
+      });
+    }
+    try {
+      return await scanGitHistory(dirPath, scanCfg?.customPatterns);
+    } catch (e) {
+      console.error(`Error: ${errorText(e)}`);
+      process.exit(2);
+    }
+  };
+  // `betterleaks git` reports paths relative to the repo root; make them
+  // absolute like every other scan, so the union merges the two engines.
+  const runBetterleaks = async (): Promise<ScanResult[]> => {
+    const found = await new BetterleaksScanner().scanDirectory(dirPath, { useGit: history ?? false, respectGitignore });
+    return repoRoot ? found.map((r) => ({ ...r, file: path.resolve(repoRoot!, r.file) })) : found;
   };
 
   let results: ScanResult[];
   if (engine === "both") {
-    // sable-j85 — start betterleaks (async subprocess) first, walk the tree
-    // with the synchronous patterns engine while it runs, then union. The
-    // exclude-paths post-filter below applies to the merged set.
-    const blPromise = (async (): Promise<ScanResult[]> => {
-      try {
-        return await new BetterleaksScanner().scanDirectory(dirPath, { useGit: history ?? false, respectGitignore });
-      } catch (e) {
-        console.error(fmt.warning(`${errorText(e)}; using patterns only for this run`));
-        return [];
-      }
-    })();
-    const patternsResults = runPatterns();
+    // sable-j85 — start betterleaks (async subprocess) first, run the patterns
+    // engine while it runs, then union. The exclude-paths post-filter below
+    // applies to the merged set.
+    const blPromise = runBetterleaks().catch((e): ScanResult[] => {
+      console.error(fmt.warning(`${errorText(e)}; using patterns only for this run`));
+      return [];
+    });
+    const patternsResults = await runPatterns();
     results = unionScanResults(await blPromise, patternsResults);
   } else if (engine === "betterleaks") {
     try {
-      const bl = new BetterleaksScanner();
-      results = await bl.scanDirectory(dirPath, { useGit: history ?? false, respectGitignore });
+      results = await runBetterleaks();
     } catch (e) {
       console.error(fmt.warning(`${errorText(e)}; falling back to patterns`));
-      results = runPatterns();
+      results = await runPatterns();
     }
   } else {
-    results = runPatterns();
+    results = await runPatterns();
   }
   // sable-yz0 — post-filter by `.rafter.yml scan.exclude_paths`. Two bugs
   // motivated this chokepoint:

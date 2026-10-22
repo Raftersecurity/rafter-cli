@@ -43,23 +43,37 @@ export function normalizeDiffPath(raw: string): string {
  * only the `+` side is returned.
  */
 export function parseUnifiedDiffAddedLines(patch: string): AddedDiffLine[] {
+  const feed = createAddedLineParser();
   const results: AddedDiffLine[] = [];
+  for (const rawLine of patch.split(/\r?\n/)) {
+    const added = feed(rawLine);
+    if (added) results.push(added);
+  }
+  return results;
+}
+
+/**
+ * The same parser, one line at a time, for diffs too large to hold in memory
+ * (`git log -p` over a whole history). Returns the added line, or null.
+ * Lines must arrive without their trailing newline.
+ */
+export function createAddedLineParser(): (rawLine: string) => AddedDiffLine | null {
   let currentFile: string | null = null;
   let newLine = 0;
 
-  for (const rawLine of patch.split(/\r?\n/)) {
-    if (NO_NEWLINE_RE.test(rawLine)) continue;
+  return (rawLine: string): AddedDiffLine | null => {
+    if (NO_NEWLINE_RE.test(rawLine)) return null;
 
     if (rawLine.startsWith("diff --git ")) {
       currentFile = null;
       newLine = 0;
-      continue;
+      return null;
     }
 
     if (rawLine.startsWith("Binary files ") && rawLine.endsWith(" differ")) {
       currentFile = null;
       newLine = 0;
-      continue;
+      return null;
     }
 
     // `+++ `/`--- ` are file headers ONLY in the file-header region (before the
@@ -74,42 +88,31 @@ export function parseUnifiedDiffAddedLines(patch: string): AddedDiffLine[] {
         currentFile = normalizeDiffPath(pathPart);
       }
       newLine = 0;
-      continue;
+      return null;
     }
 
     if (newLine <= 0 && rawLine.startsWith("--- ")) {
-      continue;
+      return null;
     }
 
     const hunk = HUNK_HEADER_RE.exec(rawLine);
     if (hunk) {
       newLine = parseInt(hunk[1], 10);
-      continue;
+      return null;
     }
 
-    if (!currentFile || newLine <= 0) continue;
+    if (!currentFile || newLine <= 0) return null;
 
     // Any '+' line here is added content (real headers were consumed above
     // while newLine <= 0). Do NOT exclude '+++...': an added line whose content
     // starts with '++' would otherwise be dropped, missing a secret.
     if (rawLine.startsWith("+")) {
-      results.push({
-        file: currentFile,
-        line: newLine,
-        text: rawLine.slice(1),
-      });
-      newLine++;
-      continue;
-    }
-
-    if (rawLine.startsWith("-")) {
-      continue;
+      return { file: currentFile, line: newLine++, text: rawLine.slice(1) };
     }
 
     if (rawLine.startsWith(" ")) {
       newLine++;
     }
-  }
-
-  return results;
+    return null;
+  };
 }
