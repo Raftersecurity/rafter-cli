@@ -24,6 +24,7 @@ def _run_scan(target: str, capsys) -> tuple[dict, int]:
             format="json",
             staged=False,
             diff=None,
+            range_=None,
             engine="patterns",
             baseline=False,
             watch=False,
