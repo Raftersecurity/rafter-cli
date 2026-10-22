@@ -10,7 +10,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { execSync, spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
-import os from "os";
+import { execTmpDir } from "./exec-tmp.js";
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const CLI_DIST = path.join(PROJECT_ROOT, "dist", "index.js");
@@ -23,9 +23,9 @@ beforeAll(() => {
 
 describe.skipIf(process.platform === "win32")("agent init --local --with-gemini", () => {
   it("passes a working-directory path with shell syntax to gemini literally", () => {
-    // realpath: on macOS os.tmpdir() is under /var, a symlink to /private/var,
-    // and the CLI passes gemini its resolved cwd.
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gemini-link-")));
+    // realpath: the CLI passes gemini its resolved cwd. The stub gemini runs
+    // from here, so not under a possibly-noexec os.tmpdir().
+    const root = fs.realpathSync(execTmpDir("rafter-gemini-link-"));
     try {
       const bin = path.join(root, "bin");
       const log = path.join(root, "calls.log");

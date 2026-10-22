@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
-import { randomBytes } from "crypto";
+import { execTmpDir } from "./exec-tmp.js";
 
 /**
  * Comprehensive tests for agent subcommands:
@@ -28,13 +28,10 @@ beforeAll(() => {
   }
 });
 
+// Some tests run a stub binary from the home dir, so not under a
+// possibly-noexec os.tmpdir().
 function createTempHome(): string {
-  const dir = path.join(
-    os.tmpdir(),
-    `rafter-agent-test-${Date.now()}-${randomBytes(4).toString("hex")}`
-  );
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+  return execTmpDir("rafter-agent-test-");
 }
 
 function runCli(
