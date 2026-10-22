@@ -1026,28 +1026,271 @@ export function shellProgramFromStream(command: string): boolean {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Obfuscation normalizer + evasion-construct detector (sable-jtxp)
+// ---------------------------------------------------------------------------
+//
+// The risk patterns match the SPELLING of a command, so an attacker can keep a
+// catastrophic command's effect while changing its spelling past the patterns:
+// long flags (`rm --recursive --force /`), `$IFS` word-splitting
+// (`rm${IFS}-rf${IFS}/`), brace expansion (`{rm,-rf,/}`), ANSI-C quoting
+// (`bash -c $'rm\x20-rf\x20/'`), or process substitution into a shell
+// (`sh <(curl …)`). Two layers answer this, applied in assessCommandRisk:
+//
+//   1. normalizeForMatching() un-obfuscates a bounded set of these spellings —
+//      WITHOUT executing anything — and the patterns are matched against the
+//      normalized form as well as the raw/sanitized one (highest risk wins).
+//   2. evasionConstructRisk() independently rates the obfuscation constructs
+//      themselves as approval-grade, so a construct whose decoded payload the
+//      classifier still cannot read is gated rather than allowed.
+//
+// LIMITATION: this is heuristic DEFENCE IN DEPTH, not an airtight boundary. It
+// shrinks the evasion surface for the known constructs; it does not and cannot
+// enumerate every encoding (runtime variable assembly, nested unreadable
+// substitutions, a payload piped into a non-shell interpreter). The durable fix
+// is the deny-by-default execution redesign, tracked separately (sable-jtxp).
+// Everything here only ever EXPOSES more to the patterns — the safe direction —
+// and the quoted-data redaction in sanitizeCommandForMatching still runs on the
+// normalized form, so decoding a quoted commit message does not make it match.
+
+/** Bounds so a crafted input cannot hang or exhaust memory. */
+const MAX_NORMALIZE_INPUT = 20000;
+const MAX_NORMALIZE_OUTPUT = 40000;
+const MAX_BRACE_PASSES = 24;
+
+const ANSI_C_SIMPLE: Record<string, string> = {
+  t: "\t", n: "\n", r: "\r", "\\": "\\", "'": "'", '"': '"',
+  a: "\x07", b: "\b", f: "\f", v: "\v", e: "\x1b", E: "\x1b",
+};
+
+/**
+ * Decode the escapes of an ANSI-C `$'…'` string, keeping the result ONE quoted
+ * word so a shell wrapper still sees a single `-c` argument. Parses `$'…'` with
+ * its own escape rules (a `\'` does NOT terminate), which is why plain
+ * single-quote handling in the tokenizer cannot see through it.
+ */
+function decodeAnsiCQuotes(s: string): string {
+  if (!s.includes("$'")) return s;
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] === "$" && s[i + 1] === "'") {
+      i += 2;
+      let decoded = "";
+      while (i < s.length && s[i] !== "'") {
+        if (s[i] === "\\" && i + 1 < s.length) {
+          i++;
+          const c = s[i];
+          if (c === "x" || c === "X") {
+            i++;
+            let hex = "";
+            while (i < s.length && hex.length < 2 && /[0-9a-fA-F]/.test(s[i])) { hex += s[i]; i++; }
+            decoded += hex ? String.fromCharCode(parseInt(hex, 16)) : "x";
+            continue;
+          }
+          if (c >= "0" && c <= "7") {
+            let oct = "";
+            while (i < s.length && oct.length < 3 && s[i] >= "0" && s[i] <= "7") { oct += s[i]; i++; }
+            decoded += String.fromCharCode(parseInt(oct, 8) & 0xff);
+            continue;
+          }
+          decoded += ANSI_C_SIMPLE[c] ?? c;
+          i++;
+          continue;
+        }
+        decoded += s[i];
+        i++;
+      }
+      if (i < s.length) i++; // consume the closing quote
+      // Re-wrap as a single-quoted word, escaping embedded quotes, so the
+      // sanitizer still treats it as one argument rather than splitting it.
+      out += "'" + decoded.replace(/'/g, "'\\''") + "'";
+      continue;
+    }
+    out += s[i];
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Expand simple brace lists `{a,b,c}` to space-separated `a b c`. Space-join,
+ * NOT the shell's cartesian product, so adjacent groups cannot blow up — the
+ * over-approximation only exposes more tokens to the patterns. `(?<!\$)` leaves
+ * `${VAR}` parameter expansion alone; a comma is required so `${IFS}` and plain
+ * `{}` are untouched. Innermost-first over bounded passes handles nesting.
+ */
+function expandBraceLists(s: string): string {
+  if (!s.includes("{")) return s;
+  const re = /(?<!\$)\{([^{}]*,[^{}]*)\}/g;
+  let passes = 0;
+  let prev: string;
+  do {
+    prev = s;
+    s = s.replace(re, (_m, inner: string) => inner.split(",").join(" "));
+    passes++;
+    if (s.length > MAX_NORMALIZE_OUTPUT) { s = s.slice(0, MAX_NORMALIZE_OUTPUT); break; }
+  } while (s !== prev && passes < MAX_BRACE_PASSES);
+  return s;
+}
+
+/**
+ * Reduce an `rm` whose flags carry BOTH recursive and force intent — in any
+ * long, short or `--no-preserve-root` spelling, adjacent or not — to the
+ * `rm -rf` form the existing patterns catch. Scoped to `rm`, and the collapse
+ * only ever adds `-rf`, so it cannot turn a benign command destructive.
+ */
+function canonicalizeRmFlags(s: string): string {
+  if (!/\brm\b/i.test(s)) return s;
+  const re = /(^|[\s;&|()<>])((?:[\w./-]*\/)?rm)((?:[ \t]+--?[A-Za-z][\w-]*)*)/gi;
+  return s.replace(re, (whole, pre: string, cmd: string, flags: string) => {
+    if (!flags.trim()) return whole;
+    let recursive = false;
+    let force = false;
+    for (const tok of flags.trim().split(/\s+/)) {
+      const low = tok.toLowerCase();
+      if (low.startsWith("--")) {
+        if (low === "--recursive") recursive = true;
+        else if (low === "--force" || low === "--no-preserve-root") force = true;
+      } else {
+        if (low.includes("r")) recursive = true;
+        if (low.includes("f")) force = true;
+      }
+    }
+    return recursive && force ? `${pre}${cmd} -rf` : whole;
+  });
+}
+
+/**
+ * A spelling-normalized view of a command for pattern matching. Decodes ANSI-C
+ * quoting, substitutes `$IFS`/`${IFS}`, expands brace lists, canonicalizes
+ * destructive-flag spellings, and collapses whitespace runs. Executes nothing;
+ * bounded against hostile input.
+ */
+export function normalizeForMatching(command: string): string {
+  if (!command) return command;
+  let s = command.length > MAX_NORMALIZE_INPUT ? command.slice(0, MAX_NORMALIZE_INPUT) : command;
+  s = decodeAnsiCQuotes(s);
+  s = s.replace(/\$\{IFS\}/g, " ").replace(/\$IFS(?![A-Za-z0-9_])/g, " ");
+  s = expandBraceLists(s);
+  s = canonicalizeRmFlags(s);
+  // Collapse runs of spaces/tabs; keep newlines/CRs as statement separators.
+  s = s.replace(/[^\S\n\r]+/g, " ");
+  if (s.length > MAX_NORMALIZE_OUTPUT) s = s.slice(0, MAX_NORMALIZE_OUTPUT);
+  return s;
+}
+
+/** The exec piece of a segment (skipping env assignments and prefix wrappers). */
+function resolveExecPiece(seg: Piece[]): Piece | null {
+  const isRedirectTarget = new Array<boolean>(seg.length).fill(false);
+  for (let i = 1; i < seg.length; i++) {
+    const prev = seg[i - 1];
+    if (prev.op && REDIRECT_OPS.has(prev.op) && !seg[i].op) isRedirectTarget[i] = true;
+  }
+  for (let i = 0; i < seg.length; i++) {
+    const p = seg[i];
+    if (p.op || isRedirectTarget[i]) continue;
+    if (!p.quoted && ENV_ASSIGNMENT.test(p.text)) continue;
+    if (!p.quoted && TAIL_WRAPPERS.has(execName(p.text))) {
+      let j = i + 1;
+      while (j < seg.length) {
+        const q = seg[j];
+        if (q.op || isRedirectTarget[j]) { j++; continue; }
+        if (q.text.startsWith("-") || NUMERIC_ARG.test(q.text)) { j++; continue; }
+        break;
+      }
+      i = j - 1;
+      continue;
+    }
+    return p;
+  }
+  return null;
+}
+
+/**
+ * True if the command uses a shell OBFUSCATION construct that should require
+ * approval even when the normalized payload still cannot be read: `$IFS`
+ * splitting, ANSI-C `$'…'`, a brace list in COMMAND position, a process
+ * substitution feeding a shell/eval, or a base64 decode piped into a shell.
+ * Narrow by design — a brace ARGUMENT or a process substitution into a
+ * non-shell (`diff <(a) <(b)`) is routine and not flagged.
+ */
+export function evasionConstructRisk(command: string): boolean {
+  if (!command) return false;
+  const s = command.length > MAX_NORMALIZE_INPUT ? command.slice(0, MAX_NORMALIZE_INPUT) : command;
+  if (/\$\{IFS\}|\$IFS\b/.test(s)) return true;
+  if (/\$'/.test(s)) return true;
+  if (/\bbase64\b[\s\S]*\|\s*(ba|z|da|k|a)?sh\b/i.test(s)) return true;
+
+  const { pieces, unterminated } = tokenize(s);
+  if (unterminated) return false; // a broken parse already fails closed elsewhere
+  const segments: Piece[][] = [];
+  let seg: Piece[] = [];
+  for (const p of pieces) {
+    if (p.op !== null && CHAIN_OPS.has(p.op)) { segments.push(seg); seg = []; continue; }
+    seg.push(p);
+  }
+  segments.push(seg);
+
+  for (const segment of segments) {
+    const exec = resolveExecPiece(segment);
+    if (!exec) continue;
+    if (exec.text && /^\{[^{}]*,[^{}]*\}/.test(exec.text)) return true;
+    const name = execName(exec.text);
+    if (SHELL_EXECS.has(name) || EVAL_EXECS.has(name)) {
+      for (const p of segment) {
+        if (p.op === null && p.text === "" && p.substs.length > 0) {
+          const open = s.slice(p.start, p.start + 2);
+          if (open === "<(" || open === ">(") return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * The distinct lowercased, sanitized views a command's risk is judged against:
+ * the raw command and — when normalization changed it — the spelling-normalized
+ * command. Matching the union defeats a spelling that evades the patterns.
+ */
+function matchVariants(command: string): string[] {
+  const raw = sanitizeCommandForMatching(command).toLowerCase().trim();
+  const variants: string[] = [];
+  if (raw) variants.push(raw);
+  const normalized = normalizeForMatching(command);
+  if (normalized !== command) {
+    const normSan = sanitizeCommandForMatching(normalized).toLowerCase().trim();
+    if (normSan && normSan !== raw) variants.push(normSan);
+  }
+  return variants;
+}
+
 export function assessCommandRisk(command: string): CommandRiskLevel {
   // rf-vnxs: checked on the RAW command, before sanitization, because the
   // disarm is an ordinary well-formed invocation — there is nothing malformed
   // for the sanitizer to normalise, and redaction could hide the operand.
   if (modifiesRafterSecurityConfig(command)) return "critical";
 
-  const cmd = sanitizeCommandForMatching(command).toLowerCase().trim();
-  if (!cmd) return "low";
+  // sable-jtxp: match against the raw AND the spelling-normalized view, so a
+  // command whose spelling evades the patterns is still caught.
+  const variants = matchVariants(command);
+  if (variants.length === 0) return "low";
 
   for (const pattern of CRITICAL_PATTERNS) {
-    if (pattern.test(cmd)) return "critical";
+    if (variants.some((v) => pattern.test(v))) return "critical";
   }
-  // rf-zvll B2: a shell fed its program from a channel we cannot read requires
+  // rf-zvll B2 + sable-jtxp: a shell fed its program from a channel we cannot
+  // read, or an obfuscation construct whose payload we cannot read, requires
   // approval. Checked AFTER critical so `echo 'rm -rf /' | sh` — where the
   // payload IS readable and matches — keeps its hard block rather than being
   // softened to approval.
-  if (shellProgramFromStream(command)) return "high";
+  if (shellProgramFromStream(command) || evasionConstructRisk(command)) return "high";
   for (const pattern of HIGH_PATTERNS) {
-    if (pattern.test(cmd)) return "high";
+    if (variants.some((v) => pattern.test(v))) return "high";
   }
   for (const pattern of MEDIUM_PATTERNS) {
-    if (pattern.test(cmd)) return "medium";
+    if (variants.some((v) => pattern.test(v))) return "medium";
   }
   return "low";
 }
@@ -1062,9 +1305,10 @@ export function matchedCriticalPattern(command: string): string | null {
   if (modifiesRafterSecurityConfig(command)) {
     return "rafter security configuration is protected (rf-vnxs)";
   }
-  const cmd = sanitizeCommandForMatching(command).toLowerCase().trim();
+  // Mirror assessCommandRisk: a critical match may live in the normalized view.
+  const variants = matchVariants(command);
   for (const pattern of CRITICAL_PATTERNS) {
-    if (pattern.test(cmd)) return pattern.source;
+    if (variants.some((v) => pattern.test(v))) return pattern.source;
   }
   return null;
 }
