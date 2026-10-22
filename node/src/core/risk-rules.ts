@@ -1044,14 +1044,21 @@ export function shellProgramFromStream(command: string): boolean {
 //      themselves as approval-grade, so a construct whose decoded payload the
 //      classifier still cannot read is gated rather than allowed.
 //
-// LIMITATION: this is heuristic DEFENCE IN DEPTH, not an airtight boundary. It
-// shrinks the evasion surface for the known constructs; it does not and cannot
-// enumerate every encoding (runtime variable assembly, nested unreadable
-// substitutions, a payload piped into a non-shell interpreter). The durable fix
-// is the deny-by-default execution redesign, tracked separately (sable-jtxp).
-// Everything here only ever EXPOSES more to the patterns — the safe direction —
-// and the quoted-data redaction in sanitizeCommandForMatching still runs on the
-// normalized form, so decoding a quoted commit message does not make it match.
+// LIMITATION — READ BEFORE RELYING ON THIS. It recognizes a fixed set of
+// SPELLINGS; it is DEFENCE IN DEPTH, NOT a containment boundary. It does not and
+// cannot stop an adversary who INDIRECTS the command so the dangerous token
+// never appears literally — assembled through a shell variable (`X=rm; $X -rf
+// /`), produced by a command substitution (`$(…)` in command position), or
+// handed to an interpreter whose argument the classifier cannot read (a payload
+// piped into a non-shell `python`/`perl`, a base64 blob decoded at runtime).
+// Those are deliberately NOT chased here: a pass that tried to gate variable
+// indirection or `$(…)` in command position also catches legitimate `$CC` /
+// `$(which python)` shapes, so the real answer is a deny-by-default execution
+// redesign, tracked separately (hoare's epic sable-75st; this change is
+// sable-jtxp). Everything here only ever EXPOSES more to the patterns — the
+// safe direction — and the quoted-data redaction in sanitizeCommandForMatching
+// still runs on the normalized form, so decoding a quoted commit message does
+// not make it match.
 
 /** Bounds so a crafted input cannot hang or exhaust memory. */
 const MAX_NORMALIZE_INPUT = 20000;
@@ -1064,10 +1071,45 @@ const ANSI_C_SIMPLE: Record<string, string> = {
 };
 
 /**
- * Decode the escapes of an ANSI-C `$'…'` string, keeping the result ONE quoted
- * word so a shell wrapper still sees a single `-c` argument. Parses `$'…'` with
+ * Decode one ANSI-C `$'…'` string whose opening `$'` is at `i`, returning the
+ * decoded content and the index just past the closing quote. Parses `$'…'` with
  * its own escape rules (a `\'` does NOT terminate), which is why plain
  * single-quote handling in the tokenizer cannot see through it.
+ */
+function decodeAnsiCStringAt(s: string, i: number): { decoded: string; next: number } {
+  i += 2;
+  let decoded = "";
+  while (i < s.length && s[i] !== "'") {
+    if (s[i] === "\\" && i + 1 < s.length) {
+      i++;
+      const c = s[i];
+      if (c === "x" || c === "X") {
+        i++;
+        let hex = "";
+        while (i < s.length && hex.length < 2 && /[0-9a-fA-F]/.test(s[i])) { hex += s[i]; i++; }
+        decoded += hex ? String.fromCharCode(parseInt(hex, 16)) : "x";
+        continue;
+      }
+      if (c >= "0" && c <= "7") {
+        let oct = "";
+        while (i < s.length && oct.length < 3 && s[i] >= "0" && s[i] <= "7") { oct += s[i]; i++; }
+        decoded += String.fromCharCode(parseInt(oct, 8) & 0xff);
+        continue;
+      }
+      decoded += ANSI_C_SIMPLE[c] ?? c;
+      i++;
+      continue;
+    }
+    decoded += s[i];
+    i++;
+  }
+  if (i < s.length) i++; // consume the closing quote
+  return { decoded, next: i };
+}
+
+/**
+ * Decode the escapes of every ANSI-C `$'…'` string, keeping each result ONE
+ * quoted word so a shell wrapper still sees a single `-c` argument.
  */
 function decodeAnsiCQuotes(s: string): string {
   if (!s.includes("$'")) return s;
@@ -1075,42 +1117,36 @@ function decodeAnsiCQuotes(s: string): string {
   let i = 0;
   while (i < s.length) {
     if (s[i] === "$" && s[i + 1] === "'") {
-      i += 2;
-      let decoded = "";
-      while (i < s.length && s[i] !== "'") {
-        if (s[i] === "\\" && i + 1 < s.length) {
-          i++;
-          const c = s[i];
-          if (c === "x" || c === "X") {
-            i++;
-            let hex = "";
-            while (i < s.length && hex.length < 2 && /[0-9a-fA-F]/.test(s[i])) { hex += s[i]; i++; }
-            decoded += hex ? String.fromCharCode(parseInt(hex, 16)) : "x";
-            continue;
-          }
-          if (c >= "0" && c <= "7") {
-            let oct = "";
-            while (i < s.length && oct.length < 3 && s[i] >= "0" && s[i] <= "7") { oct += s[i]; i++; }
-            decoded += String.fromCharCode(parseInt(oct, 8) & 0xff);
-            continue;
-          }
-          decoded += ANSI_C_SIMPLE[c] ?? c;
-          i++;
-          continue;
-        }
-        decoded += s[i];
-        i++;
-      }
-      if (i < s.length) i++; // consume the closing quote
+      const r = decodeAnsiCStringAt(s, i);
       // Re-wrap as a single-quoted word, escaping embedded quotes, so the
       // sanitizer still treats it as one argument rather than splitting it.
-      out += "'" + decoded.replace(/'/g, "'\\''") + "'";
+      out += "'" + r.decoded.replace(/'/g, "'\\''") + "'";
+      i = r.next;
       continue;
     }
     out += s[i];
     i++;
   }
   return out;
+}
+
+/**
+ * True if some `$'…'` decodes to content that HIDES A WORD BOUNDARY — interior
+ * whitespace separating two or more tokens (`$'rm\x20-rf\x20/'`), the shape
+ * that reconstructs a multi-word command inside one quoted word. A `$'…'` that
+ * decodes to a lone separator (`$'\t'`, `$'\n'`) or to a single token
+ * (`$'hi'`, a color escape) is a legitimate data literal and is NOT flagged —
+ * matching on bare presence over-blocked idioms like `grep -P $'\t'`.
+ */
+function ansiCHidesWordBoundary(s: string): boolean {
+  if (!s.includes("$'")) return false;
+  let i = 0;
+  while ((i = s.indexOf("$'", i)) !== -1) {
+    const r = decodeAnsiCStringAt(s, i);
+    if (r.decoded.trim().split(/\s+/).filter(Boolean).length > 1) return true;
+    i = r.next;
+  }
+  return false;
 }
 
 /**
@@ -1219,7 +1255,7 @@ export function evasionConstructRisk(command: string): boolean {
   if (!command) return false;
   const s = command.length > MAX_NORMALIZE_INPUT ? command.slice(0, MAX_NORMALIZE_INPUT) : command;
   if (/\$\{IFS\}|\$IFS\b/.test(s)) return true;
-  if (/\$'/.test(s)) return true;
+  if (ansiCHidesWordBoundary(s)) return true;
   if (/\bbase64\b[\s\S]*\|\s*(ba|z|da|k|a)?sh\b/i.test(s)) return true;
 
   const { pieces, unterminated } = tokenize(s);

@@ -1081,14 +1081,20 @@ def shell_program_from_stream(command: str) -> bool:
 #      themselves as approval-grade, so a construct whose decoded payload the
 #      classifier still cannot read is gated rather than allowed.
 #
-# LIMITATION: this is heuristic DEFENCE IN DEPTH, not an airtight boundary. It
-# shrinks the evasion surface for the known constructs; it does not and cannot
-# enumerate every encoding (runtime variable assembly, nested unreadable
-# substitutions, a payload piped into a non-shell interpreter). The durable fix
-# is the deny-by-default execution redesign, tracked separately (sable-jtxp).
-# Everything here only ever EXPOSES more to the patterns -- the safe direction --
-# and the quoted-data redaction in sanitize_command_for_matching still runs on
-# the normalized form, so decoding a quoted commit message does not make it match.
+# LIMITATION -- READ BEFORE RELYING ON THIS. It recognizes a fixed set of
+# SPELLINGS; it is DEFENCE IN DEPTH, NOT a containment boundary. It does not and
+# cannot stop an adversary who INDIRECTS the command so the dangerous token never
+# appears literally -- assembled through a shell variable (`X=rm; $X -rf /`),
+# produced by a command substitution (`$(…)` in command position), or handed to
+# an interpreter whose argument the classifier cannot read (a payload piped into
+# a non-shell `python`/`perl`, a base64 blob decoded at runtime). Those are
+# deliberately NOT chased here: a pass that tried to gate variable indirection or
+# `$(…)` in command position also catches legitimate `$CC` / `$(which python)`
+# shapes, so the real answer is a deny-by-default execution redesign, tracked
+# separately (hoare's epic sable-75st; this change is sable-jtxp). Everything
+# here only ever EXPOSES more to the patterns -- the safe direction -- and the
+# quoted-data redaction in sanitize_command_for_matching still runs on the
+# normalized form, so decoding a quoted commit message does not make it match.
 
 _MAX_NORMALIZE_INPUT = 20000
 _MAX_NORMALIZE_OUTPUT = 40000
@@ -1106,12 +1112,45 @@ _RM_CANON = re.compile(
 )
 
 
-def _decode_ansi_c_quotes(s: str) -> str:
-    """Decode an ANSI-C ``$'…'`` string's escapes, keeping it ONE quoted word.
+def _decode_ansi_c_string_at(s: str, i: int) -> tuple[str, int]:
+    """Decode one ANSI-C ``$'…'`` whose opening ``$'`` is at ``i``; return the
+    decoded content and the index just past the closing quote. Parses ``$'…'``
+    with its own escape rules (``\\'`` does NOT terminate), which is why plain
+    single-quote handling cannot see through it."""
+    i += 2
+    n = len(s)
+    decoded: list[str] = []
+    while i < n and s[i] != "'":
+        if s[i] == "\\" and i + 1 < n:
+            i += 1
+            c = s[i]
+            if c in ("x", "X"):
+                i += 1
+                hex_ = ""
+                while i < n and len(hex_) < 2 and s[i] in "0123456789abcdefABCDEF":
+                    hex_ += s[i]
+                    i += 1
+                decoded.append(chr(int(hex_, 16)) if hex_ else "x")
+                continue
+            if "0" <= c <= "7":
+                oct_ = ""
+                while i < n and len(oct_) < 3 and "0" <= s[i] <= "7":
+                    oct_ += s[i]
+                    i += 1
+                decoded.append(chr(int(oct_, 8) & 0xFF))
+                continue
+            decoded.append(_ANSI_C_SIMPLE.get(c, c))
+            i += 1
+            continue
+        decoded.append(s[i])
+        i += 1
+    if i < n:
+        i += 1  # consume the closing quote
+    return "".join(decoded), i
 
-    Parses ``$'…'`` with its own escape rules (``\\'`` does NOT terminate),
-    which is why plain single-quote handling cannot see through it.
-    """
+
+def _decode_ansi_c_quotes(s: str) -> str:
+    """Decode every ANSI-C ``$'…'`` string, keeping each result ONE quoted word."""
     if "$'" not in s:
         return s
     out: list[str] = []
@@ -1119,39 +1158,31 @@ def _decode_ansi_c_quotes(s: str) -> str:
     n = len(s)
     while i < n:
         if s[i] == "$" and i + 1 < n and s[i + 1] == "'":
-            i += 2
-            decoded: list[str] = []
-            while i < n and s[i] != "'":
-                if s[i] == "\\" and i + 1 < n:
-                    i += 1
-                    c = s[i]
-                    if c in ("x", "X"):
-                        i += 1
-                        hex_ = ""
-                        while i < n and len(hex_) < 2 and s[i] in "0123456789abcdefABCDEF":
-                            hex_ += s[i]
-                            i += 1
-                        decoded.append(chr(int(hex_, 16)) if hex_ else "x")
-                        continue
-                    if "0" <= c <= "7":
-                        oct_ = ""
-                        while i < n and len(oct_) < 3 and "0" <= s[i] <= "7":
-                            oct_ += s[i]
-                            i += 1
-                        decoded.append(chr(int(oct_, 8) & 0xFF))
-                        continue
-                    decoded.append(_ANSI_C_SIMPLE.get(c, c))
-                    i += 1
-                    continue
-                decoded.append(s[i])
-                i += 1
-            if i < n:
-                i += 1  # consume the closing quote
-            out.append("'" + "".join(decoded).replace("'", "'\\''") + "'")
+            decoded, i = _decode_ansi_c_string_at(s, i)
+            out.append("'" + decoded.replace("'", "'\\''") + "'")
             continue
         out.append(s[i])
         i += 1
     return "".join(out)
+
+
+def _ansi_c_hides_word_boundary(s: str) -> bool:
+    """True if some ``$'…'`` decodes to content that HIDES A WORD BOUNDARY --
+    interior whitespace separating two or more tokens (``$'rm\\x20-rf\\x20/'``),
+    the shape that reconstructs a multi-word command inside one quoted word. A
+    ``$'…'`` that decodes to a lone separator (``$'\\t'``, ``$'\\n'``) or a single
+    token (``$'hi'``, a color escape) is a legitimate data literal and is NOT
+    flagged -- matching on bare presence over-blocked idioms like ``grep -P $'\\t'``."""
+    if "$'" not in s:
+        return False
+    i = 0
+    while True:
+        i = s.find("$'", i)
+        if i == -1:
+            return False
+        decoded, i = _decode_ansi_c_string_at(s, i)
+        if len(decoded.split()) > 1:
+            return True
 
 
 def _expand_brace_lists(s: str) -> str:
@@ -1271,7 +1302,7 @@ def evasion_construct_risk(command: str) -> bool:
     s = command[:_MAX_NORMALIZE_INPUT] if len(command) > _MAX_NORMALIZE_INPUT else command
     if re.search(r"\$\{IFS\}|\$IFS\b", s):
         return True
-    if "$'" in s:
+    if _ansi_c_hides_word_boundary(s):
         return True
     if re.search(r"\bbase64\b[\s\S]*\|\s*(ba|z|da|k|a)?sh\b", s, re.IGNORECASE):
         return True

