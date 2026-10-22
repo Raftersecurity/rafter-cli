@@ -1063,29 +1063,317 @@ def shell_program_from_stream(command: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Obfuscation normalizer + evasion-construct detector (sable-jtxp)
+# ---------------------------------------------------------------------------
+#
+# The risk patterns match the SPELLING of a command, so an attacker can keep a
+# catastrophic command's effect while changing its spelling past the patterns:
+# long flags (`rm --recursive --force /`), `$IFS` word-splitting
+# (`rm${IFS}-rf${IFS}/`), brace expansion (`{rm,-rf,/}`), ANSI-C quoting
+# (`bash -c $'rm\x20-rf\x20/'`), or process substitution into a shell
+# (`sh <(curl …)`). Two layers answer this, applied in assess_command_risk:
+#
+#   1. normalize_for_matching() un-obfuscates a bounded set of these spellings --
+#      WITHOUT executing anything -- and the patterns match the normalized form
+#      as well as the raw/sanitized one (highest risk wins).
+#   2. evasion_construct_risk() independently rates the obfuscation constructs
+#      themselves as approval-grade, so a construct whose decoded payload the
+#      classifier still cannot read is gated rather than allowed.
+#
+# LIMITATION -- READ BEFORE RELYING ON THIS. It recognizes a fixed set of
+# SPELLINGS; it is DEFENCE IN DEPTH, NOT a containment boundary. It does not and
+# cannot stop an adversary who INDIRECTS the command so the dangerous token never
+# appears literally -- assembled through a shell variable (`X=rm; $X -rf /`),
+# produced by a command substitution (`$(…)` in command position), or handed to
+# an interpreter whose argument the classifier cannot read (a payload piped into
+# a non-shell `python`/`perl`, a base64 blob decoded at runtime). Those are
+# deliberately NOT chased here: a pass that tried to gate variable indirection or
+# `$(…)` in command position also catches legitimate `$CC` / `$(which python)`
+# shapes, so the real answer is a deny-by-default execution redesign, tracked
+# separately (hoare's epic sable-75st; this change is sable-jtxp). Everything
+# here only ever EXPOSES more to the patterns -- the safe direction -- and the
+# quoted-data redaction in sanitize_command_for_matching still runs on the
+# normalized form, so decoding a quoted commit message does not make it match.
+
+_MAX_NORMALIZE_INPUT = 20000
+_MAX_NORMALIZE_OUTPUT = 40000
+_MAX_BRACE_PASSES = 24
+
+_ANSI_C_SIMPLE = {
+    "t": "\t", "n": "\n", "r": "\r", "\\": "\\", "'": "'", '"': '"',
+    "a": "\x07", "b": "\b", "f": "\f", "v": "\v", "e": "\x1b", "E": "\x1b",
+}
+_BRACE_LIST = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
+_BRACE_CMD = re.compile(r"^\{[^{}]*,[^{}]*\}")
+_RM_CANON = re.compile(
+    r"(^|[\s;&|()<>])((?:[\w./-]*/)?rm)((?:[ \t]+--?[A-Za-z][\w-]*)*)",
+    re.IGNORECASE,
+)
+
+
+def _decode_ansi_c_string_at(s: str, i: int) -> tuple[str, int]:
+    """Decode one ANSI-C ``$'…'`` whose opening ``$'`` is at ``i``; return the
+    decoded content and the index just past the closing quote. Parses ``$'…'``
+    with its own escape rules (``\\'`` does NOT terminate), which is why plain
+    single-quote handling cannot see through it."""
+    i += 2
+    n = len(s)
+    decoded: list[str] = []
+    while i < n and s[i] != "'":
+        if s[i] == "\\" and i + 1 < n:
+            i += 1
+            c = s[i]
+            if c in ("x", "X"):
+                i += 1
+                hex_ = ""
+                while i < n and len(hex_) < 2 and s[i] in "0123456789abcdefABCDEF":
+                    hex_ += s[i]
+                    i += 1
+                decoded.append(chr(int(hex_, 16)) if hex_ else "x")
+                continue
+            if "0" <= c <= "7":
+                oct_ = ""
+                while i < n and len(oct_) < 3 and "0" <= s[i] <= "7":
+                    oct_ += s[i]
+                    i += 1
+                decoded.append(chr(int(oct_, 8) & 0xFF))
+                continue
+            decoded.append(_ANSI_C_SIMPLE.get(c, c))
+            i += 1
+            continue
+        decoded.append(s[i])
+        i += 1
+    if i < n:
+        i += 1  # consume the closing quote
+    return "".join(decoded), i
+
+
+def _decode_ansi_c_quotes(s: str) -> str:
+    """Decode every ANSI-C ``$'…'`` string, keeping each result ONE quoted word."""
+    if "$'" not in s:
+        return s
+    out: list[str] = []
+    i = 0
+    n = len(s)
+    while i < n:
+        if s[i] == "$" and i + 1 < n and s[i + 1] == "'":
+            decoded, i = _decode_ansi_c_string_at(s, i)
+            out.append("'" + decoded.replace("'", "'\\''") + "'")
+            continue
+        out.append(s[i])
+        i += 1
+    return "".join(out)
+
+
+def _ansi_c_hides_word_boundary(s: str) -> bool:
+    """True if some ``$'…'`` decodes to content that HIDES A WORD BOUNDARY --
+    interior whitespace separating two or more tokens (``$'rm\\x20-rf\\x20/'``),
+    the shape that reconstructs a multi-word command inside one quoted word. A
+    ``$'…'`` that decodes to a lone separator (``$'\\t'``, ``$'\\n'``) or a single
+    token (``$'hi'``, a color escape) is a legitimate data literal and is NOT
+    flagged -- matching on bare presence over-blocked idioms like ``grep -P $'\\t'``."""
+    if "$'" not in s:
+        return False
+    i = 0
+    while True:
+        i = s.find("$'", i)
+        if i == -1:
+            return False
+        decoded, i = _decode_ansi_c_string_at(s, i)
+        if len(decoded.split()) > 1:
+            return True
+
+
+def _expand_brace_lists(s: str) -> str:
+    """Expand simple brace lists ``{a,b,c}`` to space-separated ``a b c``.
+
+    Space-join, NOT the shell's cartesian product, so adjacent groups cannot blow
+    up; the over-approximation only exposes more tokens. ``(?<!\\$)`` leaves
+    ``${VAR}`` alone and a comma is required, so ``${IFS}`` and ``{}`` are
+    untouched. Innermost-first over bounded passes handles nesting.
+    """
+    if "{" not in s:
+        return s
+    passes = 0
+    prev = None
+    while prev != s and passes < _MAX_BRACE_PASSES:
+        prev = s
+        s = _BRACE_LIST.sub(lambda m: " ".join(m.group(1).split(",")), s)
+        passes += 1
+        if len(s) > _MAX_NORMALIZE_OUTPUT:
+            s = s[:_MAX_NORMALIZE_OUTPUT]
+            break
+    return s
+
+
+def _canonicalize_rm_flags(s: str) -> str:
+    """Reduce an ``rm`` carrying BOTH recursive and force intent -- in any long,
+    short or ``--no-preserve-root`` spelling, adjacent or not -- to the ``rm -rf``
+    form the patterns catch. Scoped to ``rm`` and only ever adds ``-rf``."""
+    if not re.search(r"\brm\b", s, re.IGNORECASE):
+        return s
+
+    def repl(m: "re.Match[str]") -> str:
+        pre, cmd, flags = m.group(1), m.group(2), m.group(3)
+        if not flags.strip():
+            return m.group(0)
+        recursive = force = False
+        for tok in flags.split():
+            low = tok.lower()
+            if low.startswith("--"):
+                if low == "--recursive":
+                    recursive = True
+                elif low in ("--force", "--no-preserve-root"):
+                    force = True
+            else:
+                if "r" in low:
+                    recursive = True
+                if "f" in low:
+                    force = True
+        return f"{pre}{cmd} -rf" if (recursive and force) else m.group(0)
+
+    return _RM_CANON.sub(repl, s)
+
+
+def normalize_for_matching(command: str) -> str:
+    """A spelling-normalized view of a command for pattern matching.
+
+    Decodes ANSI-C quoting, substitutes ``$IFS``/``${IFS}``, expands brace lists,
+    canonicalizes destructive-flag spellings, and collapses whitespace runs.
+    Executes nothing; bounded against hostile input.
+    """
+    if not command:
+        return command
+    s = command[:_MAX_NORMALIZE_INPUT] if len(command) > _MAX_NORMALIZE_INPUT else command
+    s = _decode_ansi_c_quotes(s)
+    s = re.sub(r"\$\{IFS\}", " ", s)
+    s = re.sub(r"\$IFS(?![A-Za-z0-9_])", " ", s)
+    s = _expand_brace_lists(s)
+    s = _canonicalize_rm_flags(s)
+    # Collapse runs of spaces/tabs; keep newlines/CRs as statement separators.
+    s = re.sub(r"[^\S\n\r]+", " ", s)
+    if len(s) > _MAX_NORMALIZE_OUTPUT:
+        s = s[:_MAX_NORMALIZE_OUTPUT]
+    return s
+
+
+def _resolve_exec_piece(seg: list[_Piece]) -> _Piece | None:
+    """The exec piece of a segment (skipping env assignments and prefix wrappers)."""
+    is_redirect_target = [False] * len(seg)
+    for i in range(1, len(seg)):
+        if seg[i - 1].op in _REDIRECT_OPS and seg[i].op is None:
+            is_redirect_target[i] = True
+    i = 0
+    while i < len(seg):
+        p = seg[i]
+        if p.op is not None or is_redirect_target[i]:
+            i += 1
+            continue
+        if not p.quoted and _ENV_ASSIGNMENT.match(p.text):
+            i += 1
+            continue
+        if not p.quoted and _exec_name(p.text) in _TAIL_WRAPPERS:
+            j = i + 1
+            while j < len(seg):
+                q = seg[j]
+                if q.op is not None or is_redirect_target[j]:
+                    j += 1
+                    continue
+                if q.text.startswith("-") or _NUMERIC_ARG.match(q.text):
+                    j += 1
+                    continue
+                break
+            i = j
+            continue
+        return p
+    return None
+
+
+def evasion_construct_risk(command: str) -> bool:
+    """True if the command uses a shell OBFUSCATION construct that should require
+    approval even when the normalized payload still cannot be read: ``$IFS``
+    splitting, ANSI-C ``$'…'``, a brace list in COMMAND position, a process
+    substitution feeding a shell/eval, or a base64 decode piped into a shell.
+    Narrow by design -- a brace ARGUMENT or a process substitution into a
+    non-shell (``diff <(a) <(b)``) is routine and not flagged."""
+    if not command:
+        return False
+    s = command[:_MAX_NORMALIZE_INPUT] if len(command) > _MAX_NORMALIZE_INPUT else command
+    if re.search(r"\$\{IFS\}|\$IFS\b", s):
+        return True
+    if _ansi_c_hides_word_boundary(s):
+        return True
+    if re.search(r"\bbase64\b[\s\S]*\|\s*(ba|z|da|k|a)?sh\b", s, re.IGNORECASE):
+        return True
+
+    pieces, unterminated = _tokenize(s)
+    if unterminated:
+        return False
+    segments: list[list[_Piece]] = []
+    seg: list[_Piece] = []
+    for p in pieces:
+        if p.op is not None and p.op in _CHAIN_OPS:
+            segments.append(seg)
+            seg = []
+            continue
+        seg.append(p)
+    segments.append(seg)
+
+    for segment in segments:
+        exec_piece = _resolve_exec_piece(segment)
+        if exec_piece is None:
+            continue
+        if exec_piece.text and _BRACE_CMD.match(exec_piece.text):
+            return True
+        name = _exec_name(exec_piece.text)
+        if name in _SHELL_EXECS or name in _EVAL_EXECS:
+            for p in segment:
+                if p.op is None and p.text == "" and p.substs:
+                    if s[p.start:p.start + 2] in ("<(", ">("):
+                        return True
+    return False
+
+
+def _match_variants(command: str) -> list[str]:
+    """The distinct sanitized views a command's risk is judged against: the raw
+    command and -- when normalization changed it -- the spelling-normalized one."""
+    raw = sanitize_command_for_matching(command).strip()
+    variants = [raw] if raw else []
+    normalized = normalize_for_matching(command)
+    if normalized != command:
+        norm_san = sanitize_command_for_matching(normalized).strip()
+        if norm_san and norm_san != raw:
+            variants.append(norm_san)
+    return variants
+
+
 def assess_command_risk(command: str) -> str:
     """Assess risk level of a command string."""
     # rf-vnxs: checked before the pattern loops. The disarm is an ordinary
     # well-formed invocation — nothing malformed for the sanitizer to normalise.
     if modifies_rafter_security_config(command):
         return "critical"
-    cmd = sanitize_command_for_matching(command).strip()
-    if not cmd:
+    # sable-jtxp: match against the raw AND the spelling-normalized view, so a
+    # command whose spelling evades the patterns is still caught.
+    variants = _match_variants(command)
+    if not variants:
         return "low"
     for p in CRITICAL_PATTERNS:
-        if re.search(p, cmd, re.IGNORECASE):
+        if any(re.search(p, v, re.IGNORECASE) for v in variants):
             return "critical"
-    # rf-zvll B2: a shell fed its program from a channel we cannot read requires
+    # rf-zvll B2 + sable-jtxp: a shell fed its program from a channel we cannot
+    # read, or an obfuscation construct whose payload we cannot read, requires
     # approval. Checked AFTER critical so `echo 'rm -rf /' | sh` -- where the
     # payload IS readable and matches -- keeps its hard block rather than being
     # softened to approval.
-    if shell_program_from_stream(command):
+    if shell_program_from_stream(command) or evasion_construct_risk(command):
         return "high"
     for p in HIGH_PATTERNS:
-        if re.search(p, cmd, re.IGNORECASE):
+        if any(re.search(p, v, re.IGNORECASE) for v in variants):
             return "high"
     for p in MEDIUM_PATTERNS:
-        if re.search(p, cmd, re.IGNORECASE):
+        if any(re.search(p, v, re.IGNORECASE) for v in variants):
             return "medium"
     return "low"
 
@@ -1093,12 +1381,12 @@ def assess_command_risk(command: str) -> str:
 def match_critical_pattern(command: str) -> str | None:
     """Return the first CRITICAL pattern matching the command, or None.
 
-    Mirrors assess_command_risk's sanitization. Intended to be called only once a
-    command is already classified "critical", to surface *which* built-in rule
-    matched.
+    Mirrors assess_command_risk's sanitization and normalization. Intended to be
+    called only once a command is already classified "critical", to surface
+    *which* built-in rule matched.
     """
-    cmd = sanitize_command_for_matching(command).strip()
+    variants = _match_variants(command)
     for p in CRITICAL_PATTERNS:
-        if re.search(p, cmd, re.IGNORECASE):
+        if any(re.search(p, v, re.IGNORECASE) for v in variants):
             return p
     return None
