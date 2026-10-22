@@ -66,8 +66,7 @@ export function createServer(): Server {
 
   // ── Tools ───────────────────────────────────────────────────────────
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
+  const tools = [
       {
         name: "scan_secrets",
         description: "Scan files or directories for leaked secrets, API keys, tokens, passwords, and credentials. Use before pushing code, when handling config files, or when asked 'is this safe to commit?' or 'check for leaked keys'. Findings hidden by the project's .rafter.yml ignore rules or .rafterignore are dropped from the results; when any were, a second content block lists them as {suppressed_count, _suppressed: [{file, line, column, rule, severity, reason, source}]} (no secret text), so a blanket ignore rule cannot silently empty a scan.",
@@ -212,11 +211,27 @@ export function createServer(): Server {
           required: ["id"],
         },
       },
-    ],
-  }));
+  ];
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+
+    // sable-ykuh — validate required inputSchema fields up front, so a missing
+    // argument comes back as a clean tool error instead of reaching the handler
+    // and crashing it with a raw TypeError (surfaced to the client as a -32603
+    // internal error). Mirrors the Python server, where FastMCP rejects the
+    // call against the tool signature before the handler runs.
+    const tool = tools.find((t) => t.name === name);
+    if (!tool) return errorResult(`Unknown tool: ${name}`);
+    const required = ((tool.inputSchema as { required?: readonly string[] }).required) ?? [];
+    for (const field of required) {
+      const value = args?.[field];
+      if (value === undefined || value === null) {
+        return errorResult(`Invalid arguments for "${name}": missing required field "${field}"`);
+      }
+    }
 
     switch (name) {
       case "scan_secrets": {

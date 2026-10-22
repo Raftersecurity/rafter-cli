@@ -261,6 +261,45 @@ describe("MCP Server — real stdio transport: evaluate_command", () => {
   });
 });
 
+// sable-ykuh — a required inputSchema field left out used to reach the handler
+// and crash it with a raw TypeError, surfacing as a protocol -32603 internal
+// error. It must instead come back as a clean tool error naming the field,
+// matching the Python server (FastMCP rejects the call before the handler).
+describe("MCP Server — real stdio transport: missing required arguments", () => {
+  let client: Client;
+  let transport: StdioClientTransport;
+
+  beforeAll(async () => {
+    ({ client, transport } = await createConnectedClient());
+  });
+
+  afterAll(async () => {
+    await client.close();
+  });
+
+  it("returns a clean tool error when evaluate_command omits command", async () => {
+    const result = await client.callTool({
+      name: "evaluate_command",
+      arguments: {},
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("command");
+  });
+
+  it("returns a clean tool error when scan_secrets omits path", async () => {
+    const result = await client.callTool({
+      name: "scan_secrets",
+      arguments: {},
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("path");
+  });
+});
+
 describe("MCP Server — real stdio transport: read_audit_log", () => {
   let client: Client;
   let transport: StdioClientTransport;
