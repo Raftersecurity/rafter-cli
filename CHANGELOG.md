@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The MCP server returns a clean error when a tool call omits a required argument.** A call missing a required field — for example `evaluate_command` with no `command` — reached the handler and failed with an internal protocol error. The server now checks each required `inputSchema` field before dispatch and returns a tool error naming the missing field, matching the Python server.
 
 - **`agent exec` no longer records a secret in the audit log when a `NAME=VALUE` argument is shell-quoted.** The audit redactor matched an environment assignment only after whitespace or the start of the line, so a quote inserted by argument quoting (`env 'SECRET_TOKEN=…' …`) left the value in the clear. The match now also accepts a leading quote, so the value is redacted before it is written.
+
+- **A project `.rafter.yml` `docs:` path can no longer read files outside the repository.** `docs show` and the MCP `get_doc` tool resolved a `path:` entry without containment, so an absolute path, a `../` escape, or an in-repo symlink pointing out read any file on disk. A docs path is now confined to the project root: absolute paths are rejected, and the resolved path — after following symlinks — must stay inside the root, otherwise the fetch fails with a clear error.
 ### Changed
 
 - **Minimum supported Node.js is now 22.** Node 18 and 20 are no longer supported; both reached end of life (2025-04-30 and 2026-04-30). CI now tests against Node 22 and 24 instead of 18 and 20. **Behavior change:** the CLI may no longer run under Node 18 or 20 — upgrade to Node 22 or later.
