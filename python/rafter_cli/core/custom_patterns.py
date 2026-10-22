@@ -98,6 +98,13 @@ class Suppression:
     pattern_name: Optional[str] = None
     reason: Optional[str] = None
     source: str = ".rafterignore"
+    # Absolute directory the glob is relative to — the tree that owns this rule
+    # (the .rafter.yml's or .rafterignore's directory) (sable-lu0j). When set, a
+    # file matches only if it lies inside this directory, and the glob is
+    # matched against the path relative to it, so a relative rule cannot reach a
+    # file outside its own tree. When None, matching falls back to the legacy
+    # path-suffix behavior.
+    base_dir: Optional[str] = None
 
 
 @dataclass
@@ -125,6 +132,9 @@ def load_suppressions(project_root: str | Path | None = None) -> list[Suppressio
     if not ignore_file.exists():
         return []
 
+    # `.rafterignore` globs are relative to the file's own directory, so anchor
+    # them there (sable-lu0j).
+    base_dir = str(root.resolve())
     suppressions: list[Suppression] = []
     try:
         for raw in ignore_file.read_text().splitlines():
@@ -133,22 +143,28 @@ def load_suppressions(project_root: str | Path | None = None) -> list[Suppressio
                 continue
             colon = line.find(":")
             if colon == -1:
-                suppressions.append(Suppression(path_glob=line, source=".rafterignore"))
+                suppressions.append(Suppression(path_glob=line, source=".rafterignore", base_dir=base_dir))
             else:
                 suppressions.append(Suppression(
                     path_glob=line[:colon].strip(),
                     pattern_name=line[colon + 1:].strip() or None,
                     source=".rafterignore",
+                    base_dir=base_dir,
                 ))
     except OSError:
         pass
     return suppressions
 
 
-def policy_ignore_to_suppressions(rules) -> list[Suppression]:
-    """Flatten ScanIgnoreRule[] into Suppression[] (cross-product paths × rules)."""
+def policy_ignore_to_suppressions(rules, base_dir: str | None = None) -> list[Suppression]:
+    """Flatten ScanIgnoreRule[] into Suppression[] (cross-product paths × rules).
+
+    ``base_dir`` is the directory the globs are relative to — the .rafter.yml's
+    own directory (sable-lu0j) — so a rule cannot match files outside that tree.
+    """
     if not rules:
         return []
+    anchor = os.path.abspath(base_dir) if base_dir else None
     out: list[Suppression] = []
     for rule in rules:
         paths = getattr(rule, "paths", None) or (rule.get("paths") if isinstance(rule, dict) else None)
@@ -164,6 +180,7 @@ def policy_ignore_to_suppressions(rules) -> list[Suppression]:
                     pattern_name=name,
                     reason=reason,
                     source=".rafter.yml",
+                    base_dir=anchor,
                 ))
     return out
 
@@ -171,7 +188,7 @@ def policy_ignore_to_suppressions(rules) -> list[Suppression]:
 def find_suppression(file_path: str, pattern_name: str, suppressions: list[Suppression]) -> Optional[Suppression]:
     """Return the first matching suppression, or None. First-match wins."""
     for s in suppressions:
-        if _match_glob(s.path_glob, file_path):
+        if _match_glob(s.path_glob, file_path, s.base_dir):
             if s.pattern_name is None or s.pattern_name.lower() == pattern_name.lower():
                 return s
     return None
@@ -217,7 +234,7 @@ def apply_suppressions(results, suppressions: list[Suppression]):
     return filtered, suppressed
 
 
-def _match_glob(glob_pattern: str, file_path: str) -> bool:
+def _match_glob(glob_pattern: str, file_path: str, base_dir: str | None = None) -> bool:
     """Match a file path against a glob pattern.
 
     Uses fnmatch.fnmatch for well-tested glob semantics. Patterns without
@@ -225,9 +242,20 @@ def _match_glob(glob_pattern: str, file_path: str) -> bool:
     matches "config/.env". Relative path-globs like "tests/fixtures/**"
     are auto-anchored to match anywhere in the path so they line up with
     absolute scan paths.
+
+    When ``base_dir`` is set (sable-lu0j), the glob is relative to that tree: a
+    file outside it never matches, and the glob is tested against the file's
+    path relative to the base — so a relative rule in one tree's .rafter.yml
+    cannot suppress findings in another tree.
     """
     g = glob_pattern.replace("\\", "/")
     f = file_path.replace("\\", "/")
+
+    if base_dir:
+        rel = os.path.relpath(os.path.abspath(file_path), os.path.abspath(base_dir))
+        if rel == os.curdir or rel.startswith(os.pardir + os.sep) or rel == os.pardir or os.path.isabs(rel):
+            return False
+        f = rel.replace("\\", "/")
 
     # Bare basename pattern — match against the file basename.
     if "/" not in g:

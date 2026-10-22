@@ -123,8 +123,14 @@ def scan_local(
     from ..core.config_manager import ConfigManager
     from ..core.custom_patterns import load_suppressions, policy_ignore_to_suppressions
 
+    # Discover and anchor the policy from the scan TARGET, not the process cwd
+    # (sable-lu0j), so an ambient `.rafter.yml` in cwd cannot suppress real
+    # secrets in a scan of a different tree. For `--staged`/`--diff` the default
+    # target is "." (cwd), which is the repo the command runs in.
+    scan_base = os.path.abspath(path)
+    rafterignore_dir = scan_base if os.path.isdir(scan_base) else os.path.dirname(scan_base)
     manager = ConfigManager()
-    cfg = manager.load_with_policy()
+    cfg = manager.load_with_policy(scan_base)
     scan_cfg = cfg.agent.scan
 
     custom_patterns = (
@@ -138,7 +144,10 @@ def scan_local(
 
     # Combine policy-derived ignore rules with .rafterignore. Policy first so
     # an explicit reason wins over a bare .rafterignore line.
-    suppressions = policy_ignore_to_suppressions(scan_cfg.ignore) + load_suppressions()
+    suppressions = (
+        policy_ignore_to_suppressions(scan_cfg.ignore, scan_cfg.ignore_base_dir)
+        + load_suppressions(rafterignore_dir)
+    )
 
     baseline_entries = _load_baseline_entries() if baseline else []
 

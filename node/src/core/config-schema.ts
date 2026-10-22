@@ -139,6 +139,14 @@ export interface RafterConfig {
       customPatterns?: ScanCustomPattern[];
       ignore?: ScanIgnoreRule[];
       /**
+       * Absolute directory the policy's `ignore` globs are relative to — the
+       * directory that holds the `.rafter.yml` they came from (sable-lu0j).
+       * A runtime field set by `loadWithPolicy`, never read from YAML. Ignore
+       * globs anchor to this so a rule cannot match files outside the policy's
+       * own tree.
+       */
+      ignoreBaseDir?: string;
+      /**
        * sable-o4k — auto-update a stale rafter-managed betterleaks binary at
        * scan time. Default true. Set false (YAML: `scan.auto_update_betterleaks`)
        * to opt out, e.g. in CI that provisions its own binary.

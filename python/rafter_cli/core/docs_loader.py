@@ -88,11 +88,27 @@ def _is_expired(fetched_at: float, ttl_seconds: int) -> bool:
 
 
 def _resolve_policy_path(relative: str) -> Path:
+    """Resolve a policy ``docs: path:`` entry, confined to the project root (sable-fwup).
+
+    A path entry comes from a project ``.rafter.yml``, so it is
+    attacker-controlled for anyone who can land a file in the repo. Without
+    containment, an absolute path or a ``../`` escape read any file on disk
+    through ``docs show`` / the MCP ``get_doc`` tool. The path is confined to
+    the git root (cwd when there is no repo): absolute paths are rejected, and
+    the resolved path — after following symlinks — must stay inside the root.
+    """
     p = Path(relative)
     if p.is_absolute():
-        return p
-    root = get_git_root() or os.getcwd()
-    return Path(root) / p
+        raise ValueError(f"docs path must be relative to the project root: {relative}")
+    root = Path(get_git_root() or os.getcwd()).resolve()
+    # Path.resolve() normalizes ``..`` and follows symlinks, so an escape or a
+    # symlink pointing out lands outside root and is rejected here.
+    candidate = (root / p).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise ValueError(f"docs path escapes the project root: {relative}")
+    return candidate
 
 
 def list_docs(entries: Iterable[dict] | None = None) -> list[ResolvedDoc]:

@@ -6,16 +6,24 @@ import subprocess
 from urllib.parse import urlsplit
 
 
-def _run(cmd: list[str]) -> str:
+def _run(cmd: list[str], cwd: str | None = None) -> str:
     return subprocess.check_output(
-        cmd, text=True, stderr=subprocess.DEVNULL
+        cmd, text=True, stderr=subprocess.DEVNULL, cwd=cwd
     ).strip()
 
 
-def get_git_root() -> str | None:
-    """Return the git repository root, or None if not in a repo."""
+def get_git_root(cwd: str | None = None) -> str | None:
+    """Return the git repository root, or None if not in a repo.
+
+    ``cwd`` resolves the root relative to a given directory (sable-lu0j),
+    not the process cwd — needed to discover a policy for a scan target in
+    another tree. Ignored when it is not an existing directory.
+    """
+    import os
+
+    run_cwd = cwd if cwd and os.path.isdir(cwd) else None
     try:
-        return _run(["git", "rev-parse", "--show-toplevel"])
+        return _run(["git", "rev-parse", "--show-toplevel"], cwd=run_cwd)
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
 

@@ -267,6 +267,17 @@ def test_env_redaction_only_touches_secret_assignment_in_mixed_command():
     assert "abcdef1234567890" not in out
 
 
+# sable-fqrr: `agent exec` shell-quotes a token containing special characters,
+# so the logged command has a quote right before NAME=. The (^|\s) anchor did
+# not tolerate it and the value reached the audit log unredacted. The anchor
+# must also accept a leading quote.
+def test_env_redaction_handles_leading_shell_quote():
+    out = _engine().redact_text("env 'SECRET_TOKEN=supersecretvalue123' cmd")
+    assert "supersecretvalue123" not in out
+    dq = _engine().redact_text('env "API_KEY=supersecretvalue123" cmd')
+    assert "supersecretvalue123" not in dq
+
+
 def test_does_not_compile_regexes_per_line(monkeypatch):
     # Compiling every pattern for every line made the regex engine 45x slower
     # than betterleaks on a large repo.

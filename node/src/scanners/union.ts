@@ -27,6 +27,9 @@ export function unionScanResults(
 ): ScanResult[] {
   const fileOrder: string[] = [];
   const byFile = new Map<string, Map<string, PatternMatch>>();
+  // Carry a read failure through the union (sable-ilbx): a file one engine
+  // could not open must still be reported as unreadable, not dropped.
+  const readErrorByFile = new Map<string, string>();
 
   const ingest = (results: ScanResult[], engine: string): void => {
     for (const r of results) {
@@ -35,6 +38,9 @@ export function unionScanResults(
         fileMap = new Map();
         byFile.set(r.file, fileMap);
         fileOrder.push(r.file);
+      }
+      if (r.readError && !readErrorByFile.has(r.file)) {
+        readErrorByFile.set(r.file, r.readError);
       }
       for (const m of r.matches) {
         // Two secrets cannot start at the same line and column, so a known
@@ -58,8 +64,13 @@ export function unionScanResults(
   ingest(betterleaks, "betterleaks");
   ingest(patterns, "patterns");
 
-  return fileOrder.map((file) => ({
-    file,
-    matches: Array.from(byFile.get(file)!.values()),
-  }));
+  return fileOrder.map((file) => {
+    const out: ScanResult = {
+      file,
+      matches: Array.from(byFile.get(file)!.values()),
+    };
+    const readError = readErrorByFile.get(file);
+    if (readError) out.readError = readError;
+    return out;
+  });
 }
