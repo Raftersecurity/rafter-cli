@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-22
+
 ### Added
 
 - **`rafter secrets --range <a>..<b>` scans only the files changed in a git commit range.** Same scope and patterns-engine semantics as `--diff`, so a large repo can be scanned for secrets introduced by a range of commits without walking the whole tree. A range git would read as an option (leading `-`) exits 2.
