@@ -297,6 +297,7 @@ Initialize local security system. Creates config and detects available developme
 - `--with-betterleaks` — download and install Betterleaks binary (the gitleaks successor)
 - `--all` — install all detected integrations and download Betterleaks
 - `-i, --interactive` — guided setup — prompts for each detected integration (Node only)
+- `--quiet` — suppress informational, progress, and success output; warnings and errors remain visible on stderr. Initialization and integration installation still run normally. When combined with `--dry-run`, the dry-run plan remains visible.
 - `--update` — re-download betterleaks and reinstall integrations without resetting config
 - `--local` — install integration configs into the current working directory instead of the user home. Writes to `./.claude/`, `./.agents/`, `./.gemini/`, `./.cursor/` etc. Supports `--with-claude-code`, `--with-codex`, `--with-gemini`, `--with-cursor`. User-level side effects (global config, `agent.environments.*.enabled`, auto-detection, betterleaks download) are suppressed in this mode. Intended for benchmark harnesses, one-off project setup, and ephemeral containers.
 
@@ -931,6 +932,7 @@ Install git pre-commit hook for automatic secret scanning.
 
 - `--global` — install globally for all repos (sets `core.hooksPath`)
 - `--push` — install pre-push hook instead of pre-commit
+- `--quiet` — suppress informational and success output while installing the Git hook; errors remain visible on stderr and retain a nonzero exit code. Works with local, `--global`, and `--push` installation.
 
 ### rafter agent config SUBCOMMAND
 
