@@ -14,19 +14,20 @@ export function createInstallHookCommand(): Command {
     .description("Install git hook to scan for secrets")
     .option("--global", "Install globally for all repos (via git config)")
     .option("--push", "Install pre-push hook instead of pre-commit")
-    .action(async (opts: { global?: boolean; push?: boolean }) => {
+    .option("--quiet", "Suppress informational and success output (errors still go to stderr)", false)
+    .action(async (opts: { global?: boolean; push?: boolean; quiet: boolean }) => {
       await installHook(opts);
     });
 }
 
-async function installHook(opts: { global?: boolean; push?: boolean }): Promise<void> {
+async function installHook(opts: { global?: boolean; push?: boolean; quiet: boolean }): Promise<void> {
   const hookName = opts.push ? "pre-push" : "pre-commit";
   const templateName = opts.push ? "pre-push-hook.sh" : "pre-commit-hook.sh";
 
   if (opts.global) {
-    await installGlobalHook(hookName, templateName);
+    await installGlobalHook(hookName, templateName, opts.quiet);
   } else {
-    await installLocalHook(hookName, templateName);
+    await installLocalHook(hookName, templateName, opts.quiet);
   }
 }
 
@@ -43,7 +44,7 @@ function getTemplatePath(templateName: string): string {
 /**
  * Install hook for current repository
  */
-async function installLocalHook(hookName: string, templateName: string): Promise<void> {
+async function installLocalHook(hookName: string, templateName: string, quiet: boolean): Promise<void> {
   try {
     execSync("git rev-parse --git-dir", { stdio: "pipe" });
   } catch (e) {
@@ -64,17 +65,25 @@ async function installLocalHook(hookName: string, templateName: string): Promise
     const existing = fs.readFileSync(hookPath, "utf-8");
     const marker = hookName === "pre-push" ? "Rafter Security Pre-Push Hook" : "Rafter Security Pre-Commit Hook";
     if (existing.includes(marker)) {
-      console.log(fmt.success(`Rafter ${hookName} hook already installed`));
+      if (!quiet) {
+        console.log(fmt.success(`Rafter ${hookName} hook already installed`));
+      }
       return;
     }
     const backupPath = `${hookPath}.backup-${Date.now()}`;
     fs.copyFileSync(hookPath, backupPath);
-    console.log(fmt.info(`Backed up existing hook to: ${path.basename(backupPath)}`));
+    if (!quiet) {
+      console.log(fmt.info(`Backed up existing hook to: ${path.basename(backupPath)}`));
+    }
   }
 
   const hookContent = fs.readFileSync(getTemplatePath(templateName), "utf-8");
   fs.writeFileSync(hookPath, hookContent, "utf-8");
   fs.chmodSync(hookPath, 0o755);
+
+  if (quiet) {
+    return;
+  }
 
   console.log(fmt.success(`Installed Rafter ${hookName} hook`));
   console.log(`  Location: ${hookPath}`);
@@ -96,7 +105,7 @@ async function installLocalHook(hookName: string, templateName: string): Promise
 /**
  * Install hook globally for all repositories
  */
-async function installGlobalHook(hookName: string, templateName: string): Promise<void> {
+async function installGlobalHook(hookName: string, templateName: string, quiet: boolean): Promise<void> {
   const homeDir = os.homedir();
   if (!homeDir) {
     console.error(fmt.error("Could not determine home directory"));
@@ -116,6 +125,9 @@ async function installGlobalHook(hookName: string, templateName: string): Promis
 
   try {
     execFileSync("git", ["config", "--global", "core.hooksPath", globalHooksDir], { stdio: "pipe" });
+    if (quiet) {
+      return;
+    }
     console.log(fmt.success(`Installed Rafter ${hookName} hook globally`));
     console.log(`  Location: ${hookPath}`);
     console.log(`  Git config: core.hooksPath = ${globalHooksDir}`);
