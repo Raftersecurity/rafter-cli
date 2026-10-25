@@ -8,6 +8,12 @@ import {
   getPatternsBySeverity,
 } from "../src/scanners/secret-patterns.js";
 
+// A fake AWS key ID, assembled at runtime so the file holds no key-shaped literal.
+const FAKE_AWS_KEY_ID = "AKIA" + "IOSFODNN7ABCDEFG";
+const FAKE_AWS_KEY_ID_2 = "AKIA" + "QWERTYUIOPASDFGH";
+const FAKE_AWS_STS_KEY_ID = "ASIA" + "QWERTYUIOP123456";
+const FAKE_AWS_SECRET = "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYABCDEFGHIJ";
+
 /**
  * Comprehensive tests for every secret detection pattern.
  *
@@ -51,13 +57,13 @@ describe("Secret patterns — coverage matrix", () => {
 
   describe("AWS Access Key ID", () => {
     it("detects AKIA key", () => {
-      const r = scanString("AKIAIOSFODNN7ABCDEFG\n");
+      const r = scanString(FAKE_AWS_KEY_ID + "\n");
       expect(r.matches.length).toBeGreaterThan(0);
       expect(r.matches.some((m) => m.pattern.name.includes("AWS Access Key"))).toBe(true);
     });
 
     it("detects ASIA (STS temporary) key", () => {
-      const r = scanString("ASIAQWERTYUIOP123456\n");
+      const r = scanString(FAKE_AWS_STS_KEY_ID + "\n");
       expect(r.matches.some((m) => m.pattern.name.includes("AWS Access Key"))).toBe(true);
     });
 
@@ -76,7 +82,7 @@ describe("Secret patterns — coverage matrix", () => {
     });
 
     it("still detects a plausible key that happens to share the EXAMPLE prefix but not the full EXAMPLE suffix", () => {
-      const r = scanString("AKIAQWERTYUIOPASDFGH\n");
+      const r = scanString(FAKE_AWS_KEY_ID_2 + "\n");
       expect(r.matches.some((m) => m.pattern.name.includes("AWS Access Key"))).toBe(true);
     });
   });
@@ -85,8 +91,17 @@ describe("Secret patterns — coverage matrix", () => {
     it("detects quoted secret key", () => {
       // Pattern: (?i)aws(.{0,20})?['"][0-9a-zA-Z\/+]{40}['"]
       // Must keep ≤20 chars between "aws" and the opening quote
-      const r = scanString(`AWS_SECRET="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"\n`);
+      const r = scanString(`AWS_SECRET="${FAKE_AWS_SECRET}"\n`);
       expect(r.matches.some((m) => m.pattern.name.includes("AWS Secret"))).toBe(true);
+    });
+
+    // #230: betterleaks skips the canonical AWS-docs example secret
+    // access key (it ends in EXAMPLEKEY); the built-in regex engine disagreed
+    // and flagged it. Copy betterleaks' exemption so a Write containing the
+    // AWS docs sample isn't denied.
+    it("ignores the canonical AWS-docs example secret key (ends in EXAMPLEKEY)", () => {
+      const r = scanString(`AWS_SECRET="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"\n`);
+      expect(r.matches.filter((m) => m.pattern.name.includes("AWS Secret")).length).toBe(0);
     });
   });
 
@@ -393,7 +408,7 @@ describe("Multi-secret file scanning", () => {
 
   it("detects multiple different secret types in a single file", () => {
     const content = [
-      "AKIAIOSFODNN7ABCDEFG",
+      FAKE_AWS_KEY_ID,
       "ghp_ABCDEFghijklmnopqrstuvwxyz0123456789",
       fakeSecret("sk_live_", "abcdefghijklmnopqrstuvwx"),
       "-----BEGIN RSA PRIVATE KEY-----",
@@ -422,7 +437,7 @@ describe("RegexScanner utility methods", () => {
 
   describe("scanText", () => {
     it("scans raw text without a file", () => {
-      const matches = scanner.scanText("AKIAIOSFODNN7ABCDEFG");
+      const matches = scanner.scanText(FAKE_AWS_KEY_ID);
       expect(matches.length).toBeGreaterThan(0);
     });
 
@@ -434,7 +449,7 @@ describe("RegexScanner utility methods", () => {
 
   describe("hasSecrets", () => {
     it("returns true when secrets present", () => {
-      expect(scanner.hasSecrets("AKIAIOSFODNN7ABCDEFG")).toBe(true);
+      expect(scanner.hasSecrets(FAKE_AWS_KEY_ID)).toBe(true);
     });
 
     it("returns false for clean text", () => {
