@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The PreToolUse hook now evaluates shell and file-write tools under each platform's own name, not only `Bash`, `Write` and `Edit`.** Shell commands from Gemini CLI (`run_shell_command`) and Cursor's `preToolUse` (`Shell`) go through the command policy, and file writes from Gemini CLI (`write_file`, `replace`), Codex (`apply_patch`), `MultiEdit`, Continue's `Write` (`filepath`) and Windsurf's `pre_write_code` edits go through the same write checks as `Write`/`Edit`. The tools recognized per platform are listed in CLI_SPEC. Both Node and Python.
+- **The built-in AWS Secret Access Key pattern no longer flags the canonical AWS-docs example secret key** (#230). `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` matched the regex engine but not betterleaks, so e.g. the hook's Write gate denied a write containing the well-known public non-secret while `rafter secrets` via betterleaks allowed it. The regex engine now carries the same exemption betterleaks already applies, mirroring the AWS Access Key ID fix in 0.11.0, in both Node and Python. **Behavior change:** a 40-character secret value ending in `EXAMPLEKEY` is no longer reported as a finding by the patterns engine; any other 40-character value is still detected as before.
 
 ## [0.11.1] - 2026-10-22
 
