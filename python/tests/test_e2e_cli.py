@@ -12,6 +12,9 @@ import tempfile
 
 import pytest
 
+# A fake AWS key ID, assembled at runtime so the file holds no key-shaped literal.
+FAKE_AWS_KEY_ID = "AKIA" + "IOSFODNN7ABCDEFG"
+
 # Captured under the real HOME so user-site packages (e.g. typer) remain
 # importable in subprocesses launched with HOME overridden via env_override.
 _USER_BASE = site.getuserbase()
@@ -137,7 +140,7 @@ class TestSecretsScanning:
 
     def test_exits_1_when_secrets_detected(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIAIOSFODNN7ABCDEFG\n")
+        f.write_text(FAKE_AWS_KEY_ID + "\n")
         _, _, rc = rafter(f"secrets {f} --engine patterns --quiet")
         assert rc == 1
 
@@ -176,7 +179,7 @@ class TestSecretsScanning:
 
     def test_sarif_format_outputs_sarif_schema(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIAIOSFODNN7ABCDEFG\n")
+        f.write_text(FAKE_AWS_KEY_ID + "\n")
         stdout, _, rc = rafter(f"secrets {f} --engine patterns --format sarif")
         assert rc == 1
         sarif = json.loads(stdout)
@@ -241,7 +244,7 @@ class TestSecretsScanning:
 class TestScanLocalAliasBackCompat:
     def test_alias_produces_identical_json_to_secrets(self, tmp_path):
         f = tmp_path / "secrets.txt"
-        f.write_text("AKIAIOSFODNN7ABCDEFG\n")
+        f.write_text(FAKE_AWS_KEY_ID + "\n")
         canonical_stdout, _, canonical_rc = rafter(f"secrets {f} --engine patterns --json")
         alias_stdout, _, alias_rc = rafter(f"scan local {f} --engine patterns --json")
         assert canonical_rc == 1
@@ -379,7 +382,7 @@ class TestAgentExecStagedDiffFailsClosed:
         assert "could not run" in err
 
     def test_scans_non_utf8_staged_diff(self, tmp_path):
-        self._repo(tmp_path, "latin1.txt", b"caf\xe9\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n")
+        self._repo(tmp_path, "latin1.txt", b"caf\xe9\nAWS_ACCESS_KEY_ID=" + FAKE_AWS_KEY_ID.encode() + b"\n")
         out, err, rc = rafter(["agent", "exec", "git commit -m x"], cwd=tmp_path,
                               env_override={"HOME": str(tmp_path)})
         assert rc == 1
@@ -410,11 +413,12 @@ class TestMalformedPolicyScansWithDefaults:
     def _hook(self, tmp_path):
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}})
         out, err, _ = self._run(tmp_path, ["hook", "pretool"], payload)
-        return json.loads(out)["hookSpecificOutput"], err
+        return json.loads(out), err
 
     def test_still_denies_staged_secret_and_warns(self, tmp_path):
-        self._stage(tmp_path, 'const k = "AKIAIOSFODNN7ABCDEFG";\n')
+        self._stage(tmp_path, 'const k = "' + FAKE_AWS_KEY_ID + '";\n')
         out, err = self._hook(tmp_path)
+        out = out["hookSpecificOutput"]
         assert out["permissionDecision"] == "deny"
         assert "AWS Access Key ID" in out["permissionDecisionReason"]
         assert re.search(r"Warning: .*\.rafter\.yml", err)
@@ -425,7 +429,7 @@ class TestMalformedPolicyScansWithDefaults:
     def test_allows_clean_diff_and_warns(self, tmp_path):
         self._stage(tmp_path, "const a = 1;\n")
         out, err = self._hook(tmp_path)
-        assert out["permissionDecision"] == "allow"
+        assert out == {}
         assert re.search(r"Warning: .*\.rafter\.yml", err)
         _, err, rc = self._run(tmp_path, ["secrets", "--staged"])
         assert rc == 0

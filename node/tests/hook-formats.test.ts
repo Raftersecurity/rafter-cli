@@ -12,11 +12,6 @@ interface HookInput {
   tool_input: Record<string, any>;
 }
 
-interface HookDecision {
-  decision: "allow" | "deny";
-  reason?: string;
-}
-
 interface PostToolInput {
   session_id?: string;
   tool_name: string;
@@ -71,62 +66,6 @@ function normalizeInput(raw: Record<string, any>, format: HookFormat): HookInput
     tool_name: raw.tool_name || "",
     tool_input: raw.tool_input || {},
   };
-}
-
-// ── Reproduced writeDecision from pretool.ts ─────────────────────────────
-
-function writeDecision(
-  decision: HookDecision,
-  format: HookFormat,
-  stdoutWrite: (s: string) => void,
-  stderrWrite: (s: string) => void,
-  exitFn: (code: number) => void,
-): void {
-  const isDeny = decision.decision === "deny";
-  const reason = decision.reason ?? "";
-
-  switch (format) {
-    case "cursor": {
-      const output: Record<string, any> = {
-        permission: isDeny ? "deny" : "allow",
-      };
-      if (isDeny && reason) {
-        output.agentMessage = reason;
-        output.userMessage = reason;
-      }
-      stdoutWrite(JSON.stringify(output) + "\n");
-      break;
-    }
-
-    case "gemini": {
-      if (isDeny) {
-        stdoutWrite(JSON.stringify({ decision: "deny", reason }) + "\n");
-      } else {
-        stdoutWrite("{}\n");
-      }
-      break;
-    }
-
-    case "windsurf": {
-      if (isDeny) {
-        stderrWrite(reason + "\n");
-        exitFn(2);
-      }
-      break;
-    }
-
-    default: {
-      const output = {
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse",
-          permissionDecision: isDeny ? "deny" : "allow",
-          permissionDecisionReason: reason,
-        },
-      };
-      stdoutWrite(JSON.stringify(output) + "\n");
-      break;
-    }
-  }
 }
 
 // ── Reproduced normalizePostInput from posttool.ts ───────────────────────
@@ -389,114 +328,6 @@ describe("Multi-Platform Hook Format Support", () => {
       it("defaults tool_input to empty object when missing", () => {
         const result = normalizeInput({ tool_name: "Bash" }, "claude");
         expect(result.tool_input).toEqual({});
-      });
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // 2. writeDecision() — pretool output formatting
-  // ═══════════════════════════════════════════════════════════════════════
-
-  describe("writeDecision()", () => {
-    let stdoutBuf: string;
-    let stderrBuf: string;
-    let exitCode: number | null;
-    let stdoutWrite: (s: string) => void;
-    let stderrWrite: (s: string) => void;
-    let exitFn: (code: number) => void;
-
-    beforeEach(() => {
-      stdoutBuf = "";
-      stderrBuf = "";
-      exitCode = null;
-      stdoutWrite = (s: string) => { stdoutBuf += s; };
-      stderrWrite = (s: string) => { stderrBuf += s; };
-      exitFn = (code: number) => { exitCode = code; };
-    });
-
-    describe("Claude format (default)", () => {
-      it("outputs hookSpecificOutput envelope with allow", () => {
-        writeDecision({ decision: "allow" }, "claude", stdoutWrite, stderrWrite, exitFn);
-        const parsed = JSON.parse(stdoutBuf.trim());
-        expect(parsed.hookSpecificOutput).toBeDefined();
-        expect(parsed.hookSpecificOutput.hookEventName).toBe("PreToolUse");
-        expect(parsed.hookSpecificOutput.permissionDecision).toBe("allow");
-        expect(parsed.hookSpecificOutput.permissionDecisionReason).toBe("");
-      });
-
-      it("outputs hookSpecificOutput envelope with deny and reason", () => {
-        writeDecision(
-          { decision: "deny", reason: "blocked: rm -rf" },
-          "claude", stdoutWrite, stderrWrite, exitFn,
-        );
-        const parsed = JSON.parse(stdoutBuf.trim());
-        expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
-        expect(parsed.hookSpecificOutput.permissionDecisionReason).toBe("blocked: rm -rf");
-      });
-    });
-
-    describe("Cursor format", () => {
-      it("outputs { permission: 'allow' } for allow decisions", () => {
-        writeDecision({ decision: "allow" }, "cursor", stdoutWrite, stderrWrite, exitFn);
-        const parsed = JSON.parse(stdoutBuf.trim());
-        expect(parsed).toEqual({ permission: "allow" });
-      });
-
-      it("outputs deny with agentMessage and userMessage", () => {
-        writeDecision(
-          { decision: "deny", reason: "dangerous command" },
-          "cursor", stdoutWrite, stderrWrite, exitFn,
-        );
-        const parsed = JSON.parse(stdoutBuf.trim());
-        expect(parsed.permission).toBe("deny");
-        expect(parsed.agentMessage).toBe("dangerous command");
-        expect(parsed.userMessage).toBe("dangerous command");
-      });
-
-      it("omits agentMessage/userMessage when deny has no reason", () => {
-        writeDecision(
-          { decision: "deny" },
-          "cursor", stdoutWrite, stderrWrite, exitFn,
-        );
-        const parsed = JSON.parse(stdoutBuf.trim());
-        expect(parsed.permission).toBe("deny");
-        expect(parsed.agentMessage).toBeUndefined();
-        expect(parsed.userMessage).toBeUndefined();
-      });
-    });
-
-    describe("Gemini format", () => {
-      it("outputs empty object for allow", () => {
-        writeDecision({ decision: "allow" }, "gemini", stdoutWrite, stderrWrite, exitFn);
-        expect(stdoutBuf.trim()).toBe("{}");
-      });
-
-      it("outputs { decision: 'deny', reason } for deny", () => {
-        writeDecision(
-          { decision: "deny", reason: "secret found" },
-          "gemini", stdoutWrite, stderrWrite, exitFn,
-        );
-        const parsed = JSON.parse(stdoutBuf.trim());
-        expect(parsed).toEqual({ decision: "deny", reason: "secret found" });
-      });
-    });
-
-    describe("Windsurf format", () => {
-      it("produces no stdout output for allow (just exits 0)", () => {
-        writeDecision({ decision: "allow" }, "windsurf", stdoutWrite, stderrWrite, exitFn);
-        expect(stdoutBuf).toBe("");
-        expect(stderrBuf).toBe("");
-        expect(exitCode).toBeNull();
-      });
-
-      it("writes reason to stderr and exits with code 2 on deny", () => {
-        writeDecision(
-          { decision: "deny", reason: "blocked: rm -rf /" },
-          "windsurf", stdoutWrite, stderrWrite, exitFn,
-        );
-        expect(stdoutBuf).toBe("");
-        expect(stderrBuf).toBe("blocked: rm -rf /\n");
-        expect(exitCode).toBe(2);
       });
     });
   });
@@ -777,27 +608,6 @@ describe("Multi-Platform Hook Format Support", () => {
       expect(cursorResult.tool_input.command).toBe("rm -rf /");
       expect(windsurfResult.tool_input.command).toBe("rm -rf /");
       expect(geminiResult.tool_input.command).toBe("rm -rf /");
-    });
-
-    it("all formats produce valid JSON output for pretool allow", () => {
-      const formats: HookFormat[] = ["claude", "cursor", "gemini", "windsurf"];
-      for (const format of formats) {
-        let stdout = "";
-        let stderr = "";
-        writeDecision(
-          { decision: "allow" },
-          format,
-          (s) => { stdout += s; },
-          (s) => { stderr += s; },
-          () => {},
-        );
-        // Windsurf allow produces no output; others produce valid JSON
-        if (format === "windsurf") {
-          expect(stdout).toBe("");
-        } else {
-          expect(() => JSON.parse(stdout.trim())).not.toThrow();
-        }
-      }
     });
 
     it("all formats produce valid JSON output for posttool continue", () => {

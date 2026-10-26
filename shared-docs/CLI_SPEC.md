@@ -1097,15 +1097,26 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 
 - `--format <format>` — output format: `claude` (default, also works for Codex/Continue), `cursor`, `gemini`, `windsurf`
 
+**The hook only ever denies; otherwise it defers.** When rafter has no objection to a call, the hook returns the platform's no-decision answer, so the platform's own permission settings (allow/ask/deny rules, permission mode, prompts) decide the call as they would without rafter. It never approves a call: in Claude Code and Codex a PreToolUse `allow` skips the permission prompt, so an approving hook would make an agent more permissive with rafter installed than without it.
+
+| Format | Deny | No objection |
+|--------|------|--------------|
+| `claude` (Claude Code, Codex, Continue) | `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"<reason>"}}` | `{}` (no `permissionDecision`), exit 0 |
+| `gemini` | `{"decision":"deny","reason":"<reason>"}` | `{}`, exit 0 |
+| `windsurf` | reason on stderr, exit 2 | no output, exit 0 |
+| `cursor` | `{"permission":"deny","agentMessage":"<reason>","userMessage":"<reason>"}` | `{"permission":"allow"}` |
+
+Cursor is the one exception: its permission hooks block the action on an empty or schema-invalid response, so `permission` is required and there is no neutral value. `"ask"` would force a prompt on every call, so the hook sends `"allow"` there.
+
 **Approval-required commands are denied, not asked.** A Bash command the policy marks as requiring approval (for example `curl … | sh`, which is high risk) gets `deny`, the same decision as a blocked command; the hook never returns `ask`. The reason says a person must run `rafter agent exec '<command>'` at an interactive terminal to approve it (see the approval model under `rafter agent exec`). Both runtimes.
 
 On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
 
-**Errors fail closed.** Input that is not a JSON object is allowed (there is nothing to evaluate). Any unexpected exception while evaluating a call, for any tool, returns `deny` with the reason `rafter hook error: <type>: <message>; denying to be safe`, also printed to stderr. Conditions the loaders handle (a malformed `.rafter.yml` warns and falls back to defaults) are not errors. A failed audit-log write never changes a decision.
+**Errors fail closed.** Input that is not a JSON object gets the no-decision answer (there is nothing to evaluate). Any unexpected exception while evaluating a call, for any tool, returns `deny` with the reason `rafter hook error: <type>: <message>; denying to be safe`, also printed to stderr. Conditions the loaders handle (a malformed `.rafter.yml` warns and falls back to defaults) are not errors. A failed audit-log write never changes a decision.
 
 **Hook off-switch.** The hook can be disabled at runtime from **trusted sources only** — the `RAFTER_DISABLE_HOOKS` / `RAFTER_DISABLE_SECRET_SCAN` / `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on) and the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default is enabled; a corrupt config or unrecognized value fails safe to enabled. By design this is **never** read from project-local `.rafter.yml`, so a hostile repo cannot ship a config that silently disables a victim's hook. `rafter agent status` reports the effective state and its source. See `shared-docs/CONFIG.md` for the full configuration reference.
 
-**Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (`allow` / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
+**Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (no decision / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
 
 **Tolerates harness-appended flags.** Hook input arrives on **stdin**, so both subcommands ignore unknown options and extra positional args that an agent platform appends to the hook command — e.g. Claude Code adds `--hook-json <data>`. Such extras are discarded (the hook never errors on them); declared options like `--format` are still parsed normally.
 

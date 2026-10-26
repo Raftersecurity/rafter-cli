@@ -21,10 +21,10 @@ function runHook(args: string): { code: number; out: any } {
 }
 
 describe("hook commands tolerate harness-appended flags (#180)", () => {
-  it("pretool accepts --hook-json and still returns a decision", () => {
+  it("pretool accepts --hook-json and still answers", () => {
     const { code, out } = runHook("hook pretool --hook-json '{}'");
     expect(code).toBe(0);
-    expect(out.hookSpecificOutput?.permissionDecision).toBe("allow");
+    expect(out).toEqual({});
   });
 
   it("posttool accepts --hook-json", () => {
@@ -34,17 +34,18 @@ describe("hook commands tolerate harness-appended flags (#180)", () => {
   });
 
   it("a real option (--format) is still honored, not swallowed", () => {
-    // gemini "allow" emits an empty object, distinct from the claude shape.
+    // A gemini deny is a flat { decision: "deny" }, distinct from the claude envelope.
     const r = spawnSync(`node ${CLI_ENTRY} hook pretool --format gemini --hook-json '{}'`, {
-      input: PRETOOL_IN, encoding: "utf-8", shell: true, timeout: 30_000,
+      input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "rm -rf /" } }),
+      encoding: "utf-8", shell: true, timeout: 30_000,
     });
     expect(r.status).toBe(0);
-    expect(r.stdout.trim()).toBe("{}");
+    expect(JSON.parse(r.stdout).decision).toBe("deny");
   });
 
   it("still works with no extra flag (unchanged behavior)", () => {
     const { code, out } = runHook("hook pretool");
     expect(code).toBe(0);
-    expect(out.hookSpecificOutput?.permissionDecision).toBe("allow");
+    expect(out).toEqual({});
   });
 });
