@@ -114,11 +114,23 @@ def _read_stdin() -> str:
 
 
 def _write_pretool_decision(decision: dict, fmt: str = "claude") -> None:
-    """Write a PreToolUse hook decision in the platform's expected format."""
+    """Write a PreToolUse hook decision in the platform's expected format.
+
+    The hook only ever DENIES: an internal "allow" means "rafter has no
+    objection", and is written as the platform's no-decision form so the
+    platform's own permission settings still apply. Approving would skip those
+    settings (a Claude Code PreToolUse "allow" skips the permission prompt),
+    making an agent more permissive with rafter installed than without it.
+    Cursor is the one exception; see below.
+    """
     is_deny = decision.get("decision") == "deny"
     reason = decision.get("reason", "")
 
     if fmt == "cursor":
+        # Cursor has no neutral answer: its permission hooks block on an empty
+        # or schema-invalid response, so "allow" is the only way to let a call
+        # proceed. "ask" would force a prompt on every call, overriding the
+        # user's own allowlist in the other direction.
         out: dict = {"permission": "deny" if is_deny else "allow"}
         if is_deny and reason:
             out["agentMessage"] = reason
@@ -136,13 +148,18 @@ def _write_pretool_decision(decision: dict, fmt: str = "claude") -> None:
             sys.stderr.write(reason + "\n")
             sys.stderr.flush()
             sys.exit(2)
-        # Allow: exit 0 (no output needed)
+        # No decision: exit 0 (no output needed)
     else:
-        # Claude Code / Codex / Continue.dev
+        # Claude Code / Codex / Continue.dev: hookSpecificOutput envelope for a
+        # deny; `{}` (no permissionDecision) leaves the call to the normal flow.
+        if not is_deny:
+            sys.stdout.write("{}\n")
+            sys.stdout.flush()
+            return
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "permissionDecision": "deny" if is_deny else "allow",
+                "permissionDecision": "deny",
                 "permissionDecisionReason": reason,
             },
         }

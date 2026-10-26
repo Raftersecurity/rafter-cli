@@ -4,6 +4,9 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+// A fake AWS key ID, assembled at runtime so the file holds no key-shaped literal.
+const FAKE_AWS_KEY_ID = "AKIA" + "IOSFODNN7ABCDEFG";
+
 // End-to-end coverage of the config-driven hook off-switch through the REAL
 // built CLI (`rafter hook pretool`). The security-critical assertion is that a
 // project-local `.rafter.yml` can NOT disable the hook (secure-design D1).
@@ -13,7 +16,7 @@ const CLI_ENTRY = path.join(PROJECT_ROOT, "dist", "index.js");
 
 const SECRET_WRITE = JSON.stringify({
   tool_name: "Write",
-  tool_input: { content: "aws_key = AKIAIOSFODNN7ABCDEFG" },
+  tool_input: { content: "aws_key = " + FAKE_AWS_KEY_ID },
 });
 
 function runHook(cwd: string, env: Record<string, string> = {}): { decision: string } {
@@ -26,6 +29,8 @@ function runHook(cwd: string, env: Record<string, string> = {}): { decision: str
     // Isolate HOME so the developer's real ~/.rafter/config.json can't change the result.
     env: { ...process.env, HOME: cwd, XDG_CONFIG_HOME: path.join(cwd, ".config"), ...env },
   });
+  // `{}` is the hook's no-decision answer: it defers to the platform's permissions.
+  if (r.stdout.trim() === "{}") return { decision: "defer" };
   const out = JSON.parse(r.stdout || "{}");
   return { decision: out.hookSpecificOutput?.permissionDecision ?? "unknown" };
 }
@@ -43,12 +48,12 @@ describe("hook off-switch — end to end via the real CLI", () => {
     expect(runHook(dir).decision).toBe("deny");
   });
 
-  it("RAFTER_DISABLE_HOOKS=1: ALLOWED", () => {
-    expect(runHook(dir, { RAFTER_DISABLE_HOOKS: "1" }).decision).toBe("allow");
+  it("RAFTER_DISABLE_HOOKS=1: DEFERRED", () => {
+    expect(runHook(dir, { RAFTER_DISABLE_HOOKS: "1" }).decision).toBe("defer");
   });
 
-  it("RAFTER_DISABLE_SECRET_SCAN=1: ALLOWED (secret scan off)", () => {
-    expect(runHook(dir, { RAFTER_DISABLE_SECRET_SCAN: "1" }).decision).toBe("allow");
+  it("RAFTER_DISABLE_SECRET_SCAN=1: DEFERRED (secret scan off)", () => {
+    expect(runHook(dir, { RAFTER_DISABLE_SECRET_SCAN: "1" }).decision).toBe("defer");
   });
 
   // ── The security property ────────────────────────────────────────────────
@@ -66,13 +71,13 @@ describe("hook off-switch — end to end via the real CLI", () => {
     expect(runHook(dir).decision).toBe("deny");
   });
 
-  it("SECURITY: global config (trusted) CAN disable — ALLOWED", () => {
+  it("SECURITY: global config (trusted) CAN disable — DEFERRED", () => {
     // The user-owned ~/.rafter/config.json (HOME is isolated to `dir`) is trusted.
     fs.mkdirSync(path.join(dir, ".rafter"), { recursive: true });
     fs.writeFileSync(
       path.join(dir, ".rafter", "config.json"),
       JSON.stringify({ version: "1", agent: { hooks: { enabled: false } } }),
     );
-    expect(runHook(dir).decision).toBe("allow");
+    expect(runHook(dir).decision).toBe("defer");
   });
 });

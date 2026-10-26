@@ -49,12 +49,12 @@ function runWithOpenStdin(
 }
 
 describe("hook stdin read is bounded — process exits even when stdin never closes", () => {
-  it("pretool: exits (fail-open allow) instead of hanging", async () => {
+  it("pretool: exits (fail-open, no decision) instead of hanging", async () => {
     const r = await runWithOpenStdin("pretool");
     expect(r.timedOut).toBe(false);
     expect(r.code).toBe(0);
     const out = JSON.parse(r.stdout || "{}");
-    expect(out.hookSpecificOutput?.permissionDecision).toBe("allow");
+    expect(out).toEqual({});
   });
 
   it("posttool: exits instead of hanging", async () => {

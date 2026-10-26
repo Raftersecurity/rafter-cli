@@ -32,6 +32,9 @@ def _run_hook(home: Path, command: str) -> subprocess.CompletedProcess:
 
 
 def _decision(r: subprocess.CompletedProcess) -> str:
+    # `{}` is the hook's no-decision answer: it defers to the platform's permissions.
+    if r.stdout.strip() == "{}":
+        return "defer"
     return json.loads(r.stdout or "{}").get("hookSpecificOutput", {}).get("permissionDecision", "unknown")
 
 
@@ -58,7 +61,7 @@ def test_project_config_cannot_choose_audit_append_target(tmp_path):
     target = tmp_path / "victim.txt"
     (tmp_path / ".rafter.yml").write_text(f"audit:\n  log_path: {target}\n")
     r = _run_hook(tmp_path, "echo hi")
-    assert _decision(r) == "allow", r.stderr
+    assert _decision(r) == "defer", r.stderr
     assert not target.exists()
     assert (tmp_path / ".rafter" / "audit.jsonl").exists()
     assert "audit.log_path" in r.stderr
