@@ -28,7 +28,10 @@ export function createCiInitCommand(): Command {
         process.exit(1);
       }
 
-      const includeRemote = !!(opts.includeRemote || opts.withBackend);
+      // commander stores `--with-remote` as `opts.withRemote`; `--with-backend`
+      // is the deprecated alias. Reading a non-existent `opts.includeRemote`
+      // meant `--with-remote` silently dropped the security-audit job (sable-o7vh).
+      const includeRemote = !!(opts.withRemote || opts.withBackend);
       const { content, defaultPath } = generateTemplate(platform as CIPlatform, includeRemote);
       const outputPath = opts.output || defaultPath;
       const outputDir = path.dirname(outputPath);

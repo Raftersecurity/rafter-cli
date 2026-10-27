@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`rafter ci init --with-remote` now emits the remote security-audit job.** The flag was read under the wrong option name, so `--with-remote` generated only the secret-scan job and dropped the security-audit job that CLI_SPEC and the README describe; the deprecated `--with-backend` alias was unaffected. Node only (Python already honored the flag). Covers all three platforms (GitHub, GitLab, CircleCI).
+
 - **The PreToolUse hook now evaluates shell and file-write tools under each platform's own name, not only `Bash`, `Write` and `Edit`.** Shell commands from Gemini CLI (`run_shell_command`) and Cursor's `preToolUse` (`Shell`) go through the command policy, and file writes from Gemini CLI (`write_file`, `replace`), Codex (`apply_patch`), `MultiEdit`, Continue's `Write` (`filepath`) and Windsurf's `pre_write_code` edits go through the same write checks as `Write`/`Edit`. The tools recognized per platform are listed in CLI_SPEC. Both Node and Python.
 
 ## [0.11.1] - 2026-10-22
