@@ -205,7 +205,7 @@ def _claude_code_hooks() -> ComponentSpec:
                 del hooks["SessionStart"]
         hooks["PreToolUse"].extend([
             {"matcher": "Bash", "hooks": [pre]},
-            {"matcher": "Write|Edit", "hooks": [pre]},
+            {"matcher": "Write|Edit|MultiEdit", "hooks": [pre]},
         ])
         # Narrow to tools that produce scannable output (shell output + file
         # writes); avoids firing posttool on every Read/MCP call (latency).
@@ -587,8 +587,9 @@ def _gemini_hooks() -> ComponentSpec:
         h["AfterTool"] = _filter_hooks(h["AfterTool"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
         # Explicit Gemini built-in tool names per geminicli.com/docs/hooks/reference
         # (rf-044o verification).
+        #  No tool is named `edit`: Gemini's edit tool is `replace`.
         h["BeforeTool"].append({
-            "matcher": "run_shell_command|write_file|replace|edit",
+            "matcher": "run_shell_command|write_file|replace",
             "hooks": [{"type": "command", "command": "rafter hook pretool --format gemini", "timeout": 5000}],
         })
         h["AfterTool"].append({

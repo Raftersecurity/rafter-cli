@@ -436,7 +436,7 @@ function installClaudeCodeHooks(root: string, out: InitOutput): void {
   // Add Rafter hooks
   settings.hooks.PreToolUse.push(
     { matcher: "Bash", hooks: [preHook] },
-    { matcher: "Write|Edit", hooks: [preHook] },
+    { matcher: "Write|Edit|MultiEdit", hooks: [preHook] },
   );
   // Narrow to tools that produce scannable output (shell output + file
   // writes). Firing posttool on every tool — including Read and MCP calls —
@@ -689,10 +689,12 @@ function installGeminiHooks(root: string, out: InitOutput): void {
 
   // Gemini matchers are regexes against built-in tool names per
   // geminicli.com/docs/hooks/reference. Match the mutating tools by name
-  // explicitly: run_shell_command, write_file, replace, edit. (rf-044o
-  // verification 2026-05-03 — schema confirmed against current Gemini docs.)
+  // explicitly: run_shell_command, write_file, replace. (rf-044o
+  // verification 2026-05-03 — schema confirmed against current Gemini docs.
+  // Gemini has no tool named `edit`; its edit tool is `replace` per
+  // geminicli.com/docs/reference/tools.)
   settings.hooks.BeforeTool.push({
-    matcher: "run_shell_command|write_file|replace|edit",
+    matcher: "run_shell_command|write_file|replace",
     hooks: [{ type: "command", command: absoluteHookCommand("pretool --format gemini"), timeout: 5000 }],
   });
   settings.hooks.AfterTool.push({

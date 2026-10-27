@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The PreToolUse hook now evaluates shell and file-write tools under each platform's own name, not only `Bash`, `Write` and `Edit`.** Shell commands from Gemini CLI (`run_shell_command`) and Cursor's `preToolUse` (`Shell`) go through the command policy, and file writes from Gemini CLI (`write_file`, `replace`), Codex (`apply_patch`), `MultiEdit`, Continue's `Write` (`filepath`) and Windsurf's `pre_write_code` edits go through the same write checks as `Write`/`Edit`. The tools recognized per platform are listed in CLI_SPEC. Both Node and Python.
+- **Codex `apply_patch` writes to rafter's own configuration are refused, Claude Code's `MultiEdit` reaches the PreToolUse hook, and the Gemini CLI hook matcher names only Gemini's real tools.** The hook now checks every path in an `apply_patch`'s file headers against the rafter-config guard. The Claude Code installer and `policy export --format claude` register `Write|Edit|MultiEdit` instead of `Write|Edit`. The Gemini installer drops `edit`, which is not a Gemini CLI tool name. Rerun `rafter agent init` to update an existing install. Both Node and Python.
 
 ## [0.11.1] - 2026-10-22
 

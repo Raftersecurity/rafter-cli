@@ -455,8 +455,9 @@ def _writes_rafter_security_config(file_path: str) -> bool:
 def _evaluate_write(tool_input: dict) -> dict:
     # rf-vnxs: checked FIRST, and before the no-content early return, because a
     # truncating write with empty content disables the hook just as well as one
-    # carrying JSON.
-    if _writes_rafter_security_config(tool_input.get("file_path", "")):
+    # carrying JSON. apply_patch names its targets only in the patch headers.
+    targets = [tool_input.get("file_path", ""), *tool_input.get("patch_paths", [])]
+    if any(_writes_rafter_security_config(t) for t in targets):
         return {
             "decision": "deny",
             "reason": (
@@ -572,7 +573,8 @@ def _normalize_write_input(tool_name: str, tool_input: dict) -> dict:
 
     Continue's Write names its path ``filepath``; MultiEdit and Windsurf's
     pre_write_code carry ``edits[].new_string``; Codex's apply_patch carries
-    the whole patch in ``command``.
+    the whole patch in ``command``, with its target paths in the patch
+    headers (``patch_paths``).
     """
     out = dict(tool_input)
     if "file_path" not in out and isinstance(tool_input.get("filepath"), str):
@@ -585,7 +587,26 @@ def _normalize_write_input(tool_name: str, tool_input: dict) -> dict:
             )
         elif tool_name == "apply_patch" and isinstance(tool_input.get("command"), str):
             out["content"] = tool_input["command"]
+    if tool_name == "apply_patch" and isinstance(tool_input.get("command"), str):
+        out["patch_paths"] = _apply_patch_paths(tool_input["command"])
     return out
+
+
+# The apply_patch format carries its targets only in hunk headers, which Codex
+# matches on the trimmed line (codex-rs/apply-patch, apply_patch.lark).
+_APPLY_PATCH_HEADERS = ("*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: ")
+
+
+def _apply_patch_paths(patch: str) -> list[str]:
+    """Every path an apply_patch names."""
+    paths = []
+    for raw in patch.split("\n"):
+        line = raw.strip()
+        for header in _APPLY_PATCH_HEADERS:
+            if line.startswith(header):
+                paths.append(line[len(header):].strip())
+                break
+    return paths
 
 
 def _deny_on_error(exc: Exception) -> dict:
