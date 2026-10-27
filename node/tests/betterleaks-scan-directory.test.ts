@@ -4,6 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { BetterleaksScanner } from "../src/scanners/betterleaks.js";
+import { execTmpDir } from "./exec-tmp.js";
 
 // #262 — `betterleaks dir` ignores .gitignore, so handed a directory it walked
 // node_modules / build output / .env: slow enough to hit the timeout, and it
@@ -32,6 +33,7 @@ const SECRET = "aws_key = AKIAQYLPMN5HHHFPZAM2\n";
 
 describe("BetterleaksScanner.scanDirectory and .gitignore", () => {
   let tmp: string;
+  let binDir: string;
   let repo: string;
   let argvLog: string;
   let scanner: BetterleaksScanner;
@@ -40,7 +42,8 @@ describe("BetterleaksScanner.scanDirectory and .gitignore", () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-bl-dir-"));
     repo = path.join(tmp, "repo");
     fs.mkdirSync(path.join(repo, "build"), { recursive: true });
-    const bin = path.join(tmp, "betterleaks");
+    binDir = execTmpDir("bl-");
+    const bin = path.join(binDir, "betterleaks");
     fs.writeFileSync(bin, FAKE_BL, { mode: 0o755 });
     argvLog = path.join(tmp, "argv.log");
     process.env.FAKE_BL_ARGV = argvLog;
@@ -61,6 +64,7 @@ describe("BetterleaksScanner.scanDirectory and .gitignore", () => {
     delete process.env.FAKE_BL_ARGV;
     delete process.env.FAKE_BL_SLEEP;
     fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(binDir, { recursive: true, force: true });
   });
 
   const reported = (rs: { file: string }[]) =>

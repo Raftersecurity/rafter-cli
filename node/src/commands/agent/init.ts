@@ -19,6 +19,34 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
+ * Command-scoped output for `rafter agent init` (issue #31).
+ *
+ * `info` carries progress/success/informational lines and is dropped under
+ * --quiet. `warn` carries warnings (and the few failure lines this command
+ * historically printed to stdout): unchanged on stdout normally, moved to
+ * stderr under --quiet so problems stay visible while stdout stays empty.
+ * Hard errors keep using console.error directly — they already go to stderr.
+ */
+interface InitOutput {
+  info(message?: string): void;
+  warn(message: string): void;
+}
+
+function createInitOutput(quiet: boolean): InitOutput {
+  return {
+    info(message?: string): void {
+      if (quiet) return;
+      if (message === undefined) console.log();
+      else console.log(message);
+    },
+    warn(message: string): void {
+      if (quiet) console.error(message);
+      else console.log(message);
+    },
+  };
+}
+
+/**
  * Resolve an ABSOLUTE, self-contained hook command (rf-er8a). Agents run a hook
  * through `sh -c "<command>"` in a minimal environment that need not have
  * `rafter` — or even `node` — on PATH; a bare `rafter hook pretool` then exits
@@ -303,15 +331,16 @@ function installGlobalInstructions(
   },
   root: string,
   scope: "user" | "project",
+  out: InitOutput,
 ): void {
   // Claude Code — <root>/.claude/CLAUDE.md
   if (platforms.claudeCode) {
     try {
       const filePath = path.join(root, ".claude", "CLAUDE.md");
       injectInstructionFile(filePath);
-      console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
+      out.info(fmt.success(`Installed Rafter instructions to ${filePath}`));
     } catch (e) {
-      console.log(fmt.warning(`Failed to write Claude Code instructions: ${e}`));
+      out.warn(fmt.warning(`Failed to write Claude Code instructions: ${e}`));
     }
   }
 
@@ -328,9 +357,9 @@ function installGlobalInstructions(
       const readers = [platforms.codex && "Codex", platforms.windsurf && "Windsurf"]
         .filter(Boolean)
         .join(" + ");
-      console.log(fmt.success(`Installed Rafter instructions for ${readers} to ${filePath}`));
+      out.info(fmt.success(`Installed Rafter instructions for ${readers} to ${filePath}`));
     } catch (e) {
-      console.log(fmt.warning(`Failed to write AGENTS.md: ${e}`));
+      out.warn(fmt.warning(`Failed to write AGENTS.md: ${e}`));
     }
   }
 
@@ -341,9 +370,9 @@ function installGlobalInstructions(
         ? path.join(root, ".gemini", "GEMINI.md")
         : path.join(root, "GEMINI.md");
       injectInstructionFile(filePath);
-      console.log(fmt.success(`Installed Rafter instructions to ${filePath}`));
+      out.info(fmt.success(`Installed Rafter instructions to ${filePath}`));
     } catch (e) {
-      console.log(fmt.warning(`Failed to write Gemini instructions: ${e}`));
+      out.warn(fmt.warning(`Failed to write Gemini instructions: ${e}`));
     }
   }
 
@@ -353,7 +382,7 @@ function installGlobalInstructions(
   // in rf-svn3 in favor of per-skill rules with trigger-first descriptions.
 }
 
-function installClaudeCodeHooks(root: string): void {
+function installClaudeCodeHooks(root: string, out: InitOutput): void {
   const settingsPath = path.join(root, ".claude", "settings.json");
   const claudeDir = path.join(root, ".claude");
 
@@ -368,7 +397,7 @@ function installClaudeCodeHooks(root: string): void {
       settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
     } catch {
       // Corrupted file — start fresh but warn
-      console.log(fmt.warning("Existing settings.json was unreadable, creating new one"));
+      out.warn(fmt.warning("Existing settings.json was unreadable, creating new one"));
     }
   }
 
@@ -417,11 +446,11 @@ function installClaudeCodeHooks(root: string): void {
   );
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
-  console.log(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
-  console.log(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
+  out.info(fmt.success(`Installed PreToolUse hooks to ${settingsPath}`));
+  out.info(fmt.success(`Installed PostToolUse hooks to ${settingsPath}`));
 }
 
-function installCodexHooks(root: string): void {
+function installCodexHooks(root: string, out: InitOutput): void {
   const codexDir = path.join(root, ".codex");
 
   if (!fs.existsSync(codexDir)) {
@@ -435,7 +464,7 @@ function installCodexHooks(root: string): void {
     try {
       config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
     } catch {
-      console.log(fmt.warning("Existing Codex hooks.json was unreadable, creating new one"));
+      out.warn(fmt.warning("Existing Codex hooks.json was unreadable, creating new one"));
     }
   }
 
@@ -471,7 +500,7 @@ function installCodexHooks(root: string): void {
   );
 
   fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+  out.info(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
 /**
@@ -486,7 +515,7 @@ function installCodexHooks(root: string): void {
  * Idempotent — repeated installs do not duplicate rafter entries.
  * Non-rafter entries (other tools' hooks, unrelated events) are preserved.
  */
-function installCursorHooks(root: string): void {
+function installCursorHooks(root: string, out: InitOutput): void {
   const cursorDir = path.join(root, ".cursor");
 
   if (!fs.existsSync(cursorDir)) {
@@ -500,7 +529,7 @@ function installCursorHooks(root: string): void {
     try {
       config = JSON.parse(fs.readFileSync(hooksPath, "utf-8"));
     } catch {
-      console.log(fmt.warning("Existing Cursor hooks.json was unreadable, creating new one"));
+      out.warn(fmt.warning("Existing Cursor hooks.json was unreadable, creating new one"));
     }
   }
 
@@ -522,7 +551,7 @@ function installCursorHooks(root: string): void {
   }
 
   fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log(fmt.success(`Installed hooks to ${hooksPath}`));
+  out.info(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
 /** Skills shipped as both Cursor rules and (Claude Code / Codex / Gemini) skills. */
@@ -543,7 +572,7 @@ const CURSOR_RULE_SKILLS = [
  * Replaces the legacy consolidated `.cursor/rules/rafter-security.mdc` — that
  * single file is no longer written by the Cursor install path.
  */
-function installCursorRules(root: string): void {
+function installCursorRules(root: string, out: InitOutput): void {
   const rulesDir = path.join(root, ".cursor", "rules");
   fs.mkdirSync(rulesDir, { recursive: true });
 
@@ -555,7 +584,7 @@ function installCursorRules(root: string): void {
   ];
   const sourceDir = candidates.find((p) => fs.existsSync(p));
   if (!sourceDir) {
-    console.log(fmt.warning(`Cursor rule templates not found in resources/cursor-rules`));
+    out.warn(fmt.warning(`Cursor rule templates not found in resources/cursor-rules`));
     return;
   }
 
@@ -563,11 +592,11 @@ function installCursorRules(root: string): void {
     const src = path.join(sourceDir, `${name}.mdc`);
     const dest = path.join(rulesDir, `${name}.mdc`);
     if (!fs.existsSync(src)) {
-      console.log(fmt.warning(`Cursor rule template missing: ${src}`));
+      out.warn(fmt.warning(`Cursor rule template missing: ${src}`));
       continue;
     }
     fs.copyFileSync(src, dest);
-    console.log(fmt.success(`Installed Cursor rule to ${dest}`));
+    out.info(fmt.success(`Installed Cursor rule to ${dest}`));
   }
 
   // Remove the legacy consolidated rule if present, so reinstall on top of
@@ -576,7 +605,7 @@ function installCursorRules(root: string): void {
   if (fs.existsSync(legacy)) {
     try {
       fs.unlinkSync(legacy);
-      console.log(fmt.info(`Removed legacy ${legacy} (superseded by per-skill rules)`));
+      out.info(fmt.info(`Removed legacy ${legacy} (superseded by per-skill rules)`));
     } catch {
       /* best-effort */
     }
@@ -592,7 +621,7 @@ function installCursorRules(root: string): void {
  * apply, since Cursor relies on prompt-level constraints rather than
  * structural restriction.
  */
-function installCursorSubAgents(root: string): void {
+function installCursorSubAgents(root: string, out: InitOutput): void {
   const agentsDir = path.join(root, ".cursor", "agents");
   fs.mkdirSync(agentsDir, { recursive: true });
 
@@ -602,7 +631,7 @@ function installCursorSubAgents(root: string): void {
   ];
   const src = candidates.find((p) => fs.existsSync(p));
   if (!src) {
-    console.log(fmt.warning(`Rafter sub-agent template not found in resources/agents`));
+    out.warn(fmt.warning(`Rafter sub-agent template not found in resources/agents`));
     return;
   }
 
@@ -611,7 +640,7 @@ function installCursorSubAgents(root: string): void {
 
   const dest = path.join(agentsDir, "rafter.md");
   fs.writeFileSync(dest, cursored, "utf-8");
-  console.log(fmt.success(`Installed Cursor sub-agent to ${dest}`));
+  out.info(fmt.success(`Installed Cursor sub-agent to ${dest}`));
 }
 
 /** Strip the Claude-Code `tools:` line from sub-agent frontmatter — Cursor doesn't have it. */
@@ -628,7 +657,7 @@ function stripToolsFromFrontmatter(content: string): string {
   return `---\n${cleaned}${body}`;
 }
 
-function installGeminiHooks(root: string): void {
+function installGeminiHooks(root: string, out: InitOutput): void {
   const geminiDir = path.join(root, ".gemini");
 
   if (!fs.existsSync(geminiDir)) {
@@ -642,7 +671,7 @@ function installGeminiHooks(root: string): void {
     try {
       settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
     } catch {
-      console.log(fmt.warning("Existing Gemini settings.json was unreadable, creating new one"));
+      out.warn(fmt.warning("Existing Gemini settings.json was unreadable, creating new one"));
     }
   }
 
@@ -672,7 +701,7 @@ function installGeminiHooks(root: string): void {
   });
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
-  console.log(fmt.success(`Installed hooks to ${settingsPath}`));
+  out.info(fmt.success(`Installed hooks to ${settingsPath}`));
 }
 
 /** Skills shipped as Windsurf per-workspace rules at .windsurf/rules/<skill>.md (rf-0vr3). */
@@ -695,7 +724,7 @@ const WINDSURF_RULE_SKILLS = [
  * no-op — Windsurf has no documented hook surface as of v1.x (research bead
  * rf-s1n3, gap reports rf-p1ri / rf-vayl).
  */
-function installWindsurfRules(root: string): void {
+function installWindsurfRules(root: string, out: InitOutput): void {
   const rulesDir = path.join(root, ".windsurf", "rules");
   fs.mkdirSync(rulesDir, { recursive: true });
 
@@ -705,7 +734,7 @@ function installWindsurfRules(root: string): void {
   ];
   const sourceDir = candidates.find((p) => fs.existsSync(p));
   if (!sourceDir) {
-    console.log(fmt.warning(`Windsurf rule templates not found in resources/windsurf-rules`));
+    out.warn(fmt.warning(`Windsurf rule templates not found in resources/windsurf-rules`));
     return;
   }
 
@@ -713,11 +742,11 @@ function installWindsurfRules(root: string): void {
     const src = path.join(sourceDir, `${name}.md`);
     const dest = path.join(rulesDir, `${name}.md`);
     if (!fs.existsSync(src)) {
-      console.log(fmt.warning(`Windsurf rule template missing: ${src}`));
+      out.warn(fmt.warning(`Windsurf rule template missing: ${src}`));
       continue;
     }
     fs.copyFileSync(src, dest);
-    console.log(fmt.success(`Installed Windsurf rule to ${dest}`));
+    out.info(fmt.success(`Installed Windsurf rule to ${dest}`));
   }
 }
 
@@ -732,7 +761,7 @@ const RAFTER_MCP_ENTRY = {
  * Install MCP server config for Claude Code (<root>/.mcp.json).
  * Project-scope MCP config that Claude Code auto-loads on startup.
  */
-function installClaudeCodeMcp(root: string): boolean {
+function installClaudeCodeMcp(root: string, out: InitOutput): boolean {
   const mcpPath = path.join(root, ".mcp.json");
 
   let config: Record<string, any> = {};
@@ -740,7 +769,7 @@ function installClaudeCodeMcp(root: string): boolean {
     try {
       config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
     } catch {
-      console.log(fmt.warning("Existing .mcp.json was unreadable, creating new one"));
+      out.warn(fmt.warning("Existing .mcp.json was unreadable, creating new one"));
     }
   }
 
@@ -748,14 +777,14 @@ function installClaudeCodeMcp(root: string): boolean {
   config.mcpServers.rafter = { ...RAFTER_MCP_ENTRY };
 
   fs.writeFileSync(mcpPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log(fmt.success(`Installed Rafter MCP server to ${mcpPath}`));
+  out.info(fmt.success(`Installed Rafter MCP server to ${mcpPath}`));
   return true;
 }
 
 /**
  * Install MCP server config for Gemini CLI (~/.gemini/settings.json)
  */
-function installGeminiMcp(root: string): boolean {
+function installGeminiMcp(root: string, out: InitOutput): boolean {
   const geminiDir = path.join(root, ".gemini");
   const settingsPath = path.join(geminiDir, "settings.json");
 
@@ -768,7 +797,7 @@ function installGeminiMcp(root: string): boolean {
     try {
       settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
     } catch {
-      console.log(fmt.warning("Existing Gemini settings.json was unreadable, creating new one"));
+      out.warn(fmt.warning("Existing Gemini settings.json was unreadable, creating new one"));
     }
   }
 
@@ -776,14 +805,14 @@ function installGeminiMcp(root: string): boolean {
   settings.mcpServers.rafter = { ...RAFTER_MCP_ENTRY };
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
-  console.log(fmt.success(`Installed Rafter MCP server to ${settingsPath}`));
+  out.info(fmt.success(`Installed Rafter MCP server to ${settingsPath}`));
   return true;
 }
 
 /**
  * Install MCP server config for Cursor (~/.cursor/mcp.json)
  */
-function installCursorMcp(root: string): boolean {
+function installCursorMcp(root: string, out: InitOutput): boolean {
   const cursorDir = path.join(root, ".cursor");
   const mcpPath = path.join(cursorDir, "mcp.json");
 
@@ -796,7 +825,7 @@ function installCursorMcp(root: string): boolean {
     try {
       config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
     } catch {
-      console.log(fmt.warning("Existing Cursor mcp.json was unreadable, creating new one"));
+      out.warn(fmt.warning("Existing Cursor mcp.json was unreadable, creating new one"));
     }
   }
 
@@ -804,14 +833,14 @@ function installCursorMcp(root: string): boolean {
   config.mcpServers.rafter = { ...RAFTER_MCP_ENTRY };
 
   fs.writeFileSync(mcpPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log(fmt.success(`Installed Rafter MCP server to ${mcpPath}`));
+  out.info(fmt.success(`Installed Rafter MCP server to ${mcpPath}`));
   return true;
 }
 
 /**
  * Install MCP server config for Windsurf (~/.codeium/windsurf/mcp_config.json)
  */
-function installWindsurfMcp(root: string): boolean {
+function installWindsurfMcp(root: string, out: InitOutput): boolean {
   const windsurfDir = path.join(root, ".codeium", "windsurf");
   const mcpPath = path.join(windsurfDir, "mcp_config.json");
 
@@ -824,7 +853,7 @@ function installWindsurfMcp(root: string): boolean {
     try {
       config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
     } catch {
-      console.log(fmt.warning("Existing Windsurf mcp_config.json was unreadable, creating new one"));
+      out.warn(fmt.warning("Existing Windsurf mcp_config.json was unreadable, creating new one"));
     }
   }
 
@@ -832,7 +861,7 @@ function installWindsurfMcp(root: string): boolean {
   config.mcpServers.rafter = { ...RAFTER_MCP_ENTRY };
 
   fs.writeFileSync(mcpPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log(fmt.success(`Installed Rafter MCP server to ${mcpPath}`));
+  out.info(fmt.success(`Installed Rafter MCP server to ${mcpPath}`));
   return true;
 }
 
@@ -854,7 +883,7 @@ const CONTINUE_RULE_SKILLS = [
  * Continue.dev has no documented hook surface (the prior hooks install was
  * pruned in rf-cia phase b). Rules + MCP are the only intercepts.
  */
-function installContinueDevRules(root: string): void {
+function installContinueDevRules(root: string, out: InitOutput): void {
   const rulesDir = path.join(root, ".continue", "rules");
   fs.mkdirSync(rulesDir, { recursive: true });
 
@@ -864,7 +893,7 @@ function installContinueDevRules(root: string): void {
   ];
   const sourceDir = candidates.find((p) => fs.existsSync(p));
   if (!sourceDir) {
-    console.log(fmt.warning(`Continue.dev rule templates not found in resources/continue-rules`));
+    out.warn(fmt.warning(`Continue.dev rule templates not found in resources/continue-rules`));
     return;
   }
 
@@ -872,18 +901,18 @@ function installContinueDevRules(root: string): void {
     const src = path.join(sourceDir, `${name}.md`);
     const dest = path.join(rulesDir, `${name}.md`);
     if (!fs.existsSync(src)) {
-      console.log(fmt.warning(`Continue.dev rule template missing: ${src}`));
+      out.warn(fmt.warning(`Continue.dev rule template missing: ${src}`));
       continue;
     }
     fs.copyFileSync(src, dest);
-    console.log(fmt.success(`Installed Continue.dev rule to ${dest}`));
+    out.info(fmt.success(`Installed Continue.dev rule to ${dest}`));
   }
 }
 
 /**
  * Install MCP server config for Continue.dev (~/.continue/config.json)
  */
-function installContinueDevMcp(root: string): boolean {
+function installContinueDevMcp(root: string, out: InitOutput): boolean {
   const continueDir = path.join(root, ".continue");
   const configPath = path.join(continueDir, "config.json");
 
@@ -896,7 +925,7 @@ function installContinueDevMcp(root: string): boolean {
     try {
       config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     } catch {
-      console.log(fmt.warning("Existing Continue.dev config.json was unreadable, creating new one"));
+      out.warn(fmt.warning("Existing Continue.dev config.json was unreadable, creating new one"));
     }
   }
 
@@ -918,7 +947,7 @@ function installContinueDevMcp(root: string): boolean {
   }
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log(fmt.success(`Installed Rafter MCP server to ${configPath}`));
+  out.info(fmt.success(`Installed Rafter MCP server to ${configPath}`));
   return true;
 }
 
@@ -951,7 +980,7 @@ function installContinueDevMcp(root: string): boolean {
  * pending confirmation Hermes exposes a hook surface — landing MCP-only as
  * v0 mirrors how Gemini and Continue.dev were initially shipped.
  */
-function installHermesMcp(root: string): boolean {
+function installHermesMcp(root: string, out: InitOutput): boolean {
   const hermesDir = path.join(root, ".hermes");
   const configPath = path.join(hermesDir, "config.yaml");
 
@@ -968,7 +997,7 @@ function installHermesMcp(root: string): boolean {
         config = loaded as Record<string, any>;
       }
     } catch {
-      console.log(fmt.warning(`Existing Hermes config.yaml was not valid YAML, creating new one`));
+      out.warn(fmt.warning(`Existing Hermes config.yaml was not valid YAML, creating new one`));
     }
   }
 
@@ -978,7 +1007,7 @@ function installHermesMcp(root: string): boolean {
   config.mcp_servers.rafter = { ...RAFTER_MCP_ENTRY };
 
   fs.writeFileSync(configPath, yaml.dump(config), "utf-8");
-  console.log(fmt.success(`Installed Rafter MCP server to ${configPath}`));
+  out.info(fmt.success(`Installed Rafter MCP server to ${configPath}`));
   return true;
 }
 
@@ -1003,7 +1032,7 @@ const RAFTER_OPENCODE_MCP_ENTRY = {
  * pointer is seeded on first write so editors get completion. Any existing
  * keys / other MCP servers are preserved.
  */
-function installOpenCodeMcp(root: string): boolean {
+function installOpenCodeMcp(root: string, out: InitOutput): boolean {
   const openCodeDir = path.join(root, ".config", "opencode");
   const configPath = path.join(openCodeDir, "opencode.json");
 
@@ -1021,10 +1050,10 @@ function installOpenCodeMcp(root: string): boolean {
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         config = parsed;
       } else {
-        console.log(fmt.warning("Existing OpenCode opencode.json was not a JSON object, creating new one"));
+        out.warn(fmt.warning("Existing OpenCode opencode.json was not a JSON object, creating new one"));
       }
     } catch {
-      console.log(fmt.warning("Existing OpenCode opencode.json was unreadable, creating new one"));
+      out.warn(fmt.warning("Existing OpenCode opencode.json was unreadable, creating new one"));
     }
   }
 
@@ -1035,11 +1064,11 @@ function installOpenCodeMcp(root: string): boolean {
   config.mcp.rafter = { ...RAFTER_OPENCODE_MCP_ENTRY };
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log(fmt.success(`Installed Rafter MCP server to ${configPath}`));
+  out.info(fmt.success(`Installed Rafter MCP server to ${configPath}`));
   return true;
 }
 
-function installAiderRead(root: string): boolean {
+function installAiderRead(root: string, out: InitOutput): boolean {
   const rafterMdPath = path.join(root, "RAFTER.md");
   const configPath = path.join(root, ".aider.conf.yml");
   const RAFTER_READ_ENTRY = "RAFTER.md";
@@ -1070,7 +1099,7 @@ function installAiderRead(root: string): boolean {
         parsed = loaded as Record<string, any>;
       }
     } catch {
-      console.log(fmt.warning(`Existing ${configPath} was not valid YAML — preserving raw content and appending read: entry`));
+      out.warn(fmt.warning(`Existing ${configPath} was not valid YAML — preserving raw content and appending read: entry`));
       // Append the read: line at the bottom rather than rewriting an
       // unparseable file. We still need to make sure RAFTER.md ends up in it.
       if (!new RegExp(`^read:\\s*\\[?[^\\n]*\\b${RAFTER_READ_ENTRY}\\b`, "m").test(raw)) {
@@ -1078,7 +1107,7 @@ function installAiderRead(root: string): boolean {
         raw = `${raw}${sep}read:\n  - ${RAFTER_READ_ENTRY}\n`;
         fs.writeFileSync(configPath, raw, "utf-8");
       }
-      console.log(fmt.success(`Installed Rafter read-only context to ${configPath}`));
+      out.info(fmt.success(`Installed Rafter read-only context to ${configPath}`));
       return true;
     }
   }
@@ -1097,37 +1126,37 @@ function installAiderRead(root: string): boolean {
   parsed.read = reads;
 
   fs.writeFileSync(configPath, yaml.dump(parsed), "utf-8");
-  console.log(fmt.success(`Installed Rafter read-only context to ${rafterMdPath} + ${configPath}`));
+  out.info(fmt.success(`Installed Rafter read-only context to ${rafterMdPath} + ${configPath}`));
   return true;
 }
 
 // Copies an entire skill source directory (SKILL.md + any subfolders like docs/)
 // into the destination. Without this, `docs/` reference material referenced from
 // SKILL.md would never reach users — only SKILL.md would.
-function installSkillDir(sourceSkillDir: string, destSkillDir: string, label: string): void {
+function installSkillDir(sourceSkillDir: string, destSkillDir: string, label: string, out: InitOutput): void {
   const sourceSkillFile = path.join(sourceSkillDir, "SKILL.md");
   if (!fs.existsSync(sourceSkillFile)) {
-    console.log(fmt.warning(`${label} skill template not found at ${sourceSkillFile}`));
+    out.warn(fmt.warning(`${label} skill template not found at ${sourceSkillFile}`));
     return;
   }
   fs.mkdirSync(destSkillDir, { recursive: true });
   fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true });
-  console.log(fmt.success(`Installed ${label} skill to ${destSkillDir}`));
+  out.info(fmt.success(`Installed ${label} skill to ${destSkillDir}`));
 }
 
 function skillResourceDir(name: string): string {
   return path.join(__dirname, "..", "..", "..", "resources", "skills", name);
 }
 
-function installSkillsTo(skillsDir: string): void {
+function installSkillsTo(skillsDir: string, out: InitOutput): void {
   fs.mkdirSync(skillsDir, { recursive: true });
   for (const skill of AGENT_SKILLS) {
-    installSkillDir(skillResourceDir(skill.name), path.join(skillsDir, skill.name), skill.description);
+    installSkillDir(skillResourceDir(skill.name), path.join(skillsDir, skill.name), skill.description, out);
   }
 }
 
-async function installClaudeCodeSkills(root: string): Promise<void> {
-  installSkillsTo(path.join(root, ".claude", "skills"));
+async function installClaudeCodeSkills(root: string, out: InitOutput): Promise<void> {
+  installSkillsTo(path.join(root, ".claude", "skills"), out);
 }
 
 /**
@@ -1144,7 +1173,7 @@ const CLAUDE_CODE_SUBAGENTS: { name: string; description: string }[] = [
   { name: "rafter", description: "Rafter Security" },
 ];
 
-function installClaudeCodeSubAgents(root: string): void {
+function installClaudeCodeSubAgents(root: string, out: InitOutput): void {
   const agentsDir = path.join(root, ".claude", "agents");
   if (!fs.existsSync(agentsDir)) {
     fs.mkdirSync(agentsDir, { recursive: true });
@@ -1156,19 +1185,19 @@ function installClaudeCodeSubAgents(root: string): void {
     );
     if (fs.existsSync(srcPath)) {
       fs.copyFileSync(srcPath, destPath);
-      console.log(fmt.success(`Installed ${sub.description} sub-agent to ${destPath}`));
+      out.info(fmt.success(`Installed ${sub.description} sub-agent to ${destPath}`));
     } else {
-      console.log(fmt.warning(`${sub.description} sub-agent template not found at ${srcPath}`));
+      out.warn(fmt.warning(`${sub.description} sub-agent template not found at ${srcPath}`));
     }
   }
 }
 
-function installCodexSkills(root: string): void {
-  installSkillsTo(path.join(root, ".agents", "skills"));
+function installCodexSkills(root: string, out: InitOutput): void {
+  installSkillsTo(path.join(root, ".agents", "skills"), out);
 }
 
-function installGeminiSkills(root: string): void {
-  installSkillsTo(path.join(root, ".agents", "skills"));
+function installGeminiSkills(root: string, out: InitOutput): void {
+  installSkillsTo(path.join(root, ".agents", "skills"), out);
 }
 
 /**
@@ -1178,12 +1207,12 @@ function installGeminiSkills(root: string): void {
  * Missing CLI, missing subcommand, and per-skill registration failures are
  * non-fatal: we warn and continue so the on-disk install still succeeds.
  */
-function registerGeminiSkills(skillsDir: string): void {
+function registerGeminiSkills(skillsDir: string, out: InitOutput): void {
   // Probe for the `gemini` binary. Absence is expected on CI / fresh machines.
   try {
     execSync("gemini --version", { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
   } catch {
-    console.log(fmt.warning(
+    out.warn(fmt.warning(
       "gemini CLI not found on PATH — skipping skill registration. " +
       "Skills are installed to disk; re-run after installing gemini ≥ 0.35.",
     ));
@@ -1194,7 +1223,7 @@ function registerGeminiSkills(skillsDir: string): void {
   try {
     execSync("gemini skills --help", { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
   } catch {
-    console.log(fmt.warning(
+    out.warn(fmt.warning(
       "gemini CLI does not support `skills` subcommand (needs ≥ 0.35). " +
       "Skipping registration — skills are still installed to disk.",
     ));
@@ -1214,10 +1243,10 @@ function registerGeminiSkills(skillsDir: string): void {
       } else {
         execFileSync("gemini", ["skills", "link", absPath], execOpts);
       }
-      console.log(fmt.success(`Registered ${skill.name} with Gemini CLI`));
+      out.info(fmt.success(`Registered ${skill.name} with Gemini CLI`));
     } catch (e: any) {
       const msg = (e?.stderr?.toString?.() || e?.message || "").trim();
-      console.log(fmt.warning(
+      out.warn(fmt.warning(
         `Failed to register ${skill.name} with Gemini CLI: ${msg.split("\n")[0] || "unknown error"}`,
       ));
     }
@@ -1252,16 +1281,18 @@ export function createInitCommand(): Command {
       "--dry-run",
       "Print every file path that would be created, modified, or downloaded — without making any changes (rf-hrtd).",
     )
+    .option("--quiet", "Suppress informational and success output (warnings and errors still go to stderr)", false)
     .action(async (opts) => {
-      console.log(fmt.header("Rafter Agent Security Setup"));
-      console.log(fmt.divider());
-      console.log();
+      const out = createInitOutput(opts.quiet === true);
+      out.info(fmt.header("Rafter Agent Security Setup"));
+      out.info(fmt.divider());
+      out.info();
 
       const manager = new ConfigManager();
       const root = opts.local ? process.cwd() : os.homedir();
       const scope: "project" | "user" = opts.local ? "project" : "user";
       if (opts.local) {
-        console.log(fmt.info(`Project-local install — writing configs under ${root}`));
+        out.info(fmt.info(`Project-local install — writing configs under ${root}`));
       }
 
       // Platforms supported in --local scope: Claude Code, Codex, Gemini, Cursor.
@@ -1319,9 +1350,9 @@ export function createInitCommand(): Command {
 
       // Interactive mode: prompt for each detected integration
       if (opts.interactive && !opts.all) {
-        console.log();
-        console.log(fmt.info("Select integrations to install:"));
-        console.log();
+        out.info();
+        out.info(fmt.info("Select integrations to install:"));
+        out.info();
         if (hasClaudeCode && !wantClaudeCode) wantClaudeCode = await askYesNo("Install Claude Code hooks + skills?");
         if (hasCodex && !wantCodex) wantCodex = await askYesNo("Install Codex CLI skills + hooks?");
         if (hasOpenClaw && !wantOpenClaw) wantOpenClaw = await askYesNo("Install OpenClaw skill?");
@@ -1333,7 +1364,7 @@ export function createInitCommand(): Command {
         if (hasHermes && !wantHermes) wantHermes = await askYesNo("Install Hermes MCP server?");
         if (hasOpenCode && !wantOpenCode) wantOpenCode = await askYesNo("Install OpenCode MCP server?");
         if (!wantBetterleaks) wantBetterleaks = await askYesNo("Download Betterleaks binary (enhanced scanning)?");
-        console.log();
+        out.info();
       }
 
       // Show detected environments with opt-in hints
@@ -1350,9 +1381,9 @@ export function createInitCommand(): Command {
       if (hasOpenCode) detected.push("OpenCode");
 
       if (detected.length > 0) {
-        console.log(fmt.info(`Detected environments: ${detected.join(", ")}`));
+        out.info(fmt.info(`Detected environments: ${detected.join(", ")}`));
       } else {
-        console.log(fmt.info("No agent environments detected"));
+        out.info(fmt.info("No agent environments detected"));
       }
 
       // Warn about requested but undetected environments (user scope only —
@@ -1363,16 +1394,16 @@ export function createInitCommand(): Command {
       // under --all is normal and shouldn't warn individually — 9 such
       // warnings buried the ones that actually matter (rafter-cli#231).
       if (scope === "user") {
-        if (opts.withOpenclaw && !hasOpenClaw) console.log(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"));
-        if (opts.withClaudeCode && !hasClaudeCode) console.log(fmt.warning("Claude Code requested but not detected (~/.claude not found)"));
-        if (opts.withCodex && !hasCodex) console.log(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"));
-        if (opts.withGemini && !hasGemini) console.log(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"));
-        if (opts.withCursor && !hasCursor) console.log(fmt.warning("Cursor requested but not detected (~/.cursor not found)"));
-        if (opts.withWindsurf && !hasWindsurf) console.log(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
-        if (opts.withContinue && !hasContinueDev) console.log(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
-        if (opts.withAider && !hasAider) console.log(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
-        if (opts.withHermes && !hasHermes) console.log(fmt.warning("Hermes requested but not detected (~/.hermes not found)"));
-        if (opts.withOpencode && !hasOpenCode) console.log(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"));
+        if (opts.withOpenclaw && !hasOpenClaw) out.warn(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"));
+        if (opts.withClaudeCode && !hasClaudeCode) out.warn(fmt.warning("Claude Code requested but not detected (~/.claude not found)"));
+        if (opts.withCodex && !hasCodex) out.warn(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"));
+        if (opts.withGemini && !hasGemini) out.warn(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"));
+        if (opts.withCursor && !hasCursor) out.warn(fmt.warning("Cursor requested but not detected (~/.cursor not found)"));
+        if (opts.withWindsurf && !hasWindsurf) out.warn(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
+        if (opts.withContinue && !hasContinueDev) out.warn(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
+        if (opts.withAider && !hasAider) out.warn(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
+        if (opts.withHermes && !hasHermes) out.warn(fmt.warning("Hermes requested but not detected (~/.hermes not found)"));
+        if (opts.withOpencode && !hasOpenCode) out.warn(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"));
       }
 
       // --dry-run: print every file path the command would touch, then
@@ -1413,7 +1444,7 @@ export function createInitCommand(): Command {
       // Initialize directory structure
       try {
         await manager.initialize();
-        console.log(fmt.success("Created config at ~/.rafter/config.json"));
+        out.info(fmt.success("Created config at ~/.rafter/config.json"));
       } catch (e) {
         console.error(fmt.error(`Failed to initialize: ${e}`));
         process.exit(1);
@@ -1428,7 +1459,7 @@ export function createInitCommand(): Command {
       }
 
       manager.set("agent.riskLevel", opts.riskLevel);
-      console.log(fmt.success(`Set risk level: ${opts.riskLevel}`));
+      out.info(fmt.success(`Set risk level: ${opts.riskLevel}`));
 
       // Check / download Betterleaks binary (opt-in via --with-betterleaks or --all)
       if (wantBetterleaks) {
@@ -1438,25 +1469,25 @@ export function createInitCommand(): Command {
         // Helper: show diagnostics for a failing binary (mirrors Python's agent init)
         const showDiagnostics = async (binaryPath: string, verResult: { ok: boolean; stdout: string; stderr: string }) => {
           if (verResult.stderr) {
-            console.log(fmt.info(`  stderr: ${verResult.stderr}`));
+            out.warn(fmt.info(`  stderr: ${verResult.stderr}`));
           }
           const diag = await binaryManager.collectBinaryDiagnostics(binaryPath);
           if (diag) {
-            console.log(fmt.info("Diagnostics:"));
-            console.log(diag);
+            out.warn(fmt.info("Diagnostics:"));
+            out.warn(diag);
           }
-          console.log(fmt.info("To fix: install betterleaks (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
-          console.log();
+          out.warn(fmt.info("To fix: install betterleaks (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
+          out.info();
         };
 
         if (!opts.update && binaryManager.isBetterleaksInstalled()) {
           // Local binary exists — verify it actually works
           const verResult = await binaryManager.verifyBetterleaksVerbose();
           if (verResult.ok) {
-            console.log(fmt.success(`Betterleaks already installed (${verResult.stdout})`));
+            out.info(fmt.success(`Betterleaks already installed (${verResult.stdout})`));
           } else {
-            console.log(fmt.warning("Betterleaks binary found locally but failed to execute."));
-            console.log(fmt.info(`  Binary: ${binaryManager.getBetterleaksPath()}`));
+            out.warn(fmt.warning("Betterleaks binary found locally but failed to execute."));
+            out.warn(fmt.info(`  Binary: ${binaryManager.getBetterleaksPath()}`));
             await showDiagnostics(binaryManager.getBetterleaksPath(), verResult);
           }
         } else {
@@ -1466,31 +1497,31 @@ export function createInitCommand(): Command {
           if (pathBinary) {
             const verResult = await binaryManager.verifyBetterleaksVerbose(pathBinary);
             if (verResult.ok) {
-              console.log(fmt.success(`Betterleaks available on PATH (${verResult.stdout})`));
+              out.info(fmt.success(`Betterleaks available on PATH (${verResult.stdout})`));
             } else {
-              console.log(fmt.warning("Betterleaks found on PATH but failed to execute."));
-              console.log(fmt.info(`  Binary: ${pathBinary}`));
+              out.warn(fmt.warning("Betterleaks found on PATH but failed to execute."));
+              out.warn(fmt.info(`  Binary: ${pathBinary}`));
               await showDiagnostics(pathBinary, verResult);
             }
           } else if (!platformInfo.supported) {
-            console.log(fmt.info(`Betterleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
-            console.log(fmt.success("Using pattern-based scanning (21 patterns)"));
+            out.info(fmt.info(`Betterleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
+            out.info(fmt.success("Using pattern-based scanning (21 patterns)"));
           } else {
             // Not on PATH, not installed locally — download
-            console.log();
-            console.log(fmt.info("Downloading Betterleaks (enhanced secret detection)..."));
+            out.info();
+            out.info(fmt.info("Downloading Betterleaks (enhanced secret detection)..."));
             try {
               await binaryManager.downloadBetterleaks((msg) => {
-                console.log(`   ${msg}`);
+                out.info(`   ${msg}`);
               });
-              console.log();
+              out.info();
             } catch (e) {
-              console.log();
-              console.log(fmt.error(`Betterleaks setup failed — pattern-based scanning will be used instead.`));
-              console.log(fmt.warning(String(e)));
-              console.log();
-              console.log(fmt.info("To fix: install betterleaks manually (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
-              console.log();
+              out.info();
+              out.warn(fmt.error(`Betterleaks setup failed — pattern-based scanning will be used instead.`));
+              out.warn(fmt.warning(String(e)));
+              out.info();
+              out.warn(fmt.info("To fix: install betterleaks manually (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
+              out.info();
             }
           }
         }
@@ -1508,21 +1539,21 @@ export function createInitCommand(): Command {
           }
         })();
         if (onPath) {
-          console.log(fmt.success(`skill-scanner available on PATH (${onPath})`));
+          out.info(fmt.success(`skill-scanner available on PATH (${onPath})`));
         } else {
-          console.log();
-          console.log(fmt.info(
+          out.info();
+          out.info(fmt.info(
             "Installing optional skill-scanner deep engine (heavy third-party package; isolated install)...",
           ));
           const result = await new SkillScannerInstaller().install(
             SKILL_SCANNER_VERSION,
-            (msg) => console.log(`   ${msg}`),
+            (msg) => out.info(`   ${msg}`),
           );
           if (result.ok) {
-            console.log(fmt.success(`skill-scanner installed (via ${result.via}): ${result.message}`));
+            out.info(fmt.success(`skill-scanner installed (via ${result.via}): ${result.message}`));
           } else {
-            console.log(fmt.warning(`skill-scanner install failed: ${result.message}`));
-            console.log(fmt.info(
+            out.warn(fmt.warning(`skill-scanner install failed: ${result.message}`));
+            out.warn(fmt.info(
               "To fix: run 'rafter agent update-skill-scanner' or install manually with 'uv tool install cisco-ai-skill-scanner'.",
             ));
           }
@@ -1532,25 +1563,25 @@ export function createInitCommand(): Command {
       // Install OpenClaw skill if opted in
       let openclawOk = false;
       if (hasOpenClaw && wantOpenClaw) {
-        const skillManager = new SkillManager();
+        const skillManager = new SkillManager({ log: (message) => out.info(message) });
         const result = await skillManager.installRafterSkillVerbose();
         openclawOk = result.ok;
         if (result.ok) {
-          console.log(fmt.success(`Installed Rafter Security skill to ${result.destPath}`));
+          out.info(fmt.success(`Installed Rafter Security skill to ${result.destPath}`));
           manager.set("agent.environments.openclaw.enabled", true);
         } else {
-          console.log(fmt.error("Failed to install Rafter Security skill"));
-          console.log(fmt.warning(`  Source: ${result.sourcePath}`));
-          console.log(fmt.warning(`  Destination: ${result.destPath}`));
+          out.warn(fmt.error("Failed to install Rafter Security skill"));
+          out.warn(fmt.warning(`  Source: ${result.sourcePath}`));
+          out.warn(fmt.warning(`  Destination: ${result.destPath}`));
           if (result.error) {
-            console.log(fmt.warning(`  Error: ${result.error}`));
+            out.warn(fmt.warning(`  Error: ${result.error}`));
           }
         }
       }
 
       // Helper: warn that a platform is not supported in --local mode.
       const localUnsupported = (label: string): void => {
-        console.log(fmt.warning(
+        out.warn(fmt.warning(
           `${label} is not supported in --local mode yet. Skipping. ` +
           `Re-run without --local to install for this platform user-globally.`,
         ));
@@ -1561,15 +1592,15 @@ export function createInitCommand(): Command {
       let claudeCodeOk = false;
       if ((hasClaudeCode || opts.withClaudeCode || (opts.local && wantClaudeCode)) && wantClaudeCode) {
         try {
-          await installClaudeCodeSkills(root);
-          installClaudeCodeSubAgents(root);
-          installClaudeCodeHooks(root);
+          await installClaudeCodeSkills(root, out);
+          installClaudeCodeSubAgents(root, out);
+          installClaudeCodeHooks(root, out);
           if (scope === "project") {
             const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
             if (components["claude-code.mcp"]?.enabled === false) {
-              console.log(fmt.info("Skipped .mcp.json (claude-code.mcp disabled; re-enable with `rafter agent enable claude-code.mcp`)"));
+              out.info(fmt.info("Skipped .mcp.json (claude-code.mcp disabled; re-enable with `rafter agent enable claude-code.mcp`)"));
             } else {
-              installClaudeCodeMcp(root);
+              installClaudeCodeMcp(root, out);
               components["claude-code.mcp"] = { enabled: true, updatedAt: new Date().toISOString() };
               manager.set("agent.components", components);
             }
@@ -1585,8 +1616,8 @@ export function createInitCommand(): Command {
       let codexOk = false;
       if ((hasCodex || (opts.local && wantCodex)) && wantCodex) {
         try {
-          installCodexSkills(root);
-          installCodexHooks(root);
+          installCodexSkills(root, out);
+          installCodexHooks(root, out);
           if (scope === "user") manager.set("agent.environments.codex.enabled", true);
           codexOk = true;
         } catch (e) {
@@ -1598,10 +1629,10 @@ export function createInitCommand(): Command {
       let geminiOk = false;
       if ((hasGemini || (opts.local && wantGemini)) && wantGemini) {
         try {
-          geminiOk = installGeminiMcp(root);
-          installGeminiSkills(root);
-          registerGeminiSkills(path.join(root, ".agents", "skills"));
-          installGeminiHooks(root);
+          geminiOk = installGeminiMcp(root, out);
+          installGeminiSkills(root, out);
+          registerGeminiSkills(path.join(root, ".agents", "skills"), out);
+          installGeminiHooks(root, out);
           if (geminiOk && scope === "user") manager.set("agent.environments.gemini.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Gemini CLI integration: ${e}`));
@@ -1612,10 +1643,10 @@ export function createInitCommand(): Command {
       let cursorOk = false;
       if ((hasCursor || (opts.local && wantCursor)) && wantCursor) {
         try {
-          cursorOk = installCursorMcp(root);
-          installCursorHooks(root);
-          installCursorRules(root);
-          installCursorSubAgents(root);
+          cursorOk = installCursorMcp(root, out);
+          installCursorHooks(root, out);
+          installCursorRules(root, out);
+          installCursorSubAgents(root, out);
           if (cursorOk && scope === "user") manager.set("agent.environments.cursor.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Cursor integration: ${e}`));
@@ -1634,10 +1665,10 @@ export function createInitCommand(): Command {
       if (wantWindsurf && (hasWindsurf || opts.local)) {
         try {
           if (hasWindsurf) {
-            windsurfOk = installWindsurfMcp(root);
+            windsurfOk = installWindsurfMcp(root, out);
             if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
           }
-          installWindsurfRules(root);
+          installWindsurfRules(root, out);
           // AGENTS.md is written below in installGlobalInstructions when
           // platforms.windsurf is true.
           if (!hasWindsurf) windsurfOk = true; // local-scope success: rules + AGENTS.md
@@ -1656,10 +1687,10 @@ export function createInitCommand(): Command {
       if (wantContinue && (hasContinueDev || opts.local)) {
         try {
           if (hasContinueDev) {
-            continueOk = installContinueDevMcp(root);
+            continueOk = installContinueDevMcp(root, out);
             if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
           }
-          installContinueDevRules(root);
+          installContinueDevRules(root, out);
           if (!hasContinueDev) continueOk = true; // local-scope success: rules only
         } catch (e) {
           console.error(fmt.error(`Failed to install Continue.dev integration: ${e}`));
@@ -1674,7 +1705,7 @@ export function createInitCommand(): Command {
       let aiderOk = false;
       if (wantAider && (hasAider || opts.local)) {
         try {
-          aiderOk = installAiderRead(root);
+          aiderOk = installAiderRead(root, out);
           if (aiderOk && hasAider) manager.set("agent.environments.aider.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Aider integration: ${e}`));
@@ -1687,7 +1718,7 @@ export function createInitCommand(): Command {
       let hermesOk = false;
       if (wantHermes && hasHermes) {
         try {
-          hermesOk = installHermesMcp(root);
+          hermesOk = installHermesMcp(root, out);
           if (hermesOk) manager.set("agent.environments.hermes.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Hermes integration: ${e}`));
@@ -1701,7 +1732,7 @@ export function createInitCommand(): Command {
       let openCodeOk = false;
       if (wantOpenCode && hasOpenCode) {
         try {
-          openCodeOk = installOpenCodeMcp(root);
+          openCodeOk = installOpenCodeMcp(root, out);
           if (openCodeOk) manager.set("agent.environments.opencode.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install OpenCode integration: ${e}`));
@@ -1716,61 +1747,61 @@ export function createInitCommand(): Command {
         codex: codexOk,
         gemini: geminiOk,
         windsurf: windsurfOk,
-      }, root, scope);
+      }, root, scope, out);
 
-      console.log();
+      out.info();
       // rf-er8a: do not report a clean success if the hook we just wrote cannot
       // execute and enforce. A silent 127 (or an npx-cache entrypoint) means the
       // gate is inert even though settings.json looks configured.
       const hookWarnings = claudeCodeOk ? installedHookWarnings() : [];
       if (hookWarnings.length > 0) {
-        for (const w of hookWarnings) console.log(fmt.warning(w));
-        console.log(fmt.warning("Agent security initialized WITH WARNINGS — the command gate may NOT be active (see above). Run 'rafter agent verify' to confirm."));
+        for (const w of hookWarnings) out.warn(fmt.warning(w));
+        out.warn(fmt.warning("Agent security initialized WITH WARNINGS — the command gate may NOT be active (see above). Run 'rafter agent verify' to confirm."));
       } else {
-        console.log(fmt.success("Agent security initialized!"));
+        out.info(fmt.success("Agent security initialized!"));
       }
-      console.log();
+      out.info();
 
       const anyIntegration = openclawOk || claudeCodeOk || codexOk || geminiOk || cursorOk || windsurfOk || continueOk || aiderOk || hermesOk || openCodeOk;
 
       if (anyIntegration) {
-        console.log("Next steps:");
-        if (openclawOk) console.log("  - Restart OpenClaw to load skill");
-        if (claudeCodeOk) console.log("  - Restart Claude Code to load skills");
-        if (codexOk) console.log("  - Restart Codex CLI to load skills");
-        if (geminiOk) console.log("  - Restart Gemini CLI to load MCP server");
-        if (cursorOk) console.log("  - Restart Cursor to load MCP server");
-        if (windsurfOk) console.log("  - Restart Windsurf to load MCP server");
-        if (continueOk) console.log("  - Restart Continue.dev to load MCP server");
-        if (aiderOk) console.log("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:");
-        if (hermesOk) console.log("  - Restart Hermes to load MCP server");
-        if (openCodeOk) console.log("  - Restart OpenCode to load MCP server");
+        out.info("Next steps:");
+        if (openclawOk) out.info("  - Restart OpenClaw to load skill");
+        if (claudeCodeOk) out.info("  - Restart Claude Code to load skills");
+        if (codexOk) out.info("  - Restart Codex CLI to load skills");
+        if (geminiOk) out.info("  - Restart Gemini CLI to load MCP server");
+        if (cursorOk) out.info("  - Restart Cursor to load MCP server");
+        if (windsurfOk) out.info("  - Restart Windsurf to load MCP server");
+        if (continueOk) out.info("  - Restart Continue.dev to load MCP server");
+        if (aiderOk) out.info("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:");
+        if (hermesOk) out.info("  - Restart Hermes to load MCP server");
+        if (openCodeOk) out.info("  - Restart OpenCode to load MCP server");
       } else if (scope === "project") {
-        console.log("No integrations were installed. In --local mode, pass one or more opt-in flags:");
-        console.log("  rafter agent init --local --with-claude-code");
-        console.log("  rafter agent init --local --with-codex");
-        console.log("  rafter agent init --local --with-gemini");
-        console.log("  rafter agent init --local --with-cursor");
+        out.info("No integrations were installed. In --local mode, pass one or more opt-in flags:");
+        out.info("  rafter agent init --local --with-claude-code");
+        out.info("  rafter agent init --local --with-codex");
+        out.info("  rafter agent init --local --with-gemini");
+        out.info("  rafter agent init --local --with-cursor");
       } else if (detected.length > 0) {
-        console.log("No integrations were installed. To install, re-run with opt-in flags:");
-        console.log("  rafter agent init --all                  # Install all detected");
-        if (hasClaudeCode) console.log("  rafter agent init --with-claude-code     # Claude Code only");
-        if (hasOpenClaw) console.log("  rafter agent init --with-openclaw        # OpenClaw only");
-        if (hasCodex) console.log("  rafter agent init --with-codex           # Codex CLI only");
-        if (hasGemini) console.log("  rafter agent init --with-gemini          # Gemini CLI only");
-        if (hasCursor) console.log("  rafter agent init --with-cursor          # Cursor only");
-        if (hasWindsurf) console.log("  rafter agent init --with-windsurf        # Windsurf only");
-        if (hasContinueDev) console.log("  rafter agent init --with-continue        # Continue.dev only");
-        if (hasAider) console.log("  rafter agent init --with-aider           # Aider only");
-        if (hasHermes) console.log("  rafter agent init --with-hermes          # Hermes only");
-        if (hasOpenCode) console.log("  rafter agent init --with-opencode        # OpenCode only");
+        out.info("No integrations were installed. To install, re-run with opt-in flags:");
+        out.info("  rafter agent init --all                  # Install all detected");
+        if (hasClaudeCode) out.info("  rafter agent init --with-claude-code     # Claude Code only");
+        if (hasOpenClaw) out.info("  rafter agent init --with-openclaw        # OpenClaw only");
+        if (hasCodex) out.info("  rafter agent init --with-codex           # Codex CLI only");
+        if (hasGemini) out.info("  rafter agent init --with-gemini          # Gemini CLI only");
+        if (hasCursor) out.info("  rafter agent init --with-cursor          # Cursor only");
+        if (hasWindsurf) out.info("  rafter agent init --with-windsurf        # Windsurf only");
+        if (hasContinueDev) out.info("  rafter agent init --with-continue        # Continue.dev only");
+        if (hasAider) out.info("  rafter agent init --with-aider           # Aider only");
+        if (hasHermes) out.info("  rafter agent init --with-hermes          # Hermes only");
+        if (hasOpenCode) out.info("  rafter agent init --with-opencode        # OpenCode only");
       } else {
-        console.log("No agent environments detected. Install an agent tool and re-run with --with-<tool>.");
+        out.info("No agent environments detected. Install an agent tool and re-run with --with-<tool>.");
       }
-      console.log();
-      console.log("  - Run: rafter secrets . (test secret scanning)");
-      console.log("  - Configure: rafter agent config show");
-      console.log();
+      out.info();
+      out.info("  - Run: rafter secrets . (test secret scanning)");
+      out.info("  - Configure: rafter agent config show");
+      out.info();
 
       // Warn if a different rafter version shadows this one on PATH
       try {
@@ -1782,9 +1813,9 @@ export function createInitCommand(): Command {
           stdio: ["pipe", "pipe", "ignore"],
         }).trim();
         if (pathVersion && pathVersion !== thisVersion && !pathVersion.includes(thisVersion)) {
-          console.log(fmt.warning(`PATH version mismatch: 'rafter --version' reports ${pathVersion}, but this install is ${thisVersion}.`));
-          console.log(fmt.info("Another rafter binary may be shadowing this one. Check: which rafter"));
-          console.log();
+          out.warn(fmt.warning(`PATH version mismatch: 'rafter --version' reports ${pathVersion}, but this install is ${thisVersion}.`));
+          out.warn(fmt.info("Another rafter binary may be shadowing this one. Check: which rafter"));
+          out.info();
         }
       } catch {
         // Ignore — rafter may not be on PATH yet

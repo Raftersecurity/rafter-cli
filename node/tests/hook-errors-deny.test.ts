@@ -26,6 +26,8 @@ function runHook(dir: string, command: string, nodeArgs = ""): { decision: strin
     timeout: 30_000,
     env: { ...process.env, HOME: dir, XDG_CONFIG_HOME: path.join(dir, ".config") },
   });
+  // `{}` is the hook's no-decision answer: it defers to the platform's permissions.
+  if (r.stdout.trim() === "{}") return { decision: "defer", stderr: r.stderr };
   const out = JSON.parse(r.stdout || "{}");
   return { decision: out.hookSpecificOutput?.permissionDecision ?? "unknown", stderr: r.stderr };
 }
@@ -62,7 +64,7 @@ describe("hook pretool — audit and config errors deny, never allow", () => {
     const target = path.join(dir, "victim.txt");
     fs.writeFileSync(path.join(dir, ".rafter.yml"), `audit:\n  log_path: ${target}\n`);
     const r = runHook(dir, "echo hi");
-    expect(r.decision).toBe("allow");
+    expect(r.decision).toBe("defer");
     expect(fs.existsSync(target)).toBe(false);
     expect(fs.existsSync(path.join(dir, ".rafter", "audit.jsonl"))).toBe(true);
     expect(r.stderr).toMatch(/audit\.log_path/);

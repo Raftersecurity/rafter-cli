@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The PreToolUse hook now evaluates shell and file-write tools under each platform's own name, not only `Bash`, `Write` and `Edit`.** Shell commands from Gemini CLI (`run_shell_command`) and Cursor's `preToolUse` (`Shell`) go through the command policy, and file writes from Gemini CLI (`write_file`, `replace`), Codex (`apply_patch`), `MultiEdit`, Continue's `Write` (`filepath`) and Windsurf's `pre_write_code` edits go through the same write checks as `Write`/`Edit`. The tools recognized per platform are listed in CLI_SPEC. Both Node and Python.
+
+## [0.11.1] - 2026-10-22
+
+### Added
+
+- **`rafter secrets --range <a>..<b>` scans only the files changed in a git commit range.** Same scope and patterns-engine semantics as `--diff`, so a large repo can be scanned for secrets introduced by a range of commits without walking the whole tree. A range git would read as an option (leading `-`) exits 2.
+
+- **The scan JSON now reports which engine ran.** `rafter secrets --json` carries `engine_requested`, `engine_used`, and `degraded` (plus `degraded_reason` when degraded). A consumer can now tell when betterleaks was requested or implied by `auto` but the patterns engine was used instead; text output notes the same on stderr. Documented in CLI_SPEC.
+
+- **`rafter agent init` and `rafter agent install-hook` accept `--quiet`.** It suppresses informational, progress and success output; warnings and errors still go to stderr, and a `--dry-run` plan is still shown. Python `install-hook` now writes its errors to stderr in every mode, matching Node. Both Node and Python (#288).
+
+### Fixed
+
+- **rafter's skills now load in non-interactive agent sessions (CI, SDK); they previously returned only their descriptions.** The bundled skills no longer declare `allowed-tools`, which made invoking a skill need an approval that a non-interactive session cannot give.
+
+- **The PreToolUse hook no longer pre-approves commands it doesn't block; your agent's own permission prompts apply again.** When rafter had no objection, `rafter hook pretool` answered `allow`, which in Claude Code and Codex skips the permission prompt. It now returns no decision (`{}`) and leaves the call to the platform's permission settings; a denied call is unchanged. Gemini and Windsurf already received a no-decision answer. Cursor still receives `allow`, because its hooks must return a permission and block the action without one. Both Node and Python.
+
+- **The command classifier normalizes shell quoting, splitting, brace expansion and long flags before matching.** Risk patterns were matched only against the raw command, so a command whose spelling differed from the pattern — long destructive flags (`rm --recursive --force /`), `$IFS` word-splitting, brace expansion, ANSI-C `$'…'` quoting, or a process substitution feeding a shell — could be rated low and allowed while having the same effect as a form the patterns catch. The classifier now also matches against a normalized view (it decodes `$'…'`, substitutes `$IFS`/`${IFS}`, expands brace lists, and canonicalizes long/greedy destructive flags, executing nothing), and independently treats these evasion constructs as requiring approval. Normalization is bounded against hostile input. This classifier recognizes spellings and is defense-in-depth, not a containment boundary: it does not stop an adversary who indirects the command (for example through a shell variable or a command substitution) or uses an interpreter whose argument it cannot read. Both Node and Python.
+- **betterleaks no longer times out and silently falls back to patterns on a large repo.** betterleaks' run time scales with the length of the explicit git-tracked file list it is handed, so a few-hundred-file repo exceeded the per-invocation timeout and the scan dropped to the patterns engine with nothing to say so. The file list is now scanned in bounded batches (at most 64 files per invocation), each well under the timeout, and their findings are unioned by file; `.gitignore` is still honored and the per-invocation timeout is kept as a floor. When a fall-back does happen (betterleaks unavailable, stale, or a scan-time failure) it is now reported in the text and JSON output rather than being silent.
+
+- **`rafter secrets --history` now scans history with both engines.** Only betterleaks read the history; the patterns engine scanned the working tree. A secret in a deleted file was found only if a betterleaks rule matched it, and without betterleaks `--history` reported history it never read as clean. The patterns engine now streams `git log -p` over every ref, and `auto` unions it with betterleaks as in a directory scan. History findings are reported as absolute paths under the repository root, for both engines (betterleaks paths were relative). `--history` outside a git repository exits 2.
+
+- **The docs now say the PreToolUse hook denies a command that requires approval, such as `curl … | sh`.** README, SKILL.md, the bundled skills and CLI_SPEC described it as prompting for approval; the hook has no way to prompt, and its deny reason tells a person to approve the command with `rafter agent exec` at a terminal. The Python package's copies of the `rafter` skill's `guardrails.md` and `cli-reference.md` were also brought in line with the Node copies.
+
+- **The README quickstart now installs the pre-commit hook with `rafter agent install-hook`.** It said `rafter agent init --all` installs the hook, and the npm postinstall message said the same. `init --all` sets up detected agent integrations and Betterleaks; it has never installed a git hook.
+
+- **The MCP server returns a clean error when a tool call omits a required argument.** A call missing a required field — for example `evaluate_command` with no `command` — reached the handler and failed with an internal protocol error. The server now checks each required `inputSchema` field before dispatch and returns a tool error naming the missing field, matching the Python server.
+
+- **`agent exec` no longer records a secret in the audit log when a `NAME=VALUE` argument is shell-quoted.** The audit redactor matched an environment assignment only after whitespace or the start of the line, so a quote inserted by argument quoting (`env 'SECRET_TOKEN=…' …`) left the value in the clear. The match now also accepts a leading quote, so the value is redacted before it is written.
+
+- **A project `.rafter.yml` `docs:` path can no longer read files outside the repository.** `docs show` and the MCP `get_doc` tool resolved a `path:` entry without containment, so an absolute path, a `../` escape, or an in-repo symlink pointing out read any file on disk. A docs path is now confined to the project root: absolute paths are rejected, and the resolved path — after following symlinks — must stay inside the root, otherwise the fetch fails with a clear error.
+
+- **A file that could not be read is no longer reported as a clean scan.** `rafter secrets` / `rafter scan` swallowed a read error — for example a permission-denied file — and returned no findings for it, indistinguishable from a file with no secrets. Unreadable files are now reported: on stderr, in an `unreadable` field in the JSON output, and as a separate block in the MCP `scan_secrets` result; and the scan exits 2 when it could not read a file and found nothing. An unreadable directory encountered during a tree walk is still skipped without aborting the scan.
+
+- **A `.rafter.yml` policy no longer governs a scan of a different tree.** The policy and its suppression rules were discovered from the process working directory, so an ambient `.rafter.yml` in the cwd silently suppressed real secrets when scanning an unrelated path, and a relative ignore glob matched absolute paths outside the policy's own tree. `rafter secrets` / `rafter scan` and the MCP `scan_secrets` tool now discover the policy from the scan target and anchor each ignore glob — and `.rafterignore` — to the tree that owns it. Scanning the current directory, `--staged`, and the pre-commit hook are unchanged.
+### Changed
+
+- **Minimum supported Node.js is now 22.** Node 18 and 20 are no longer supported; both reached end of life (2025-04-30 and 2026-04-30). CI now tests against Node 22 and 24 instead of 18 and 20. **Behavior change:** the CLI may no longer run under Node 18 or 20 — upgrade to Node 22 or later.
+
+- **Minimum supported Python is now 3.11.** Python 3.10 is no longer supported; it reached end of life on 2026-10-01. **Behavior change:** installing on Python 3.10 or earlier is no longer supported — upgrade to Python 3.11 or later.
+
 ## [0.11.0] - 2026-10-13
 
 ### Added

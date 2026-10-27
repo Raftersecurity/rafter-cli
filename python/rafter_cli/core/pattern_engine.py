@@ -40,7 +40,13 @@ _QUOTED_VALUE_RE = re.compile(r"""['\"]([^'\"]+)['\"]""")
 # followed immediately by ``=`` and a run of non-whitespace (the value). Used
 # to find ``NAME=VALUE`` tokens like ``RAFTER_API_KEY=<secret> rafter ...`` so
 # their value can be redacted before the command is written to the audit log.
-_ENV_ASSIGN_RE = re.compile(r"(^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\S+)")
+#
+# The prefix also accepts a leading quote (sable-fqrr): ``agent exec``
+# shell-quotes a token containing special characters, so a logged command can
+# read ``env 'SECRET_TOKEN=<secret>' ...`` — a quote, not whitespace, sits
+# before NAME=. Without this the value escaped redaction and reached the audit
+# log in the clear.
+_ENV_ASSIGN_RE = re.compile(r"""(^|[\s'"])([A-Za-z_][A-Za-z0-9_]*)=(\S+)""")
 
 # A ``NAME`` in a ``NAME=VALUE`` assignment is treated as secret-bearing when
 # it ends in a credential-suggesting word (RAFTER_API_KEY, GITHUB_TOKEN,

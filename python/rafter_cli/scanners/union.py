@@ -36,6 +36,9 @@ def union_scan_results(
     """
     file_order: list[str] = []
     by_file: dict[str, dict[str, PatternMatch]] = {}
+    # Carry a read failure through the union (sable-ilbx): a file one engine
+    # could not open must still be reported as unreadable, not dropped.
+    read_error_by_file: dict[str, str] = {}
 
     def ingest(results: list[ScanResult], engine: str) -> None:
         for r in results:
@@ -44,6 +47,8 @@ def union_scan_results(
                 file_map = {}
                 by_file[r.file] = file_map
                 file_order.append(r.file)
+            if r.read_error and r.file not in read_error_by_file:
+                read_error_by_file[r.file] = r.read_error
             for m in r.matches:
                 # Two secrets cannot start at the same line and column, so a
                 # known position alone identifies the secret: the engines
@@ -67,6 +72,10 @@ def union_scan_results(
     ingest(patterns, "patterns")
 
     return [
-        ScanResult(file=f, matches=list(by_file[f].values()))
+        ScanResult(
+            file=f,
+            matches=list(by_file[f].values()),
+            read_error=read_error_by_file.get(f),
+        )
         for f in file_order
     ]

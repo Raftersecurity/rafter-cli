@@ -114,11 +114,23 @@ def _read_stdin() -> str:
 
 
 def _write_pretool_decision(decision: dict, fmt: str = "claude") -> None:
-    """Write a PreToolUse hook decision in the platform's expected format."""
+    """Write a PreToolUse hook decision in the platform's expected format.
+
+    The hook only ever DENIES: an internal "allow" means "rafter has no
+    objection", and is written as the platform's no-decision form so the
+    platform's own permission settings still apply. Approving would skip those
+    settings (a Claude Code PreToolUse "allow" skips the permission prompt),
+    making an agent more permissive with rafter installed than without it.
+    Cursor is the one exception; see below.
+    """
     is_deny = decision.get("decision") == "deny"
     reason = decision.get("reason", "")
 
     if fmt == "cursor":
+        # Cursor has no neutral answer: its permission hooks block on an empty
+        # or schema-invalid response, so "allow" is the only way to let a call
+        # proceed. "ask" would force a prompt on every call, overriding the
+        # user's own allowlist in the other direction.
         out: dict = {"permission": "deny" if is_deny else "allow"}
         if is_deny and reason:
             out["agentMessage"] = reason
@@ -136,13 +148,18 @@ def _write_pretool_decision(decision: dict, fmt: str = "claude") -> None:
             sys.stderr.write(reason + "\n")
             sys.stderr.flush()
             sys.exit(2)
-        # Allow: exit 0 (no output needed)
+        # No decision: exit 0 (no output needed)
     else:
-        # Claude Code / Codex / Continue.dev
+        # Claude Code / Codex / Continue.dev: hookSpecificOutput envelope for a
+        # deny; `{}` (no permissionDecision) leaves the call to the normal flow.
+        if not is_deny:
+            sys.stdout.write("{}\n")
+            sys.stdout.flush()
+            return
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "permissionDecision": "deny" if is_deny else "allow",
+                "permissionDecision": "deny",
                 "permissionDecisionReason": reason,
             },
         }
@@ -531,13 +548,44 @@ def _evaluate_tool_call(payload: dict, fmt: str) -> dict:
     if not control.hook_enabled:
         return {"decision": "allow"}
 
-    if tool_name == "Bash":
+    if tool_name in _SHELL_TOOLS:
         return _evaluate_bash(tool_input.get("command", ""), control)
-    if tool_name in ("Write", "Edit"):
+    if tool_name in _WRITE_TOOLS:
         if not control.secret_scan_enabled:
             return {"decision": "allow"}
-        return _evaluate_write(tool_input)
+        return _evaluate_write(_normalize_write_input(tool_name, tool_input))
     return {"decision": "allow"}
+
+
+# Shell and file-write tools under each platform's own name, so the same
+# policy applies whatever the tool is called.
+#   Shell: Bash (Claude Code, Codex, Continue), Shell (Cursor preToolUse),
+#          run_shell_command (Gemini CLI).
+#   Write: Write/Edit (Claude Code, Continue, Cursor), MultiEdit (Claude Code,
+#          Continue), write_file/replace (Gemini CLI), apply_patch (Codex).
+_SHELL_TOOLS = frozenset({"Bash", "Shell", "run_shell_command"})
+_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "write_file", "replace", "apply_patch"})
+
+
+def _normalize_write_input(tool_name: str, tool_input: dict) -> dict:
+    """Map each write tool's input onto the {file_path, content} shape _evaluate_write reads.
+
+    Continue's Write names its path ``filepath``; MultiEdit and Windsurf's
+    pre_write_code carry ``edits[].new_string``; Codex's apply_patch carries
+    the whole patch in ``command``.
+    """
+    out = dict(tool_input)
+    if "file_path" not in out and isinstance(tool_input.get("filepath"), str):
+        out["file_path"] = tool_input["filepath"]
+    if not out.get("content") and not out.get("new_string"):
+        edits = tool_input.get("edits")
+        if isinstance(edits, list):
+            out["content"] = "\n".join(
+                e["new_string"] for e in edits if isinstance(e, dict) and isinstance(e.get("new_string"), str)
+            )
+        elif tool_name == "apply_patch" and isinstance(tool_input.get("command"), str):
+            out["content"] = tool_input["command"]
+    return out
 
 
 def _deny_on_error(exc: Exception) -> dict:

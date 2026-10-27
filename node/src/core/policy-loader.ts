@@ -81,7 +81,10 @@ const POLICY_FILE_CANDIDATES: string[] = [
  */
 export function findPolicyFile(startDir: string = process.cwd()): string | null {
   let dir = startDir;
-  const root = getGitRoot() || path.parse(dir).root;
+  // Bound the walk by the git root of the START dir, not of the process cwd
+  // (sable-lu0j) — otherwise discovering a policy for a scan target in another
+  // tree stops at the wrong root.
+  const root = getGitRoot(startDir) || path.parse(dir).root;
 
   while (true) {
     for (const filename of POLICY_FILE_CANDIDATES) {
@@ -103,8 +106,10 @@ export function findPolicyFile(startDir: string = process.cwd()): string | null 
 /**
  * Load and parse the policy file, returning null if not found
  */
-export function loadPolicy(): PolicyFile | null {
-  const policyPath = findPolicyFile();
+export function loadPolicy(baseDir?: string): PolicyFile | null {
+  // Discover the policy from the scan target, not the process cwd (sable-lu0j):
+  // an ambient `.rafter.yml` in cwd must not govern a scan of a different tree.
+  const policyPath = findPolicyFile(baseDir ?? process.cwd());
   if (!policyPath) return null;
 
   try {
@@ -439,10 +444,11 @@ function validatePolicy(policy: PolicyFile, raw: Record<string, any>): PolicyFil
   return policy;
 }
 
-function getGitRoot(): string | null {
+function getGitRoot(cwd?: string): string | null {
   try {
     return execSync("git rev-parse --show-toplevel", {
       encoding: "utf-8",
+      cwd: cwd && fs.existsSync(cwd) && fs.statSync(cwd).isDirectory() ? cwd : undefined,
       stdio: ["pipe", "pipe", "ignore"],
     }).trim();
   } catch {

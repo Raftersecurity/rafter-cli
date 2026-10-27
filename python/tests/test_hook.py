@@ -9,6 +9,9 @@ import pytest
 from rafter_cli.commands.hook import _evaluate_bash, _evaluate_write
 from rafter_cli.core.config_schema import get_default_config
 
+# A fake AWS key ID, assembled at runtime so the file holds no key-shaped literal.
+FAKE_AWS_KEY_ID = "AKIA" + "IOSFODNN7ABCDEFG"
+
 
 @pytest.fixture(autouse=True)
 def _use_default_config():
@@ -104,7 +107,7 @@ class TestEvaluateWrite:
 
     def test_secret_in_content(self):
         result = _evaluate_write({
-            "content": "AKIAIOSFODNN7ABCDEFG1",
+            "content": FAKE_AWS_KEY_ID + "1",
             "file_path": "config.py",
         })
         assert result["decision"] == "deny"
@@ -125,20 +128,7 @@ class TestEvaluateWrite:
 class TestPretoolEnvelope:
     """Tests that pretool outputs Claude Code's hookSpecificOutput envelope."""
 
-    def test_allow_envelope_format(self):
-        import json
-        from rafter_cli.commands.hook import hook_app
-        from typer.testing import CliRunner
-
-        payload = {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}
-        runner = CliRunner(mix_stderr=False)
-        result = runner.invoke(hook_app, ["pretool"], input=json.dumps(payload))
-        data = json.loads(result.output.strip())
-        assert "hookSpecificOutput" in data
-        hso = data["hookSpecificOutput"]
-        assert hso["hookEventName"] == "PreToolUse"
-        assert hso["permissionDecision"] == "allow"
-        assert "permissionDecisionReason" in hso
+    # The benign (no-decision) case is covered by tests/test_hook_defer.py.
 
     def test_deny_envelope_format(self):
         import json
@@ -155,15 +145,14 @@ class TestPretoolEnvelope:
         assert hso["permissionDecision"] == "deny"
         assert hso["permissionDecisionReason"] != ""
 
-    def test_invalid_json_returns_allow_envelope(self):
+    def test_invalid_json_returns_no_decision(self):
         import json
         from rafter_cli.commands.hook import hook_app
         from typer.testing import CliRunner
 
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(hook_app, ["pretool"], input="not json{{{")
-        data = json.loads(result.output.strip())
-        assert data["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert json.loads(result.output.strip()) == {}
 
 
 class TestCursorFormat:
@@ -290,7 +279,7 @@ class TestPosttool:
             "tool_name": "Bash",
             "tool_input": {"command": "cat .env"},
             "tool_response": {
-                "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\nother stuff",
+                "output": "AWS_ACCESS_KEY_ID=" + FAKE_AWS_KEY_ID + "\nother stuff",
                 "error": "",
             },
         }
@@ -299,7 +288,7 @@ class TestPosttool:
         data = json.loads(result.output.strip())
         assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
         modified = data["hookSpecificOutput"]["modifiedToolResult"]
-        assert "AKIAIOSFODNN7ABCDEFG" not in modified["output"]
+        assert FAKE_AWS_KEY_ID not in modified["output"]
         assert "****" in modified["output"]
 
     def test_secret_in_content_is_redacted(self):
@@ -311,7 +300,7 @@ class TestPosttool:
             "tool_name": "Read",
             "tool_input": {"file_path": "config.json"},
             "tool_response": {
-                "content": '{"api_key": "AKIAIOSFODNN7ABCDEFG"}',
+                "content": '{"api_key": "' + FAKE_AWS_KEY_ID + '"}',
             },
         }
         runner = CliRunner(mix_stderr=False)
@@ -319,7 +308,7 @@ class TestPosttool:
         data = json.loads(result.output.strip())
         assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
         modified = data["hookSpecificOutput"]["modifiedToolResult"]
-        assert "AKIAIOSFODNN7ABCDEFG" not in modified["content"]
+        assert FAKE_AWS_KEY_ID not in modified["content"]
 
     def test_error_field_preserved_when_output_redacted(self):
         import json
@@ -330,7 +319,7 @@ class TestPosttool:
             "tool_name": "Bash",
             "tool_input": {"command": "cat secrets.txt"},
             "tool_response": {
-                "output": "AKIAIOSFODNN7ABCDEFG1B",
+                "output": FAKE_AWS_KEY_ID + "1B",
                 "error": "some stderr message",
             },
         }
@@ -523,7 +512,7 @@ class TestCursorPosttool:
 
         payload = {
             "hook_event_name": "afterShellExecution",
-            "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\nother stuff",
+            "output": "AWS_ACCESS_KEY_ID=" + FAKE_AWS_KEY_ID + "\nother stuff",
             "error": "",
         }
         runner = CliRunner(mix_stderr=False)
@@ -558,7 +547,7 @@ class TestGeminiPosttool:
         payload = {
             "tool_name": "Bash",
             "tool_response": {
-                "output": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\nother stuff",
+                "output": "AWS_ACCESS_KEY_ID=" + FAKE_AWS_KEY_ID + "\nother stuff",
                 "error": "",
             },
         }

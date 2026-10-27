@@ -177,6 +177,29 @@ describe("MCP Server — real stdio transport: scan_secrets", () => {
     // scanFiles only returns entries with matches, so clean dir → empty array
     expect(parsed).toHaveLength(0);
   });
+
+  // sable-ilbx — a permission-denied file must surface as unreadable, not be
+  // reported as a clean, empty scan.
+  it("reports an unreadable file in a separate block", async () => {
+    const f = path.join(tmpDir, "secret.env");
+    fs.writeFileSync(f, "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdef1234567890ABCDEFGHIJKL\n");
+    fs.chmodSync(f, 0o000);
+    try {
+      const result = await client.callTool({
+        name: "scan_secrets",
+        arguments: { path: f, engine: "patterns" },
+      });
+      expect(result.isError).toBeFalsy();
+      const content = result.content as Array<{ text: string }>;
+      expect(JSON.parse(content[0].text)).toHaveLength(0);
+      const meta = content.map((c) => JSON.parse(c.text)).find((o) => o.unreadable);
+      expect(meta).toBeTruthy();
+      expect(meta.unreadable_count).toBe(1);
+      expect(meta.unreadable[0].file).toBe(f);
+    } finally {
+      fs.chmodSync(f, 0o644);
+    }
+  });
 });
 
 // The triage loop the suppress_finding description promises: once a finding
@@ -258,6 +281,45 @@ describe("MCP Server — real stdio transport: evaluate_command", () => {
     expect(parsed.allowed).toBe(false);
     expect(parsed.risk_level).toBe("critical");
     expect(parsed.reason).toBeTruthy();
+  });
+});
+
+// sable-ykuh — a required inputSchema field left out used to reach the handler
+// and crash it with a raw TypeError, surfacing as a protocol -32603 internal
+// error. It must instead come back as a clean tool error naming the field,
+// matching the Python server (FastMCP rejects the call before the handler).
+describe("MCP Server — real stdio transport: missing required arguments", () => {
+  let client: Client;
+  let transport: StdioClientTransport;
+
+  beforeAll(async () => {
+    ({ client, transport } = await createConnectedClient());
+  });
+
+  afterAll(async () => {
+    await client.close();
+  });
+
+  it("returns a clean tool error when evaluate_command omits command", async () => {
+    const result = await client.callTool({
+      name: "evaluate_command",
+      arguments: {},
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("command");
+  });
+
+  it("returns a clean tool error when scan_secrets omits path", async () => {
+    const result = await client.callTool({
+      name: "scan_secrets",
+      arguments: {},
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("path");
   });
 });
 
