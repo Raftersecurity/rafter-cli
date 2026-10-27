@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-10-27
+
+### Added
+
+- **`rafter agent init` and `rafter agent install-hook` accept `--quiet`** (#31). `--quiet` suppresses informational and success output; warnings and errors still go to stderr, and the setup (and any hook backup) still runs. When combined with `--dry-run`, the dry-run plan stays visible. Both Node and Python.
+
+### Changed
+
+- **The PreToolUse hook defers to the agent platform's own permissions instead of pre-approving.** When rafter has no objection to a command it no longer emits an allow decision; `rafter hook pretool` returns no decision, so the agent platform's normal permission prompt applies again. Commands rafter blocks are denied exactly as before. Per format: `claude`/Codex/Continue get `{}` with no `permissionDecision`, `gemini` `{}`, `windsurf` exit 0 with no output.
+
 ### Fixed
 
+- **`rafter secrets` now records each scan in the audit log**, so the "run `rafter agent audit`" hint the scanner prints is true. Counts and pattern names only — never a matched value, redacted or otherwise; the audit log must not become a second place secrets live.
+- **Bundled skills load in non-interactive agent sessions** (CI, SDK, `claude -p`). They declared `allowed-tools`, which needs a permission approval a non-interactive session cannot give, so a skill came back as only its description; the field was removed from every bundled skill. Rafter commands a skill suggests now go through the session's normal permission flow.
+- **The Python CLI's `--help` no longer crashes when `click` 8.2+ is installed.** `rafter --help` and every subcommand `--help` raised `TypeError: Parameter.make_metavar() missing 'ctx'` in an environment where something else pulled `click>=8.2`; moving to `typer>=0.16` resolves it. A CI step now installs the newest `click` and runs `--help` so this cannot regress behind the lockfile.
 - **`rafter agent disable` no longer deletes user content from a shared instruction file; it removes only Rafter's managed block.** `disable aider.read` deleted the whole `RAFTER.md`, and in Python `disable cursor.instructions` deleted the whole `~/.cursor/rules/rafter-security.mdc`, even when the user had written their own content around Rafter's `<!-- rafter:start -->`/`<!-- rafter:end -->` block. Disable now excises only that block and preserves the surrounding text; the file is removed only when nothing but the block remained. The `.aider.conf.yml` `read:` entry is still removed as before. Both Node and Python.
 - **The PostToolUse hook now redacts secrets echoed in a tool's `error` field, not only `output` and `content`.** A tool that failed and printed a credential in its error text passed it through un-redacted, contrary to the documented contract that the hook redacts any secrets found. Both Node and Python.
 
