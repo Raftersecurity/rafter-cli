@@ -253,6 +253,34 @@ describe("rafter agent enable / disable", () => {
     expect(fs.existsSync(path.join(home, "RAFTER.md"))).toBe(false);
   });
 
+  it("aider.read disable preserves user content outside the managed block", () => {
+    const rafterMd = path.join(home, "RAFTER.md");
+    // Enable writes a fresh RAFTER.md (the managed block) + the read: entry.
+    runCli("agent enable aider.read", home);
+    const managed = fs.readFileSync(rafterMd, "utf-8");
+    expect(managed).toContain("<!-- rafter:start -->");
+
+    // User wraps their own notes around the managed block.
+    fs.writeFileSync(
+      rafterMd,
+      `# My project notes\nKeep this line.\n\n${managed}\n## My own section\nDo not delete me.\n`,
+      "utf-8",
+    );
+
+    runCli("agent disable aider.read", home);
+
+    // The file survives, the block is gone, and both user sections remain.
+    expect(fs.existsSync(rafterMd)).toBe(true);
+    const after = fs.readFileSync(rafterMd, "utf-8");
+    expect(after).toContain("Keep this line.");
+    expect(after).toContain("Do not delete me.");
+    expect(after).not.toContain("<!-- rafter:start -->");
+    expect(after).not.toContain("<!-- rafter:end -->");
+    expect(after).not.toContain("Security: Rafter");
+    // The read: entry is still removed from the aider config.
+    expect(fs.readFileSync(path.join(home, ".aider.conf.yml"), "utf-8")).not.toContain("RAFTER.md");
+  });
+
   it("records enabled=true/false in ~/.rafter/config.json for each toggle", () => {
     fs.mkdirSync(path.join(home, ".cursor"), { recursive: true });
     runCli("agent enable cursor.mcp", home);

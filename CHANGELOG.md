@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`rafter agent disable` no longer deletes user content from a shared instruction file; it removes only Rafter's managed block.** `disable aider.read` deleted the whole `RAFTER.md`, and in Python `disable cursor.instructions` deleted the whole `~/.cursor/rules/rafter-security.mdc`, even when the user had written their own content around Rafter's `<!-- rafter:start -->`/`<!-- rafter:end -->` block. Disable now excises only that block and preserves the surrounding text; the file is removed only when nothing but the block remained. The `.aider.conf.yml` `read:` entry is still removed as before. Both Node and Python.
+
 - **The PreToolUse hook now evaluates shell and file-write tools under each platform's own name, not only `Bash`, `Write` and `Edit`.** Shell commands from Gemini CLI (`run_shell_command`) and Cursor's `preToolUse` (`Shell`) go through the command policy, and file writes from Gemini CLI (`write_file`, `replace`), Codex (`apply_patch`), `MultiEdit`, Continue's `Write` (`filepath`) and Windsurf's `pre_write_code` edits go through the same write checks as `Write`/`Edit`. The tools recognized per platform are listed in CLI_SPEC. Both Node and Python.
 
 ## [0.11.1] - 2026-10-22
