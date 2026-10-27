@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`rafter gates [path]` maps a codebase's security gates for an audit.** It lists the functions whose names say they decide whether something is allowed (authorize, authenticate, `can*`, `is*Allowed`, `check*`, `verify*`, middleware and similar), ranked by name and path, and groups gates that implement the same contract (sync and async variants, two backends, v1 and v2), flagging a group when one member lacks a guard call (escaping, path normalization or containment, constant-time compare, expiry, limits) that another makes. Go, Python, JavaScript, TypeScript, Java and Ruby; test, vendored and generated code is skipped and `.gitignore` is honored. Static and offline, with text output sized for an agent and `--json`. The `rafter-code-review` skill's audit path now starts with it. Both Node and Python, with identical output.
 
+### Changed
+
+- **The `rafter-code-review` skill now fires on security audits, not only on diffs.** Its description names codebase audits and finding vulnerabilities, and is shorter. Its audit path starts with a security-gate checklist: inventory the functions that decide whether something is allowed, then try to make each say yes wrongly (loose matching, fail-open logic, missing validity checks, security values set but never read, a twin implementation that lost its guard, containment, escaping and limits).
+
 ## [0.11.1] - 2026-10-22
 
 ### Added
