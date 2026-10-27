@@ -95,7 +95,7 @@ class TestGenerateClaudeConfig:
     def test_has_write_edit_matcher(self):
         config = json.loads(_generate_claude_config())
         matchers = [entry["matcher"] for entry in config["hooks"]["PreToolUse"]]
-        assert "Write|Edit" in matchers
+        assert "Write|Edit|MultiEdit" in matchers
 
     def test_hook_command(self):
         config = json.loads(_generate_claude_config())

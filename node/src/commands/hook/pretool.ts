@@ -251,7 +251,8 @@ const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "write_file", "replac
  * Map each write tool's input onto the { file_path, content } shape that
  * evaluateWrite reads: Continue's Write names its path `filepath`; MultiEdit
  * and Windsurf's pre_write_code carry `edits[].new_string`; Codex's
- * apply_patch carries the whole patch in `command`.
+ * apply_patch carries the whole patch in `command`, with its target paths
+ * in the patch headers (`patch_paths`).
  */
 function normalizeWriteInput(toolName: string, input: Record<string, any>): Record<string, any> {
   const out = { ...input };
@@ -263,7 +264,28 @@ function normalizeWriteInput(toolName: string, input: Record<string, any>): Reco
       out.content = input.command;
     }
   }
+  if (toolName === "apply_patch" && typeof input.command === "string") {
+    out.patch_paths = applyPatchPaths(input.command);
+  }
   return out;
+}
+
+/**
+ * Every path an apply_patch names. The patch format carries its targets only
+ * in hunk headers, which Codex matches on the trimmed line:
+ * `*** Add File: <path>`, `*** Update File: <path>`, `*** Delete File: <path>`
+ * and `*** Move to: <path>` (codex-rs/apply-patch, apply_patch.lark).
+ */
+const APPLY_PATCH_HEADERS = ["*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "];
+
+function applyPatchPaths(patch: string): string[] {
+  const paths: string[] = [];
+  for (const raw of patch.split("\n")) {
+    const line = raw.trim();
+    const header = APPLY_PATCH_HEADERS.find((h) => line.startsWith(h));
+    if (header) paths.push(line.slice(header.length).trim());
+  }
+  return paths;
 }
 
 function evaluateBash(command: string, control: HookControl): HookDecision {
@@ -352,8 +374,9 @@ function writesRafterSecurityConfig(filePath: string): boolean {
 function evaluateWrite(toolInput: Record<string, any>): HookDecision {
   // rf-vnxs: checked FIRST, and before the no-content early return, because a
   // truncating write with empty content disables the hook just as well as one
-  // carrying JSON.
-  if (writesRafterSecurityConfig(toolInput.file_path ?? "")) {
+  // carrying JSON. apply_patch names its targets only in the patch headers.
+  const targets: string[] = [toolInput.file_path ?? "", ...(toolInput.patch_paths ?? [])];
+  if (targets.some(writesRafterSecurityConfig)) {
     return {
       decision: "deny",
       reason:
