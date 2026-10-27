@@ -330,6 +330,28 @@ class TestPosttool:
         modified = data["hookSpecificOutput"]["modifiedToolResult"]
         assert modified["error"] == "some stderr message"
 
+    def test_secret_in_error_is_redacted(self):
+        import json
+        from rafter_cli.commands.hook import hook_app
+        from typer.testing import CliRunner
+
+        # sable-t578 — a tool that fails and echoes a credential in its error
+        # text must have it redacted too, not only output/content.
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "deploy"},
+            "tool_response": {
+                "output": "",
+                "error": "auth failed: " + FAKE_AWS_KEY_ID,
+            },
+        }
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
+        data = json.loads(result.output.strip())
+        modified = data["hookSpecificOutput"]["modifiedToolResult"]
+        assert FAKE_AWS_KEY_ID not in modified["error"]
+        assert "****" in modified["error"]
+
     def test_invalid_json_passes_through(self):
         import json
         from rafter_cli.commands.hook import hook_app
