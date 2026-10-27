@@ -108,3 +108,47 @@ describe("hook pretool still denies a blocked command", () => {
     expect(r.stderr).toContain("Rafter blocked");
   });
 });
+
+// Each platform names its shell and file-write tools differently. The same
+// policy must apply whatever the tool is called: a blocked command (or a write
+// carrying a secret) through the platform's own tool name is denied, and a
+// benign one gets the usual no-objection answer.
+const FAKE_KEY = "AKIA" + "IOSFODNN7" + "ABCDEFG";
+const NATIVE_TOOLS: { name: string; format: Format; payload: (bad: boolean) => object }[] = [
+  { name: "gemini run_shell_command", format: "gemini",
+    payload: (bad) => ({ tool_name: "run_shell_command", tool_input: { command: bad ? "rm -rf /" : "ls -la" } }) },
+  { name: "gemini write_file", format: "gemini",
+    payload: (bad) => ({ tool_name: "write_file", tool_input: { file_path: "a.ts", content: bad ? FAKE_KEY : "hello" } }) },
+  { name: "gemini replace", format: "gemini",
+    payload: (bad) => ({ tool_name: "replace", tool_input: { file_path: "a.ts", old_string: "x", new_string: bad ? FAKE_KEY : "hello" } }) },
+  { name: "cursor Shell", format: "cursor",
+    payload: (bad) => ({ hook_event_name: "preToolUse", tool_name: "Shell", tool_input: { command: bad ? "rm -rf /" : "ls -la" } }) },
+  { name: "codex apply_patch", format: "claude",
+    payload: (bad) => ({ tool_name: "apply_patch", tool_input: { command: `*** Begin Patch\n*** Add File: a.ts\n+${bad ? FAKE_KEY : "hello"}\n*** End Patch` } }) },
+  // Continue's Write names its path "filepath"; the rafter-config guard must still see it.
+  { name: "continue Write", format: "claude",
+    payload: (bad) => ({ tool_name: "Write", tool_input: { filepath: bad ? path.join(home, ".rafter", "config.json") : "a.ts", content: "{}" } }) },
+  { name: "continue MultiEdit", format: "claude",
+    payload: (bad) => ({ tool_name: "MultiEdit", tool_input: { file_path: "a.ts", edits: [{ old_string: "x", new_string: bad ? FAKE_KEY : "hello" }] } }) },
+  { name: "windsurf pre_write_code edits", format: "windsurf",
+    payload: (bad) => ({ agent_action_name: "pre_write_code", tool_info: { file_path: "a.ts", edits: [{ old_string: "x", new_string: bad ? FAKE_KEY : "hello" }] } }) },
+];
+
+function isDeny(format: Format, r: ReturnType<typeof runHook>): boolean {
+  if (format === "windsurf") return r.status === 2;
+  const out = JSON.parse(r.stdout);
+  if (format === "cursor") return out.permission === "deny";
+  if (format === "gemini") return out.decision === "deny";
+  return out.hookSpecificOutput?.permissionDecision === "deny";
+}
+
+describe("hook pretool evaluates each platform's own tool names", () => {
+  for (const t of NATIVE_TOOLS) {
+    it(`${t.name}: denied when bad, no objection when benign`, () => {
+      expect(isDeny(t.format, runHook(t.format, t.payload(true)))).toBe(true);
+      const ok = runHook(t.format, t.payload(false));
+      expect(ok.status).toBe(0);
+      expect(isDeny(t.format, ok)).toBe(false);
+    });
+  }
+});
