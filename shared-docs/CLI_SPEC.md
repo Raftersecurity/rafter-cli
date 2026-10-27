@@ -1393,7 +1393,7 @@ Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not a
 
 **Ignore rules (`ignore:`):** suppress findings without removing them from the audit trail. Each entry needs `paths:` (a non-empty list of globs); `rules:` is optional (omitting it suppresses every rule on the matched paths) and `reason:` is surfaced verbatim in the JSON `_suppressed` output. First entry that matches wins, so put more specific entries earlier.
 
-These rules are honored identically by the **local** CLI engines (Node and Python) and by the **remote `rafter run`** backend — they read the same `.rafter.yml` (and `.rafter/config.yml`) `ignore:` block. The matching contract is fixed and the same on every engine:
+These rules are honored identically by the **local** CLI engines (Node and Python) and by the **remote `rafter run`** backend — they read the same `.rafter.yml` (and `.rafter/config.yml`) `ignore:` block. The legacy `.rafterignore` file is read by the local engines only; the remote backend does not read it, so suppress remote findings with `.rafter.yml` `ignore:`. The matching contract is fixed and the same on every engine:
 
 *Path globs (`paths:`)* — gitignore/minimatch semantics:
 - A bare pattern with no `/` (e.g. `*.env`) matches against the file **basename** anywhere in the tree (so it matches `config/.env`).
