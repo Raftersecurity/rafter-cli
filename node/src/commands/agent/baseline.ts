@@ -3,9 +3,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fmt } from "../../utils/formatter.js";
-import { RegexScanner } from "../../scanners/regex-scanner.js";
-import { BetterleaksScanner } from "../../scanners/betterleaks.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { selectEngine, scanFile, scanDirectory } from "./scan.js";
 
 const BASELINE_PATH = path.join(os.homedir(), ".rafter", "baseline.json");
 
@@ -79,13 +78,19 @@ function createBaselineCreateCommand(): Command {
 
       console.error(`Scanning ${resolvedPath} to build baseline...`);
 
-      const engine = await selectEngine(opts.engine || "auto");
+      // Use the same engine selection and union the scan command uses, so the
+      // baseline captures exactly what a later `rafter secrets` would find
+      // (sable-qb9g). In `auto` this runs BOTH engines and unions; the old
+      // local helpers ran betterleaks-only, so a secret only the patterns
+      // engine catches never made it into the baseline.
+      const autoUpdate = scanCfg?.autoUpdateBetterleaks !== false;
+      const { engine } = await selectEngine(opts.engine || "auto", false, autoUpdate);
       let results;
 
       if (fs.statSync(resolvedPath).isDirectory()) {
         results = await scanDirectory(resolvedPath, engine, scanCfg);
       } else {
-        results = await scanFile(resolvedPath, engine);
+        results = await scanFile(resolvedPath, engine, scanCfg);
       }
 
       const now = new Date().toISOString();
@@ -202,56 +207,3 @@ function createBaselineAddCommand(): Command {
     });
 }
 
-// ── helpers ─────────────────────────────────────────────────────────
-
-async function selectEngine(preference: string): Promise<"betterleaks" | "patterns"> {
-  if (preference === "patterns") return "patterns";
-  if (preference === "betterleaks") {
-    const b = new BetterleaksScanner();
-    return (await b.isAvailable()) ? "betterleaks" : "patterns";
-  }
-  if (preference !== "auto") {
-    console.error(`Invalid engine: ${preference}. Valid values: auto, betterleaks, patterns`);
-    process.exit(2);
-  }
-  const b = new BetterleaksScanner();
-  return (await b.isAvailable()) ? "betterleaks" : "patterns";
-}
-
-async function scanFile(
-  filePath: string,
-  engine: "betterleaks" | "patterns",
-) {
-  if (engine === "betterleaks") {
-    try {
-      const b = new BetterleaksScanner();
-      const r = await b.scanFile(filePath);
-      return r.matches.length > 0 ? [r] : [];
-    } catch {
-      const s = new RegexScanner();
-      const r = s.scanFile(filePath);
-      return r.matches.length > 0 ? [r] : [];
-    }
-  }
-  const s = new RegexScanner();
-  const r = s.scanFile(filePath);
-  return r.matches.length > 0 ? [r] : [];
-}
-
-async function scanDirectory(
-  dirPath: string,
-  engine: "betterleaks" | "patterns",
-  scanCfg?: { excludePaths?: string[] },
-) {
-  if (engine === "betterleaks") {
-    try {
-      const b = new BetterleaksScanner();
-      return await b.scanDirectory(dirPath);
-    } catch {
-      const s = new RegexScanner();
-      return s.scanDirectory(dirPath, { excludePaths: scanCfg?.excludePaths });
-    }
-  }
-  const s = new RegexScanner();
-  return s.scanDirectory(dirPath, { excludePaths: scanCfg?.excludePaths });
-}

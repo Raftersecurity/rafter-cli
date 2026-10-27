@@ -796,7 +796,7 @@ function diffModeReport(opts: ScanOpts): EngineReport {
  * scanning. The caller resolves this from `--no-auto-update` and the
  * `scan.auto_update_betterleaks` config key.
  */
-async function selectEngine(
+export async function selectEngine(
   preference: string,
   quiet: boolean,
   autoUpdate = true,
@@ -901,7 +901,7 @@ export function autoUpdateEnabled(
 /**
  * Scan a file with selected engine
  */
-async function scanFile(
+export async function scanFile(
   filePath: string,
   engine: ResolvedEngine,
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; autoUpdateBetterleaks?: boolean },
@@ -956,7 +956,7 @@ function errorText(e: unknown): string {
 /**
  * Scan a directory with selected engine
  */
-async function scanDirectory(
+export async function scanDirectory(
   dirPath: string,
   engine: ResolvedEngine,
   scanCfg?: { excludePaths?: string[]; customPatterns?: Array<{ name: string; regex: string; severity: string }>; autoUpdateBetterleaks?: boolean },
