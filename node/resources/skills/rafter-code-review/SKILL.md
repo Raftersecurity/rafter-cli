@@ -1,7 +1,7 @@
 ---
 name: rafter-code-review
 description: "Security review of code: auditing a codebase, finding vulnerabilities in a module, or reviewing a diff before calling work on auth, input, SQL, shell or crypto done. Walks a security-gate checklist (allowlists, auth checks, token and crypto validity, path containment, escaping, limits) and OWASP/CWE questions, with file:line evidence. NOT for secret scanning alone (rafter secrets)."
-version: 0.8.1
+version: 0.8.2
 ---
 
 # Rafter Code Review — Structured Security Walkthroughs
@@ -36,7 +36,7 @@ For: "audit this codebase", "review X for vulnerabilities", any review not limit
 
 Most real bugs in mature code are a **gate** (a function that decides whether something is allowed) that says yes when it should say no, not a tainted sink. So:
 
-1. **Inventory the gates.** Grep for functions that decide: `authorize`, `authenticate`, `allow`, `permit`, `can*`, `is*Allowed`, `check*`, `verify*`, `validate*`, `match*`, middleware. Note each one's contract in one sentence before reading the body.
+1. **Inventory the gates.** Run `rafter gates .` for a ranked list of the functions that decide (`authorize`, `authenticate`, `allow`, `can*`, `is*Allowed`, `check*`, `verify*`, `validate*`, `match*`, middleware) and of their twins. A flagged twin lacks a guard call its siblings make; read those first. Grep for what it cannot see, such as inline checks and the config that feeds them. Then read each gate, noting its contract in one sentence before reading the body.
 2. **For each gate, name an input the contract rejects and the code accepts.** The usual shapes:
    - **Loose matching:** substring, prefix or suffix where equality or a dot-boundary was needed; case folding on one side only; wildcards or an empty list that mean "allow all"; comparing a truncated value.
    - **Fail-open logic:** the wrong variable checked; a check applied to some request kinds and skipped for others; an early `return true`/`nil` on error; inverted `==`/`!=`; `||` for `&&`; a default branch that grants.

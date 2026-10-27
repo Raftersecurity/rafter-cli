@@ -19,6 +19,7 @@ import { createNotifyCommand } from "./commands/notify.js";
 import { createCompletionCommand } from "./commands/completion.js";
 import { createIssuesCommand } from "./commands/issues/index.js";
 import { createReportCommand } from "./commands/report.js";
+import { createGatesCommand } from "./commands/gates.js";
 import { createSitesCommand } from "./commands/sites/index.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
@@ -96,6 +97,9 @@ program.addCommand(createNotifyCommand());
 
 // HTML security report
 program.addCommand(createReportCommand());
+
+// Gates — static map of security gates for an audit
+program.addCommand(createGatesCommand());
 
 // Shell completions
 program.addCommand(createCompletionCommand());
