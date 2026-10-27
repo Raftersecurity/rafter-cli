@@ -548,13 +548,44 @@ def _evaluate_tool_call(payload: dict, fmt: str) -> dict:
     if not control.hook_enabled:
         return {"decision": "allow"}
 
-    if tool_name == "Bash":
+    if tool_name in _SHELL_TOOLS:
         return _evaluate_bash(tool_input.get("command", ""), control)
-    if tool_name in ("Write", "Edit"):
+    if tool_name in _WRITE_TOOLS:
         if not control.secret_scan_enabled:
             return {"decision": "allow"}
-        return _evaluate_write(tool_input)
+        return _evaluate_write(_normalize_write_input(tool_name, tool_input))
     return {"decision": "allow"}
+
+
+# Shell and file-write tools under each platform's own name, so the same
+# policy applies whatever the tool is called.
+#   Shell: Bash (Claude Code, Codex, Continue), Shell (Cursor preToolUse),
+#          run_shell_command (Gemini CLI).
+#   Write: Write/Edit (Claude Code, Continue, Cursor), MultiEdit (Claude Code,
+#          Continue), write_file/replace (Gemini CLI), apply_patch (Codex).
+_SHELL_TOOLS = frozenset({"Bash", "Shell", "run_shell_command"})
+_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "write_file", "replace", "apply_patch"})
+
+
+def _normalize_write_input(tool_name: str, tool_input: dict) -> dict:
+    """Map each write tool's input onto the {file_path, content} shape _evaluate_write reads.
+
+    Continue's Write names its path ``filepath``; MultiEdit and Windsurf's
+    pre_write_code carry ``edits[].new_string``; Codex's apply_patch carries
+    the whole patch in ``command``.
+    """
+    out = dict(tool_input)
+    if "file_path" not in out and isinstance(tool_input.get("filepath"), str):
+        out["file_path"] = tool_input["filepath"]
+    if not out.get("content") and not out.get("new_string"):
+        edits = tool_input.get("edits")
+        if isinstance(edits, list):
+            out["content"] = "\n".join(
+                e["new_string"] for e in edits if isinstance(e, dict) and isinstance(e.get("new_string"), str)
+            )
+        elif tool_name == "apply_patch" and isinstance(tool_input.get("command"), str):
+            out["content"] = tool_input["command"]
+    return out
 
 
 def _deny_on_error(exc: Exception) -> dict:

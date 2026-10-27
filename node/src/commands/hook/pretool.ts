@@ -224,16 +224,46 @@ function evaluateToolCall(payload: HookInput): HookDecision {
   const control = resolveHookControl();
   if (!control.hookEnabled) return { decision: "allow" };
 
-  if (tool_name === "Bash") {
+  if (SHELL_TOOLS.has(tool_name)) {
     return evaluateBash(tool_input?.command || "", control);
   }
 
-  if (tool_name === "Write" || tool_name === "Edit") {
+  if (WRITE_TOOLS.has(tool_name)) {
     if (!control.secretScanEnabled) return { decision: "allow" };
-    return evaluateWrite(tool_input || {});
+    return evaluateWrite(normalizeWriteInput(tool_name, tool_input || {}));
   }
 
   return { decision: "allow" };
+}
+
+/**
+ * Shell and file-write tools under each platform's own name, so the same
+ * policy applies whatever the tool is called.
+ *   Shell: Bash (Claude Code, Codex, Continue), Shell (Cursor preToolUse),
+ *          run_shell_command (Gemini CLI).
+ *   Write: Write/Edit (Claude Code, Continue, Cursor), MultiEdit (Claude Code,
+ *          Continue), write_file/replace (Gemini CLI), apply_patch (Codex).
+ */
+const SHELL_TOOLS = new Set(["Bash", "Shell", "run_shell_command"]);
+const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "write_file", "replace", "apply_patch"]);
+
+/**
+ * Map each write tool's input onto the { file_path, content } shape that
+ * evaluateWrite reads: Continue's Write names its path `filepath`; MultiEdit
+ * and Windsurf's pre_write_code carry `edits[].new_string`; Codex's
+ * apply_patch carries the whole patch in `command`.
+ */
+function normalizeWriteInput(toolName: string, input: Record<string, any>): Record<string, any> {
+  const out = { ...input };
+  if (out.file_path === undefined && typeof input.filepath === "string") out.file_path = input.filepath;
+  if (!out.content && !out.new_string) {
+    if (Array.isArray(input.edits)) {
+      out.content = input.edits.map((e: any) => (typeof e?.new_string === "string" ? e.new_string : "")).join("\n");
+    } else if (toolName === "apply_patch" && typeof input.command === "string") {
+      out.content = input.command;
+    }
+  }
+  return out;
 }
 
 function evaluateBash(command: string, control: HookControl): HookDecision {

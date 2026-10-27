@@ -106,3 +106,60 @@ def test_blocked_command_still_denied_in_every_format(home):
     w = _run(home, "windsurf", _PAYLOADS["windsurf"]["blocked"])
     assert w.returncode == 2
     assert "Rafter blocked" in w.stderr
+
+
+# Each platform names its shell and file-write tools differently. The same
+# policy must apply whatever the tool is called: a blocked command (or a write
+# carrying a secret) through the platform's own tool name is denied, and a
+# benign one gets the usual no-objection answer.
+_FAKE_KEY = "AKIA" + "IOSFODNN7" + "ABCDEFG"
+
+
+def _patch(line: str) -> str:
+    return f"*** Begin Patch\n*** Add File: a.ts\n+{line}\n*** End Patch"
+
+
+_NATIVE_TOOLS = {
+    "gemini run_shell_command": ("gemini", lambda bad, home: {
+        "tool_name": "run_shell_command", "tool_input": {"command": "rm -rf /" if bad else "ls -la"}}),
+    "gemini write_file": ("gemini", lambda bad, home: {
+        "tool_name": "write_file", "tool_input": {"file_path": "a.ts", "content": _FAKE_KEY if bad else "hello"}}),
+    "gemini replace": ("gemini", lambda bad, home: {
+        "tool_name": "replace",
+        "tool_input": {"file_path": "a.ts", "old_string": "x", "new_string": _FAKE_KEY if bad else "hello"}}),
+    "cursor Shell": ("cursor", lambda bad, home: {
+        "hook_event_name": "preToolUse", "tool_name": "Shell",
+        "tool_input": {"command": "rm -rf /" if bad else "ls -la"}}),
+    "codex apply_patch": ("claude", lambda bad, home: {
+        "tool_name": "apply_patch", "tool_input": {"command": _patch(_FAKE_KEY if bad else "hello")}}),
+    # Continue's Write names its path "filepath"; the rafter-config guard must still see it.
+    "continue Write": ("claude", lambda bad, home: {
+        "tool_name": "Write",
+        "tool_input": {"filepath": os.path.join(home, ".rafter", "config.json") if bad else "a.ts", "content": "{}"}}),
+    "continue MultiEdit": ("claude", lambda bad, home: {
+        "tool_name": "MultiEdit",
+        "tool_input": {"file_path": "a.ts", "edits": [{"old_string": "x", "new_string": _FAKE_KEY if bad else "hello"}]}}),
+    "windsurf pre_write_code edits": ("windsurf", lambda bad, home: {
+        "agent_action_name": "pre_write_code",
+        "tool_info": {"file_path": "a.ts", "edits": [{"old_string": "x", "new_string": _FAKE_KEY if bad else "hello"}]}}),
+}
+
+
+def _is_deny(fmt: str, r: subprocess.CompletedProcess) -> bool:
+    if fmt == "windsurf":
+        return r.returncode == 2
+    out = json.loads(r.stdout)
+    if fmt == "cursor":
+        return out.get("permission") == "deny"
+    if fmt == "gemini":
+        return out.get("decision") == "deny"
+    return out.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+
+
+@pytest.mark.parametrize("name", list(_NATIVE_TOOLS))
+def test_platform_tool_names_are_evaluated(home, name):
+    fmt, payload = _NATIVE_TOOLS[name]
+    assert _is_deny(fmt, _run(home, fmt, payload(True, home)))
+    ok = _run(home, fmt, payload(False, home))
+    assert ok.returncode == 0, ok.stderr
+    assert not _is_deny(fmt, ok)

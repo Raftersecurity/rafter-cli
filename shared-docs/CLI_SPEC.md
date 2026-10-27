@@ -1108,6 +1108,19 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 
 Cursor is the one exception: its permission hooks block the action on an empty or schema-invalid response, so `permission` is required and there is no neutral value. `"ask"` would force a prompt on every call, so the hook sends `"allow"` there.
 
+**Tools evaluated.** Each platform names its shell and file-write tools differently; the hook applies the same command policy and the same write checks (rafter-config guard, secret scan) whatever the tool is called. Every format recognizes every name below; any other tool gets the no-objection answer.
+
+| Platform (format) | Shell tool → command policy | File-write tools → write checks |
+|-------------------|-----------------------------|---------------------------------|
+| Claude Code (`claude`) | `Bash` (`tool_input.command`) | `Write` (`content`), `Edit` (`new_string`), `MultiEdit` (`edits[].new_string`) |
+| Codex (`claude`) | `Bash` (`tool_input.command`) | `apply_patch` (the patch text in `tool_input.command`) |
+| Continue (`claude`) | `Bash` (`tool_input.command`) | `Write` (`filepath`, `content`), `Edit`, `MultiEdit` |
+| Gemini CLI (`gemini`) | `run_shell_command` (`tool_input.command`) | `write_file` (`content`), `replace` (`new_string`) |
+| Cursor (`cursor`) | `beforeShellExecution` (`command`); `preToolUse` with `Shell` (`tool_input.command`) | `preToolUse` with `Write`; `afterFileEdit` |
+| Windsurf (`windsurf`) | `pre_run_command` (`tool_info.command_line`) | `pre_write_code` (`tool_info.edits[].new_string`) |
+
+The write checks read the target from `file_path` (or `filepath`) and scan `content`, else `new_string`, else the joined `edits[].new_string`, else (for `apply_patch`) the patch text.
+
 **Approval-required commands are denied, not asked.** A Bash command the policy marks as requiring approval (for example `curl … | sh`, which is high risk) gets `deny`, the same decision as a blocked command; the hook never returns `ask`. The reason says a person must run `rafter agent exec '<command>'` at an interactive terminal to approve it (see the approval model under `rafter agent exec`). Both runtimes.
 
 On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
