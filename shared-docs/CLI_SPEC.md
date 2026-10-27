@@ -297,6 +297,7 @@ Initialize local security system. Creates config and detects available developme
 - `--with-betterleaks` — download and install Betterleaks binary (the gitleaks successor)
 - `--all` — install all detected integrations and download Betterleaks
 - `-i, --interactive` — guided setup — prompts for each detected integration (Node only)
+- `--quiet` — suppress informational, progress, and success output; warnings and errors remain visible on stderr. Initialization and integration installation still run normally. When combined with `--dry-run`, the dry-run plan remains visible.
 - `--update` — re-download betterleaks and reinstall integrations without resetting config
 - `--local` — install integration configs into the current working directory instead of the user home. Writes to `./.claude/`, `./.agents/`, `./.gemini/`, `./.cursor/` etc. Supports `--with-claude-code`, `--with-codex`, `--with-gemini`, `--with-cursor`. User-level side effects (global config, `agent.environments.*.enabled`, auto-detection, betterleaks download) are suppressed in this mode. Intended for benchmark harnesses, one-off project setup, and ephemeral containers.
 
@@ -440,14 +441,15 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `--format <format>` — output format: `text`, `json`, or `sarif` (default: `text`)
 - `--staged` — scan **added/modified lines only** in the git staged diff (`git diff -U0 --cached`); patterns engine only; reports `file:line` from the post-change side
 - `--diff <ref>` — scan **added/modified lines only** in the unified diff since `<ref>` (`git diff -U0 <ref>`); patterns engine only; pre-existing secrets in touched files are not re-flagged unless their line appears as `+` in the diff
-- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default). In `auto` mode rafter runs **both** engines when betterleaks is available and unions the findings (deduplicated conservatively by file + line + column + matched text — when the two engines extract a secret slightly differently it is reported once per engine rather than risk collapsing two distinct findings), so a secret one engine misses (e.g. betterleaks 1.1.x does not flag AWS access keys) is still caught by the other. Each finding then carries an `engines` array attributing which engine(s) surfaced it. `auto` degrades to patterns-only when betterleaks is absent or a stale binary can't be refreshed. `--engine betterleaks` / `--engine patterns` stay single-engine and omit the `engines` field.
+- `--range <a>..<b>` — scan **added/modified lines only** in a git commit range (`git diff -U0 <a>..<b>`); patterns engine only, same scope semantics as `--diff`. Lets a user scope the scan to a range's changed files instead of the whole tree on a large repo. A range that git would read as an option (leading `-`) exits `2`.
+- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default). In `auto` mode rafter runs **both** engines when betterleaks is available and unions the findings (deduplicated conservatively by file + line + column + matched text — when the two engines extract a secret slightly differently it is reported once per engine rather than risk collapsing two distinct findings), so a secret one engine misses (e.g. betterleaks 1.1.x does not flag AWS access keys) is still caught by the other. Each finding then carries an `engines` array attributing which engine(s) surfaced it. `auto` degrades to patterns-only when betterleaks is absent or a stale binary can't be refreshed. `--engine betterleaks` / `--engine patterns` stay single-engine and omit the `engines` field. The `--diff` / `--range` / `--staged` modes always scan with the patterns engine (a line scope is incompatible with betterleaks' whole-file `dir` scan); an explicit `--engine betterleaks` in those modes is reported as a degradation (see the engine fields below).
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
-- `--history` — scan the full git history for previously-committed secrets (requires `--engine betterleaks`; invokes `betterleaks git` against the repo history)
-- `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree. Applies to both engines: the patterns engine filters its walk that way, and betterleaks is handed the list from `git ls-files --cached --others --exclude-standard` instead of the directory (plus `-c` for the target's own `.betterleaks.toml` / `.gitleaks.toml` when no `BETTERLEAKS_CONFIG*` / `GITLEAKS_CONFIG*` env var is set). A betterleaks failure or timeout falls back to patterns with the cause in the warning.
+- `--history` — scan every line ever added on any ref (`git log -p -U0 --full-history --all`) instead of the working tree, so secrets in deleted files and rewritten lines are found. Uncommitted changes are not scanned. Each engine reads the history: betterleaks via `betterleaks git`, the patterns engine by streaming the log. `auto` unions the two as in a directory scan, and without betterleaks the patterns engine alone covers history. Findings are reported at `<repo root>/<path>` with the line number in the commit that added them, even when the file no longer exists. Outside a git repository, or if `git log` fails, the scan exits `2`.
+- `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree. Applies to both engines: the patterns engine filters its walk that way, and betterleaks is handed the list from `git ls-files --cached --others --exclude-standard` instead of the directory (plus `-c` for the target's own `.betterleaks.toml` / `.gitleaks.toml` when no `BETTERLEAKS_CONFIG*` / `GITLEAKS_CONFIG*` env var is set). betterleaks' run time scales with the length of that file list, so it is scanned in bounded batches (at most 64 files per invocation) whose findings are unioned by file — a few-hundred-file repo completes under the per-invocation timeout instead of timing out and dropping to patterns. A betterleaks failure or timeout still falls back to patterns, with the cause in the warning and recorded in the engine fields below.
 - `--auto-update` / `--no-auto-update` — auto-update a **stale rafter-managed betterleaks binary** before scanning (default: on). A leftover binary from an older rafter (a gitleaks-8.x install from before the rename, or an older betterleaks) runs `version` fine but emits a JSON shape the current parser rejects, which would otherwise silently yield **zero findings** on the default engine. When the managed binary's version doesn't match the pinned one, rafter downloads the pinned version (prompting first in an interactive TTY). `--no-auto-update` (or `scan.auto_update_betterleaks: false`) skips the update and falls back to the **patterns** engine for that scan, printing a one-line CTA (`rafter agent update-betterleaks`) — never a silent zero. Only the rafter-managed binary at `~/.rafter/bin/betterleaks` is auto-updated; a binary on `PATH` is left untouched (a non-array parse there warns with the same CTA).
 
-Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
+Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error — a bad path or ref, not a git repository, or a file that could not be read (a clean result over a file the scan could not open is reported as exit 2, not 0).
 
 > **Note:** `--watch` mode does not exit on findings — it prints results inline and keeps watching. Findings are logged to `audit.jsonl` in real time. Requires `chokidar` (Node, bundled) or `watchdog` (Python: `pip install watchdog`).
 
@@ -460,6 +462,9 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
   "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
   "scan_mode": "local",
   "triage_applied": false,
+  "engine_requested": "auto",
+  "engine_used": "both",
+  "degraded": false,
   "results": [
     {
       "file": "/absolute/path/to/file.ts",
@@ -488,6 +493,10 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
 | `_note` | string | Human-readable scan-mode note. JSON has no comments — this `_*` key is the convention. Surface it to users when reporting findings. |
 | `scan_mode` | string | Always `"local"` for local secret scans. Programmatic flag for agents to detect that no agentic-intelligence triage was applied. |
 | `triage_applied` | boolean | Always `false` for local scans. `true` would indicate backend agentic context evaluation (i.e., `rafter run`). |
+| `engine_requested` | string | The `--engine` value as requested: `"auto"`, `"betterleaks"`, or `"patterns"`. |
+| `engine_used` | string | The engine whose findings are in `results`: `"both"`, `"betterleaks"`, or `"patterns"`. Differs from `engine_requested` when betterleaks was wanted but could not run. |
+| `degraded` | boolean | `true` when betterleaks was requested or implied by `auto` but the patterns engine was used instead (betterleaks unavailable, a stale binary that could not be refreshed, or a scan-time timeout/crash). Lets a consumer detect that the stronger engine never ran rather than inferring a clean scan. |
+| `degraded_reason` | string | Present only when `degraded` is `true`: why the downgrade happened. |
 | `results` | array | Per-file findings. |
 
 **Per-file field reference:**
@@ -923,6 +932,7 @@ Install git pre-commit hook for automatic secret scanning.
 
 - `--global` — install globally for all repos (sets `core.hooksPath`)
 - `--push` — install pre-push hook instead of pre-commit
+- `--quiet` — suppress informational and success output while installing the Git hook; errors remain visible on stderr and retain a nonzero exit code. Works with local, `--global`, and `--push` installation.
 
 ### rafter agent config SUBCOMMAND
 
@@ -1087,13 +1097,39 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 
 - `--format <format>` — output format: `claude` (default, also works for Codex/Continue), `cursor`, `gemini`, `windsurf`
 
+**The hook only ever denies; otherwise it defers.** When rafter has no objection to a call, the hook returns the platform's no-decision answer, so the platform's own permission settings (allow/ask/deny rules, permission mode, prompts) decide the call as they would without rafter. It never approves a call: in Claude Code and Codex a PreToolUse `allow` skips the permission prompt, so an approving hook would make an agent more permissive with rafter installed than without it.
+
+| Format | Deny | No objection |
+|--------|------|--------------|
+| `claude` (Claude Code, Codex, Continue) | `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"<reason>"}}` | `{}` (no `permissionDecision`), exit 0 |
+| `gemini` | `{"decision":"deny","reason":"<reason>"}` | `{}`, exit 0 |
+| `windsurf` | reason on stderr, exit 2 | no output, exit 0 |
+| `cursor` | `{"permission":"deny","agentMessage":"<reason>","userMessage":"<reason>"}` | `{"permission":"allow"}` |
+
+Cursor is the one exception: its permission hooks block the action on an empty or schema-invalid response, so `permission` is required and there is no neutral value. `"ask"` would force a prompt on every call, so the hook sends `"allow"` there.
+
+**Tools evaluated.** Each platform names its shell and file-write tools differently; the hook applies the same command policy and the same write checks (rafter-config guard, secret scan) whatever the tool is called. Every format recognizes every name below; any other tool gets the no-objection answer.
+
+| Platform (format) | Shell tool → command policy | File-write tools → write checks |
+|-------------------|-----------------------------|---------------------------------|
+| Claude Code (`claude`) | `Bash` (`tool_input.command`) | `Write` (`content`), `Edit` (`new_string`), `MultiEdit` (`edits[].new_string`) |
+| Codex (`claude`) | `Bash` (`tool_input.command`) | `apply_patch` (the patch text in `tool_input.command`) |
+| Continue (`claude`) | `Bash` (`tool_input.command`) | `Write` (`filepath`, `content`), `Edit`, `MultiEdit` |
+| Gemini CLI (`gemini`) | `run_shell_command` (`tool_input.command`) | `write_file` (`content`), `replace` (`new_string`) |
+| Cursor (`cursor`) | `beforeShellExecution` (`command`); `preToolUse` with `Shell` (`tool_input.command`) | `preToolUse` with `Write`; `afterFileEdit` |
+| Windsurf (`windsurf`) | `pre_run_command` (`tool_info.command_line`) | `pre_write_code` (`tool_info.edits[].new_string`) |
+
+The write checks read the target from `file_path` (or `filepath`) and scan `content`, else `new_string`, else the joined `edits[].new_string`, else (for `apply_patch`) the patch text.
+
+**Approval-required commands are denied, not asked.** A Bash command the policy marks as requiring approval (for example `curl … | sh`, which is high risk) gets `deny`, the same decision as a blocked command; the hook never returns `ask`. The reason says a person must run `rafter agent exec '<command>'` at an interactive terminal to approve it (see the approval model under `rafter agent exec`). Both runtimes.
+
 On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
 
-**Errors fail closed.** Input that is not a JSON object is allowed (there is nothing to evaluate). Any unexpected exception while evaluating a call, for any tool, returns `deny` with the reason `rafter hook error: <type>: <message>; denying to be safe`, also printed to stderr. Conditions the loaders handle (a malformed `.rafter.yml` warns and falls back to defaults) are not errors. A failed audit-log write never changes a decision.
+**Errors fail closed.** Input that is not a JSON object gets the no-decision answer (there is nothing to evaluate). Any unexpected exception while evaluating a call, for any tool, returns `deny` with the reason `rafter hook error: <type>: <message>; denying to be safe`, also printed to stderr. Conditions the loaders handle (a malformed `.rafter.yml` warns and falls back to defaults) are not errors. A failed audit-log write never changes a decision.
 
 **Hook off-switch.** The hook can be disabled at runtime from **trusted sources only** — the `RAFTER_DISABLE_HOOKS` / `RAFTER_DISABLE_SECRET_SCAN` / `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on) and the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default is enabled; a corrupt config or unrecognized value fails safe to enabled. By design this is **never** read from project-local `.rafter.yml`, so a hostile repo cannot ship a config that silently disables a victim's hook. `rafter agent status` reports the effective state and its source. See `shared-docs/CONFIG.md` for the full configuration reference.
 
-**Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (`allow` / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
+**Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (no decision / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
 
 **Tolerates harness-appended flags.** Hook input arrives on **stdin**, so both subcommands ignore unknown options and extra positional args that an agent platform appends to the hook command — e.g. Claude Code adds `--hook-json <data>`. Such extras are discarded (the hook never errors on them); declared options like `--format` are still parsed normally.
 

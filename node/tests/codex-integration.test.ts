@@ -115,7 +115,7 @@ describe("Codex CLI Integration", () => {
       expect(skillContent).toContain("version:");
       if (name === "rafter") {
         expect(skillContent).toContain("name: rafter");
-        expect(skillContent).toContain("allowed-tools:");
+        expect(skillContent).toContain("description:");
       }
     });
   });

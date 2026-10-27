@@ -127,7 +127,7 @@ rafter agent exec "rm -rf /"              # critical -- blocked
 
 When installed via `rafter agent init --with-claude-code`, Rafter registers hooks in `~/.claude/settings.json`:
 
-- **PreToolUse** hooks on `Bash` and `Write|Edit` tool calls. Every shell command is evaluated against the risk policy before execution. Dangerous commands are blocked or require approval transparently -- no manual invocation needed.
+- **PreToolUse** hooks on `Bash` and `Write|Edit` tool calls. Every shell command is evaluated against the risk policy before execution. No manual invocation is needed. The hook cannot prompt, so a command that requires approval (such as `curl | sh`) is denied like a blocked one; the deny reason tells a person to run `rafter agent exec '<command>'` at an interactive terminal to approve it.
 - **PostToolUse** hooks on `Bash`, `Write`, `Edit`, and `MultiEdit` tool calls (`Bash|Write|Edit|MultiEdit` matcher). Scans command output and file writes for accidentally leaked secrets and redacts them. (Scoped to these tools so the hook doesn't fire on every `Read`/MCP call, which never produces secrets to redact and only added latency.)
 
 The hooks read JSON from stdin and write a `{"decision": "allow"}` or `{"decision": "deny", "reason": "..."}` response to stdout. This is the Claude Code hook protocol.

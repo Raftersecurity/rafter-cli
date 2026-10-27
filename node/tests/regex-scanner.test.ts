@@ -30,6 +30,38 @@ describe("RegexScanner", () => {
     expect(results.map((r) => path.relative(tmpDir, r.file))).toEqual(["creds.env"]);
   });
 
+  // sable-ilbx — a file that cannot be read is not a clean scan. The scanner
+  // swallowed the read error and returned nothing, so a permission-denied file
+  // looked identical to one with no secrets.
+  describe("unreadable files", () => {
+    it("scanFile surfaces a read error instead of an empty result", () => {
+      const f = path.join(tmpDir, "secret.env");
+      fs.writeFileSync(f, "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdef1234567890ABCDEFGHIJKL\n");
+      fs.chmodSync(f, 0o000);
+      try {
+        const res = scanner.scanFile(f);
+        expect(res.readError).toBeTruthy();
+        expect(res.matches).toHaveLength(0);
+      } finally {
+        fs.chmodSync(f, 0o644);
+      }
+    });
+
+    it("scanDirectory reports an unreadable file rather than dropping it", () => {
+      const f = path.join(tmpDir, "secret.env");
+      fs.writeFileSync(f, "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdef1234567890ABCDEFGHIJKL\n");
+      fs.chmodSync(f, 0o000);
+      try {
+        const results = scanner.scanDirectory(tmpDir, { respectGitignore: false });
+        const unreadable = results.filter((r) => r.readError);
+        expect(unreadable).toHaveLength(1);
+        expect(unreadable[0].file).toBe(f);
+      } finally {
+        fs.chmodSync(f, 0o644);
+      }
+    });
+  });
+
   describe("symlink handling", () => {
     it("should not follow symlinked directories", () => {
       // Create an "outside" directory with a secret

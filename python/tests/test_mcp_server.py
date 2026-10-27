@@ -183,6 +183,19 @@ class TestEvaluateCommand:
         result = handle_evaluate_command("chmod 777 /tmp/test")
         assert result["risk_level"] in ("medium", "high", "critical")
 
+    def test_missing_command_rejected_cleanly(self):
+        # sable-ykuh — the Node server crashed on a missing required argument
+        # with a raw TypeError (surfaced to the client as a -32603 internal
+        # error). Python validates the call against the tool signature and
+        # rejects it cleanly, naming the missing field, before the handler runs.
+        import asyncio
+
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        with pytest.raises(ToolError) as exc:
+            asyncio.run(create_mcp_server().call_tool("evaluate_command", {}))
+        assert "command" in str(exc.value)
+
 
 class TestReadAuditLog:
     def test_empty_log(self, tmp_path):

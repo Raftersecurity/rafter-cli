@@ -21,7 +21,7 @@ Every command (Bash-like tool call) gets classified into one of four tiers by `s
 |---|---|---|
 | `low` | Read-only, safe prefix (`ls`, `cat`, `grep`, `git status` …), no chaining | **approve** silently |
 | `medium` | State-changing but recoverable (package installs, git commits on current branch) | **approve with note** in audit log |
-| `high` | Destructive or privileged (force push, `sudo`, broad file deletion, curl | sh) | **prompt** the agent / user for approval |
+| `high` | Destructive or privileged (force push, `sudo`, broad file deletion, curl \| sh) | **deny**; the reason says a person must approve it with `rafter agent exec` at a terminal |
 | `critical` | Likely irreversible damage (`rm -rf /`, DB drop, wiping .git, repo-wide chmod) | **block** hard |
 
 Tiers are derived from regex patterns in `risk-rules.ts` (`CRITICAL_PATTERNS`, `HIGH_PATTERNS`, `MEDIUM_PATTERNS`) plus a `SAFE_PREFIX` allowlist. A command holding more than one statement disqualifies the safe-prefix shortcut. Statement separators are whatever the tokenizer treats as one — `&&`, `||`, `;`, `|`, `&`, and a NEWLINE — rather than a hand-kept list; the newline was missing from an earlier hand-kept copy and that was a live bypass.

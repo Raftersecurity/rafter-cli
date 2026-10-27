@@ -22,7 +22,7 @@ _POSTTOOL_IN = '{"tool_name":"Bash","tool_response":{"output":"ok"}}'
 def test_pretool_tolerates_hook_json():
     r = runner.invoke(hook_app, ["pretool", "--hook-json", "{}"], input=_PRETOOL_IN)
     assert r.exit_code == 0, r.output
-    assert json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert json.loads(r.stdout) == {}
 
 
 def test_posttool_tolerates_hook_json():
@@ -32,15 +32,17 @@ def test_posttool_tolerates_hook_json():
 
 
 def test_real_format_option_still_honored():
-    # gemini "allow" emits an empty object — proves --format wasn't swallowed.
+    # A gemini deny is a flat {"decision": "deny"}, distinct from the claude
+    # envelope — proves --format wasn't swallowed.
     r = runner.invoke(
-        hook_app, ["pretool", "--format", "gemini", "--hook-json", "{}"], input=_PRETOOL_IN
+        hook_app, ["pretool", "--format", "gemini", "--hook-json", "{}"],
+        input='{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}',
     )
     assert r.exit_code == 0, r.output
-    assert r.stdout.strip() == "{}"
+    assert json.loads(r.stdout)["decision"] == "deny"
 
 
 def test_no_extra_flag_unchanged():
     r = runner.invoke(hook_app, ["pretool"], input=_PRETOOL_IN)
     assert r.exit_code == 0, r.output
-    assert json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert json.loads(r.stdout) == {}

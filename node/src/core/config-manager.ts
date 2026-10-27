@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { RafterConfig } from "./config-schema.js";
 import { getDefaultConfig, getConfigPath, getRafterDir, CONFIG_VERSION } from "./config-defaults.js";
-import { loadPolicy } from "./policy-loader.js";
+import { loadPolicy, findPolicyFile } from "./policy-loader.js";
 
 const VALID_RISK_LEVELS = new Set(["minimal", "moderate", "aggressive"]);
 const VALID_COMMAND_MODES = new Set(["allow-all", "approve-dangerous", "deny-list"]);
@@ -338,11 +338,17 @@ export class ConfigManager {
   }
 
   /**
-   * Load config merged with .rafter.yml policy (policy wins)
+   * Load config merged with .rafter.yml policy (policy wins).
+   *
+   * `baseDir` is the scan target: the policy and its ignore globs are
+   * discovered and anchored from there, not the process cwd (sable-lu0j), so
+   * an ambient `.rafter.yml` in cwd cannot govern a scan of a different tree.
+   * Defaults to cwd, which is correct for `--staged`/hook runs that scan the
+   * repo the command runs in.
    */
-  loadWithPolicy(): RafterConfig {
+  loadWithPolicy(baseDir?: string): RafterConfig {
     const config = this.load();
-    const policy = loadPolicy();
+    const policy = loadPolicy(baseDir);
     if (!policy) return config;
 
     // Ensure agent block exists, AND that commandPolicy inside it does.
@@ -393,10 +399,15 @@ export class ConfigManager {
       }
     }
 
-    // Ignore rules — top-level policy key, applied per finding at scan time
+    // Ignore rules — top-level policy key, applied per finding at scan time.
+    // Record the directory the globs are relative to (the `.rafter.yml`'s own
+    // directory) so they anchor to the policy's tree, not an absolute path
+    // anywhere on disk (sable-lu0j).
     if (policy.ignore && config.agent) {
       if (!config.agent.scan) config.agent.scan = {};
       config.agent.scan.ignore = policy.ignore;
+      const policyPath = findPolicyFile(baseDir);
+      if (policyPath) config.agent.scan.ignoreBaseDir = path.dirname(policyPath);
     }
 
     // Audit settings

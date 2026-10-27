@@ -254,6 +254,17 @@ line 3`;
       expect(out).toContain("FOO=bar");
       expect(out).not.toContain("abcdef1234567890");
     });
+
+    // sable-fqrr: `agent exec` shell-quotes a token containing special
+    // characters, so the logged command has a quote right before NAME=. The
+    // (^|\s) anchor did not tolerate it, and the value went to the audit log
+    // unredacted. The anchor must also accept a leading quote.
+    it("redacts an env assignment preceded by a shell quote", () => {
+      const out = engine.redactText("env 'SECRET_TOKEN=supersecretvalue123' cmd");
+      expect(out).not.toContain("supersecretvalue123");
+      const dq = engine.redactText('env "API_KEY=supersecretvalue123" cmd');
+      expect(dq).not.toContain("supersecretvalue123");
+    });
   });
 });
 

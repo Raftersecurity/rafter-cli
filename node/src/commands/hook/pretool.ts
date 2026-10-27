@@ -65,6 +65,7 @@ interface HookInput {
 }
 
 interface HookDecision {
+  // "allow" = rafter has no objection; written as a no-decision (see writeDecision).
   decision: "allow" | "deny";
   reason?: string;
 }
@@ -223,16 +224,46 @@ function evaluateToolCall(payload: HookInput): HookDecision {
   const control = resolveHookControl();
   if (!control.hookEnabled) return { decision: "allow" };
 
-  if (tool_name === "Bash") {
+  if (SHELL_TOOLS.has(tool_name)) {
     return evaluateBash(tool_input?.command || "", control);
   }
 
-  if (tool_name === "Write" || tool_name === "Edit") {
+  if (WRITE_TOOLS.has(tool_name)) {
     if (!control.secretScanEnabled) return { decision: "allow" };
-    return evaluateWrite(tool_input || {});
+    return evaluateWrite(normalizeWriteInput(tool_name, tool_input || {}));
   }
 
   return { decision: "allow" };
+}
+
+/**
+ * Shell and file-write tools under each platform's own name, so the same
+ * policy applies whatever the tool is called.
+ *   Shell: Bash (Claude Code, Codex, Continue), Shell (Cursor preToolUse),
+ *          run_shell_command (Gemini CLI).
+ *   Write: Write/Edit (Claude Code, Continue, Cursor), MultiEdit (Claude Code,
+ *          Continue), write_file/replace (Gemini CLI), apply_patch (Codex).
+ */
+const SHELL_TOOLS = new Set(["Bash", "Shell", "run_shell_command"]);
+const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "write_file", "replace", "apply_patch"]);
+
+/**
+ * Map each write tool's input onto the { file_path, content } shape that
+ * evaluateWrite reads: Continue's Write names its path `filepath`; MultiEdit
+ * and Windsurf's pre_write_code carry `edits[].new_string`; Codex's
+ * apply_patch carries the whole patch in `command`.
+ */
+function normalizeWriteInput(toolName: string, input: Record<string, any>): Record<string, any> {
+  const out = { ...input };
+  if (out.file_path === undefined && typeof input.filepath === "string") out.file_path = input.filepath;
+  if (!out.content && !out.new_string) {
+    if (Array.isArray(input.edits)) {
+      out.content = input.edits.map((e: any) => (typeof e?.new_string === "string" ? e.new_string : "")).join("\n");
+    } else if (toolName === "apply_patch" && typeof input.command === "string") {
+      out.content = input.command;
+    }
+  }
+  return out;
 }
 
 function evaluateBash(command: string, control: HookControl): HookDecision {
@@ -512,6 +543,14 @@ function readStdin(): Promise<string> {
   });
 }
 
+/**
+ * Write the decision in the platform's format. The hook only ever DENIES: an
+ * internal "allow" means "rafter has no objection", and is written as the
+ * platform's no-decision form so the platform's own permission settings still
+ * apply. Approving would skip those settings (a Claude Code PreToolUse "allow"
+ * skips the permission prompt), making an agent more permissive with rafter
+ * installed than without it. Cursor is the one exception; see below.
+ */
 function writeDecision(decision: HookDecision, format: HookFormat): void {
   const isDeny = decision.decision === "deny";
   const reason = decision.reason ?? "";
@@ -519,6 +558,10 @@ function writeDecision(decision: HookDecision, format: HookFormat): void {
   switch (format) {
     case "cursor": {
       // Cursor: { permission: "allow"|"deny"|"ask", agentMessage?, userMessage? }
+      // Cursor has no neutral answer: its permission hooks block on an empty or
+      // schema-invalid response, so "allow" is the only way to let a call
+      // proceed. "ask" would force a prompt on every call, overriding the
+      // user's own allowlist in the other direction.
       const output: Record<string, any> = {
         permission: isDeny ? "deny" : "allow",
       };
@@ -531,7 +574,7 @@ function writeDecision(decision: HookDecision, format: HookFormat): void {
     }
 
     case "gemini": {
-      // Gemini: {} for allow, { decision: "deny", reason: "..." } for deny
+      // Gemini: {} for no decision, { decision: "deny", reason: "..." } for deny
       if (isDeny) {
         process.stdout.write(JSON.stringify({ decision: "deny", reason }) + "\n");
       } else {
@@ -541,21 +584,26 @@ function writeDecision(decision: HookDecision, format: HookFormat): void {
     }
 
     case "windsurf": {
-      // Windsurf: exit 0 for allow, exit 2 + stderr for deny
+      // Windsurf: exit 0 to proceed normally, exit 2 + stderr for deny
       if (isDeny) {
         process.stderr.write(reason + "\n");
         process.exit(2);
       }
-      // Allow: exit 0 (no output needed)
+      // No decision: exit 0 (no output needed)
       break;
     }
 
     default: {
-      // Claude Code / Codex / Continue.dev: hookSpecificOutput envelope
+      // Claude Code / Codex / Continue.dev: hookSpecificOutput envelope for a
+      // deny; `{}` (no permissionDecision) leaves the call to the normal flow.
+      if (!isDeny) {
+        process.stdout.write("{}\n");
+        break;
+      }
       const output = {
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
-          permissionDecision: isDeny ? "deny" : "allow",
+          permissionDecision: "deny",
           permissionDecisionReason: reason,
         },
       };

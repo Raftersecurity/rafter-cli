@@ -37,7 +37,10 @@ def find_policy_file(start_dir: str | Path | None = None) -> Path | None:
     declared by ``POLICY_FILE_CANDIDATES``.
     """
     cwd = Path(start_dir) if start_dir else Path.cwd()
-    root = get_git_root()
+    # Bound the walk by the git root of the START dir, not the process cwd
+    # (sable-lu0j) — otherwise discovering a policy for a scan target in another
+    # tree stops at the wrong root.
+    root = get_git_root(str(cwd))
     stop = Path(root) if root else cwd.anchor and Path(cwd.anchor)
 
     current = cwd
@@ -56,9 +59,14 @@ def find_policy_file(start_dir: str | Path | None = None) -> Path | None:
     return None
 
 
-def load_policy() -> dict | None:
-    """Load and parse the policy file, returning None if not found."""
-    path = find_policy_file()
+def load_policy(base_dir: str | Path | None = None) -> dict | None:
+    """Load and parse the policy file, returning None if not found.
+
+    ``base_dir`` is the scan target: the policy is discovered from there, not
+    the process cwd (sable-lu0j), so an ambient ``.rafter.yml`` in cwd cannot
+    govern a scan of a different tree.
+    """
+    path = find_policy_file(base_dir)
     if not path:
         return None
     try:

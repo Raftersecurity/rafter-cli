@@ -15,6 +15,9 @@ import pytest
 from rafter_cli.core.config_schema import AgentConfig, HooksConfig, RafterConfig
 from rafter_cli.core.hook_control import resolve_hook_control
 
+# A fake AWS key ID, assembled at runtime so the file holds no key-shaped literal.
+FAKE_AWS_KEY_ID = "AKIA" + "IOSFODNN7ABCDEFG"
+
 
 def _cfg(hooks: HooksConfig | None) -> RafterConfig:
     return RafterConfig(agent=AgentConfig(hooks=hooks or HooksConfig()))
@@ -84,7 +87,7 @@ def test_env_disable_overrides_global_enable():
 
 
 # ── End-to-end via the real CLI (security property) ───────────────────────
-SECRET_WRITE = json.dumps({"tool_name": "Write", "tool_input": {"content": "aws_key = AKIAIOSFODNN7ABCDEFG"}})
+SECRET_WRITE = json.dumps({"tool_name": "Write", "tool_input": {"content": "aws_key = " + FAKE_AWS_KEY_ID}})
 
 
 _PKG_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -108,6 +111,9 @@ def _run_hook(cwd: str, extra_env: dict | None = None) -> str:
         [sys.executable, "-m", "rafter_cli", "hook", "pretool"],
         input=SECRET_WRITE, capture_output=True, text=True, cwd=cwd, env=env, timeout=30,
     )
+    # `{}` is the hook's no-decision answer: it defers to the platform's permissions.
+    if r.stdout.strip() == "{}":
+        return "defer"
     return json.loads(r.stdout or "{}").get("hookSpecificOutput", {}).get("permissionDecision", "unknown")
 
 
@@ -116,9 +122,9 @@ def test_e2e_default_denies():
         assert _run_hook(d) == "deny"
 
 
-def test_e2e_env_disable_allows():
+def test_e2e_env_disable_defers():
     with tempfile.TemporaryDirectory() as d:
-        assert _run_hook(d, {"RAFTER_DISABLE_HOOKS": "1"}) == "allow"
+        assert _run_hook(d, {"RAFTER_DISABLE_HOOKS": "1"}) == "defer"
 
 
 def test_e2e_security_project_local_cannot_disable():
@@ -137,4 +143,4 @@ def test_e2e_global_config_can_disable():
         Path(d, ".rafter", "config.json").write_text(
             json.dumps({"version": "1", "agent": {"hooks": {"enabled": False}}})
         )
-        assert _run_hook(d) == "allow"
+        assert _run_hook(d) == "defer"

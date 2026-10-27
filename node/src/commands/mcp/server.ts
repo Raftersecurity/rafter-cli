@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import fs from "fs";
+import path from "path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -66,8 +67,7 @@ export function createServer(): Server {
 
   // ── Tools ───────────────────────────────────────────────────────────
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
+  const tools = [
       {
         name: "scan_secrets",
         description: "Scan files or directories for leaked secrets, API keys, tokens, passwords, and credentials. Use before pushing code, when handling config files, or when asked 'is this safe to commit?' or 'check for leaked keys'. Findings hidden by the project's .rafter.yml ignore rules or .rafterignore are dropped from the results; when any were, a second content block lists them as {suppressed_count, _suppressed: [{file, line, column, rule, severity, reason, source}]} (no secret text), so a blanket ignore rule cannot silently empty a scan.",
@@ -212,11 +212,27 @@ export function createServer(): Server {
           required: ["id"],
         },
       },
-    ],
-  }));
+  ];
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+
+    // sable-ykuh — validate required inputSchema fields up front, so a missing
+    // argument comes back as a clean tool error instead of reaching the handler
+    // and crashing it with a raw TypeError (surfaced to the client as a -32603
+    // internal error). Mirrors the Python server, where FastMCP rejects the
+    // call against the tool signature before the handler runs.
+    const tool = tools.find((t) => t.name === name);
+    if (!tool) return errorResult(`Unknown tool: ${name}`);
+    const required = ((tool.inputSchema as { required?: readonly string[] }).required) ?? [];
+    for (const field of required) {
+      const value = args?.[field];
+      if (value === undefined || value === null) {
+        return errorResult(`Invalid arguments for "${name}": missing required field "${field}"`);
+      }
+    }
 
     switch (name) {
       case "scan_secrets": {
@@ -234,12 +250,26 @@ export function createServer(): Server {
         // Honor the project's suppressions, as `rafter secrets` does, so a
         // finding triaged with suppress_finding is not reported again.
         const report = (results: ScanResult[]) => {
-          const suppressions = collectSuppressions(new ConfigManager().loadWithPolicy().agent?.scan?.ignore);
-          const applied = applySuppressions(results, suppressions);
+          // Partition off files that could not be read (sable-ilbx), so an
+          // unreadable file is not reported as a clean, empty entry.
+          const readErrors = results
+            .filter((r) => r.readError)
+            .map((r) => ({ file: r.file, error: r.readError! }));
+          const scanResults = results.filter((r) => !r.readError);
+          // Discover and anchor the policy from the scan TARGET, not the MCP
+          // server's cwd (sable-lu0j).
+          const scanBase = path.resolve(scanPath);
+          const rafterignoreDir =
+            fs.existsSync(scanBase) && fs.statSync(scanBase).isDirectory()
+              ? scanBase
+              : path.dirname(scanBase);
+          const policyCfg = new ConfigManager().loadWithPolicy(scanBase).agent?.scan;
+          const suppressions = collectSuppressions(policyCfg?.ignore, policyCfg?.ignoreBaseDir, rafterignoreDir);
+          const applied = applySuppressions(scanResults, suppressions);
           // Drop only what was suppressed; a clean file keeps its empty entry.
           const kept = new Map(applied.results.map((r) => [r.file, r]));
           const out = textResult(formatScanResults(
-            results.filter((r) => r.matches.length === 0 || kept.has(r.file)).map((r) => kept.get(r.file) ?? r),
+            scanResults.filter((r) => r.matches.length === 0 || kept.has(r.file)).map((r) => kept.get(r.file) ?? r),
           ));
           // Say what was dropped (metadata only, no secret text), as
           // `rafter secrets --json` does under `_suppressed`.
@@ -247,6 +277,14 @@ export function createServer(): Server {
             out.content.push(textResult({
               suppressed_count: applied.suppressed.length,
               _suppressed: applied.suppressed,
+            }).content[0]);
+          }
+          // Say what could not be read (metadata only, no secret text), so a
+          // caller can tell an empty result from an incomplete scan.
+          if (readErrors.length > 0) {
+            out.content.push(textResult({
+              unreadable_count: readErrors.length,
+              unreadable: readErrors,
             }).content[0]);
           }
           return out;

@@ -7,7 +7,10 @@ Mirrors node/tests/betterleaks-scan-directory.test.ts.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -34,12 +37,19 @@ exit 0
 
 SECRET = "aws_key = AKIAQYLPMN5HHHFPZAM2\n"
 
+# The stub must be executable, and the system temp dir is often mounted noexec
+# (sable-m8vv). Keep it beside the tests, which are on an executable
+# filesystem wherever this suite can run; RAFTER_TEST_EXEC_DIR overrides.
+EXEC_BASE = os.environ.get("RAFTER_TEST_EXEC_DIR") or os.path.join(os.path.dirname(__file__), ".exec-tmp")
+
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     (repo / "build").mkdir(parents=True)
-    bin_path = tmp_path / "betterleaks"
+    os.makedirs(EXEC_BASE, exist_ok=True)
+    bin_dir = tempfile.mkdtemp(prefix="bl-", dir=EXEC_BASE)
+    bin_path = Path(bin_dir) / "betterleaks"
     bin_path.write_text(FAKE_BL)
     bin_path.chmod(0o755)
     argv_log = tmp_path / "argv.log"
@@ -55,7 +65,8 @@ def setup(tmp_path, monkeypatch):
 
     scanner = BetterleaksScanner()
     scanner._path = str(bin_path)
-    return scanner, repo, argv_log
+    yield scanner, repo, argv_log
+    shutil.rmtree(bin_dir, ignore_errors=True)
 
 
 def _reported(results, repo):
