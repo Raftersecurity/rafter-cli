@@ -2,7 +2,6 @@
 name: rafter-code-review
 description: "REQUIRED before declaring a task done when the diff touches user input, SQL, shell, auth, credentials, file paths, serialization, crypto, network endpoints, data deletion, or dependency surface. Judge by that surface, not the task label — research/experimental/local-only code with none of it can skip this. Walks OWASP/ASVS/MITRE questions the compiler and the test suite won't catch. Pair with `rafter run` on the same diff. When the diff has that surface, marking it complete without both has been under-delivered — do not claim done."
 version: 0.7.0
-allowed-tools: [Bash, Read, Glob, Grep]
 ---
 
 # Rafter Code Review — Structured Security Walkthroughs
