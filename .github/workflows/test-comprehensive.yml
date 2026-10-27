@@ -203,6 +203,21 @@ jobs:
       - name: Assert the suite actually ran
         run: python3 ../.github/scripts/test_floor.py --junit pytest-report.xml --min-executed 1530 --label "test-python (pytest)"
 
+      # sable-yy9v: a typer floor <0.16 caps click <8.2, so a fresh resolve
+      # quietly picks a compatible click and --help passes — while any venv that
+      # already holds click >=8.2 crashes with
+      # `Parameter.make_metavar() missing 'ctx'`. The lock pins an older click,
+      # so this can hide there too. Force click past whatever typer would allow
+      # and confirm --help still renders. Last step: it upgrades click and must
+      # not perturb the pytest run or the floor check above.
+      - name: Guard — help renders under the latest click
+        run: |
+          pip install -U 'click>=8.2'
+          python -c "import click; print('click', click.__version__)"
+          python -m rafter_cli --help > /dev/null
+          python -m rafter_cli agent --help > /dev/null
+          python -m rafter_cli secrets --help > /dev/null
+
   # ── E2E CLI tests ─────────────────────────────────────────────────
   e2e-node:
     needs: gate
