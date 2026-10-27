@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`rafter run` and `rafter get` (plain and `--interactive`) report which commit a completed remote scan actually covered.** stderr prints `Scanned commit: <first 12 chars>` (or `not recorded` when the backend predates the field), suppressed by `--quiet`. Inside a git checkout, a mismatch against local `HEAD` prints a warning even with `--quiet`. stdout is unchanged. Both Node and Python.
+
 ## [0.11.1] - 2026-10-22
 
 ### Added

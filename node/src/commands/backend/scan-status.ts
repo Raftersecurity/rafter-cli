@@ -8,6 +8,7 @@ import {
   apiClient,
   apiUrl} from "../../utils/api.js";
 import { fmt as output } from "../../utils/formatter.js";
+import { git, parseRemote } from "../../utils/git.js";
 
 /**
  * sable-l10k — the report a scan writes is not durable the instant the scan
@@ -281,6 +282,7 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
         if (status === "completed") {
           spinner?.succeed("Scan completed");
           warnIfPartial(poll.data);
+          reportScannedCommit(poll.data, quiet);
           return writePayload(poll.data, fmt, quiet);
         } else if (status === "failed") {
           spinner?.stop();
@@ -302,6 +304,7 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
       console.error("Scan completed");
     }
     warnIfPartial(poll.data);
+    reportScannedCommit(poll.data, quiet);
     return writePayload(poll.data, fmt, quiet);
   } else if (status === "failed") {
     return reportFailedScan(poll.data, fmt);
@@ -343,4 +346,46 @@ export function warnIfPartial(data: any): void {
   console.error(output.warning(
     `Scan completed with gaps (${code}): some scanners did not finish, so findings may be missing.${missing} Do not treat this result as clean.`
   ));
+}
+
+/**
+ * Tell the user which commit a completed remote scan actually covered, and
+ * flag it when that differs from what is checked out locally.
+ *
+ * `scanned_commit` is a full SHA, or null on scans from before the backend
+ * recorded it. The info line is suppressed by --quiet; the mismatch warning
+ * is not — a scan report attributed to the wrong commit is worth knowing
+ * even when the rest of the run is quiet. Silent when there is no local
+ * checkout, git fails, or the field is null — nothing to compare against.
+ */
+export function reportScannedCommit(data: any, quiet?: boolean): void {
+  const scanned = typeof data?.scanned_commit === "string" ? data.scanned_commit : null;
+  if (!quiet) {
+    console.error(
+      scanned ? `Scanned commit: ${scanned.slice(0, 12)}` : "Scanned commit: not recorded"
+    );
+  }
+  if (!scanned) return;
+
+  // Compare only against a checkout of the scanned repository: run from an
+  // unrelated repo, the local HEAD says nothing about the scan.
+  if (typeof data?.repository_name === "string") {
+    try {
+      if (parseRemote(git("remote get-url origin")).toLowerCase() !== data.repository_name.toLowerCase()) return;
+    } catch {
+      return;
+    }
+  }
+
+  let head: string;
+  try {
+    head = git("rev-parse HEAD");
+  } catch {
+    return;
+  }
+  if (head && head !== scanned) {
+    console.error(
+      `Warning: the scan covers commit ${scanned.slice(0, 12)}, but your checkout is at ${head.slice(0, 12)}.`
+    );
+  }
 }

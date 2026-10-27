@@ -24,7 +24,7 @@ from ..utils.api import (
     resolve_key,
     write_payload,
 )
-from ..utils.git import _run, branch_from_env, detect_repo, remote_branch_sha
+from ..utils.git import _run, branch_from_env, detect_repo, parse_remote, remote_branch_sha
 
 
 def _plus_approval_gate_enabled() -> bool:
@@ -358,6 +358,7 @@ def _handle_scan_status_interactive(
                 if not quiet:
                     print("Scan completed!", file=sys.stderr)
                 _warn_if_partial(data)
+                _report_scanned_commit(data, quiet)
                 return write_payload(data, fmt, quiet)
             elif status == "failed":
                 _report_failed_scan(data, fmt)
@@ -367,6 +368,7 @@ def _handle_scan_status_interactive(
         if not quiet:
             print("Scan completed!", file=sys.stderr)
         _warn_if_partial(data)
+        _report_scanned_commit(data, quiet)
         return write_payload(data, fmt, quiet)
     elif status == "failed":
         _report_failed_scan(data, fmt)
@@ -391,6 +393,48 @@ def _warn_if_partial(data: dict) -> None:
         f"so findings may be missing.{tail} Do not treat this result as clean.",
         file=sys.stderr,
     )
+
+
+def _report_scanned_commit(data: dict, quiet: bool) -> None:
+    """Tell the user which commit a completed remote scan actually covered,
+    and flag it when that differs from what is checked out locally.
+
+    ``scanned_commit`` is a full SHA, or None on scans from before the
+    backend recorded it. The info line is suppressed by --quiet; the
+    mismatch warning is not -- a scan report attributed to the wrong commit
+    is worth knowing about even when the rest of the run is quiet. Silent
+    when there is no local checkout, git fails, or the field is None --
+    nothing to compare against.
+    """
+    scanned = data.get("scanned_commit")
+    scanned = scanned if isinstance(scanned, str) else None
+    if not quiet:
+        print(
+            f"Scanned commit: {scanned[:12]}" if scanned else "Scanned commit: not recorded",
+            file=sys.stderr,
+        )
+    if not scanned:
+        return
+
+    # Compare only against a checkout of the scanned repository: run from an
+    # unrelated repo, the local HEAD says nothing about the scan.
+    if isinstance(data.get("repository_name"), str):
+        try:
+            if parse_remote(_run(["git", "remote", "get-url", "origin"])).lower() != data["repository_name"].lower():
+                return
+        except Exception:
+            return
+
+    try:
+        head = _run(["git", "rev-parse", "HEAD"])
+    except Exception:
+        return  # no checkout, or git failed -- nothing to compare against
+
+    if head and head != scanned:
+        print(
+            f"Warning: the scan covers commit {scanned[:12]}, but your checkout is at {head[:12]}.",
+            file=sys.stderr,
+        )
 
 
 def _report_failed_scan(data: dict, fmt: str) -> None:
@@ -556,6 +600,8 @@ def register_backend_commands(app: typer.Typer) -> None:
             if data.get("status") == "failed":
                 _report_failed_scan(data, fmt)
             _warn_if_partial(data)
+            if data.get("status") == "completed":
+                _report_scanned_commit(data, quiet)
             return write_payload(data, fmt, quiet)
 
         _handle_scan_status_interactive(scan_id, headers, fmt, quiet)

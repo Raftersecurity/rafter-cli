@@ -134,6 +134,12 @@ A scan whose status is `failed` exits `1` from `rafter run`, `rafter get` and `r
 
 A completed scan that the API marks `partial: true` or `warning_code: "SCAN_PARTIAL"` (some scanners did not finish) still exits `0` with its payload on stdout, but stderr warns that findings may be missing, names `missing_scanners` when the API lists them, and says not to treat the result as clean. The warning prints even with `--quiet`. Both runtimes.
 
+#### Scanned commit
+
+A completed scan's payload carries `scanned_commit`: the full SHA the backend actually scanned, or `null` for scans from before the API recorded it. `rafter run`, `rafter get`, and `rafter get --interactive` print it to stderr on completion: `Scanned commit: <first 12 chars>`, or `Scanned commit: not recorded` when the field is `null` or absent. `--quiet` suppresses this line.
+
+When the command runs inside a git checkout, it also compares `scanned_commit` against the local `git rev-parse HEAD`. A mismatch prints `Warning: the scan covers commit <short>, but your checkout is at <short>.` to stderr — this warning is **not** suppressed by `--quiet`, since a scan report attributed to the wrong commit is worth knowing about regardless. Outside a git checkout, when git fails, or when `scanned_commit` is `null`, the comparison is silently skipped. Both runtimes. stdout is unaffected: `scanned_commit` passes through unchanged in `--format json`, and the markdown payload is unchanged.
+
 #### Poll-loop retry contract
 
 A report is not necessarily durable the instant a scan flips to `completed`, so a poll can hit a 5xx on a scan that is readable seconds later. Both runtimes retry transient read failures instead of aborting. This applies to `rafter run`, `rafter get --interactive`, and plain `rafter get <scan_id>`:

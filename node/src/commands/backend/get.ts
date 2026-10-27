@@ -6,7 +6,7 @@ import {
   EXIT_GENERAL_ERROR,
   EXIT_SCAN_NOT_FOUND
 } from "../../utils/api.js";
-import { handleScanStatus, fetchScanWithRetry, PollGaveUpError, reportFailedScan, warnIfPartial } from "./scan-status.js";
+import { handleScanStatus, fetchScanWithRetry, PollGaveUpError, reportFailedScan, warnIfPartial, reportScannedCommit } from "./scan-status.js";
 
 export function createGetCommand(): Command {
   return new Command("get")
@@ -29,6 +29,7 @@ export function createGetCommand(): Command {
             opts.quiet
           );
           if (data?.status !== "failed") warnIfPartial(data);
+          if (data?.status === "completed") reportScannedCommit(data, opts.quiet);
           const exitCode = data?.status === "failed"
             ? reportFailedScan(data, opts.format)
             : writePayload(data, opts.format, opts.quiet);
