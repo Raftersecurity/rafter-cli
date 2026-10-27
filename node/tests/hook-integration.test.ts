@@ -499,6 +499,42 @@ describe("Hook Integration — Real Git Repos", () => {
     });
   });
 
+  // sable-t578 — a tool that fails and echoes a credential in its error text
+  // leaked it: the posttool redactor read only `output`/`content`, never
+  // `error`. Driven through the real built CLI so the shipped redaction path
+  // is covered, not a reproduced copy.
+  describe("posttool — redacts secrets in tool_response.error (sable-t578)", () => {
+    function posttool(payload: object): Record<string, any> {
+      const r = spawnSync("node", [path.resolve(__dirname, "../dist/index.js"), "hook", "posttool"], {
+        input: JSON.stringify(payload),
+        encoding: "utf-8",
+        timeout: 30_000,
+        env: { ...process.env, HOME: repoDir },
+      });
+      return JSON.parse(r.stdout || "{}");
+    }
+
+    it("redacts a secret echoed in an error field", () => {
+      const out = posttool({
+        tool_name: "Bash",
+        tool_response: { error: `command failed: ${FAKE_AWS_KEY}` },
+      });
+      const modified = out.hookSpecificOutput?.modifiedToolResult;
+      expect(modified).toBeDefined();
+      expect(modified.error).not.toContain(FAKE_AWS_KEY);
+      expect(modified.error).toContain("command failed:");
+      expect(modified.error).toContain("****");
+    });
+
+    it("passes through a clean error field unchanged", () => {
+      const out = posttool({
+        tool_name: "Bash",
+        tool_response: { error: "command failed: file not found" },
+      });
+      expect(out.hookSpecificOutput?.modifiedToolResult).toBeUndefined();
+    });
+  });
+
   // ── Install-hook: real git repo ───────────────────────────────────────
 
   describe("install-hook — local hook installation in real repo", () => {

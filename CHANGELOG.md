@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The PostToolUse hook now redacts secrets echoed in a tool's `error` field, not only `output` and `content`.** A tool that failed and printed a credential in its error text passed it through un-redacted, contrary to the documented contract that the hook redacts any secrets found. Both Node and Python.
+
 - **`rafter agent baseline create` now captures the same union-of-engines result a scan does.** In `auto` mode the Node implementation ran betterleaks only and did not union with the patterns engine, so a secret that only the patterns engine detects (betterleaks 1.1.x misses AWS access keys, for example) was left out of the baseline a later `rafter secrets` would then flag. It now reuses the scan command's engine selection and union, matching the Python implementation, which already unioned. Node only.
 
 - **`rafter ci init --with-remote` now emits the remote security-audit job.** The flag was read under the wrong option name, so `--with-remote` generated only the secret-scan job and dropped the security-audit job that CLI_SPEC and the README describe; the deprecated `--with-backend` alias was unaffected. Node only (Python already honored the flag). Covers all three platforms (GitHub, GitLab, CircleCI).
