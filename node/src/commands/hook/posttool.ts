@@ -126,6 +126,15 @@ function evaluateToolResponse(payload: PostToolInput): PostToolOutput {
     }
   }
 
+  // Scan and redact the error field (sable-t578). A tool that fails and echoes
+  // a credential in its error text surfaces it to the user just like output.
+  if (typeof tool_response.error === "string" && tool_response.error) {
+    if (scanner.hasSecrets(tool_response.error)) {
+      redacted.error = scanner.redact(tool_response.error);
+      modified = true;
+    }
+  }
+
   if (modified) {
     const audit = new AuditLogger();
     const matchCount = countMatches(scanner, tool_response);
@@ -143,6 +152,9 @@ function countMatches(scanner: RegexScanner, tool_response: PostToolInput["tool_
   }
   if (typeof tool_response?.content === "string" && tool_response.content) {
     count += scanner.scanText(tool_response.content).length;
+  }
+  if (typeof tool_response?.error === "string" && tool_response.error) {
+    count += scanner.scanText(tool_response.error).length;
   }
   return count;
 }

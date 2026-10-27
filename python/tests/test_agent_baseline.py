@@ -96,6 +96,31 @@ class TestBaselineCreate:
         result = runner.invoke(agent_app, ["baseline", "create", str(tmp_path / "nonexistent.py")])
         assert result.exit_code != 0
 
+    def test_auto_unions_both_engines(self, tmp_path, monkeypatch):
+        # sable-qb9g — in `auto`, baseline create must capture the same
+        # union-of-engines result a scan does, so a secret only the patterns
+        # engine catches (betterleaks returns nothing here) is still recorded.
+        # Node had this gap; this guards the Python side against regressing.
+        from rafter_cli.scanners.betterleaks import BetterleaksScanner
+
+        monkeypatch.setattr("rafter_cli.commands.agent._BASELINE_PATH", tmp_path / "baseline.json")
+        monkeypatch.setattr(BetterleaksScanner, "is_available", lambda self: True)
+        monkeypatch.setattr(
+            "rafter_cli.commands.agent._ensure_betterleaks_usable",
+            lambda quiet, auto_update: ("betterleaks", None),
+        )
+        monkeypatch.setattr(BetterleaksScanner, "scan_directory", lambda self, *a, **k: [])
+
+        # GitHub PAT (ghp_ + 36 alnum), assembled so the file holds no literal.
+        token = "ghp_" + "A" * 36
+        (tmp_path / "leak.js").write_text(f'const token = "{token}";\n')
+
+        result = runner.invoke(agent_app, ["baseline", "create", str(tmp_path)])
+        assert result.exit_code == 0
+        data = json.loads((tmp_path / "baseline.json").read_text())
+        patterns = [e["pattern"] for e in data["entries"]]
+        assert "GitHub Personal Access Token" in patterns
+
 
 class TestBaselineShow:
     def test_empty_baseline_message(self, tmp_path, monkeypatch):
