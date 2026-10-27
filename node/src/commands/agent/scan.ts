@@ -411,6 +411,11 @@ function outputScanResults(
   // that could not complete cleanly (2); a clean, complete scan is 0.
   const scanExitCode = keptResults.length > 0 ? 1 : readErrors.length > 0 ? 2 : 0;
 
+  // Before the format branches, so --json and SARIF runs are recorded too. A
+  // clean scan is recorded as well: "we looked on this date and found nothing"
+  // is what a postmortem needs.
+  logScanToAudit(keptResults, context);
+
   if (format === "sarif") {
     outputSarif(keptResults, scanExitCode);
     return;
@@ -1121,6 +1126,45 @@ async function watchAndScan(
       resolve();
     });
   });
+}
+
+/**
+ * Record that a scan ran, so `rafter agent audit` has something in it.
+ *
+ * `rafter secrets` told the user "Run 'rafter agent audit' to see the security
+ * log" and the log was always empty, because only command interception ever
+ * wrote to it — three of seven beta users followed that hint and hit a dead
+ * end, one of them immediately after a correct and useful scan result. The
+ * first thing a careful person does with a security finding is look for the
+ * record of it.
+ *
+ * Counts and pattern NAMES only — never a matched value, not even redacted.
+ * The audit log is a postmortem artifact that outlives the terminal, so it
+ * must not become a second place secrets live.
+ */
+function logScanToAudit(results: ScanResult[], context?: string): void {
+  try {
+    const totalMatches = results.reduce((n, r) => n + r.matches.length, 0);
+    const patterns = [...new Set(results.flatMap((r) => r.matches.map((m) => m.pattern.name)))].sort();
+    new AuditLogger().log({
+      eventType: "scan_executed",
+      securityCheck: {
+        passed: totalMatches === 0,
+        reason: totalMatches === 0
+          ? "Secret scan completed with no findings"
+          : `Secret scan found ${totalMatches} secret(s) in ${results.length} file(s)`,
+        details: {
+          filesWithFindings: results.length,
+          totalMatches,
+          patterns,
+          ...(context ? { context } : {}),
+        },
+      },
+      resolution: { actionTaken: totalMatches === 0 ? "allowed" : "blocked" },
+    });
+  } catch {
+    // Never let audit logging break a scan — the scan result is the product.
+  }
 }
 
 /**
