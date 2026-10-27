@@ -10,7 +10,7 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
     name: "AWS Access Key ID",
     // Negative lookahead excludes the canonical AWS-docs example key
     // (AKIAIOSFODNN7EXAMPLE and its siblings, which all end in EXAMPLE).
-    // betterleaks skips these too (sable/#230); matching that keeps the two
+    // betterleaks skips these too (#230); matching that keeps the two
     // engines from disagreeing on a well-known public non-secret.
     regex: "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)(?![A-Z0-9]{9}EXAMPLE)[A-Z0-9]{16}",
     severity: "critical",
@@ -18,7 +18,12 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   },
   {
     name: "AWS Secret Access Key",
-    regex: "(?i)aws(.{0,20})?['\"]?[0-9a-zA-Z/+]{40}['\"]?",
+    // Negative lookahead excludes the canonical AWS-docs example secret key
+    // (wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY, which ends in EXAMPLEKEY).
+    // betterleaks skips this too (#230); matching that keeps the two
+    // engines from disagreeing on a well-known public non-secret, mirroring
+    // the AWS Access Key ID exemption above.
+    regex: "(?i)aws(.{0,20})?['\"]?(?![0-9a-zA-Z/+]{30}EXAMPLEKEY)[0-9a-zA-Z/+]{40}['\"]?",
     severity: "critical",
     description: "AWS Secret Access Key detected"
   },

@@ -5,6 +5,9 @@ import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
 
+// A fake AWS secret key, assembled at runtime so the file holds no key-shaped literal.
+const FAKE_AWS_SECRET = "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYABCDEFGHIJ";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
@@ -74,7 +77,7 @@ describe("rafter agent audit-skill", () => {
       "Uses AWS to deploy:",
       "",
       "```bash",
-      "export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "export AWS_SECRET_ACCESS_KEY=" + FAKE_AWS_SECRET,
       "aws s3 sync ./dist s3://my-bucket",
       "```",
     ].join("\n"));
