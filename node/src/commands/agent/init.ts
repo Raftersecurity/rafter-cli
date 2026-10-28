@@ -12,7 +12,8 @@ import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import { askYesNo } from "../../utils/prompt.js";
 import { fmt } from "../../utils/formatter.js";
-import { injectInstructionFile } from "./instruction-block.js";
+import { injectInstructionFile, injectAiderNote } from "./instruction-block.js";
+import { KNOWN_SKILL_NAMES, removeRetiredSkills } from "../skill/registry.js";
 import yaml from "js-yaml";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -106,18 +107,25 @@ function installedHookWarnings(): string[] {
 }
 
 /**
- * Skills installed by `rafter agent init` for Claude Code / Codex.
- *
- * Sourced from `resources/skills/<name>/SKILL.md` in the shipped package.
- * Keep this list in sync with Python's installer and the skills that actually
- * ship in both resources/skills/ trees.
+ * Log-friendly label per skill, keyed off the single canonical skill-name
+ * list (`KNOWN_SKILL_NAMES` in `../skill/registry.js`) so there's one place
+ * that names the shipped skills, not several lists that can drift.
  */
-const AGENT_SKILLS: { name: string; description: string }[] = [
-  { name: "rafter", description: "Rafter Remote" },
-  { name: "rafter-secure-design", description: "Rafter Secure Design" },
-  { name: "rafter-code-review", description: "Rafter Code Review" },
-  { name: "rafter-skill-review", description: "Rafter Skill Review" },
-];
+const SKILL_LABELS: Record<string, string> = {
+  rafter: "Rafter Remote",
+  "rafter-secure-design": "Rafter Secure Design",
+  "rafter-code-review": "Rafter Code Review",
+  "rafter-skill-review": "Rafter Skill Review",
+};
+
+/**
+ * Skills installed by `rafter agent init` for Claude Code / Codex / Gemini.
+ * Sourced from `resources/skills/<name>/SKILL.md` in the shipped package.
+ */
+const AGENT_SKILLS: { name: string; description: string }[] = KNOWN_SKILL_NAMES.map((name) => ({
+  name,
+  description: SKILL_LABELS[name] ?? name,
+}));
 
 /**
  * Print every file path the install would touch — without writing anything.
@@ -1075,6 +1083,9 @@ function installAiderRead(root: string, out: InitOutput): boolean {
 
   // 1. Write RAFTER.md (idempotent — the marker block is replaced in place).
   injectInstructionFile(rafterMdPath);
+  // 1a. Aider has no skill-loading mechanism — add the note explaining that
+  // the skill names in the block above aren't separate files here.
+  injectAiderNote(rafterMdPath);
 
   // 2. Update .aider.conf.yml read: list.
   let raw = "";
@@ -1152,6 +1163,12 @@ function installSkillsTo(skillsDir: string, out: InitOutput): void {
   fs.mkdirSync(skillsDir, { recursive: true });
   for (const skill of AGENT_SKILLS) {
     installSkillDir(skillResourceDir(skill.name), path.join(skillsDir, skill.name), skill.description, out);
+  }
+  // Clean up any rafter skill directory left over from a rename — never a
+  // user's own skill that happens to share a retired name (checked via the
+  // SKILL.md's `publisher` frontmatter in removeRetiredSkills itself).
+  for (const name of removeRetiredSkills(skillsDir)) {
+    out.info(fmt.info(`Removed retired skill ${name} from ${skillsDir}`));
   }
 }
 

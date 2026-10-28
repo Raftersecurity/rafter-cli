@@ -5,6 +5,7 @@ import os from "os";
 import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { randomBytes } from "crypto";
+import { removeRetiredSkills, isRafterAuthoredSkillDir } from "../src/commands/skill/registry.js";
 
 /**
  * Tests for `rafter skill list / install / uninstall`. Each test uses a fake
@@ -211,5 +212,75 @@ describe("rafter skill install / uninstall", () => {
     run("skill uninstall rafter-secure-design --platform claude-code", home);
     const cfg2 = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
     expect(cfg2.skillInstallations?.["claude-code"]?.["rafter-secure-design"]?.enabled).toBe(false);
+  });
+});
+
+/**
+ * Tests for the generic retired-skill cleanup used by every skill install
+ * path (`installSkillsTo` in agent/init.ts, `skillsDirComponent` in
+ * agent/components.ts). Before this, renaming or removing a bundled skill
+ * needed new hand-written unlink code at every install path, and the old
+ * directory would otherwise survive forever on a machine that installed it
+ * under the old name. This fails if a "retired" directory is left behind
+ * after a simulated rename, or if cleanup deletes a user's own skill that
+ * happens to reuse the retired name.
+ */
+describe("removeRetiredSkills — generic stale-skill cleanup", () => {
+  let base: string;
+  beforeEach(() => {
+    base = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-retired-"));
+  });
+  afterEach(() => {
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  function writeSkill(name: string, publisher: string | undefined): string {
+    const dir = path.join(base, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const frontmatter = publisher
+      ? `---\nname: ${name}\npublisher: ${publisher}\n---\n`
+      : `---\nname: ${name}\n---\n`;
+    fs.writeFileSync(path.join(dir, "SKILL.md"), `${frontmatter}\n# ${name}\n`);
+    return dir;
+  }
+
+  it("removes a rafter-authored skill directory once its name is retired", () => {
+    // "install" under the old name, as a real install path would have.
+    const dir = writeSkill("rafter-old-name", "rafter-security");
+    expect(fs.existsSync(dir)).toBe(true);
+
+    // Simulate the rename landing: the name is now retired.
+    const removed = removeRetiredSkills(base, ["rafter-old-name"]);
+
+    expect(removed).toEqual(["rafter-old-name"]);
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("leaves a user-authored skill alone even if it reuses a retired name", () => {
+    const dir = writeSkill("rafter-old-name", undefined); // no publisher field — not ours
+    const removed = removeRetiredSkills(base, ["rafter-old-name"]);
+
+    expect(removed).toEqual([]);
+    expect(fs.existsSync(dir)).toBe(true);
+  });
+
+  it("leaves a different publisher's same-named skill alone", () => {
+    const dir = writeSkill("rafter-old-name", "someone-else");
+    const removed = removeRetiredSkills(base, ["rafter-old-name"]);
+
+    expect(removed).toEqual([]);
+    expect(fs.existsSync(dir)).toBe(true);
+  });
+
+  it("is a no-op when the retired name was never installed", () => {
+    const removed = removeRetiredSkills(base, ["never-installed"]);
+    expect(removed).toEqual([]);
+  });
+
+  it("isRafterAuthoredSkillDir distinguishes rafter's own skills from lookalikes", () => {
+    const rafterDir = writeSkill("rafter-x", "rafter-security");
+    const userDir = writeSkill("rafter-y", undefined);
+    expect(isRafterAuthoredSkillDir(rafterDir)).toBe(true);
+    expect(isRafterAuthoredSkillDir(userDir)).toBe(false);
   });
 });

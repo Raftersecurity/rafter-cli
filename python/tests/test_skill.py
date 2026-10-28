@@ -181,3 +181,72 @@ class TestSkillInstallUninstall:
         entry2 = cfg2.get("skillInstallations", {}).get("claude-code", {}).get("rafter-secure-design")
         assert entry2 is not None
         assert entry2["enabled"] is False
+
+
+class TestRemoveRetiredSkills:
+    """Tests for the generic retired-skill cleanup used by every skill
+    install path (`_install_skills_to` in agent.py, `_skills_component` in
+    agent_components.py). Before this, renaming or removing a bundled skill
+    needed new hand-written unlink code at every install path, and the old
+    directory would otherwise survive forever on a machine that installed it
+    under the old name. This fails if a "retired" directory is left behind
+    after a simulated rename, or if cleanup deletes a user's own skill that
+    happens to reuse the retired name.
+    """
+
+    @staticmethod
+    def _write_skill(base: Path, name: str, publisher: str | None) -> Path:
+        skill_dir = base / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        frontmatter = (
+            f"---\nname: {name}\npublisher: {publisher}\n---\n"
+            if publisher is not None
+            else f"---\nname: {name}\n---\n"
+        )
+        (skill_dir / "SKILL.md").write_text(f"{frontmatter}\n# {name}\n", encoding="utf-8")
+        return skill_dir
+
+    def test_removes_rafter_authored_skill_once_retired(self, tmp_path: Path):
+        from rafter_cli.commands.skill import remove_retired_skills
+
+        # "install" under the old name, as a real install path would have.
+        skill_dir = self._write_skill(tmp_path, "rafter-old-name", "rafter-security")
+        assert skill_dir.exists()
+
+        # Simulate the rename landing: the name is now retired.
+        removed = remove_retired_skills(tmp_path, ("rafter-old-name",))
+
+        assert removed == ["rafter-old-name"]
+        assert not skill_dir.exists()
+
+    def test_leaves_user_authored_skill_alone(self, tmp_path: Path):
+        from rafter_cli.commands.skill import remove_retired_skills
+
+        skill_dir = self._write_skill(tmp_path, "rafter-old-name", None)  # no publisher — not ours
+        removed = remove_retired_skills(tmp_path, ("rafter-old-name",))
+
+        assert removed == []
+        assert skill_dir.exists()
+
+    def test_leaves_different_publishers_same_named_skill_alone(self, tmp_path: Path):
+        from rafter_cli.commands.skill import remove_retired_skills
+
+        skill_dir = self._write_skill(tmp_path, "rafter-old-name", "someone-else")
+        removed = remove_retired_skills(tmp_path, ("rafter-old-name",))
+
+        assert removed == []
+        assert skill_dir.exists()
+
+    def test_noop_when_retired_name_never_installed(self, tmp_path: Path):
+        from rafter_cli.commands.skill import remove_retired_skills
+
+        removed = remove_retired_skills(tmp_path, ("never-installed",))
+        assert removed == []
+
+    def test_is_rafter_authored_skill_dir_distinguishes_lookalikes(self, tmp_path: Path):
+        from rafter_cli.commands.skill import _is_rafter_authored_skill_dir
+
+        rafter_dir = self._write_skill(tmp_path, "rafter-x", "rafter-security")
+        user_dir = self._write_skill(tmp_path, "rafter-y", None)
+        assert _is_rafter_authored_skill_dir(rafter_dir) is True
+        assert _is_rafter_authored_skill_dir(user_dir) is False

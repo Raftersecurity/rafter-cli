@@ -8,6 +8,7 @@ import {
   injectInstructionFile,
 } from "./instruction-block.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { KNOWN_SKILL_NAMES, removeRetiredSkills } from "../skill/registry.js";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -233,15 +234,10 @@ function skillTemplatePath(name: string): string {
 
 /**
  * Canonical rafter-authored skills that a per-platform "skills" component
- * installs. Mirrors `python/rafter_cli/commands/agent_components.py`. Keep in
- * sync with the SKILL.md files shipped under `node/resources/skills/`.
+ * installs — the single `KNOWN_SKILL_NAMES` list in `../skill/registry.js`,
+ * so this and `AGENT_SKILLS` in `init.ts` can't drift apart.
  */
-const COMPONENT_SKILL_NAMES = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
+const COMPONENT_SKILL_NAMES = KNOWN_SKILL_NAMES;
 
 function skillsDirComponent(opts: {
   id: string;
@@ -270,6 +266,10 @@ function skillsDirComponent(opts: {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         fs.copyFileSync(src, dst);
       }
+      // Clean up any rafter skill directory left over from a rename — never
+      // a user's own skill that happens to share a retired name (checked via
+      // the SKILL.md's `publisher` frontmatter in removeRetiredSkills itself).
+      removeRetiredSkills(opts.skillsBaseDir);
     },
     uninstall: () => {
       for (const p of destPaths) {
