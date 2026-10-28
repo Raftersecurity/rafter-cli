@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import click
+import typer
 import pytest
 
 from rafter_cli.utils.api import (
@@ -108,7 +108,7 @@ class TestRemoteScan403:
         )
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -128,7 +128,7 @@ class TestRemoteScan403:
         mock_post.return_value = _mock_response(403, "forbidden")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -145,7 +145,7 @@ class TestRemoteScan403:
         mock_post.return_value = _mock_response(429, "quota exhausted")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -209,7 +209,7 @@ class TestBackwardCompatibility:
         mock_post.return_value = _mock_response(401, "invalid api key")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -227,7 +227,7 @@ class TestBackwardCompatibility:
         mock_post.return_value = _mock_response(500, "internal server error")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",

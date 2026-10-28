@@ -1058,8 +1058,15 @@ function aiderRead(): ComponentSpec {
       fs.writeFileSync(configPath, yaml.dump(parsed), "utf-8");
     },
     uninstall: () => {
-      if (fs.existsSync(rafterMdPath)) {
-        try { fs.rmSync(rafterMdPath, { force: true }); } catch { /* best-effort */ }
+      // Excise only the managed block; any user content in RAFTER.md survives.
+      // If the file was ours alone (nothing but the block), remove it.
+      // A RAFTER.md with no markers is user-authored — leave it untouched.
+      if (fs.existsSync(rafterMdPath) && stripMarkerBlock(rafterMdPath)) {
+        try {
+          if (fs.readFileSync(rafterMdPath, "utf-8").trim() === "") {
+            fs.rmSync(rafterMdPath, { force: true });
+          }
+        } catch { /* best-effort */ }
       }
       if (!fs.existsSync(configPath)) return;
       const raw = fs.readFileSync(configPath, "utf-8");

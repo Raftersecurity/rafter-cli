@@ -639,6 +639,13 @@ def posttool(
             redacted["content"] = scanner.redact(content_text)
             modified = True
 
+        # Scan and redact the error field (sable-t578). A tool that fails and
+        # echoes a credential in its error text surfaces it like output.
+        error_text = tool_response.get("error", "")
+        if error_text and isinstance(error_text, str) and scanner.has_secrets(error_text):
+            redacted["error"] = scanner.redact(error_text)
+            modified = True
+
         if modified:
             audit = AuditLogger()
             match_count = 0
@@ -646,6 +653,8 @@ def posttool(
                 match_count += len(scanner.scan_text(output_text))
             if content_text and isinstance(content_text, str):
                 match_count += len(scanner.scan_text(content_text))
+            if error_text and isinstance(error_text, str):
+                match_count += len(scanner.scan_text(error_text))
             audit.log_content_sanitized(f"{tool_name} tool response", match_count)
             _write_posttool_output({"action": "modify", "tool_response": redacted}, format)
             return

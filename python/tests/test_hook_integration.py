@@ -238,7 +238,7 @@ def _pretool_decision(command: str) -> dict:
     from rafter_cli.commands.hook import hook_app
 
     payload = {"tool_name": "Bash", "tool_input": {"command": command}}
-    result = CliRunner(mix_stderr=False).invoke(hook_app, ["pretool"], input=json.dumps(payload))
+    result = CliRunner().invoke(hook_app, ["pretool"], input=json.dumps(payload))
     return json.loads(result.output.strip())["hookSpecificOutput"]
 
 
