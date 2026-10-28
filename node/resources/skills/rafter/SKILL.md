@@ -2,6 +2,7 @@
 name: rafter
 description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter agent audit`, policy checks, or command-risk evaluation. Scope by security surface, not task label: engage when the diff touches auth, credentials/secrets/tokens, untrusted input, SQL, shell/exec, file paths, deserialization, crypto, network endpoints, data deletion, or dependencies; for research/experimental/local-only code with none of that, a quick surface check is enough. When such surface IS present and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on genuine security surface is not done."
 version: 0.7.0
+publisher: rafter-security
 ---
 
 # Rafter — Security Toolkit for AI Workflows
@@ -57,9 +58,8 @@ Use this for: "Is `rm -rf $DIR` safe?", any destructive-looking shell the user t
 Use this for: installing an MCP server, adding a Claude skill, vetting an AI tool config.
 
 - **Installing a new skill? → Read `rafter-skill-review/SKILL.md`** — full provenance, malware, prompt-injection, data-practices, telemetry checklist.
-- Run the deterministic pass: `rafter skill review <path-or-url>` (emits JSON).
-- Audit a directory: `rafter agent audit <path>` (still supported).
-- **Read `docs/cli-reference.md`** §`skill review` / §`agent audit` for output shape and exit codes.
+- Run the deterministic pass: `rafter skill review <path-or-url>` (emits JSON). `--installed` reviews every skill already on this machine instead of a path.
+- **Read `docs/cli-reference.md`** §`skill review` for output shape and exit codes.
 
 ### (d) I want to understand a finding I already have
 
