@@ -345,7 +345,7 @@ class TestPosttool:
                 "error": "auth failed: " + FAKE_AWS_KEY_ID,
             },
         }
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         result = runner.invoke(hook_app, ["posttool"], input=json.dumps(payload))
         data = json.loads(result.output.strip())
         modified = data["hookSpecificOutput"]["modifiedToolResult"]
