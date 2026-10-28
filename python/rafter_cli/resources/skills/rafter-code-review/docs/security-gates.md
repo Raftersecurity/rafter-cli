@@ -11,6 +11,7 @@ Grep for the functions that decide, not the ones that act:
 - Names: `authorize`, `authenticate`, `allow`, `permit`, `can*`, `is*Allowed`, `has*Permission`, `check*`, `verify*`, `validate*`, `match*`, `isSafe*`, `isTrusted*`, middleware and interceptors.
 - Config that feeds them: allowlists, trusted domains or proxies, roles, scopes, ACL rules, TLS and auth settings.
 - Callers that skip them: handlers registered without the middleware their siblings use.
+- Places no gate name points to: `rafter gates` prints these as **leads** (TLS verification off, a security setting never read, a body read with no limit, prefix or substring matching on a host, URL, path or claim). A lead is a place to look deeper and a question to answer, not a finding; it shares the worklist budget with the gates.
 
 For each gate, write down its contract in one sentence ("only same-origin redirect targets", "only active users with a valid password") before reading the body.
 
