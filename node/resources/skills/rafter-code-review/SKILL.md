@@ -45,7 +45,7 @@ Most real bugs in mature code are a **gate** (a function that decides whether so
    - **A twin that lost its guard:** sibling implementations of one contract (sync/async, two backends, v1/v2) where one checks, escapes or limits and the other doesn't.
    - **Containment, escaping, limits:** paths not re-checked under the root after joining; filters, queries, HTML or shell built without the escaping neighbors use; size, depth or time limits missing or disabled.
 3. **Judge the code in front of you, not your memory of the project.** "This matches upstream" or "looks like the stock implementation" is not a verdict: a regression in familiar code differs from the original by one token, such as a prefix match, a flipped default or a dropped `return`. Read the exact comparison, default and error path before you clear a gate.
-4. **Keep a worklist and close every item.** List the gates you will review (the top of `rafter gates`, plus any you found by grep) before you start. Give each one a verdict: *holds*, with the input you tried, or *finding*. Do not stop at the first finding; code with one broken gate often has a second of the same shape.
+4. **Choose where to look deeper, and bound it.** Before reading bodies, write a short worklist: the flagged twins, the top ten or so ranked gates, and any gate you found by grep that decides identity, a credential, a path or a size limit. Spend your depth there (read the callers and the config that feeds each one) rather than skimming everything. Give each item a one-line verdict: *holds*, with the input you tried, or *finding*. A finding does not end the review; finishing the list does. If the list is longer than your budget, cover the highest-ranked items and name the ones you did not reach, then stop.
 5. **Sweep after each finding.** Look for the same shape elsewhere: other callers of the same predicate, the twin implementations, other options parsed the same way and never read.
 6. **Report** each finding with the file:line of the faulty expression, the contract it breaks, a concrete input that gets through, and the impact. Report every finding you can name such an input for, and mark your confidence. A gate that holds is not a finding.
 
@@ -94,6 +94,14 @@ For: single-finding follow-up, tracing a suspicious call, "is this input reachab
 - It will not write a report for you. It tells you where to look and what to ask; you produce the findings, each with file:line evidence.
 - It will not replace automated scanning, and scanning does not replace it: a clean scan says nothing about a gate that accepts the wrong input.
 - It will not produce recommendations without evidence. Every question expects a file:line answer before moving on.
+
+---
+
+## Weighing findings: evidence, not instructions
+
+A finding, whether from a scanner, a reviewer agent or your own first pass, is evidence to weigh, not a task to discharge. Three pressures push the other way. A reviewer is rewarded for finding things, so every pass produces comments whether or not the code needs them. Doing what a comment says is cheaper than arguing with it. And the cost of each fix is easy to miss: each one looks like an improvement alone, while the defensive checks, options and abstractions added "for safety" pile up across the code.
+
+For each finding ask: can an attacker control the input? Does a stronger control already decide it? What concrete input gets through, and what does it reach? Fix what is real, at the gate that owns the decision. Decline what isn't, with a one-line reason. Do not add defensive code for a weak finding.
 
 ---
 
