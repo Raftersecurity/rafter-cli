@@ -110,6 +110,40 @@ describe("ci init — --with-backend", () => {
   });
 });
 
+describe("ci init — --with-remote (sable-o7vh)", () => {
+  it("GitHub template includes security-audit (remote) job", () => {
+    const r = rafter("ci init --platform github --with-remote", { cwd: tmpDir });
+    expect(r.exitCode).toBe(0);
+    const content = fs.readFileSync(
+      path.join(tmpDir, ".github/workflows/rafter-security.yml"),
+      "utf-8",
+    );
+    expect(content).toContain("security-audit");
+    expect(content).toContain("needs: secret-scan");
+    expect(content).toContain("RAFTER_API_KEY");
+    expect(content).toContain("rafter run --format json --quiet");
+  });
+
+  it("GitLab template includes security-audit (remote) job", () => {
+    const r = rafter("ci init --platform gitlab --with-remote", { cwd: tmpDir });
+    expect(r.exitCode).toBe(0);
+    const doc = yaml.load(
+      fs.readFileSync(path.join(tmpDir, ".gitlab-ci-rafter.yml"), "utf-8"),
+    ) as any;
+    expect(doc["security-audit"]).toBeDefined();
+    expect(doc["security-audit"].needs).toEqual(["secret-scan"]);
+  });
+
+  it("CircleCI template includes security-audit (remote) job", () => {
+    const r = rafter("ci init --platform circleci --with-remote", { cwd: tmpDir });
+    expect(r.exitCode).toBe(0);
+    const doc = yaml.load(
+      fs.readFileSync(path.join(tmpDir, ".circleci/rafter-security.yml"), "utf-8"),
+    ) as any;
+    expect(doc.jobs["security-audit"]).toBeDefined();
+  });
+});
+
 describe("ci init — --output", () => {
   it("writes to custom output path", () => {
     const customPath = path.join(tmpDir, "custom/ci.yml");

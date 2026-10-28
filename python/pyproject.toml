@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "rafter-cli"
-version = "0.11.1"
+version = "0.11.2"
 description = "Rafter CLI — the default security agent for AI workflows. Free for individuals and open source."
 authors = ["Rafter Team <hello@rafter.so>"]
 license = "MIT"
@@ -8,7 +8,9 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<4.0"
-typer = "^0.15.0"
+# typer >=0.16 supports click 8.2+. The old ^0.15 floor capped click <8.2, so a
+# shared venv that pulled click 8.2+ broke --help (Parameter.make_metavar(ctx)).
+typer = ">=0.16"
 click = ">=8.0.0,<9.0.0"
 rich = "^13.7.1"
 python-dotenv = "^1.2.2"

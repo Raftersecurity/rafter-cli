@@ -7,9 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-10-27
+
+### Added
+
+- **`rafter agent init` and `rafter agent install-hook` accept `--quiet`** (#31). `--quiet` suppresses informational and success output; warnings and errors still go to stderr, and the setup (and any hook backup) still runs. When combined with `--dry-run`, the dry-run plan stays visible. Both Node and Python.
+
+### Changed
+
+- **The PreToolUse hook defers to the agent platform's own permissions instead of pre-approving.** When rafter has no objection to a command it no longer emits an allow decision; `rafter hook pretool` returns no decision, so the agent platform's normal permission prompt applies again. Commands rafter blocks are denied exactly as before. Per format: `claude`/Codex/Continue get `{}` with no `permissionDecision`, `gemini` `{}`, `windsurf` exit 0 with no output.
+
 ### Fixed
 
+- **`rafter secrets` now records each scan in the audit log**, so the "run `rafter agent audit`" hint the scanner prints is true. Counts and pattern names only — never a matched value, redacted or otherwise; the audit log must not become a second place secrets live.
+- **Bundled skills load in non-interactive agent sessions** (CI, SDK, `claude -p`). They declared `allowed-tools`, which needs a permission approval a non-interactive session cannot give, so a skill came back as only its description; the field was removed from every bundled skill. Rafter commands a skill suggests now go through the session's normal permission flow.
+- **The Python CLI's `--help` no longer crashes when `click` 8.2+ is installed.** `rafter --help` and every subcommand `--help` raised `TypeError: Parameter.make_metavar() missing 'ctx'` in an environment where something else pulled `click>=8.2`; moving to `typer>=0.16` resolves it. A CI step now installs the newest `click` and runs `--help` so this cannot regress behind the lockfile.
+- **`rafter agent disable` no longer deletes user content from a shared instruction file; it removes only Rafter's managed block.** `disable aider.read` deleted the whole `RAFTER.md`, and in Python `disable cursor.instructions` deleted the whole `~/.cursor/rules/rafter-security.mdc`, even when the user had written their own content around Rafter's `<!-- rafter:start -->`/`<!-- rafter:end -->` block. Disable now excises only that block and preserves the surrounding text; the file is removed only when nothing but the block remained. The `.aider.conf.yml` `read:` entry is still removed as before. Both Node and Python.
+- **The PostToolUse hook now redacts secrets echoed in a tool's `error` field, not only `output` and `content`.** A tool that failed and printed a credential in its error text passed it through un-redacted, contrary to the documented contract that the hook redacts any secrets found. Both Node and Python.
+
+- **`rafter agent baseline create` now captures the same union-of-engines result a scan does.** In `auto` mode the Node implementation ran betterleaks only and did not union with the patterns engine, so a secret that only the patterns engine detects (betterleaks 1.1.x misses AWS access keys, for example) was left out of the baseline a later `rafter secrets` would then flag. It now reuses the scan command's engine selection and union, matching the Python implementation, which already unioned. Node only.
+
+- **`rafter ci init --with-remote` now emits the remote security-audit job.** The flag was read under the wrong option name, so `--with-remote` generated only the secret-scan job and dropped the security-audit job that CLI_SPEC and the README describe; the deprecated `--with-backend` alias was unaffected. Node only (Python already honored the flag). Covers all three platforms (GitHub, GitLab, CircleCI).
+
 - **The PreToolUse hook now evaluates shell and file-write tools under each platform's own name, not only `Bash`, `Write` and `Edit`.** Shell commands from Gemini CLI (`run_shell_command`) and Cursor's `preToolUse` (`Shell`) go through the command policy, and file writes from Gemini CLI (`write_file`, `replace`), Codex (`apply_patch`), `MultiEdit`, Continue's `Write` (`filepath`) and Windsurf's `pre_write_code` edits go through the same write checks as `Write`/`Edit`. The tools recognized per platform are listed in CLI_SPEC. Both Node and Python.
+- **The built-in AWS Secret Access Key pattern no longer flags the canonical AWS-docs example secret key** (#230). `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` matched the regex engine but not betterleaks, so e.g. the hook's Write gate denied a write containing the well-known public non-secret while `rafter secrets` via betterleaks allowed it. The regex engine now carries the same exemption betterleaks already applies, mirroring the AWS Access Key ID fix in 0.11.0, in both Node and Python. **Behavior change:** a 40-character secret value ending in `EXAMPLEKEY` is no longer reported as a finding by the patterns engine; any other 40-character value is still detected as before.
 
 ## [0.11.1] - 2026-10-22
 
