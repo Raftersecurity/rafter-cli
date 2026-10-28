@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 
 /**
- * Regression tests for a set of real agent-transcript friction points with
+ * Regression tests for common agent invocation mistakes with
  * `rafter secrets`:
  *
  *   1. Several paths in one invocation used to scan only the first and drop
