@@ -1274,20 +1274,33 @@ Remote scan results (`rafter run`/`rafter get --format json`) are rejected with 
 
 ### rafter gates [PATH] [OPTIONS]
 
-Map a codebase's security gates for an audit: the functions whose names say they decide whether something is allowed, ranked by likely security weight, and "twin" groups of gates that implement the same contract, with the guard calls each twin makes. Static and local: regex over source lines, no network, no LLM. It is a reading list, not a set of findings. Both runtimes produce byte-identical output for the same tree.
+Map a codebase's security gates for an audit: the functions whose names say they decide whether something is allowed, ranked by likely security weight; leads, the lines no gate name points to that are worth a question; and "twin" groups of gates that implement the same contract, with the guard calls each twin makes. Static and local: regex over source lines, no network, no LLM. It is a reading list, not a set of findings. Both runtimes produce byte-identical output for the same tree.
 
 - `[PATH]` — directory or single file to map (default: `.`)
 - `--json` — machine-readable output (schema below)
 - `--limit <n>` — number of ranked gates to output, text and JSON (default: `60`); twins are computed from all gates
 - `--no-gitignore` — do not honor `.gitignore`
 
-**Files.** Go, Python, JavaScript, TypeScript, Java and Ruby (`.go .py .js .jsx .mjs .cjs .ts .tsx .mts .cts .java .rb`). Skipped: the `rafter secrets` default excludes (`node_modules`, `vendor`, `dist`, `build`, virtualenvs, ...), hidden directories, test, docs and example directories (`test`, `tests`, `__tests__`, `spec`, `testdata`, `fixtures`, `mocks`, `e2e`, `docs`, `examples`, `samples`, `third_party`, `generated`, ...), test files (`*_test.go`, `test_*.py`, `*.test.ts`, `*.spec.js`, `*Test.java`, `*_spec.rb`, ...), generated files (`*.pb.go`, `*_pb2.py`, `*.min.js`, `*.d.ts`, or a `DO NOT EDIT` / `@generated` marker in the first five lines), files over 1 MiB, lines over 400 characters, and anything `.gitignore` excludes.
+**Files.** Go, Python, JavaScript, TypeScript, Java and Ruby (`.go .py .js .jsx .mjs .cjs .ts .tsx .mts .cts .java .rb`). Skipped: the `rafter secrets` default excludes (`node_modules`, `vendor`, `dist`, `build`, virtualenvs, ...), hidden directories, test, docs and example directories (`test`, `tests`, `__tests__`, `spec`, `testdata`, `fixtures`, `mocks`, `e2e`, `docs`, `examples`, `samples`, `third_party`, `generated`, ...), test files (`*_test.go`, `test_*.py`, `*.test.ts`, `*.spec.js`, `*Test.java`, `*_spec.rb`, ...), generated files (`*.pb.go`, `*_pb2.py`, `*.min.js`, `*.d.ts`, or a `DO NOT EDIT` / `@generated` marker in the first five lines), Go files that import `"testing"` (test harness packages), `demo`/`demos` directories, files over 1 MiB, lines over 400 characters, and anything `.gitignore` excludes. In Python, the inside of triple-quoted strings (docstrings) is ignored, so example code in a docstring is neither a gate nor a lead.
 
 **Gates.** A definition (function, method, or a class/struct/type) is a gate when its name's first word is a deciding verb (`authorize`, `authenticate`, `allow`, `permit`, `deny`, `can`, `verify`, `enforce`, `guard`, `check`, `validate`, `ensure`, `require`, `match`, `sanitize`, `escape`, `clean`, `safe`, ...), it is `is*` followed by a state such as `Allowed`, `Valid`, `Trusted`, `Safe`, `Admin` or `Owner`, `has*` followed by `Permission`, `Role`, `Scope` or `Access`, it ends in `match`/`matches`/`matcher`, or it contains a role word (`middleware`, `guard`, `interceptor`, `authorizer`, `authenticator`, `verifier`, `sanitizer`, ...). Names starting with an accessor or plumbing word (`get`, `set`, `load`, `create`, `parse`, `render`, ...) are never gates. A type is a gate only through a role word. `score` adds the name's verb or role weight, security tokens in the name (`authoriz`, `authent`, `permission`, `acl`, `policy`, `token`, `session`, `password`, ..., capped at 6), and 2 when a directory or the file name is security-ish (`auth`, `acl`, `policy`, `session`, `token`, `oauth`, `jwt`, `crypto`, `tls`, `middleware`, `security`, `access`, ...). The weights are heuristics and may change between versions. Gates sort by score, then file, then line.
 
-**Twins.** Function and method gates group by a key derived from the name: words are lowercased and joined with case and separators ignored; version suffixes (`V2`, `_2`), `async`/`sync`/`impl` markers, a leading `do`, and backend words (`ldap`, `sql`, `redis`, `local`, `memory`, `http`, ...) are dropped, as is a word at either end of the name that also names the file or its directory. A name prefixed with `a` for its async variant (`acheck_password`) joins the unprefixed group. A key reduced to one weak verb (`check`, `validate`, `ensure`) is not grouped. Groups of 2 to 8 members are reported. For each member, calls in its body are sorted into guard categories by the called name, lowercased with underscores removed: `escape`, `normalize`, `containment`, `constant_time`, `expiry`, `authz`, `authn`, `limit`, `verify`, `validate`, `check`. A group is **flagged** when a category appears in one member and not in another. Flagged groups sort first, by the weight of their missing categories (escape, normalize, containment, constant-time compare and expiry above authz, authn and limit, above verify, validate and check), then by the highest member score.
+**Twins.** Function and method gates group by a key derived from the name: words are lowercased and joined with case and separators ignored; version suffixes (`V2`, `_2`), `async`/`sync`/`impl` markers, a leading `do`, and backend words (`ldap`, `sql`, `redis`, `local`, `memory`, `http`, ...) are dropped, as is a word at either end of the name that also names the file or its directory. A name prefixed with `a` for its async variant (`acheck_password`) joins the unprefixed group. A key reduced to one weak verb (`check`, `validate`, `ensure`) is not grouped. Groups of 2 to 8 members are reported. For each member, calls in its body are sorted into guard categories by the called name, lowercased with underscores removed: `escape`, `normalize`, `containment`, `constant_time`, `expiry`, `authz`, `authn`, `limit`, `verify`, `validate`, `check`. Each member has a `status`: `stub` when its body holds only `...`, a docstring, empty braces or `raise NotImplementedError` (an abstract declaration; a bare `pass` is not a stub, since an override that does nothing is how a check gets switched off); `delegates` when it calls a twin by a different name (`CleanPath` calling `cleanPath`) or calls `super`; otherwise `checked`. Only a `checked` member can lack a category. A group is **flagged** when a category appears in one member and a `checked` member lacks it. `lacks_calls` names the guard calls its twins make in the categories a member lacks. Flagged groups carry a `confidence`: the weight of the heaviest missing category (escape, normalize, containment, constant-time compare and expiry 3; authz, authn and limit 2; verify, validate and check 1), plus 1 when the members live in different files, plus 1 when one checking member is the only one lacking a category that two or more checking twins call, minus 1 when every call behind the missing categories is a generic name (`max`, `min`, `check`, `validate`, `verify`, `clean`, `quote`, `limit`, ...). Flagged groups sort first, by confidence, then by the weight of their missing categories, then by the highest member score.
 
-**Text output** (stdout): a stats line, the ranked gates as `score  file:line  signature` (signature truncated to 90 characters), up to 10 flagged twin groups with each member's guard calls and the categories it lacks, then up to 8 other twin groups. It is sized for an agent to read (a few KB).
+**Leads.** Lines worth a question that no gate name points to, found per language by these rules (`rule` id, then what fires it):
+
+- `tls-verify-off` (weight 5): certificate verification turned off by a literal: Go `InsecureSkipVerify: true`; Python `verify=False` (and `verify_ssl`, `ssl_verify`, `verify_certs`, ...), `CERT_NONE`, `_create_unverified_context`, `check_hostname = False`; JS/TS `rejectUnauthorized: false`, `strictSSL: false`, `NODE_TLS_REJECT_UNAUTHORIZED` set to `0`; Java `NoopHostnameVerifier`, `ALLOW_ALL_HOSTNAME_VERIFIER`, `TrustAllStrategy`; Ruby `VERIFY_NONE`.
+- `client-cert-unverified` (5): Go `ClientAuth` set to `tls.RequestClientCert`, `tls.RequireAnyClientCert` or `tls.VerifyClientCertIfGiven`.
+- `tls-verify-config` (4): Go `InsecureSkipVerify` or JS/TS `rejectUnauthorized` set from a value rather than a literal.
+- `insecure-default` (4, or 3 for a Go field): an option named like `insecure`, `skip_verify`, `no_verify` or `disable_tls` set or defaulted to `true` (including Go `flag.Bool("insecure...", true, ...)`); a Go struct field of type `bool` named for a peer check (`VerifyHostname`, `TLSVerify`, `RequireCert`) whose zero value, `false`, skips it.
+- `unbounded-read` (3 for a request body, 2 for a response body): Go `io.ReadAll`/`ioutil.ReadAll`/`json.NewDecoder` on a `Body` with no `LimitReader`/`MaxBytesReader` on that line or the 15 before; Python `.read()` with no size on `request`, `req`, `stream`, `rfile`, `body` or `wsgi_input`; JS/TS a `'data'` event handler with no `length`/`size`/`limit`/`max` on that line or the 7 after.
+- `limit-disabled` (2): a setting named with `limit` or `max` set to `-1`, `Infinity`, `math.Inf(1)` or `float("inf")`, as a key, keyword default, attribute or constant (not a Go `:=` local).
+- `loose-match` (4 on a host, origin, domain, referer, redirect, URL or URI, or a scope, audience, issuer, role or subject; 2 on a path): Go `strings.HasPrefix`/`HasSuffix`/`Contains`/`EqualFold`, Python `startswith`/`endswith`/`in`, JS/TS `startsWith`/`endsWith`/`includes`/`indexOf`, Java `startsWith`/`endsWith`/`contains`/`equalsIgnoreCase`, Ruby `start_with?`/`end_with?`/`include?`, where the value tested is an identifier whose last word names one of those (a plural such as `hosts` names a collection and does not count). Not raised when the needle is a literal with no letters (`"/"`, `"*"`, `":"`; except a prefix check on a URL or redirect, where `"/"` also admits `//evil.com`), a path suffix is a file extension (`".py"`), the line holds a scheme-only literal (`"https://"`), the comparison is a case-insensitive one on a host, origin or domain, or (for Python `in`) the line holds `for`.
+- `config-unread` (3): a security-named setting (a word starting with `verif`, `secur`, `insecur`, `strict`, `requir`, `allow`, `deny`, `limit`, `max`, `timeout`, `auth`, `tls`, `ssl`, `csrf`, `xsrf`, `origin` or `trust`) declared in exactly one file, as a Go struct field, a Python class field, `self.` attribute or module constant, a TS `boolean`/`number`/`string` field, a JS `this.` attribute or a Java field, and never read in the scanned files. A read is any occurrence other than a declaration line, an assignment target or key (`x.name =`, `name:`, `name=`), an address taken to set it (`&cfg.Name`) or the right side of a pass-through (`self.name = name`). At most 10.
+
+A lead gets +1 when its path is security-ish (the gate path rule). Each line gives at most one lead, its heaviest rule (the first on a tie); each file gives at most 3 leads per rule. Leads sort by weight, then file, line and rule. Leads are found in the same files as gates; comments and string contents are ignored except where a rule reads a literal.
+
+**Text output** (stdout): a stats line, the ranked gates as `score  file:line  signature` (signature truncated to 90 characters), up to 25 leads as `file:line  [rule]  question` with `... N more, use --json` when there are more, up to 10 flagged twin groups by confidence with each member's guard calls and, for a member that lacks a category, the calls its twins make (`lacks: escape (twins call escape_filter_chars(); this one does not)`), or `(stub)` / `(delegates to a twin)`, then up to 8 other twin groups. It is sized for an agent to read (a few KB).
 
 **JSON output** (`--json`, stdout; this example is `--limit 1`):
 
@@ -1298,7 +1311,8 @@ Map a codebase's security gates for an audit: the functions whose names say they
     "gates_found": 5,
     "gates_shown": 1,
     "twin_groups": 1,
-    "flagged_groups": 1
+    "flagged_groups": 1,
+    "leads_found": 1
   },
   "gates": [
     {
@@ -1311,25 +1325,40 @@ Map a codebase's security gates for an audit: the functions whose names say they
       "signature": "func (a *Authorizer) Authorize(user string, action string) bool {"
     }
   ],
+  "leads": [
+    {
+      "file": "web/middleware.js",
+      "line": 6,
+      "rule": "loose-match",
+      "weight": 5,
+      "question": "startsWith on url: does it accept https://example.com.evil.com, https://example.com@evil.com or //evil.com?",
+      "snippet": "const isSafeRedirect = (url) => url.startsWith(\"/\");"
+    }
+  ],
   "twins": [
     {
       "key": "authenticate",
       "flagged": true,
+      "confidence": 4,
       "missing": ["escape"],
       "members": [
         {
           "file": "backends/ldap.py",
           "line": 1,
           "name": "authenticate",
+          "status": "checked",
           "guards": { "escape": ["escape_filter_chars"] },
-          "lacks": []
+          "lacks": [],
+          "lacks_calls": []
         },
         {
           "file": "backends/local.py",
           "line": 1,
           "name": "authenticate",
+          "status": "checked",
           "guards": {},
-          "lacks": ["escape"]
+          "lacks": ["escape"],
+          "lacks_calls": ["escape_filter_chars"]
         }
       ]
     }
@@ -1340,7 +1369,8 @@ Map a codebase's security gates for an audit: the functions whose names say they
 - `file` — path relative to `[PATH]` (or to the file's directory when `[PATH]` is a file), `/`-separated
 - `kind` — `function`, `method` or `type`; `language` — `go`, `python`, `javascript`, `typescript`, `java` or `ruby`
 - `gates` — at most `--limit` entries; `stats.gates_found` counts all of them
-- `twins` — all groups, flagged first; `missing` lists the guard categories some member lacks, in category order; `guards` maps each category a member calls to the sorted called names
+- `leads` — at most 200 entries, ranked; `stats.leads_found` counts all of them. `rule` is one of the ids above, `weight` its rank weight, `question` the one-line question for the reader, `snippet` the trimmed source line (truncated to 90 characters). A lead is a place to look, not a finding
+- `twins` — all groups, flagged first by `confidence` (0 for a group that is not flagged); `missing` lists the guard categories some checking member lacks, in category order; `guards` maps each category a member calls to the sorted called names; `status` is `checked`, `delegates` or `stub`; `lacks_calls` is the sorted guard calls its twins make in the categories it `lacks`
 
 **Exit codes:** `0` on success, whatever is found; `2` when `[PATH]` does not exist or `--limit` is not a positive integer.
 

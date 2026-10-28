@@ -3,7 +3,7 @@ import { execSync, execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { GATES_FIXTURE, writeFixture } from "./fixtures/gates-fixture.js";
+import { GATES_FIXTURE, LEADS_FIXTURE, writeFixture } from "./fixtures/gates-fixture.js";
 
 /**
  * Cross-runtime parity tests — invoke both Node.js and Python CLIs
@@ -668,6 +668,17 @@ describeIfPython("parity: gates", () => {
 
     const json = runBoth(["gates", tmpDir, "--json"]);
     expect(JSON.parse(json.node.stdout).stats.flagged_groups).toBe(1);
+    expect(json.python.stdout).toBe(json.node.stdout);
+  });
+
+  it("leads and twin status are identical", () => {
+    const leadsDir = path.join(tmpDir, "leads");
+    writeFixture(leadsDir, LEADS_FIXTURE);
+    const text = runBoth(["gates", leadsDir]);
+    expect(text.node.stdout).toContain("[tls-verify-off]");
+    expect(text.python.stdout).toBe(text.node.stdout);
+    const json = runBoth(["gates", leadsDir, "--json"]);
+    expect(JSON.parse(json.node.stdout).stats.leads_found).toBeGreaterThan(0);
     expect(json.python.stdout).toBe(json.node.stdout);
   });
 });
