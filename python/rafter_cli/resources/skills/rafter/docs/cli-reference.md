@@ -3,7 +3,7 @@
 Full command tree for the `rafter` CLI. Commands group by concern: **scanning**, **agent** (local security primitives), **hook** (platform bridges), **policy**, **ci**, **mcp**, **docs/brief**, **notify**, **report**.
 
 Global flags:
-- `-a, --agent` — plain output (no colors/emoji) for AI consumers.
+- `-a, --agent` — plain output (no colors/emoji) for AI consumers. Works before or after the subcommand name.
 - `--version`, `version` — print version.
 
 Exit codes (consistent across commands):
@@ -30,15 +30,16 @@ Key options: `--repo org/repo`, `--branch <name>`, `--mode fast|plus`, `--format
 
 Example: `rafter run --repo myorg/api --branch feature/auth --mode plus --format json`
 
-### `rafter secrets [path]`
+### `rafter secrets [path...]`
 
-Local secret scan. Deterministic, offline, no API key. Dual-engine: Betterleaks binary if present, built-in regex fallback (21+ patterns).
+Local secret scan. Deterministic, offline, no API key. Dual-engine: Betterleaks binary if present, built-in regex fallback (21+ patterns). Accepts one or more paths; findings merge into a single report.
 
 When: pre-commit, pre-push, fast first pass before remote scan, air-gapped envs.
 
-Useful flags: `--history` (scan git history with Betterleaks), `--format json`, `--quiet`.
+Useful flags: `--history` (scan git history with Betterleaks), `--format json`, `--out <file>` (write JSON/SARIF to a file instead of stdout — for a sandbox with no shell redirects), `--quiet`.
 
 Example: `rafter secrets . --format json`
+Example (several paths, writing to a file): `rafter secrets src/ infra/ --json --out findings.json`
 
 (Back-compat aliases: `rafter scan local` and `rafter agent scan`. Prefer `rafter secrets`.)
 
