@@ -95,7 +95,13 @@ security guidance into each session; run the Rafter CLI (`rafter secrets`,
 
 ## Uninstall
 
-Remove `RAFTER.md` from the `read:` list in `.aider.conf.yml`. Then delete
+```sh
+rafter agent disable aider.read
+```
+
+On 0.11.2 and later this removes Rafter's managed block and the `read:` entry
+and keeps any project-specific content in `RAFTER.md`. To do it by hand,
+remove `RAFTER.md` from the `read:` list in `.aider.conf.yml`. Then delete
 `RAFTER.md` only if it contains no project-specific content outside the
 `<!-- rafter:start -->` / `<!-- rafter:end -->` managed block. At user scope,
 make the same change in `~/.aider.conf.yml` and `~/RAFTER.md`.
