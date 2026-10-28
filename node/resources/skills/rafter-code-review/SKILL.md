@@ -24,7 +24,7 @@ If **none** of those are present — research / experimental / exploratory / loc
 2. `Read` only the matching sub-doc — do not preload them all.
 3. Work through its questions against the specific files/diff. Cite file:line evidence as you go.
 4. When in doubt on a single finding, jump to `docs/investigation-playbook.md` for canonical follow-up questions.
-5. Finish with `rafter run --mode plus` on the same diff if the stakes warrant a deep automated pass.
+5. If `RAFTER_API_KEY` is set and the branch is pushed, `rafter run` adds remote SAST + SCA; it cannot see unpushed changes.
 
 ---
 
@@ -44,7 +44,10 @@ Most real bugs in mature code are a **gate** (a function that decides whether so
    - **Set but never read:** a security flag, field or config option that is computed or parsed and then ignored by the decision.
    - **A twin that lost its guard:** sibling implementations of one contract (sync/async, two backends, v1/v2) where one checks, escapes or limits and the other doesn't.
    - **Containment, escaping, limits:** paths not re-checked under the root after joining; filters, queries, HTML or shell built without the escaping neighbors use; size, depth or time limits missing or disabled.
-3. **Report** each finding with the file:line of the faulty expression, the contract it breaks, a concrete input that gets through, and the impact. A gate that holds is not a finding.
+3. **Judge the code in front of you, not your memory of the project.** "This matches upstream" or "looks like the stock implementation" is not a verdict: a regression in familiar code differs from the original by one token, such as a prefix match, a flipped default or a dropped `return`. Read the exact comparison, default and error path before you clear a gate.
+4. **Keep a worklist and close every item.** List the gates you will review (the top of `rafter gates`, plus any you found by grep) before you start. Give each one a verdict: *holds*, with the input you tried, or *finding*. Do not stop at the first finding; code with one broken gate often has a second of the same shape.
+5. **Sweep after each finding.** Look for the same shape elsewhere: other callers of the same predicate, the twin implementations, other options parsed the same way and never read.
+6. **Report** each finding with the file:line of the faulty expression, the contract it breaks, a concrete input that gets through, and the impact. Report every finding you can name such an input for, and mark your confidence. A gate that holds is not a finding.
 
 More detail and grep hints: `docs/security-gates.md`. Then walk the category sub-doc below that fits the code.
 
@@ -89,21 +92,18 @@ For: single-finding follow-up, tracing a suspicious call, "is this input reachab
 ## What this skill will NOT do
 
 - It will not write a report for you. It tells you where to look and what to ask; you produce the findings, each with file:line evidence.
-- It will not replace automated scanning. Always pair with `rafter secrets .` (secrets) and `rafter run` (SAST/SCA) before review.
+- It will not replace automated scanning, and scanning does not replace it: a clean scan says nothing about a gate that accepts the wrong input.
 - It will not produce recommendations without evidence. Every question expects a file:line answer before moving on.
 
 ---
 
-## Fast path for a typical PR review
+## Fast path for reviewing your own diff
 
-```bash
-# 1. Run deterministic checks first — cheap, catches the obvious
-rafter secrets .
-rafter run                    # remote SAST/SCA, if RAFTER_API_KEY set
-
-# 2. Then pick the category and walk the questions
-#    Read docs/<category>.md
-```
+1. `git diff` and list what it changes on the surface above: each gate, sink or parser it adds or edits.
+2. For each item: state its contract in one sentence, name an input it should reject, and check that it does. Steps 3–6 of (0) apply.
+3. `rafter secrets <changed files>` for hardcoded credentials.
+4. Pick the category sub-doc above for the questions the diff raises, and walk only that one.
+5. If `RAFTER_API_KEY` is set and the branch is pushed, `rafter run` for SAST + SCA.
 
 If the diff spans categories (e.g. a web app that also has an LLM feature), Read both sub-docs and walk them sequentially. Don't try to merge the checklists.
 
