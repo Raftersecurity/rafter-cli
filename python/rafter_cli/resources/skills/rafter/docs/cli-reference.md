@@ -108,6 +108,12 @@ Snapshot current findings so only *new* ones fail future scans.
 
 Emit a ready-to-paste instruction block for an agent's system prompt.
 
+### `rafter agent update`
+
+Bring every installed rafter skill, rule, instruction block, hook and MCP entry up to this CLI's version. The pretool hook already refreshes unmodified skill and rule files once a day after an upgrade.
+A file you or the user edited is kept, and the new version is written beside it as `<file>.rafter-new`; `rafter agent status` lists each one.
+To reconcile: merge the local changes into `<file>.rafter-new`, move it over `<file>`, then run `rafter agent update` (or delete `<file>.rafter-new` to keep the local version as is).
+
 ### `rafter agent update-betterleaks`
 
 Download / upgrade the Betterleaks binary Rafter uses for local scans.
