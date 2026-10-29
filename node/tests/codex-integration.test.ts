@@ -155,27 +155,22 @@ describe("Codex CLI Integration", () => {
 
     it("should overwrite stale skill content on re-install", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
-      const skillDir = path.join(
-        testHomeDir,
-        ".agents",
-        "skills",
-        "rafter"
+      const skillFile = path.join(testHomeDir, ".agents", "skills", "rafter", "SKILL.md");
+      fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+      // The SKILL.md published 0.11.2 installed: rafter's own, so it is replaced.
+      // (Content rafter never shipped counts as the user's and is kept.)
+      const stale = fs.readFileSync(
+        path.join(PROJECT_ROOT, "..", "fixtures", "install-0.11.2", "home", ".agents", "skills", "rafter", "SKILL.md"),
+        "utf-8",
       );
-      fs.mkdirSync(skillDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(skillDir, "SKILL.md"),
-        "---\nname: rafter\nversion: 0.0.1\n---\nOld content\n"
-      );
+      fs.writeFileSync(skillFile, stale);
 
       runCli("agent init --with-codex", testHomeDir);
 
-      const content = fs.readFileSync(
-        path.join(skillDir, "SKILL.md"),
-        "utf-8"
-      );
-      // Should be overwritten with the current template, not the old content
-      expect(content).not.toContain("Old content");
-      expect(content).not.toContain("version: 0.0.1");
+      const content = fs.readFileSync(skillFile, "utf-8");
+      const current = fs.readFileSync(path.join(PROJECT_ROOT, "resources", "skills", "rafter", "SKILL.md"), "utf-8");
+      expect(stale).not.toBe(current);
+      expect(content).toBe(current);
     });
   });
 
