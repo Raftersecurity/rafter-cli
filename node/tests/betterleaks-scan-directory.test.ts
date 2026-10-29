@@ -3,7 +3,7 @@ import { execSync, spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { BetterleaksScanner } from "../src/scanners/betterleaks.js";
+import { BetterleaksScanner, gitSkippedPaths, scanConfigToml } from "../src/scanners/betterleaks.js";
 import { execTmpDir } from "./exec-tmp.js";
 
 // #262 — `betterleaks dir` ignores .gitignore, so handed a directory it walked
@@ -113,12 +113,88 @@ describe("BetterleaksScanner.scanDirectory and .gitignore", () => {
   });
 });
 
+// The skip list and the generated config decide what betterleaks never reads,
+// so an error in either hides secrets. These need git but not betterleaks.
+describe("gitSkippedPaths and scanConfigToml", () => {
+  let repo: string;
+  const git = (...args: string[]) =>
+    execSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...args].map((a) => `'${a}'`).join(" "), {
+      cwd: repo, stdio: "pipe",
+    }).toString();
+  const patternsOf = (toml: string) =>
+    [...toml.matchAll(/^ {2}(".*"),$/gm)].map((m) => new RegExp(JSON.parse(m[1])));
+  const skips = (toml: string, abs: string) => patternsOf(toml).some((p) => p.test(abs));
+
+  beforeEach(() => {
+    repo = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-bl-skip-"));
+    git("init", "-q");
+  });
+  afterEach(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+  it("scans a tracked file that is now a directory, skips submodules and nested repos", () => {
+    fs.writeFileSync(path.join(repo, "vendor"), "x\n");
+    git("add", "vendor");
+    git("commit", "-qm", "c");
+    fs.rmSync(path.join(repo, "vendor"));
+    fs.mkdirSync(path.join(repo, "vendor"));
+    fs.writeFileSync(path.join(repo, "vendor", "s.js"), SECRET);
+    const sha = git("rev-parse", "HEAD").trim();
+    git("update-index", "--add", "--cacheinfo", `160000,${sha},sub`);
+    fs.mkdirSync(path.join(repo, "sub"));
+    fs.mkdirSync(path.join(repo, "nested"));
+    execSync("git init -q", { cwd: path.join(repo, "nested") });
+    fs.writeFileSync(path.join(repo, "nested", "n.js"), SECRET);
+    expect(gitSkippedPaths(repo)!.sort()).toEqual(["nested/", "sub"]);
+  });
+
+  it.skipIf(process.platform === "win32")("keeps a backslash in a POSIX filename literal", () => {
+    const toml = scanConfigToml(repo, ["trigger\\x.txt"], null);
+    expect(skips(toml, path.join(repo, "trigger\\x.txt"))).toBe(true);
+    expect(skips(toml, path.join(repo, "trigger", "x.txt"))).toBe(false);
+  });
+
+  it("writes no character TOML forbids raw in a basic string", () => {
+    const toml = scanConfigToml(repo, ["d\x7fel.txt", "t\tab", "n\nl"], "/c\x7f/x.toml");
+    // Line feeds separate entries; any other control character must be escaped.
+    expect(toml).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f]/);
+    expect(patternsOf(toml)).toHaveLength(4);
+    expect(skips(toml, path.join(repo, "d\x7fel.txt"))).toBe(true);
+  });
+});
+
 // #262 — betterleaks 1.1.x never resets its extend-depth counter, so handed many
 // paths under a config that extends the default rules, it applied rules to the
 // first two paths only. Needs the real binary on PATH; skipped without it.
 const realBl = spawnSync("betterleaks", ["version"], { stdio: "ignore" }).status === 0;
 
 describe.skipIf(!realBl)("BetterleaksScanner.scanDirectory with the real betterleaks", () => {
+  it("scans files the skip list must not touch, under a config betterleaks can read", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-bl-real-"));
+    try {
+      const g = (cmd: string) => execSync(`git -c user.name=t -c user.email=t@t ${cmd}`, { cwd: repo });
+      g("init -q");
+      fs.writeFileSync(path.join(repo, ".gitignore"), "*.txt\n");
+      fs.writeFileSync(path.join(repo, "vendor"), "x\n");
+      g("add vendor .gitignore");
+      g("commit -qm c");
+      fs.rmSync(path.join(repo, "vendor"));
+      fs.mkdirSync(path.join(repo, "vendor"));
+      const pat = (i: number) => `const t = "ghp_${String(i).repeat(4)}Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXyZ0";\n`;
+      fs.writeFileSync(path.join(repo, "vendor", "v.js"), pat(1));
+      fs.mkdirSync(path.join(repo, "trigger"));
+      fs.writeFileSync(path.join(repo, "trigger", "x.txt"), pat(2));
+      g("add -f trigger/x.txt");
+      fs.writeFileSync(path.join(repo, "trigger\\x.txt"), "ignored\n");
+      fs.writeFileSync(path.join(repo, "d\x7fel.txt"), pat(3));
+      const scanner = new BetterleaksScanner();
+      (scanner as any).resolvedPath = "betterleaks";
+      const files = (await scanner.scanDirectory(repo)).map((r) => path.relative(repo, r.file)).sort();
+      expect(files).toEqual([path.join("trigger", "x.txt"), path.join("vendor", "v.js")]);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("applies the extended rules to every file and skips gitignored ones", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-bl-real-"));
     try {

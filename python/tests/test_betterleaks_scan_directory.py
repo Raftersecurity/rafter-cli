@@ -17,7 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from rafter_cli.scanners.betterleaks import BetterleaksScanner
+import sys
+import tomllib
+
+from rafter_cli.scanners.betterleaks import BetterleaksScanner, git_skipped_paths, scan_config_toml
 
 # The developer's own betterleaks config must not leak into these tests.
 CONFIG_ENV_VARS = ("BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG", "BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML")
@@ -113,6 +116,74 @@ def test_extends_the_targets_own_config(setup):
     (repo / ".betterleaks.toml").write_text("[extend]\nuseDefault = true\n")
     scanner.scan_directory(str(repo))
     assert f"path = {json.dumps(str(repo / '.betterleaks.toml'))}" in cfg.read_text()
+
+
+# The skip list and the generated config decide what betterleaks never reads,
+# so an error in either hides secrets. These need git but not betterleaks.
+def _git(repo, *args):
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=repo, check=True, capture_output=True, text=True,
+    ).stdout
+
+
+def _skips(toml, abs_path):
+    return any(re.search(p, abs_path) for p in tomllib.loads(toml)["allowlists"][0]["paths"])
+
+
+def test_skip_list_scans_tracked_file_now_dir_but_skips_submodules_and_nested_repos(tmp_path):
+    repo = tmp_path
+    _git(repo, "init", "-q")
+    (repo / "vendor").write_text("x\n")
+    _git(repo, "add", "vendor")
+    _git(repo, "commit", "-qm", "c")
+    (repo / "vendor").unlink()
+    (repo / "vendor").mkdir()
+    (repo / "vendor" / "s.js").write_text(SECRET)
+    sha = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{sha},sub")
+    (repo / "sub").mkdir()
+    (repo / "nested").mkdir()
+    _git(repo / "nested", "init", "-q")
+    (repo / "nested" / "n.js").write_text(SECRET)
+    assert sorted(git_skipped_paths(str(repo))) == ["nested/", "sub"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash is a separator on Windows")
+def test_config_keeps_a_backslash_in_a_posix_filename_literal(tmp_path):
+    toml = scan_config_toml(str(tmp_path), ["trigger\\x.txt"], None)
+    assert _skips(toml, os.path.join(str(tmp_path), "trigger\\x.txt"))
+    assert not _skips(toml, os.path.join(str(tmp_path), "trigger", "x.txt"))
+
+
+def test_config_is_valid_toml_whatever_the_filenames(tmp_path):
+    toml = scan_config_toml(str(tmp_path), ["d\x7fel.txt", "t\tab", "n\nl"], "/c\x7f/x.toml")
+    assert tomllib.loads(toml)["extend"]["path"] == "/c\x7f/x.toml"
+    assert _skips(toml, os.path.join(str(tmp_path), "d\x7fel.txt"))
+
+
+@pytest.mark.skipif(shutil.which("betterleaks") is None, reason="needs the betterleaks binary")
+def test_real_betterleaks_scans_what_the_skip_list_must_not_touch(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / ".gitignore").write_text("*.txt\n")
+    (repo / "vendor").write_text("x\n")
+    _git(repo, "add", "vendor", ".gitignore")
+    _git(repo, "commit", "-qm", "c")
+    (repo / "vendor").unlink()
+    (repo / "vendor").mkdir()
+    pat = lambda i: f'const t = "ghp_{str(i) * 4}Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXyZ0";\n'
+    (repo / "vendor" / "v.js").write_text(pat(1))
+    (repo / "trigger").mkdir()
+    (repo / "trigger" / "x.txt").write_text(pat(2))
+    _git(repo, "add", "-f", "trigger/x.txt")
+    (repo / "trigger\\x.txt").write_text("ignored\n")
+    (repo / "d\x7fel.txt").write_text(pat(3))
+    scanner = BetterleaksScanner()
+    scanner._path = shutil.which("betterleaks")
+    files = sorted(os.path.relpath(r.file, repo) for r in scanner.scan_directory(str(repo)))
+    assert files == [os.path.join("trigger", "x.txt"), os.path.join("vendor", "v.js")]
 
 
 # #262 — betterleaks 1.1.x never resets its extend-depth counter, so handed many
