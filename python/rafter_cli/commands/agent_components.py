@@ -31,18 +31,28 @@ RAFTER_MARKER_START = "<!-- rafter:start -->"
 RAFTER_MARKER_END = "<!-- rafter:end -->"
 
 RAFTER_INSTRUCTION_BLOCK = f"""{RAFTER_MARKER_START}
-## Security: Rafter (required review gate)
+## Security: Rafter (surface-driven review gate)
 
-Rafter is this project's security review gate. A security-relevant task is
-**not complete** until a rafter skill (or `rafter run`) has reviewed it.
-Don't mark done, don't hand off, don't open a PR without that pass.
+Rafter is this project's security review gate — driven by the change's **security
+surface**, not by the task label. When a diff touches a real surface (below), it is
+**not complete** until a rafter skill (or `rafter run`) has reviewed it: don't mark
+done, don't hand off, don't open a PR without that pass. When it touches **none** of
+that surface — research / experimental / local-only / throwaway code (training
+scripts, data analysis, plotting, model eval, notebooks, pure computation over
+trusted local data) — a quick surface check is enough; proceed without the full
+gate. Judge by the diff's actual surface, not the "research" label: research code
+that reads a secret, shells out, hits the network, parses untrusted input, or bumps
+a dependency still gets the full gate.
 
-**Stop and invoke before continuing:**
+**Stop and invoke when the change touches that surface:**
 
 - Designing auth, payments, credentials, tokens, sessions, file upload,
-  user data, or data deletion → **`rafter-secure-design`** (before writing code).
-- Diff touches user input, SQL, shell, auth, credentials, file paths, or
-  serialization → **`rafter-code-review`** + `rafter run` (before declaring done).
+  user/untrusted data, deserialization, network endpoints, or data deletion
+  → **`rafter-secure-design`** (before writing code).
+- Diff touches user/untrusted input, SQL/query building, shell/exec, auth,
+  credentials, file paths, (de)serialization, crypto, network endpoints/outbound
+  fetchers (SSRF), data deletion, or dependencies → **`rafter-code-review`** +
+  `rafter run` (before declaring done).
 - About to install or forward a third-party SKILL.md, MCP manifest, Cursor
   rule, or agent config → **`rafter-skill-review`** (before copying anywhere).
 - Security-adjacent but the angle isn't clear → **`rafter`** (the router skill,
@@ -53,7 +63,9 @@ Don't mark done, don't hand off, don't open a PR without that pass.
 - `rafter run` — remote SAST + SCA + secrets (real code analysis, needs `RAFTER_API_KEY`)
 - `rafter secrets .` — local secrets only (offline; NOT a code-security scan)
 - `rafter run --mode plus` — everything in default (`--mode fast`) plus
-  powerful agentic deep-dives (needs `RAFTER_API_KEY`)
+  powerful agentic deep-dives (needs `RAFTER_API_KEY`). **Plus is a PAID tier
+  and consumes the user's credits — ask the user before running it.** Enforced
+  when `scan.plus_requires_approval` is set (then pass `--yes` to confirm).
 {RAFTER_MARKER_END}"""
 
 
@@ -353,9 +365,11 @@ def _codex_hooks() -> ComponentSpec:
         post = {"type": "command", "command": "rafter hook posttool"}
         h["PreToolUse"] = _filter_hooks(h["PreToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook pretool"))
         h["PostToolUse"] = _filter_hooks(h["PostToolUse"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
-        # Bash + apply_patch per Codex hook docs (rf-ovql verification).
+        # Bash + apply_patch per Codex hook docs (rf-ovql verification). PostToolUse
+        # mirrors that write/exec surface (narrowed from ".*" to skip Read/MCP log
+        # noise), matching claude-code posttool scoping (sable-h0ah).
         h["PreToolUse"].append({"matcher": "Bash|apply_patch", "hooks": [pre]})
-        h["PostToolUse"].append({"matcher": ".*", "hooks": [post]})
+        h["PostToolUse"].append({"matcher": "Bash|apply_patch", "hooks": [post]})
         _write_json(hooks_path, cfg)
 
     def uninstall() -> None:
@@ -495,8 +509,15 @@ def _cursor_instructions() -> ComponentSpec:
     file_path = detect_dir / "rules" / "rafter-security.mdc"
 
     def uninstall() -> None:
-        if file_path.exists():
-            file_path.unlink()
+        # Enable injects a marker block (coexists with user content), so disable
+        # must excise only that block, not unlink the whole file. Remove the file
+        # only when it was ours alone; a file with no markers is user-authored.
+        if file_path.exists() and _strip_marker_block(file_path):
+            try:
+                if not file_path.read_text(encoding="utf-8").strip():
+                    file_path.unlink()
+            except OSError:
+                pass
 
     return ComponentSpec(
         id="cursor.instructions",
@@ -1032,9 +1053,13 @@ def _aider_read() -> ComponentSpec:
         config_path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
 
     def uninstall() -> None:
-        if rafter_md_path.exists():
+        # Excise only the managed block; any user content in RAFTER.md survives.
+        # If the file was ours alone (nothing but the block), remove it.
+        # A RAFTER.md with no markers is user-authored — leave it untouched.
+        if rafter_md_path.exists() and _strip_marker_block(rafter_md_path):
             try:
-                rafter_md_path.unlink()
+                if not rafter_md_path.read_text(encoding="utf-8").strip():
+                    rafter_md_path.unlink()
             except OSError:
                 pass
         if not config_path.exists():

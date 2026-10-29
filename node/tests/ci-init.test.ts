@@ -87,38 +87,6 @@ describe("ci init — platform detection", () => {
 });
 
 describe("ci init — explicit platform", () => {
-  it("--platform github generates GitHub Actions config", () => {
-    const r = rafter("ci init --platform github", { cwd: tmpDir });
-    expect(r.exitCode).toBe(0);
-    const content = fs.readFileSync(
-      path.join(tmpDir, ".github/workflows/rafter-security.yml"),
-      "utf-8",
-    );
-    expect(content).toContain("actions/checkout@v4");
-    expect(content).toContain("npm install -g @rafter-security/cli");
-    expect(content).toContain("rafter secrets . --quiet");
-    expect(content).not.toContain("security-audit");
-  });
-
-  it("--platform gitlab generates GitLab CI config", () => {
-    const r = rafter("ci init --platform gitlab", { cwd: tmpDir });
-    expect(r.exitCode).toBe(0);
-    const content = fs.readFileSync(path.join(tmpDir, ".gitlab-ci-rafter.yml"), "utf-8");
-    expect(content).toContain("image: node:20");
-    expect(content).toContain("stages:");
-    expect(content).not.toContain("security-audit");
-  });
-
-  it("--platform circleci generates CircleCI config", () => {
-    const r = rafter("ci init --platform circleci", { cwd: tmpDir });
-    expect(r.exitCode).toBe(0);
-    const content = fs.readFileSync(path.join(tmpDir, ".circleci/rafter-security.yml"), "utf-8");
-    expect(content).toContain("cimg/node:20.0");
-    expect(content).toContain("version: 2.1");
-    expect(content).toContain("workflows:");
-    expect(content).not.toContain("security-audit");
-  });
-
   it("rejects invalid platform", () => {
     const r = rafter("ci init --platform jenkins", { cwd: tmpDir });
     expect(r.exitCode).toBe(1);
@@ -140,23 +108,39 @@ describe("ci init — --with-backend", () => {
     expect(content).toContain("rafter run --format json --quiet");
     expect(r.stdout).toContain("Secrets");
   });
+});
 
-  it("GitLab template includes security-audit job", () => {
-    const r = rafter("ci init --platform gitlab --with-backend", { cwd: tmpDir });
+describe("ci init — --with-remote (sable-o7vh)", () => {
+  it("GitHub template includes security-audit (remote) job", () => {
+    const r = rafter("ci init --platform github --with-remote", { cwd: tmpDir });
     expect(r.exitCode).toBe(0);
-    const content = fs.readFileSync(path.join(tmpDir, ".gitlab-ci-rafter.yml"), "utf-8");
+    const content = fs.readFileSync(
+      path.join(tmpDir, ".github/workflows/rafter-security.yml"),
+      "utf-8",
+    );
     expect(content).toContain("security-audit");
-    expect(content).toContain("needs: [secret-scan]");
+    expect(content).toContain("needs: secret-scan");
     expect(content).toContain("RAFTER_API_KEY");
+    expect(content).toContain("rafter run --format json --quiet");
   });
 
-  it("CircleCI template includes security-audit job with requires", () => {
-    const r = rafter("ci init --platform circleci --with-backend", { cwd: tmpDir });
+  it("GitLab template includes security-audit (remote) job", () => {
+    const r = rafter("ci init --platform gitlab --with-remote", { cwd: tmpDir });
     expect(r.exitCode).toBe(0);
-    const content = fs.readFileSync(path.join(tmpDir, ".circleci/rafter-security.yml"), "utf-8");
-    expect(content).toContain("security-audit");
-    expect(content).toContain("requires:");
-    expect(content).toContain("- secret-scan");
+    const doc = yaml.load(
+      fs.readFileSync(path.join(tmpDir, ".gitlab-ci-rafter.yml"), "utf-8"),
+    ) as any;
+    expect(doc["security-audit"]).toBeDefined();
+    expect(doc["security-audit"].needs).toEqual(["secret-scan"]);
+  });
+
+  it("CircleCI template includes security-audit (remote) job", () => {
+    const r = rafter("ci init --platform circleci --with-remote", { cwd: tmpDir });
+    expect(r.exitCode).toBe(0);
+    const doc = yaml.load(
+      fs.readFileSync(path.join(tmpDir, ".circleci/rafter-security.yml"), "utf-8"),
+    ) as any;
+    expect(doc.jobs["security-audit"]).toBeDefined();
   });
 });
 
@@ -196,7 +180,7 @@ describe("ci init — generated workflow YAML validation", () => {
       const steps = doc.jobs["secret-scan"].steps;
       expect(steps).toHaveLength(3);
       expect(steps[0].uses).toBe("actions/checkout@v4");
-      expect(steps[1].run).toContain("@rafter-security/cli");
+      expect(steps[1].run).toBe("npm install -g @rafter-security/cli");
       expect(steps[2].run).toBe("rafter secrets . --quiet");
     });
 
@@ -227,6 +211,7 @@ describe("ci init — generated workflow YAML validation", () => {
       expect(doc["secret-scan"]).toBeDefined();
       expect(doc["secret-scan"].stage).toBe("security");
       expect(doc["secret-scan"].image).toBe("node:20");
+      expect(doc["security-audit"]).toBeUndefined();
     });
 
     it("secret-scan has script and rules", () => {
@@ -257,6 +242,7 @@ describe("ci init — generated workflow YAML validation", () => {
       expect(doc.jobs["secret-scan"].docker[0].image).toBe("cimg/node:20.0");
       expect(doc.workflows).toBeDefined();
       expect(doc.workflows.security.jobs).toContain("secret-scan");
+      expect(doc.jobs["security-audit"]).toBeUndefined();
     });
 
     it("secret-scan steps include checkout and commands", () => {

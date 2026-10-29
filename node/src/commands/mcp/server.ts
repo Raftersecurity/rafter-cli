@@ -1,4 +1,6 @@
 import { Command } from "commander";
+import fs from "fs";
+import path from "path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -15,6 +17,10 @@ import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager, redactConfigSecrets, isSecretConfigKey, maskSecretValue } from "../../core/config-manager.js";
 import { listDocs, resolveDocSelector, fetchDoc } from "../../core/docs-loader.js";
 import { writeSuppression } from "../../core/suppression-writer.js";
+import { applySuppressions } from "../../core/custom-patterns.js";
+import { collectSuppressions } from "../agent/scan.js";
+import { apiUrl, apiClient} from "../../utils/api.js";
+import { describeSitesError, resolveMcpApiKey } from "../sites/errors.js";
 import { createRequire } from "module";
 
 const _require = createRequire(import.meta.url);
@@ -61,11 +67,10 @@ export function createServer(): Server {
 
   // ── Tools ───────────────────────────────────────────────────────────
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
+  const tools = [
       {
         name: "scan_secrets",
-        description: "Scan files or directories for leaked secrets, API keys, tokens, passwords, and credentials. Use before pushing code, when handling config files, or when asked 'is this safe to commit?' or 'check for leaked keys'.",
+        description: "Scan files or directories for leaked secrets, API keys, tokens, passwords, and credentials. Use before pushing code, when handling config files, or when asked 'is this safe to commit?' or 'check for leaked keys'. Findings hidden by the project's .rafter.yml ignore rules or .rafterignore are dropped from the results; when any were, a second content block lists them as {suppressed_count, _suppressed: [{file, line, column, rule, severity, reason, source}]} (no secret text), so a blanket ignore rule cannot silently empty a scan.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -142,7 +147,7 @@ export function createServer(): Server {
       },
       {
         name: "suppress_finding",
-        description: "Triage a false positive by persisting a suppression rule into the project's .rafter.yml. Use when a scan_secrets finding (or a remote scan finding) is a confirmed false positive — e.g. a test fixture or sample credential. Suppressed findings still surface under '_suppressed' in scan output, so the decision is reviewable and version-controlled. Always include a reason.",
+        description: "Triage a false positive by persisting a suppression rule into the project's .rafter.yml. Use when a scan_secrets finding (or a remote scan finding) is a confirmed false positive — e.g. a test fixture or sample credential. scan_secrets stops reporting suppressed findings; `rafter secrets --json` lists them under '_suppressed', so the decision is reviewable and version-controlled. Always include a reason.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -157,11 +162,77 @@ export function createServer(): Server {
           required: ["path"],
         },
       },
-    ],
-  }));
+      {
+        name: "sites_create",
+        description: "Register a URL as a Rafter Site for live-application security monitoring (exposed backends, DNS misconfig, SEO, accessibility) and kick off its first scan. Use when asked to start monitoring a domain/site.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            url: { type: "string", description: "URL of the site to monitor" },
+          },
+          required: ["url"],
+        },
+      },
+      {
+        name: "sites_scan",
+        description: "Trigger a re-scan of an existing Rafter Site. Identify the site by projectId OR url (exactly one required). Use when asked to re-scan or refresh a site's findings.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            projectId: { type: "string", description: "The site's project id (use this or url, not both)" },
+            url: { type: "string", description: "The site's URL (use this or projectId, not both)" },
+            sections: {
+              type: "array",
+              items: { type: "string", enum: ["flight", "security", "dns"] },
+              description: "Subset of scan sections to run. Omit to run all.",
+            },
+          },
+        },
+      },
+      {
+        name: "sites_list",
+        description: "List Rafter Sites registered for monitoring, paginated. Use when asked 'what sites are being monitored?' or to browse before calling sites_get.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            limit: { type: "number", description: "Results per page, 1-100 (default: 25)" },
+            offset: { type: "number", description: "Pagination offset (default: 0)" },
+            include_archived: { type: "boolean", description: "Include archived sites (default: false)" },
+          },
+        },
+      },
+      {
+        name: "sites_get",
+        description: "Get a Rafter Site's status, latest scan run, and findings summary by its project id. Use after sites_list or sites_create to check a specific site's results.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            id: { type: "string", description: "The site's project id" },
+          },
+          required: ["id"],
+        },
+      },
+  ];
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+
+    // sable-ykuh — validate required inputSchema fields up front, so a missing
+    // argument comes back as a clean tool error instead of reaching the handler
+    // and crashing it with a raw TypeError (surfaced to the client as a -32603
+    // internal error). Mirrors the Python server, where FastMCP rejects the
+    // call against the tool signature before the handler runs.
+    const tool = tools.find((t) => t.name === name);
+    if (!tool) return errorResult(`Unknown tool: ${name}`);
+    const required = ((tool.inputSchema as { required?: readonly string[] }).required) ?? [];
+    for (const field of required) {
+      const value = args?.[field];
+      if (value === undefined || value === null) {
+        return errorResult(`Invalid arguments for "${name}": missing required field "${field}"`);
+      }
+    }
 
     switch (name) {
       case "scan_secrets": {
@@ -170,18 +241,60 @@ export function createServer(): Server {
 
         const runPatterns = (): ScanResult[] => {
           const scanner = new RegexScanner();
-          try {
-            return scanner.scanDirectory(scanPath);
-          } catch {
-            return [scanner.scanFile(scanPath)];
+          // scanDirectory() on a file returns [] rather than throwing, so pick by type.
+          return fs.statSync(scanPath).isFile()
+            ? [scanner.scanFile(scanPath)]
+            : scanner.scanDirectory(scanPath);
+        };
+
+        // Honor the project's suppressions, as `rafter secrets` does, so a
+        // finding triaged with suppress_finding is not reported again.
+        const report = (results: ScanResult[]) => {
+          // Partition off files that could not be read (sable-ilbx), so an
+          // unreadable file is not reported as a clean, empty entry.
+          const readErrors = results
+            .filter((r) => r.readError)
+            .map((r) => ({ file: r.file, error: r.readError! }));
+          const scanResults = results.filter((r) => !r.readError);
+          // Discover and anchor the policy from the scan TARGET, not the MCP
+          // server's cwd (sable-lu0j).
+          const scanBase = path.resolve(scanPath);
+          const rafterignoreDir =
+            fs.existsSync(scanBase) && fs.statSync(scanBase).isDirectory()
+              ? scanBase
+              : path.dirname(scanBase);
+          const policyCfg = new ConfigManager().loadWithPolicy(scanBase).agent?.scan;
+          const suppressions = collectSuppressions(policyCfg?.ignore, policyCfg?.ignoreBaseDir, rafterignoreDir);
+          const applied = applySuppressions(scanResults, suppressions);
+          // Drop only what was suppressed; a clean file keeps its empty entry.
+          const kept = new Map(applied.results.map((r) => [r.file, r]));
+          const out = textResult(formatScanResults(
+            scanResults.filter((r) => r.matches.length === 0 || kept.has(r.file)).map((r) => kept.get(r.file) ?? r),
+          ));
+          // Say what was dropped (metadata only, no secret text), as
+          // `rafter secrets --json` does under `_suppressed`.
+          if (applied.suppressed.length > 0) {
+            out.content.push(textResult({
+              suppressed_count: applied.suppressed.length,
+              _suppressed: applied.suppressed,
+            }).content[0]);
           }
+          // Say what could not be read (metadata only, no secret text), so a
+          // caller can tell an empty result from an incomplete scan.
+          if (readErrors.length > 0) {
+            out.content.push(textResult({
+              unreadable_count: readErrors.length,
+              unreadable: readErrors,
+            }).content[0]);
+          }
+          return out;
         };
 
         if (engine === "betterleaks") {
           const bl = new BetterleaksScanner();
           if (!(await bl.isAvailable())) return errorResult("Betterleaks not installed");
           try {
-            return textResult(formatScanResults(await bl.scanDirectory(scanPath)));
+            return report(await bl.scanDirectory(scanPath));
           } catch {
             return errorResult("Betterleaks scan failed");
           }
@@ -195,16 +308,16 @@ export function createServer(): Server {
           if (await bl.isAvailable()) {
             try {
               const blResults = await bl.scanDirectory(scanPath);
-              return textResult(formatScanResults(unionScanResults(blResults, runPatterns())));
+              return report(unionScanResults(blResults, runPatterns()));
             } catch {
               // betterleaks failed — fall through to patterns-only.
             }
           }
-          return textResult(formatScanResults(runPatterns()));
+          return report(runPatterns());
         }
 
         // patterns (and any unrecognized value — the tool schema enums this).
-        return textResult(formatScanResults(runPatterns()));
+        return report(runPatterns());
       }
 
       case "evaluate_command": {
@@ -299,6 +412,64 @@ export function createServer(): Server {
           });
         } catch (err: any) {
           return errorResult(`Failed to write suppression: ${err.message || err}`);
+        }
+      }
+
+      case "sites_create": {
+        const url = args?.url as string | undefined;
+        if (!url) return errorResult("url is required");
+        const key = resolveMcpApiKey();
+        if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
+        try {
+          const { data } = await apiClient.post(apiUrl("static/sites"), { url }, { headers: { "x-api-key": key } });
+          return textResult(data);
+        } catch (e: any) {
+          return errorResult(describeSitesError(e).message);
+        }
+      }
+
+      case "sites_scan": {
+        const projectId = args?.projectId as string | undefined;
+        const url = args?.url as string | undefined;
+        if (!projectId && !url) return errorResult("Provide exactly one of projectId or url");
+        if (projectId && url) return errorResult("Provide exactly one of projectId or url, not both");
+        const key = resolveMcpApiKey();
+        if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
+        const body: Record<string, unknown> = projectId ? { projectId } : { url };
+        if (Array.isArray(args?.sections)) body.sections = (args!.sections as unknown[]).map((s) => String(s));
+        try {
+          const { data } = await apiClient.post(apiUrl("static/sites/scan"), body, { headers: { "x-api-key": key } });
+          return textResult(data);
+        } catch (e: any) {
+          return errorResult(describeSitesError(e).message);
+        }
+      }
+
+      case "sites_list": {
+        const key = resolveMcpApiKey();
+        if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
+        const params: Record<string, string> = {};
+        if (args?.limit !== undefined) params.limit = String(args.limit);
+        if (args?.offset !== undefined) params.offset = String(args.offset);
+        if (args?.include_archived) params.include_archived = "true";
+        try {
+          const { data } = await apiClient.get(apiUrl("static/sites"), { params, headers: { "x-api-key": key } });
+          return textResult(data);
+        } catch (e: any) {
+          return errorResult(describeSitesError(e).message);
+        }
+      }
+
+      case "sites_get": {
+        const id = args?.id as string | undefined;
+        if (!id) return errorResult("id is required");
+        const key = resolveMcpApiKey();
+        if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
+        try {
+          const { data } = await apiClient.get(apiUrl(`static/sites/${encodeURIComponent(id)}`), { headers: { "x-api-key": key } });
+          return textResult(data);
+        } catch (e: any) {
+          return errorResult(describeSitesError(e).message);
         }
       }
 

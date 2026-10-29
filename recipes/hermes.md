@@ -52,7 +52,7 @@ The Rafter MCP server exposes four tools to Hermes:
 | `read_audit_log` | Inspect the JSON-lines audit log (`~/.rafter/audit.jsonl`) — every scan, every blocked command, with SHA-256 chain integrity |
 | `get_config` | Read the active Rafter config (risk-level, custom patterns, audit settings) |
 
-Plus two resources (`rafter://config`, `rafter://policy`) that surface the live config and `.rafter.yml` policy as MCP resources.
+Plus three resources (`rafter://config`, `rafter://policy`, `rafter://docs`) that surface the live config, the `.rafter.yml` policy, and the repo-specific security docs declared in `.rafter.yml` (metadata only) as MCP resources.
 
 ## Troubleshooting
 

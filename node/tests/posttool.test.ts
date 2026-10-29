@@ -91,13 +91,13 @@ describe("PostTool Hook", () => {
         tool_name: "Bash",
         tool_input: { command: "cat .env" },
         tool_response: {
-          output: "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nsome other stuff",
+          output: "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\nsome other stuff",
           error: "",
         },
       });
       expect(result.action).toBe("modify");
       expect(result.tool_response).toBeDefined();
-      expect(result.tool_response!.output).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(result.tool_response!.output).not.toContain("AKIAIOSFODNN7ABCDEFG");
       // Original secret should be masked
       expect(result.tool_response!.output).toContain("****");
     });
@@ -107,13 +107,13 @@ describe("PostTool Hook", () => {
         tool_name: "Bash",
         tool_input: { command: "cat .env" },
         tool_response: {
-          output: "DB_HOST=localhost\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n",
+          output: "DB_HOST=localhost\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n",
           error: "",
         },
       });
       expect(result.action).toBe("modify");
       expect(result.tool_response!.output).toContain("DB_HOST=localhost");
-      expect(result.tool_response!.output).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(result.tool_response!.output).not.toContain("AKIAIOSFODNN7ABCDEFG");
     });
   });
 
@@ -123,11 +123,11 @@ describe("PostTool Hook", () => {
         tool_name: "Read",
         tool_input: { file_path: "config.json" },
         tool_response: {
-          content: '{"api_key": "AKIAIOSFODNN7EXAMPLE"}',
+          content: '{"api_key": "AKIAIOSFODNN7ABCDEFG"}',
         },
       });
       expect(result.action).toBe("modify");
-      expect(result.tool_response!.content).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(result.tool_response!.content).not.toContain("AKIAIOSFODNN7ABCDEFG");
     });
   });
 
@@ -137,7 +137,7 @@ describe("PostTool Hook", () => {
         tool_name: "Bash",
         tool_input: { command: "cat .env" },
         tool_response: {
-          output: "AKIAIOSFODNN7EXAMPLE1B",
+          output: "AKIAIOSFODNN7ABCDEFG1B",
           error: "some error message",
         },
       });

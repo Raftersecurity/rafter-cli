@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import axios, { AxiosError, AxiosHeaders } from "axios";
 import {
-  EXIT_GENERAL_ERROR,
   EXIT_INSUFFICIENT_SCOPE,
   EXIT_QUOTA_EXHAUSTED,
   handle403,
@@ -153,33 +152,3 @@ describe("handleScopeError (deprecated)", () => {
   });
 });
 
-// ── Exit code values ────────────────────────────────────────────────
-
-describe("exit codes", () => {
-  it("EXIT_INSUFFICIENT_SCOPE is 4", () => {
-    expect(EXIT_INSUFFICIENT_SCOPE).toBe(4);
-  });
-
-  it("does not collide with other exit codes", () => {
-    const codes = [
-      EXIT_GENERAL_ERROR,
-      EXIT_QUOTA_EXHAUSTED,
-      EXIT_INSUFFICIENT_SCOPE,
-    ];
-    expect(new Set(codes).size).toBe(codes.length);
-  });
-});
-
-// ── Read-only endpoints backward compatibility ──────────────────────
-
-describe("read-only endpoints backward compatibility", () => {
-  it("GET scan endpoint only needs read scope (no scope check on GET)", () => {
-    const readOnlyGet200 = { status: 200, data: { scan_id: "abc", status: "completed" } };
-    expect(readOnlyGet200.status).toBe(200);
-  });
-
-  it("GET usage endpoint only needs read scope (no scope check on GET)", () => {
-    const readOnlyGet200 = { status: 200, data: { scans_used: 5, scans_limit: 100 } };
-    expect(readOnlyGet200.status).toBe(200);
-  });
-});

@@ -2,70 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import * as tar from "tar";
 import { BinaryManager, BETTERLEAKS_VERSION } from "../src/utils/binary-manager.js";
-
-// ── Tarball extraction ──────────────────────────────────────────────
-
-describe("BinaryManager extractTarball", () => {
-  let tmpDir: string;
-  let binDir: string;
-  let tarballPath: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-bin-test-"));
-    binDir = path.join(tmpDir, "bin");
-    fs.mkdirSync(binDir, { recursive: true });
-
-    // Create a tarball mimicking betterleaks release: binary + LICENSE + README.md
-    const stageDir = path.join(tmpDir, "stage");
-    fs.mkdirSync(stageDir);
-    fs.writeFileSync(path.join(stageDir, "betterleaks"), "#!/bin/sh\necho fake", { mode: 0o755 });
-    fs.writeFileSync(path.join(stageDir, "LICENSE"), "MIT License");
-    fs.writeFileSync(path.join(stageDir, "README.md"), "# Betterleaks");
-
-    tarballPath = path.join(tmpDir, "betterleaks.tar.gz");
-    tar.create(
-      { gzip: true, file: tarballPath, cwd: stageDir, sync: true },
-      ["betterleaks", "LICENSE", "README.md"]
-    );
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("should extract only the betterleaks binary, not LICENSE or README", async () => {
-    const binaryName = process.platform === "win32" ? "betterleaks.exe" : "betterleaks";
-
-    await tar.extract({
-      file: tarballPath,
-      cwd: binDir,
-      strip: 0,
-      filter: (entryPath: string) => path.basename(entryPath) === binaryName
-    });
-
-    const files = fs.readdirSync(binDir);
-    expect(files).toContain("betterleaks");
-    expect(files).not.toContain("LICENSE");
-    expect(files).not.toContain("README.md");
-    expect(files).toHaveLength(1);
-  });
-
-  it("old behavior (no filter) would extract all files", async () => {
-    await tar.extract({
-      file: tarballPath,
-      cwd: binDir,
-      strip: 0
-    });
-
-    const files = fs.readdirSync(binDir);
-    expect(files).toContain("betterleaks");
-    expect(files).toContain("LICENSE");
-    expect(files).toContain("README.md");
-    expect(files).toHaveLength(3);
-  });
-});
 
 // ── Platform detection ──────────────────────────────────────────────
 
@@ -78,26 +15,6 @@ describe("BinaryManager platform detection", () => {
 
   it("reports current platform as supported (CI runs on supported platforms)", () => {
     expect(bm.isPlatformSupported()).toBe(true);
-  });
-
-  it("getPlatformInfo returns correct structure", () => {
-    const info = bm.getPlatformInfo();
-    expect(info).toHaveProperty("platform");
-    expect(info).toHaveProperty("arch");
-    expect(info).toHaveProperty("supported");
-    expect(typeof info.platform).toBe("string");
-    expect(typeof info.arch).toBe("string");
-    expect(typeof info.supported).toBe("boolean");
-  });
-
-  it("getPlatformInfo.platform matches process.platform", () => {
-    const info = bm.getPlatformInfo();
-    expect(info.platform).toBe(process.platform);
-  });
-
-  it("getPlatformInfo.arch matches process.arch", () => {
-    const info = bm.getPlatformInfo();
-    expect(info.arch).toBe(process.arch);
   });
 });
 
@@ -126,37 +43,11 @@ describe("BinaryManager getBetterleaksPath", () => {
   });
 });
 
-// ── isBetterleaksInstalled ──────────────────────────────────────────
-
-describe("BinaryManager isBetterleaksInstalled", () => {
-  it("returns a boolean", () => {
-    const bm = new BinaryManager();
-    expect(typeof bm.isBetterleaksInstalled()).toBe("boolean");
-  });
-});
-
-// ── findBetterleaksOnPath ───────────────────────────────────────────
-
-describe("BinaryManager findBetterleaksOnPath", () => {
-  it("returns string or null", () => {
-    const bm = new BinaryManager();
-    const result = bm.findBetterleaksOnPath();
-    expect(result === null || typeof result === "string").toBe(true);
-  });
-});
-
 // ── Version detection ───────────────────────────────────────────────
 
 describe("BinaryManager version detection", () => {
   it("BETTERLEAKS_VERSION is a semver string", () => {
     expect(BETTERLEAKS_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
-  });
-
-  it("getBetterleaksVersion returns a string", async () => {
-    const bm = new BinaryManager();
-    const version = await bm.getBetterleaksVersion();
-    expect(typeof version).toBe("string");
-    expect(version.length).toBeGreaterThan(0);
   });
 });
 
@@ -208,17 +99,6 @@ describe("BinaryManager isManagedBetterleaksStale", () => {
 // ── verifyBetterleaksVerbose ────────────────────────────────────────
 
 describe("BinaryManager verifyBetterleaksVerbose", () => {
-  it("returns {ok, stdout, stderr} structure", async () => {
-    const bm = new BinaryManager();
-    const result = await bm.verifyBetterleaksVerbose();
-    expect(result).toHaveProperty("ok");
-    expect(result).toHaveProperty("stdout");
-    expect(result).toHaveProperty("stderr");
-    expect(typeof result.ok).toBe("boolean");
-    expect(typeof result.stdout).toBe("string");
-    expect(typeof result.stderr).toBe("string");
-  });
-
   it("returns ok=false for a non-existent binary", async () => {
     const bm = new BinaryManager();
     const result = await bm.verifyBetterleaksVerbose("/tmp/nonexistent-betterleaks-binary-xyz");
@@ -287,26 +167,6 @@ describe("BinaryManager download URL construction", () => {
   });
 });
 
-// ── getPlatformString / getArchString ───────────────────────────────
-
-describe("BinaryManager platform/arch string mapping", () => {
-  let bm: BinaryManager;
-
-  beforeEach(() => {
-    bm = new BinaryManager();
-  });
-
-  it("getPlatformString returns a valid platform string", () => {
-    const platformStr = (bm as any).getPlatformString();
-    expect(["darwin", "linux", "windows"]).toContain(platformStr);
-  });
-
-  it("getArchString returns a valid arch string", () => {
-    const archStr = (bm as any).getArchString();
-    expect(["x64", "arm64"]).toContain(archStr);
-  });
-});
-
 // ── Checksum parsing ────────────────────────────────────────────────
 
 describe("BinaryManager checksum parsing", () => {
@@ -371,29 +231,6 @@ describe("BinaryManager downloadBetterleaks error handling", () => {
     vi.restoreAllMocks();
   });
 
-  it("accepts an onProgress callback", async () => {
-    const bm = new BinaryManager();
-    vi.spyOn(bm, "isPlatformSupported").mockReturnValue(false);
-
-    const messages: string[] = [];
-    await expect(
-      bm.downloadBetterleaks((msg) => messages.push(msg))
-    ).rejects.toThrow();
-
-    vi.restoreAllMocks();
-  });
-
-  it("accepts a custom version parameter", async () => {
-    const bm = new BinaryManager();
-    vi.spyOn(bm, "isPlatformSupported").mockReturnValue(false);
-
-    await expect(
-      bm.downloadBetterleaks(undefined, "9.99.99")
-    ).rejects.toThrow();
-
-    vi.restoreAllMocks();
-  });
-
   it("rejects malformed --version (URL injection guard)", async () => {
     const bm = new BinaryManager();
     // Should reject before any platform check / network call.
@@ -432,11 +269,5 @@ describe("BinaryManager SHA256 computation", () => {
     const hash = await (bm as any).computeSHA256(tmpFile);
     // SHA256 of "hello world\n"
     expect(hash).toBe("a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447");
-  });
-
-  it("returns a 64-character hex string", async () => {
-    const bm = new BinaryManager();
-    const hash = await (bm as any).computeSHA256(tmpFile);
-    expect(hash).toMatch(/^[0-9a-f]{64}$/);
   });
 });

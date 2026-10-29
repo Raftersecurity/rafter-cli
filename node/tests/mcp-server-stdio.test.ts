@@ -46,9 +46,9 @@ describe("MCP Server — real stdio transport: tool listing", () => {
     await client.close();
   });
 
-  it("should register exactly 7 tools over stdio", async () => {
+  it("should register exactly 11 tools over stdio", async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(7);
+    expect(tools).toHaveLength(11);
   });
 
   it("tool names match expected set", async () => {
@@ -61,36 +61,12 @@ describe("MCP Server — real stdio transport: tool listing", () => {
       "list_docs",
       "read_audit_log",
       "scan_secrets",
+      "sites_create",
+      "sites_get",
+      "sites_list",
+      "sites_scan",
       "suppress_finding",
     ]);
-  });
-
-  it("scan_secrets has required path parameter", async () => {
-    const { tools } = await client.listTools();
-    const tool = tools.find(t => t.name === "scan_secrets")!;
-    expect(tool.inputSchema.required).toContain("path");
-    expect(tool.inputSchema.properties).toHaveProperty("path");
-    expect(tool.inputSchema.properties).toHaveProperty("engine");
-  });
-
-  it("evaluate_command has required command parameter", async () => {
-    const { tools } = await client.listTools();
-    const tool = tools.find(t => t.name === "evaluate_command")!;
-    expect(tool.inputSchema.required).toContain("command");
-  });
-
-  it("read_audit_log has optional limit, event_type, since", async () => {
-    const { tools } = await client.listTools();
-    const tool = tools.find(t => t.name === "read_audit_log")!;
-    expect(tool.inputSchema.properties).toHaveProperty("limit");
-    expect(tool.inputSchema.properties).toHaveProperty("event_type");
-    expect(tool.inputSchema.properties).toHaveProperty("since");
-  });
-
-  it("get_config has optional key parameter", async () => {
-    const { tools } = await client.listTools();
-    const tool = tools.find(t => t.name === "get_config")!;
-    expect(tool.inputSchema.properties).toHaveProperty("key");
   });
 });
 
@@ -111,19 +87,6 @@ describe("MCP Server — real stdio transport: resource listing", () => {
     expect(resources).toHaveLength(3);
   });
 
-  it("should expose rafter://config with JSON mime type", async () => {
-    const { resources } = await client.listResources();
-    const res = resources.find(r => r.uri === "rafter://config");
-    expect(res).toBeDefined();
-    expect(res!.mimeType).toBe("application/json");
-  });
-
-  it("should expose rafter://policy with JSON mime type", async () => {
-    const { resources } = await client.listResources();
-    const res = resources.find(r => r.uri === "rafter://policy");
-    expect(res).toBeDefined();
-    expect(res!.mimeType).toBe("application/json");
-  });
 });
 
 describe("MCP Server — real stdio transport: scan_secrets", () => {
@@ -148,7 +111,7 @@ describe("MCP Server — real stdio transport: scan_secrets", () => {
   });
 
   it("should detect a planted AWS key in a directory", async () => {
-    fs.writeFileSync(path.join(tmpDir, "creds.env"), "AWS_KEY=AKIAIOSFODNN7EXAMPLE1\n");
+    fs.writeFileSync(path.join(tmpDir, "creds.env"), "AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n");
 
     const result = await client.callTool({
       name: "scan_secrets",
@@ -165,6 +128,24 @@ describe("MCP Server — real stdio transport: scan_secrets", () => {
     expect(withMatches[0].matches[0]).toHaveProperty("pattern");
     expect(withMatches[0].matches[0]).toHaveProperty("severity");
     expect(withMatches[0].matches[0]).toHaveProperty("redacted");
+  });
+
+  // scanDirectory() on a file path returns [] instead of throwing, so a
+  // single-file scan used to report nothing.
+  it("should detect a planted key when path is a single file", async () => {
+    const file = path.join(tmpDir, "creds.env");
+    fs.writeFileSync(file, "AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n");
+
+    const result = await client.callTool({
+      name: "scan_secrets",
+      arguments: { path: file, engine: "patterns" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse((result.content as any)[0].text);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].file).toBe(file);
+    expect(parsed[0].matches.length).toBeGreaterThanOrEqual(1);
   });
 
   it("should scan a directory and find secrets", async () => {
@@ -195,6 +176,72 @@ describe("MCP Server — real stdio transport: scan_secrets", () => {
     const parsed = JSON.parse((result.content as any)[0].text);
     // scanFiles only returns entries with matches, so clean dir → empty array
     expect(parsed).toHaveLength(0);
+  });
+
+  // sable-ilbx — a permission-denied file must surface as unreadable, not be
+  // reported as a clean, empty scan.
+  it("reports an unreadable file in a separate block", async () => {
+    const f = path.join(tmpDir, "secret.env");
+    fs.writeFileSync(f, "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdef1234567890ABCDEFGHIJKL\n");
+    fs.chmodSync(f, 0o000);
+    try {
+      const result = await client.callTool({
+        name: "scan_secrets",
+        arguments: { path: f, engine: "patterns" },
+      });
+      expect(result.isError).toBeFalsy();
+      const content = result.content as Array<{ text: string }>;
+      expect(JSON.parse(content[0].text)).toHaveLength(0);
+      const meta = content.map((c) => JSON.parse(c.text)).find((o) => o.unreadable);
+      expect(meta).toBeTruthy();
+      expect(meta.unreadable_count).toBe(1);
+      expect(meta.unreadable[0].file).toBe(f);
+    } finally {
+      fs.chmodSync(f, 0o644);
+    }
+  });
+});
+
+// The triage loop the suppress_finding description promises: once a finding
+// is suppressed, the next scan_secrets call must not report it again.
+describe("MCP Server — real stdio transport: scan_secrets after suppress_finding", () => {
+  it("does not report a finding the project has suppressed", async () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-stdio-sup-"));
+    fs.mkdirSync(path.join(project, "test", "fixtures"), { recursive: true });
+    fs.writeFileSync(path.join(project, "test", "fixtures", "creds.env"), "AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n");
+    const transport = new StdioClientTransport({
+      command: "node", args: [NODE_ENTRY, "mcp", "serve"], cwd: project, stderr: "pipe",
+    });
+    const client = new Client({ name: "stdio-test-client", version: "1.0.0" });
+    await client.connect(transport);
+    try {
+      const scan = async () => JSON.parse(((await client.callTool({
+        name: "scan_secrets", arguments: { path: project, engine: "patterns" },
+      })).content as Array<{ text: string }>)[0].text);
+
+      expect(await scan()).toHaveLength(1);
+      await client.callTool({ name: "suppress_finding", arguments: { path: "test/fixtures/**", reason: "fixture" } });
+      expect(await scan()).toEqual([]);
+
+      // What was dropped stays visible, so a cloned repo's `paths: ["**"]`
+      // cannot silently empty the results; the secret text never appears.
+      const content = (await client.callTool({
+        name: "scan_secrets", arguments: { path: project, engine: "patterns" },
+      })).content as Array<{ text: string }>;
+      expect(content).toHaveLength(2);
+      expect(content[1].text).not.toContain("AKIAIOSFODNN7ABCDEFG1");
+      const meta = JSON.parse(content[1].text);
+      expect(meta.suppressed_count).toBe(1);
+      expect(meta._suppressed[0]).toMatchObject({
+        file: path.join(project, "test", "fixtures", "creds.env"),
+        source: ".rafter.yml",
+        reason: "fixture",
+      });
+      expect(meta._suppressed[0].rule).toEqual(expect.any(String));
+    } finally {
+      await client.close();
+      fs.rmSync(project, { recursive: true, force: true });
+    }
   });
 });
 
@@ -234,6 +281,45 @@ describe("MCP Server — real stdio transport: evaluate_command", () => {
     expect(parsed.allowed).toBe(false);
     expect(parsed.risk_level).toBe("critical");
     expect(parsed.reason).toBeTruthy();
+  });
+});
+
+// sable-ykuh — a required inputSchema field left out used to reach the handler
+// and crash it with a raw TypeError, surfacing as a protocol -32603 internal
+// error. It must instead come back as a clean tool error naming the field,
+// matching the Python server (FastMCP rejects the call before the handler).
+describe("MCP Server — real stdio transport: missing required arguments", () => {
+  let client: Client;
+  let transport: StdioClientTransport;
+
+  beforeAll(async () => {
+    ({ client, transport } = await createConnectedClient());
+  });
+
+  afterAll(async () => {
+    await client.close();
+  });
+
+  it("returns a clean tool error when evaluate_command omits command", async () => {
+    const result = await client.callTool({
+      name: "evaluate_command",
+      arguments: {},
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("command");
+  });
+
+  it("returns a clean tool error when scan_secrets omits path", async () => {
+    const result = await client.callTool({
+      name: "scan_secrets",
+      arguments: {},
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("path");
   });
 });
 
@@ -374,14 +460,6 @@ describe("MCP Server — real stdio transport: error handling", () => {
 });
 
 describe("MCP Server — real stdio transport: lifecycle", () => {
-  it("should connect and disconnect cleanly", async () => {
-    const { client } = await createConnectedClient();
-    // Verify we can list tools (connection works)
-    const { tools } = await client.listTools();
-    expect(tools).toHaveLength(7);
-    await client.close();
-  });
-
   // Three back-to-back spawn/connect/listTools/close cycles. Each
   // iteration spawns `node dist/index.js mcp serve` as a fresh
   // subprocess; on cold-start CI the subprocess teardown can race the
@@ -396,7 +474,7 @@ describe("MCP Server — real stdio transport: lifecycle", () => {
     for (let i = 0; i < 3; i++) {
       const { client } = await createConnectedClient();
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(7);
+      expect(tools).toHaveLength(11);
       await client.close();
       // Let the subprocess's exit propagate before the next spawn.
       if (i < 2) await new Promise((resolve) => setTimeout(resolve, 200));

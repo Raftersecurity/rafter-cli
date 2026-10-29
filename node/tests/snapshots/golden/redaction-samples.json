@@ -2,17 +2,17 @@
   {
     "label": "aws-key-20char",
     "input_length": 20,
-    "redacted": "AKIA************MPLE"
+    "redacted": "AKIA************DEFG"
   },
   {
     "label": "github-pat-40char",
     "input_length": 40,
-    "redacted": "ghp_********************************ghij"
+    "redacted": "ghp_****************ghij"
   },
   {
     "label": "stripe-30char",
     "input_length": 32,
-    "redacted": "sk_l************************uvwx"
+    "redacted": "sk_l****************uvwx"
   },
   {
     "label": "short-token-7char",

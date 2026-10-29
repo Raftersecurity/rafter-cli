@@ -1,4 +1,4 @@
-import { execFile } from "child_process";
+import { execFile, spawnSync } from "child_process";
 import { promisify } from "util";
 import { BinaryManager } from "../utils/binary-manager.js";
 import { PatternMatch } from "../core/pattern-engine.js";
@@ -7,6 +7,111 @@ import os from "os";
 import path from "path";
 
 const execFileAsync = promisify(execFile);
+
+/** Per-invocation timeout for the betterleaks subprocess. */
+const SCAN_TIMEOUT_MS = 60_000;
+
+/** Config env vars betterleaks consults before the target's own .toml, in its order. */
+const CONFIG_PATH_ENV_VARS = ["BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG"];
+const CONFIG_TOML_ENV_VARS = ["BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML"];
+
+/**
+ * Paths under `dirPath` that a git-aware scan must skip, relative to it: what
+ * git ignores (a wholly ignored directory as one `dir/` entry), submodules (a
+ * gitlink, mode 160000, in the index) and untracked nested repositories (which
+ * `ls-files --others` lists as one `dir/` entry). Git lists no files inside
+ * either kind, so the file-list scan this replaced never scanned them. A
+ * tracked path that is now a directory on disk is NOT skipped: its files are
+ * untracked and get scanned. Returns null when `dirPath` is not inside a git
+ * work tree or git is unavailable, so the caller scans the directory whole.
+ */
+export function gitSkippedPaths(dirPath: string): string[] | null {
+  const ls = (...args: string[]): string[] | null => {
+    const r = spawnSync("git", ["-C", dirPath, "ls-files", "-z", ...args, "--", "."], {
+      encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000, maxBuffer: 256 * 1024 * 1024,
+    });
+    if (r.status !== 0 || typeof r.stdout !== "string") return null;
+    return r.stdout.split("\0").filter(Boolean);
+  };
+  const ignored = ls("--others", "--ignored", "--exclude-standard", "--directory");
+  const staged = ls("--cached", "--stage");
+  const untracked = ls("--others", "--exclude-standard");
+  if (ignored === null || staged === null || untracked === null) return null;
+  // `--stage` lines read "<mode> <object> <stage>\t<path>".
+  const submodules = staged.filter((l) => l.startsWith("160000 ")).map((l) => l.slice(l.indexOf("\t") + 1));
+  const nestedRepos = untracked.filter((rel) => rel.endsWith("/"));
+  return [...ignored, ...submodules, ...nestedRepos];
+}
+
+/**
+ * Write `s` as a TOML basic string. JSON escapes every control character
+ * TOML forbids raw except DEL (U+007F), which would make the whole config
+ * unreadable and drop the scan to the patterns engine.
+ */
+function tomlString(s: string): string {
+  return JSON.stringify(s).replace(/\x7f/g, "\\u007f");
+}
+
+/**
+ * A regex (RE2, JS and Python read it alike) matching `p` and everything below
+ * it. Only on Windows is `\\` a separator; on POSIX it is an ordinary filename
+ * character and stays literal, or an ignored `a\\b` would also skip `a/b`.
+ */
+function pathPrefixPattern(p: string): string {
+  const slashed = (process.platform === "win32" ? p.replace(/\\/g, "/") : p).replace(/\/+$/, "");
+  return "^" + slashed.replace(/[\\.+*?()|[\]{}^$]/g, "\\$&") + "(?:/.*)?$";
+}
+
+/**
+ * The betterleaks config for one git-aware directory scan: the config the scan
+ * would otherwise use (`baseToml`, its text; betterleaks' default rules when
+ * null) plus a global path allowlist for `skipped`, so one
+ * `betterleaks dir <root>` walk passes over those paths without reading them.
+ *
+ * The base config is copied in, not extended: betterleaks 1.1.x stops
+ * following `[extend]` two levels down, so wrapping a repo config that itself
+ * extends a shared config (which extends the defaults) silently dropped the
+ * default rules. A relative `extend.path` in the copy still resolves as it
+ * did, against the working directory. The deprecated `[allowlist]` table is
+ * renamed to `[[allowlists]]`, its equivalent, since betterleaks rejects a
+ * config that has both.
+ *
+ * #262 — rafter used to hand betterleaks the git-visible files as path
+ * arguments, 64 per call. betterleaks 1.1.x rebuilds its config and detector
+ * for every path argument (~0.2s each with the default rules), and its
+ * `extend` depth counter is a process global it never resets, so with a config
+ * that extends another (`[extend] useDefault = true`) only the first two path
+ * arguments of a call got the extended rules: every later file was scanned
+ * with the repo's own rules alone. A single walk builds one detector and
+ * applies the full rule set to every file.
+ */
+export function scanConfigToml(dirPath: string, skipped: string[], baseToml: string | null): string {
+  const patterns = [
+    "(?:^|/)\\.git(?:/.*)?$",
+    ...skipped.map((rel) => pathPrefixPattern(path.join(dirPath, rel))),
+  ];
+  const base = baseToml === null
+    ? ["[extend]", "useDefault = true"]
+    : [baseToml.replace(/^[ \t]*\[[ \t]*allowlist[ \t]*\][ \t]*(#.*)?$/gm, "[[allowlists]]")];
+  return [
+    "# Generated by rafter for one scan (scanConfigToml, rafter's betterleaks scanner).",
+    ...base,
+    "",
+    "[[allowlists]]",
+    'description = "rafter: paths git ignores"',
+    "paths = [",
+    ...patterns.map((p) => `  ${tomlString(p)},`),
+    "]",
+    "",
+  ].join("\n");
+}
+
+/** Name why a betterleaks subprocess failed: a timeout reads differently from a crash. */
+function describeFailure(e: any): string {
+  if (e?.killed && e?.signal) return `timed out after ${SCAN_TIMEOUT_MS / 1000}s`;
+  if (typeof e?.code === "number") return `exit ${e.code}`;
+  return e?.message ?? String(e);
+}
 
 /**
  * Subset of betterleaks JSON report fields we actually consume.
@@ -96,7 +201,7 @@ export class BetterleaksScanner {
       // `--` ensures a target path beginning with `-` isn't parsed as a flag by betterleaks.
       await execFileAsync(
         blPath, ["dir", "-f", "json", "--report-path", tmpReport, "--", filePath],
-        { timeout: 60000 }
+        { timeout: SCAN_TIMEOUT_MS }
       );
 
       if (!fs.existsSync(tmpReport)) {
@@ -152,42 +257,87 @@ export class BetterleaksScanner {
   /**
    * Scan a directory. With useGit=true, scans git history (`betterleaks git`);
    * otherwise scans the filesystem (`betterleaks dir`).
+   *
+   * `betterleaks dir` has no notion of .gitignore, so given a directory it
+   * walks node_modules, build output and local secret stores (.env) alike:
+   * slow enough to hit the timeout on an ordinary checkout, and noisy (#262).
+   * With respectGitignore (the default, matching the patterns engine) and a
+   * target inside a git work tree, it walks the tree once under a generated
+   * config that skips what git ignores (see scanConfigToml).
    */
-  async scanDirectory(dirPath: string, opts?: { useGit?: boolean }): Promise<BetterleaksScanResult[]> {
+  async scanDirectory(
+    dirPath: string,
+    opts?: { useGit?: boolean; respectGitignore?: boolean },
+  ): Promise<BetterleaksScanResult[]> {
     const blPath = await this.resolveBinary();
     if (!blPath) {
       throw new Error("Betterleaks not available");
     }
 
+    if (opts?.useGit) {
+      return this.groupByFile(await this.runDir(blPath, "git", [dirPath], []));
+    }
+
+    const skipped = opts?.respectGitignore === false ? null : gitSkippedPaths(dirPath);
+    if (skipped === null) {
+      return this.groupByFile(await this.runDir(blPath, "dir", [dirPath], []));
+    }
+
+    // Private 0700 dir, atomically created — see scanFile for the TOCTOU rationale (CWE-367).
+    const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "betterleaks-cfg-"));
+    try {
+      // The generated config is passed as -c, which outranks every other
+      // source, so it carries whichever config betterleaks would have chosen,
+      // in betterleaks' own order: env path, env content, the target's file.
+      const envPath = CONFIG_PATH_ENV_VARS.map((v) => process.env[v]).find(Boolean);
+      const envToml = CONFIG_TOML_ENV_VARS.map((v) => process.env[v]).find(Boolean);
+      const repoPath = [".betterleaks.toml", ".gitleaks.toml"]
+        .map((n) => path.join(dirPath, n))
+        .find((p) => fs.existsSync(p));
+      const baseToml = envPath
+        ? fs.readFileSync(envPath, "utf-8")
+        : envToml ?? (repoPath ? fs.readFileSync(repoPath, "utf-8") : null);
+      const cfg = path.join(cfgDir, "scan.toml");
+      fs.writeFileSync(cfg, scanConfigToml(dirPath, skipped, baseToml));
+      return this.groupByFile(await this.runDir(blPath, "dir", [dirPath], ["-c", cfg]));
+    } finally {
+      try {
+        fs.rmSync(cfgDir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  /** One betterleaks invocation; returns its findings or throws with the cause. */
+  private async runDir(
+    blPath: string,
+    subcommand: "dir" | "git",
+    targets: string[],
+    extraArgs: string[],
+  ): Promise<BetterleaksResult[]> {
     // Private 0700 dir, atomically created — see scanFile for the TOCTOU rationale (CWE-367).
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "betterleaks-"));
     const tmpReport = path.join(tmpDir, "report.json");
-    const subcommand = opts?.useGit ? "git" : "dir";
 
     try {
       // `--` ensures a target path beginning with `-` isn't parsed as a flag by betterleaks.
       await execFileAsync(
-        blPath, [subcommand, "-f", "json", "--report-path", tmpReport, "--", dirPath],
-        { timeout: 60000 }
+        blPath,
+        [subcommand, ...extraArgs, "-f", "json", "--report-path", tmpReport, "--", ...targets],
+        { timeout: SCAN_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 }
       );
 
       if (!fs.existsSync(tmpReport)) {
         return [];
       }
-
-      const results = this.parseResults(tmpReport);
-
-      return this.groupByFile(results);
+      return this.parseResults(tmpReport);
     } catch (e: any) {
-      if (fs.existsSync(tmpReport)) {
-        const results = this.parseResults(tmpReport);
-
-        if (e.code === 1) {
-          return this.groupByFile(results);
-        }
+      if (e.code === 1 && fs.existsSync(tmpReport)) {
+        return this.parseResults(tmpReport);
       }
 
-      throw new Error(`Betterleaks scan failed: ${e.message}`);
+      throw new Error(`Betterleaks scan failed (${describeFailure(e)})`);
     } finally {
       // Best-effort cleanup — a cleanup failure must never mask the scan's
       // real result or its original error.
@@ -206,6 +356,13 @@ export class BetterleaksScanner {
         return [];
       }
       const parsed = JSON.parse(content);
+      // #217 — betterleaks >=1.1.2 writes the literal `null` (not `[]`) for a
+      // clean scan via the `dir`/`git` subcommands we invoke. That is a valid
+      // empty result, not a version mismatch, so it must not reach the warning
+      // branch below — otherwise every clean file scanned emits warning noise.
+      if (parsed === null) {
+        return [];
+      }
       if (!Array.isArray(parsed)) {
         // sable-o4k — a stale/incompatible binary emits a non-array shape and
         // would otherwise silently yield zero findings. The managed binary is
@@ -233,7 +390,10 @@ export class BetterleaksScanner {
       },
       match: result.Secret || result.Match,
       line: result.StartLine,
-      column: result.StartColumn,
+      // betterleaks 1.1.x reports StartColumn one past the 1-based column on
+      // every line but the first. Report the true column, as the regex engine
+      // does, so the union can merge the two engines' findings.
+      column: result.StartLine > 1 && result.StartColumn > 1 ? result.StartColumn - 1 : result.StartColumn,
       redacted: this.redact(result.Secret || result.Match)
     };
   }
@@ -273,7 +433,8 @@ export class BetterleaksScanner {
     const visibleChars = 4;
     const start = match.substring(0, visibleChars);
     const end = match.substring(match.length - visibleChars);
-    const middle = "*".repeat(match.length - (visibleChars * 2));
+    // Cap the mask: betterleaks returns whole PEM blocks as the secret.
+    const middle = "*".repeat(Math.min(match.length - (visibleChars * 2), 16));
     return start + middle + end;
   }
 

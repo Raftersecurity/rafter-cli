@@ -25,6 +25,9 @@ class PatternMatch:
     # scan runs more than one engine (``auto`` mode → ``both``). Single-engine
     # scans leave it None — the engine is already implied by ``--engine``.
     engines: list[str] | None = None
+    # Every engine's rule name for a finding the union merged. ``pattern.name``
+    # shows only the betterleaks one, so suppression checks all of these.
+    rule_names: list[str] | None = None
 
 
 _GENERIC_PATTERN_NAMES = frozenset({"Generic API Key", "Generic Secret"})
@@ -33,18 +36,42 @@ _VARIABLE_NAME_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 _LOWERCASE_IDENT_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
 _QUOTED_VALUE_RE = re.compile(r"""['\"]([^'\"]+)['\"]""")
 
+# Matches an environment-assignment prefix in a command line: an identifier
+# followed immediately by ``=`` and a run of non-whitespace (the value). Used
+# to find ``NAME=VALUE`` tokens like ``RAFTER_API_KEY=<secret> rafter ...`` so
+# their value can be redacted before the command is written to the audit log.
+#
+# The prefix also accepts a leading quote (sable-fqrr): ``agent exec``
+# shell-quotes a token containing special characters, so a logged command can
+# read ``env 'SECRET_TOKEN=<secret>' ...`` — a quote, not whitespace, sits
+# before NAME=. Without this the value escaped redaction and reached the audit
+# log in the clear.
+_ENV_ASSIGN_RE = re.compile(r"""(^|[\s'"])([A-Za-z_][A-Za-z0-9_]*)=(\S+)""")
+
+# A ``NAME`` in a ``NAME=VALUE`` assignment is treated as secret-bearing when
+# it ends in a credential-suggesting word (RAFTER_API_KEY, GITHUB_TOKEN,
+# DB_PASSWORD, AUTH, ...). Values behind such names are redacted even when they
+# don't match any known secret pattern -- the value of a bespoke API key won't
+# match a built-in pattern, but it's still a secret. Plain names like FOO or
+# NODE_ENV do not match, so ``FOO=bar`` is left intact.
+_SECRET_ENV_NAME_RE = re.compile(
+    r"(?:^|_)(KEY|TOKEN|SECRET|SECRETS|PASSWORD|PASSWD|PWD|API[_-]?KEY|ACCESS[_-]?KEY|CREDENTIALS?|AUTH)$",
+    re.IGNORECASE,
+)
+
 
 class PatternEngine:
     def __init__(self, patterns: Sequence[Pattern]):
         self._patterns = list(patterns)
+        # Compile once: compiling per line dominated scan time on large repos.
+        self._compiled = [
+            (p, c) for p in self._patterns if (c := self._compile(p.regex)) is not None
+        ]
 
     def scan(self, text: str) -> list[PatternMatch]:
         """Scan text for pattern matches (no line info)."""
         matches: list[PatternMatch] = []
-        for pattern in self._patterns:
-            compiled = self._compile(pattern.regex)
-            if compiled is None:
-                continue
+        for pattern, compiled in self._compiled:
             for m in compiled.finditer(text):
                 if self._is_false_positive(pattern, m.group(0)):
                     continue
@@ -59,10 +86,7 @@ class PatternEngine:
         """Scan text with line/column information."""
         matches: list[PatternMatch] = []
         for line_num, line in enumerate(text.split("\n"), start=1):
-            for pattern in self._patterns:
-                compiled = self._compile(pattern.regex)
-                if compiled is None:
-                    continue
+            for pattern, compiled in self._compiled:
                 for m in compiled.finditer(line):
                     if self._is_false_positive(pattern, m.group(0)):
                         continue
@@ -76,17 +100,36 @@ class PatternEngine:
         return matches
 
     def redact_text(self, text: str) -> str:
-        """Replace all pattern matches in *text* with redacted versions."""
-        result = text
-        for pattern in self._patterns:
-            compiled = self._compile(pattern.regex)
-            if compiled is None:
-                continue
+        """Replace all pattern matches in *text* with redacted versions.
+
+        Two layers, both additive:
+          1. Env-assignment redaction: any ``NAME=VALUE`` whose NAME looks
+             secret-bearing has its VALUE masked, even if the VALUE matches no
+             known pattern. This catches leaks like
+             ``RAFTER_API_KEY=<key> rafter ...`` in a logged command line,
+             where the key's shape is unknown.
+          2. Pattern-based redaction: values matching a built-in secret
+             pattern are masked wherever they appear.
+        """
+        result = self._redact_env_assignments(text)
+        for pattern, compiled in self._compiled:
             result = compiled.sub(
                 lambda m, p=pattern: m.group(0) if self._is_false_positive(p, m.group(0)) else self._redact(m.group(0)),
                 result,
             )
         return result
+
+    @staticmethod
+    def _redact_env_assignments(text: str) -> str:
+        """Mask the VALUE of every ``NAME=VALUE`` token whose NAME looks
+        secret-bearing. Non-secret names (FOO, NODE_ENV, ...) are untouched."""
+        def _sub(m: re.Match) -> str:
+            prefix, name, value = m.group(1), m.group(2), m.group(3)
+            if _SECRET_ENV_NAME_RE.search(name):
+                return f"{prefix}{name}={PatternEngine._redact(value)}"
+            return m.group(0)
+
+        return _ENV_ASSIGN_RE.sub(_sub, text)
 
     def has_matches(self, text: str) -> bool:
         return len(self.scan(text)) > 0
@@ -125,4 +168,5 @@ class PatternEngine:
         if len(match) <= 8:
             return "*" * len(match)
         visible = 4
-        return match[:visible] + "*" * (len(match) - visible * 2) + match[-visible:]
+        # Cap the mask so a long token (a JWT) does not print a line of asterisks.
+        return match[:visible] + "*" * min(len(match) - visible * 2, 16) + match[-visible:]

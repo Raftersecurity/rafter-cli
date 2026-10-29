@@ -346,9 +346,11 @@ function codexHooks(): ComponentSpec {
         cfg.hooks.PostToolUse,
         (e) => hookEntryMatchesRafter(e, "rafter hook posttool"),
       );
-      // Bash + apply_patch per Codex hook docs (rf-ovql verification).
+      // Bash + apply_patch per Codex hook docs (rf-ovql verification). PostToolUse
+      // mirrors that write/exec surface (narrowed from `.*` to skip Read/MCP log
+      // noise), matching claude-code posttool scoping (sable-h0ah).
       cfg.hooks.PreToolUse.push({ matcher: "Bash|apply_patch", hooks: [pre] });
-      cfg.hooks.PostToolUse.push({ matcher: ".*", hooks: [post] });
+      cfg.hooks.PostToolUse.push({ matcher: "Bash|apply_patch", hooks: [post] });
       writeJson(hooksPath, cfg);
     },
     uninstall: () => {
@@ -1056,8 +1058,15 @@ function aiderRead(): ComponentSpec {
       fs.writeFileSync(configPath, yaml.dump(parsed), "utf-8");
     },
     uninstall: () => {
-      if (fs.existsSync(rafterMdPath)) {
-        try { fs.rmSync(rafterMdPath, { force: true }); } catch { /* best-effort */ }
+      // Excise only the managed block; any user content in RAFTER.md survives.
+      // If the file was ours alone (nothing but the block), remove it.
+      // A RAFTER.md with no markers is user-authored — leave it untouched.
+      if (fs.existsSync(rafterMdPath) && stripMarkerBlock(rafterMdPath)) {
+        try {
+          if (fs.readFileSync(rafterMdPath, "utf-8").trim() === "") {
+            fs.rmSync(rafterMdPath, { force: true });
+          }
+        } catch { /* best-effort */ }
       }
       if (!fs.existsSync(configPath)) return;
       const raw = fs.readFileSync(configPath, "utf-8");

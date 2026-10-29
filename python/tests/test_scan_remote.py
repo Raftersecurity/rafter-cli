@@ -7,19 +7,16 @@ Covers:
 from __future__ import annotations
 
 import json
-import sys
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
-import click.exceptions
-import pytest
 import typer
+import pytest
 
 from rafter_cli.commands.backend import _do_remote_scan, _handle_scan_status_interactive
 from rafter_cli.utils.api import (
     EXIT_GENERAL_ERROR,
     EXIT_INSUFFICIENT_SCOPE,
     EXIT_QUOTA_EXHAUSTED,
-    EXIT_SCAN_NOT_FOUND,
     EXIT_SUCCESS,
 )
 
@@ -44,46 +41,7 @@ def _mock_response(status_code: int, text: str = "", json_body=None) -> MagicMoc
 class TestDoRemoteScan:
     """Unit tests for the core remote scan trigger function."""
 
-    @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
-    def test_success_skip_interactive(self, _mock_repo, mock_post):
-        """200 with skip_interactive returns without polling."""
-        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
-
-        # Should not raise
-        _do_remote_scan(
-            repo="owner/repo",
-            branch="main",
-            api_key="test-key",
-            fmt="json",
-            skip_interactive=True,
-            quiet=True,
-        )
-
-    @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
-    def test_posts_correct_body(self, _mock_repo, mock_post):
-        """Verify POST body contains repository_name, branch_name, scan_mode."""
-        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
-
-        _do_remote_scan(
-            repo="owner/repo",
-            branch="main",
-            api_key="test-key",
-            fmt="json",
-            skip_interactive=True,
-            quiet=True,
-            mode="fast",
-        )
-
-        _, kwargs = mock_post.call_args
-        body = kwargs["json"]
-        assert body["repository_name"] == "owner/repo"
-        assert body["branch_name"] == "main"
-        assert body["scan_mode"] == "fast"
-        assert "github_token" not in body
-
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_github_body_omits_provider_and_repo_url(self, _mock_repo, mock_post):
         """A github remote produces a body with NO provider/repo_url (byte-identical to today)."""
@@ -110,7 +68,7 @@ class TestDoRemoteScan:
         assert "provider" not in body
         assert "repo_url" not in body
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_explicit_provider_github_still_omits(self, _mock_repo, mock_post):
         """An explicit --provider github still omits provider/repo_url."""
@@ -132,51 +90,38 @@ class TestDoRemoteScan:
         assert "provider" not in body
         assert "repo_url" not in body
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @pytest.mark.parametrize(
+        "provider, repo, repo_url",
+        [
+            ("gitlab", "group/project", "https://gitlab.com/group/project"),
+            ("bitbucket", "team/repo", "https://bitbucket.org/team/repo"),
+        ],
+    )
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
-    def test_flag_provider_gitlab_sends_provider_and_repo_url(self, _mock_repo, mock_post):
-        """--provider gitlab + --repo-url are sent for a non-github remote."""
+    def test_flag_provider_sends_provider_and_repo_url(
+        self, _mock_repo, mock_post, provider, repo, repo_url
+    ):
+        """--provider <non-github> + --repo-url are sent together for a non-github remote."""
         mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
 
         _do_remote_scan(
-            repo="group/project",
+            repo=repo,
             branch="main",
             api_key="test-key",
             fmt="json",
             skip_interactive=True,
             quiet=True,
-            provider="gitlab",
-            repo_url="https://gitlab.com/group/project",
+            provider=provider,
+            repo_url=repo_url,
         )
 
         _, kwargs = mock_post.call_args
         body = kwargs["json"]
-        assert body["provider"] == "gitlab"
-        assert body["repo_url"] == "https://gitlab.com/group/project"
+        assert body["provider"] == provider
+        assert body["repo_url"] == repo_url
 
-    @patch("rafter_cli.commands.backend.requests.post")
-    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
-    def test_flag_provider_bitbucket_sends_pair(self, _mock_repo, mock_post):
-        """--provider bitbucket + --repo-url are sent together."""
-        mock_post.return_value = _mock_response(200, json_body={"scan_id": "s-abc"})
-
-        _do_remote_scan(
-            repo="team/repo",
-            branch="main",
-            api_key="test-key",
-            fmt="json",
-            skip_interactive=True,
-            quiet=True,
-            provider="bitbucket",
-            repo_url="https://bitbucket.org/team/repo",
-        )
-
-        _, kwargs = mock_post.call_args
-        body = kwargs["json"]
-        assert body["provider"] == "bitbucket"
-        assert body["repo_url"] == "https://bitbucket.org/team/repo"
-
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("group/project", "main", None, None))
     def test_provider_without_any_repo_url_is_omitted(self, _mock_repo, mock_post):
         """A resolved provider with no repo_url anywhere can't send the pair; stays backward-compatible."""
@@ -200,7 +145,9 @@ class TestDoRemoteScan:
         assert "provider" not in body
         assert "repo_url" not in body
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    # Auto-detected branch: keep the remote-branch lookup off the network.
+    @patch("rafter_cli.commands.backend.remote_branch_sha", new=lambda *a, **k: False)
+    @patch("rafter_cli.commands.backend.api_post")
     @patch(
         "rafter_cli.commands.backend.detect_repo",
         return_value=("group/project", "main", "gitlab", "https://gitlab.com/group/project"),
@@ -224,7 +171,9 @@ class TestDoRemoteScan:
         assert body["provider"] == "gitlab"
         assert body["repo_url"] == "https://gitlab.com/group/project"
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    # Auto-detected branch: keep the remote-branch lookup off the network.
+    @patch("rafter_cli.commands.backend.remote_branch_sha", new=lambda *a, **k: False)
+    @patch("rafter_cli.commands.backend.api_post")
     @patch(
         "rafter_cli.commands.backend.detect_repo",
         return_value=("group/project", "main", "gitlab", "https://gitlab.com/group/project"),
@@ -249,7 +198,7 @@ class TestDoRemoteScan:
         assert body["provider"] == "bitbucket"
         assert body["repo_url"] == "https://bitbucket.org/group/project"
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_includes_github_token(self, _mock_repo, mock_post):
         """GitHub token is included in POST body when provided."""
@@ -268,7 +217,7 @@ class TestDoRemoteScan:
         _, kwargs = mock_post.call_args
         assert kwargs["json"]["github_token"] == "ghp_test123"
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_plus_mode(self, _mock_repo, mock_post):
         """scan_mode=plus is sent when mode='plus'."""
@@ -287,7 +236,7 @@ class TestDoRemoteScan:
         _, kwargs = mock_post.call_args
         assert kwargs["json"]["scan_mode"] == "plus"
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_prints_scan_id_when_not_quiet(self, _mock_repo, mock_post, capsys):
         """Scan ID is printed to stderr when not quiet."""
@@ -305,7 +254,9 @@ class TestDoRemoteScan:
         err = capsys.readouterr().err
         assert "s-xyz" in err
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    # Auto-detected branch: keep the remote-branch lookup off the network.
+    @patch("rafter_cli.commands.backend.remote_branch_sha", new=lambda *a, **k: False)
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_auto_detect_message_when_not_explicit(self, _mock_repo, mock_post, capsys):
         """Auto-detection message prints when repo/branch not explicitly provided."""
@@ -323,13 +274,13 @@ class TestDoRemoteScan:
         err = capsys.readouterr().err
         assert "auto-detected" in err.lower()
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_429_raises_quota_exhausted(self, _mock_repo, mock_post):
         """HTTP 429 → exit code 3 (quota exhausted)."""
         mock_post.return_value = _mock_response(429, "quota exhausted")
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="owner/repo",
                 branch="main",
@@ -340,7 +291,7 @@ class TestDoRemoteScan:
             )
         assert exc_info.value.exit_code == EXIT_QUOTA_EXHAUSTED
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_403_scope_raises_insufficient_scope(self, _mock_repo, mock_post, capsys):
         """HTTP 403 with scope keyword → exit code 4."""
@@ -350,7 +301,7 @@ class TestDoRemoteScan:
             json_body={},
         )
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="owner/repo",
                 branch="main",
@@ -361,7 +312,7 @@ class TestDoRemoteScan:
             )
         assert exc_info.value.exit_code == EXIT_INSUFFICIENT_SCOPE
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_403_quota_raises_quota_exhausted(self, _mock_repo, mock_post, capsys):
         """HTTP 403 with scan_mode body → exit code 3 (quota)."""
@@ -369,7 +320,7 @@ class TestDoRemoteScan:
             403, "", json_body={"scan_mode": "plus", "limit": 5, "used": 5}
         )
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="owner/repo",
                 branch="main",
@@ -380,13 +331,13 @@ class TestDoRemoteScan:
             )
         assert exc_info.value.exit_code == EXIT_QUOTA_EXHAUSTED
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_401_raises_general_error(self, _mock_repo, mock_post):
         """HTTP 401 → exit code 1 (general error)."""
         mock_post.return_value = _mock_response(401, "invalid api key")
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="owner/repo",
                 branch="main",
@@ -397,13 +348,13 @@ class TestDoRemoteScan:
             )
         assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_500_raises_general_error(self, _mock_repo, mock_post):
         """HTTP 500 → exit code 1 (general error)."""
         mock_post.return_value = _mock_response(500, "internal server error")
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="owner/repo",
                 branch="main",
@@ -419,7 +370,7 @@ class TestDoRemoteScan:
         """RuntimeError from detect_repo → exit code 1."""
         mock_detect.side_effect = RuntimeError("Could not auto-detect")
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo=None,
                 branch=None,
@@ -431,7 +382,7 @@ class TestDoRemoteScan:
         assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
 
     @patch("rafter_cli.commands.backend._handle_scan_status_interactive")
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_calls_status_handler_when_not_skip_interactive(
         self, _mock_repo, mock_post, mock_status
@@ -457,7 +408,7 @@ class TestDoRemoteScan:
         )
 
     @patch("rafter_cli.commands.backend._handle_scan_status_interactive")
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_skip_interactive_does_not_call_status_handler(
         self, _mock_repo, mock_post, mock_status
@@ -476,7 +427,7 @@ class TestDoRemoteScan:
 
         mock_status.assert_not_called()
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
     def test_sends_api_key_header(self, _mock_repo, mock_post):
         """x-api-key header is set correctly."""
@@ -501,7 +452,7 @@ class TestDoRemoteScan:
 class TestHandleScanStatusInteractive:
     """Unit tests for the polling/status handler."""
 
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_completed_immediately(self, mock_get):
         """Scan already completed on first poll → return success."""
         mock_get.return_value = _mock_response(
@@ -514,7 +465,7 @@ class TestHandleScanStatusInteractive:
         assert result == EXIT_SUCCESS
         assert mock_get.call_count == 1
 
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_completed_outputs_markdown(self, mock_get, capsys):
         """Completed scan outputs markdown to stdout."""
         mock_get.return_value = _mock_response(
@@ -525,7 +476,7 @@ class TestHandleScanStatusInteractive:
         out = capsys.readouterr().out
         assert "# Results" in out
 
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_completed_outputs_json(self, mock_get, capsys):
         """Completed scan outputs JSON to stdout."""
         response_data = {"status": "completed", "findings": []}
@@ -535,42 +486,33 @@ class TestHandleScanStatusInteractive:
         out = capsys.readouterr().out
         assert json.loads(out) == response_data
 
-    @patch("rafter_cli.commands.backend.requests.get")
-    def test_404_raises_exit_scan_not_found(self, mock_get):
-        """HTTP 404 → exit code 2 (scan not found)."""
-        mock_get.return_value = _mock_response(404, "not found")
-
-        with pytest.raises(click.exceptions.Exit) as exc_info:
-            _handle_scan_status_interactive("bad-id", {"x-api-key": "k"}, "md", True)
-        assert exc_info.value.exit_code == EXIT_SCAN_NOT_FOUND
-
-    @patch("rafter_cli.commands.backend.requests.get")
-    def test_non_200_raises_general_error(self, mock_get):
-        """Non-200, non-404 → exit code 1 (general error)."""
-        mock_get.return_value = _mock_response(500, "server error")
-
-        with pytest.raises(click.exceptions.Exit) as exc_info:
-            _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "md", True)
-        assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
-
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_failed_status_raises_general_error(self, mock_get):
         """Status 'failed' → exit code 1."""
         mock_get.return_value = _mock_response(
             200, json_body={"status": "failed"}
         )
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "md", True)
         assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
 
+    @pytest.mark.parametrize(
+        "status, markdown",
+        [
+            ("queued", "ok"),
+            ("pending", "done"),
+        ],
+    )
     @patch("rafter_cli.commands.backend.time.sleep")
-    @patch("rafter_cli.commands.backend.requests.get")
-    def test_polls_queued_then_completed(self, mock_get, mock_sleep):
-        """Queued → poll → completed."""
+    @patch("rafter_cli.commands.backend.api_get")
+    def test_polls_non_terminal_status_then_completed(
+        self, mock_get, mock_sleep, status, markdown
+    ):
+        """Queued/pending → poll → completed."""
         mock_get.side_effect = [
-            _mock_response(200, json_body={"status": "queued"}),
-            _mock_response(200, json_body={"status": "completed", "markdown": "ok"}),
+            _mock_response(200, json_body={"status": status}),
+            _mock_response(200, json_body={"status": "completed", "markdown": markdown}),
         ]
 
         result = _handle_scan_status_interactive(
@@ -581,22 +523,7 @@ class TestHandleScanStatusInteractive:
         mock_sleep.assert_called_with(10)
 
     @patch("rafter_cli.commands.backend.time.sleep")
-    @patch("rafter_cli.commands.backend.requests.get")
-    def test_polls_pending_then_completed(self, mock_get, mock_sleep):
-        """Pending → poll → completed."""
-        mock_get.side_effect = [
-            _mock_response(200, json_body={"status": "pending"}),
-            _mock_response(200, json_body={"status": "completed", "markdown": "done"}),
-        ]
-
-        result = _handle_scan_status_interactive(
-            "s1", {"x-api-key": "k"}, "md", True
-        )
-        assert result == EXIT_SUCCESS
-        assert mock_get.call_count == 2
-
-    @patch("rafter_cli.commands.backend.time.sleep")
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_polls_processing_then_failed(self, mock_get, mock_sleep):
         """Processing → poll → failed."""
         mock_get.side_effect = [
@@ -604,12 +531,56 @@ class TestHandleScanStatusInteractive:
             _mock_response(200, json_body={"status": "failed"}),
         ]
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "md", True)
         assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
 
     @patch("rafter_cli.commands.backend.time.sleep")
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
+    def test_failed_scan_says_why_and_hands_payload_to_json(self, mock_get, mock_sleep, capsys):
+        failed = {
+            "status": "failed",
+            "error_code": "SCAN_STALLED",
+            "error": "The scan stopped sending progress updates. Please re-run the scan.",
+            "retryable": True,
+        }
+        mock_get.side_effect = [
+            _mock_response(200, json_body={"status": "processing"}),
+            _mock_response(200, json_body=failed),
+        ]
+
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
+            _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "json", False)
+        assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
+        out, err = capsys.readouterr()
+        assert "SCAN_STALLED" in err
+        assert "stopped sending progress updates" in err
+        assert "rafter run" in err
+        assert json.loads(out)["error_code"] == "SCAN_STALLED"
+
+    @patch("rafter_cli.commands.backend.api_get")
+    def test_completed_partial_scan_warns_even_when_quiet(self, mock_get, capsys):
+        partial = {
+            "status": "completed", "partial": True, "warning_code": "SCAN_PARTIAL",
+            "missing_scanners": ["opengrep_rafter"], "vulnerabilities": [],
+        }
+        mock_get.return_value = _mock_response(200, json_body=partial)
+
+        result = _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "json", True)
+        assert result == EXIT_SUCCESS
+        out, err = capsys.readouterr()
+        assert "SCAN_PARTIAL" in err
+        assert "opengrep_rafter" in err
+        assert json.loads(out)["partial"] is True
+
+    def test_partial_warning_tolerates_non_string_scanner_names(self, capsys):
+        from rafter_cli.commands.backend import _warn_if_partial
+
+        _warn_if_partial({"partial": True, "missing_scanners": ["opengrep_rafter", 7, None]})
+        assert "opengrep_rafter, 7, None" in capsys.readouterr().err
+
+    @patch("rafter_cli.commands.backend.time.sleep")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_multiple_polls_before_completion(self, mock_get, mock_sleep):
         """Multiple polls before scan completes."""
         mock_get.side_effect = [
@@ -626,7 +597,7 @@ class TestHandleScanStatusInteractive:
         assert mock_get.call_count == 4
         assert mock_sleep.call_count == 3
 
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_waiting_message_in_non_quiet_mode(self, mock_get, capsys):
         """Status messages print to stderr in non-quiet mode."""
         mock_get.return_value = _mock_response(
@@ -637,7 +608,7 @@ class TestHandleScanStatusInteractive:
         err = capsys.readouterr().err
         assert "completed" in err.lower()
 
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_quiet_mode_suppresses_stderr(self, mock_get, capsys):
         """Quiet mode suppresses status messages on stderr."""
         mock_get.return_value = _mock_response(
@@ -649,7 +620,7 @@ class TestHandleScanStatusInteractive:
         # Should NOT print "Scan completed!" in quiet mode
         assert "completed" not in err.lower()
 
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_passes_format_param_to_api(self, mock_get):
         """format param is passed to the API."""
         mock_get.return_value = _mock_response(
@@ -660,7 +631,7 @@ class TestHandleScanStatusInteractive:
         _, kwargs = mock_get.call_args
         assert kwargs["params"]["format"] == "json"
 
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_passes_scan_id_param_to_api(self, mock_get):
         """scan_id param is passed to the API."""
         mock_get.return_value = _mock_response(

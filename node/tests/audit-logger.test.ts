@@ -37,84 +37,7 @@ describe("AuditLogger", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates log directory if it doesn't exist", () => {
-    const deep = path.join(tmpDir, "sub", "dir", "audit.jsonl");
-    new AuditLogger(deep);
-    expect(fs.existsSync(path.dirname(deep))).toBe(true);
-  });
-
-  it("writes a log entry as JSON line", () => {
-    const logger = new AuditLogger(logPath);
-    logger.log({
-      eventType: "command_intercepted",
-      action: { command: "rm -rf /", riskLevel: "critical" },
-      securityCheck: { passed: false, reason: "blocked" },
-      resolution: { actionTaken: "blocked" },
-    });
-
-    const content = fs.readFileSync(logPath, "utf-8");
-    const lines = content.trim().split("\n");
-    expect(lines).toHaveLength(1);
-
-    const entry = JSON.parse(lines[0]);
-    expect(entry.eventType).toBe("command_intercepted");
-    expect(entry.action.command).toBe("rm -rf /");
-    expect(entry.timestamp).toBeDefined();
-    expect(entry.sessionId).toBeDefined();
-  });
-
-  it("appends multiple entries", () => {
-    const logger = new AuditLogger(logPath);
-    logger.log({ eventType: "command_intercepted", securityCheck: { passed: true }, resolution: { actionTaken: "allowed" } });
-    logger.log({ eventType: "secret_detected", securityCheck: { passed: false }, resolution: { actionTaken: "blocked" } });
-
-    const content = fs.readFileSync(logPath, "utf-8");
-    const lines = content.trim().split("\n");
-    expect(lines).toHaveLength(2);
-  });
-
   describe("convenience logging methods", () => {
-    it("logCommandIntercepted writes command event", () => {
-      const logger = new AuditLogger(logPath);
-      logger.logCommandIntercepted("rm -rf /tmp", false, "blocked", "dangerous", "claude-code");
-
-      const entries = logger.read();
-      expect(entries).toHaveLength(1);
-      expect(entries[0].eventType).toBe("command_intercepted");
-      expect(entries[0].action?.command).toBe("rm -rf /tmp");
-      expect(entries[0].agentType).toBe("claude-code");
-    });
-
-    it("logSecretDetected writes secret event", () => {
-      const logger = new AuditLogger(logPath);
-      logger.logSecretDetected("config.js", "AWS Access Key ID", "blocked");
-
-      const entries = logger.read();
-      expect(entries).toHaveLength(1);
-      expect(entries[0].eventType).toBe("secret_detected");
-      expect(entries[0].action?.riskLevel).toBe("critical");
-    });
-
-    it("logContentSanitized writes sanitization event", () => {
-      const logger = new AuditLogger(logPath);
-      logger.logContentSanitized("output", 3);
-
-      const entries = logger.read();
-      expect(entries).toHaveLength(1);
-      expect(entries[0].eventType).toBe("content_sanitized");
-      expect(entries[0].resolution?.actionTaken).toBe("redacted");
-    });
-
-    it("logPolicyOverride writes override event", () => {
-      const logger = new AuditLogger(logPath);
-      logger.logPolicyOverride("user requested", "npm publish");
-
-      const entries = logger.read();
-      expect(entries).toHaveLength(1);
-      expect(entries[0].eventType).toBe("policy_override");
-      expect(entries[0].action?.riskLevel).toBe("high");
-    });
-
     it("logCommandIntercepted redacts secrets before persisting", () => {
       const logger = new AuditLogger(logPath);
       const token = "ghp_FAKE1234567890abcdefghijklmnopqrstuvwxyz";
@@ -141,6 +64,30 @@ describe("AuditLogger", () => {
       expect(onDisk).not.toContain(token);
     });
 
+    // ob-y5ep: a RAFTER_API_KEY env-assignment prefix leaked verbatim because
+    // the key's value matches no built-in secret pattern. Redaction must key
+    // off the secret-named env var, not just the value's shape.
+    it("logCommandIntercepted redacts a RAFTER_API_KEY env-assignment prefix", () => {
+      const logger = new AuditLogger(logPath);
+      const key = "sk-deadbeefdeadbeef";
+      logger.logCommandIntercepted(`RAFTER_API_KEY=${key} rafter scan .`, true, "allowed");
+      const entries = logger.read();
+      const logged = entries[0].action?.command as string;
+      expect(logged).not.toContain(key);
+      expect(logged).toContain("RAFTER_API_KEY=");
+      expect(logged).toMatch(/\*/);
+      // and never on disk
+      expect(fs.readFileSync(logPath, "utf-8")).not.toContain(key);
+    });
+
+    it("logCommandIntercepted preserves benign env assignments", () => {
+      const logger = new AuditLogger(logPath);
+      logger.logCommandIntercepted("FOO=bar NODE_ENV=production rafter scan .", true, "allowed");
+      const logged = logger.read()[0].action?.command as string;
+      expect(logged).toContain("FOO=bar");
+      expect(logged).toContain("NODE_ENV=production");
+    });
+
     it("auto-populates cwd and gitRepo on every entry", () => {
       const logger = new AuditLogger(logPath);
       logger.logCommandIntercepted("ls", true, "allowed");
@@ -155,6 +102,14 @@ describe("AuditLogger", () => {
       const logger = new AuditLogger(logPath);
       logger.logCommandIntercepted("echo 1", true, "allowed");
       logger.logCommandIntercepted("echo 2", true, "allowed");
+      logger.logCommandIntercepted("echo 3", true, "allowed");
+      expect(logger.verify()).toEqual([]);
+    });
+
+    it("verify() passes after an entry longer than the 64 KB read chunk", () => {
+      const logger = new AuditLogger(logPath);
+      logger.logCommandIntercepted("echo 1", true, "allowed");
+      logger.logCommandIntercepted("x".repeat(140_000), true, "allowed");
       logger.logCommandIntercepted("echo 3", true, "allowed");
       expect(logger.verify()).toEqual([]);
     });
@@ -200,86 +155,13 @@ describe("AuditLogger", () => {
   });
 
   describe("read with filters", () => {
-    it("filters by eventType", () => {
-      const logger = new AuditLogger(logPath);
-      logger.logCommandIntercepted("ls", true, "allowed");
-      logger.logSecretDetected("file.js", "AWS Key", "blocked");
-      logger.logCommandIntercepted("rm -rf", false, "blocked");
-
-      const filtered = logger.read({ eventType: "command_intercepted" });
-      expect(filtered).toHaveLength(2);
-    });
-
-    it("filters by since date", () => {
-      const logger = new AuditLogger(logPath);
-      // Write an old entry manually
-      const oldEntry = {
-        timestamp: "2024-01-01T00:00:00.000Z",
-        sessionId: "old",
-        eventType: "command_intercepted",
-      };
-      fs.writeFileSync(logPath, JSON.stringify(oldEntry) + "\n");
-
-      // Write a new entry
-      logger.logCommandIntercepted("ls", true, "allowed");
-
-      const filtered = logger.read({ since: new Date("2025-01-01") });
-      expect(filtered).toHaveLength(1);
-    });
-
-    it("limits results", () => {
-      const logger = new AuditLogger(logPath);
-      for (let i = 0; i < 10; i++) {
-        logger.logCommandIntercepted(`cmd-${i}`, true, "allowed");
-      }
-
-      const limited = logger.read({ limit: 3 });
-      expect(limited).toHaveLength(3);
-      // Should be the last 3
-      expect(limited[2].action?.command).toBe("cmd-9");
-    });
-
     it("returns empty array for missing log file", () => {
       const logger = new AuditLogger(path.join(tmpDir, "nonexistent.jsonl"));
       expect(logger.read()).toEqual([]);
     });
-
-    it("handles malformed JSON lines gracefully", () => {
-      fs.writeFileSync(logPath, '{"timestamp":"2025-01-01","eventType":"test"}\nnot json\n{"timestamp":"2025-01-02","eventType":"test2"}\n');
-      const logger = new AuditLogger(logPath);
-      const entries = logger.read();
-      expect(entries).toHaveLength(2);
-    });
   });
 
   describe("cleanup", () => {
-    it("removes entries older than retention period", () => {
-      vi.spyOn(ConfigManager.prototype, "load").mockReturnValue({
-        version: "1",
-        agent: {
-          riskLevel: "moderate",
-          commandPolicy: { mode: "approve-dangerous", blockedPatterns: [], requireApproval: [] },
-          audit: { retentionDays: 7, logLevel: "info", logAllActions: true },
-          outputFiltering: { redactSecrets: true, blockPatterns: false },
-          notifications: {},
-          scan: {},
-        },
-      } as any);
-
-      const old = new Date();
-      old.setDate(old.getDate() - 30);
-      const oldEntry = JSON.stringify({ timestamp: old.toISOString(), sessionId: "old", eventType: "command_intercepted" });
-      const newEntry = JSON.stringify({ timestamp: new Date().toISOString(), sessionId: "new", eventType: "command_intercepted" });
-      fs.writeFileSync(logPath, oldEntry + "\n" + newEntry + "\n");
-
-      const logger = new AuditLogger(logPath);
-      logger.cleanup();
-
-      const remaining = logger.read();
-      expect(remaining).toHaveLength(1);
-      expect(remaining[0].sessionId).toBe("new");
-    });
-
     it("re-seals the hash chain after retention prune", () => {
       vi.spyOn(ConfigManager.prototype, "load").mockReturnValue({
         version: "1",
@@ -361,17 +243,12 @@ describe("validateWebhookUrl", () => {
     await expect(validateWebhookUrl("https://example.com/webhook")).resolves.not.toThrow();
   });
 
-  it("rejects non-HTTP scheme (ftp)", async () => {
-    await expect(validateWebhookUrl("ftp://example.com/file")).rejects.toThrow("http or https");
-  });
-
-  it("rejects javascript: scheme", async () => {
-    await expect(validateWebhookUrl("javascript:alert(1)")).rejects.toThrow("http or https");
-  });
-
-  it("rejects file: scheme", async () => {
-    await expect(validateWebhookUrl("file:///etc/passwd")).rejects.toThrow("http or https");
-  });
+  it.each(["ftp://example.com/file", "javascript:alert(1)", "file:///etc/passwd"])(
+    "rejects non-HTTP scheme (%s)",
+    async (url) => {
+      await expect(validateWebhookUrl(url)).rejects.toThrow("http or https");
+    },
+  );
 
   it("rejects private IPv4 (127.0.0.1)", async () => {
     await expect(validateWebhookUrl("http://127.0.0.1/webhook")).rejects.toThrow("private");

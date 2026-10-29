@@ -143,30 +143,23 @@ describe("agent init --with-opencode", () => {
     expect(cfg.mcp.rafter?.type).toBe("local");
   });
 
-  it("recovers from a valid-but-non-object top-level config (array)", () => {
-    // Valid JSON, but the top level is an array — must be replaced with a
+  it.each([
+    ["array", [1, 2, 3]],
+    ["string", "hello"],
+    ["number", 42],
+  ] as const)("recovers from a valid-but-non-object top-level config (%s)", (_label, value) => {
+    // Valid JSON, but the top level is not an object — must be replaced with a
     // fresh object, not silently mangled by property assignment (rafter review).
-    fs.writeFileSync(
-      openCodeConfigPath(home),
-      JSON.stringify([1, 2, 3], null, 2),
-      "utf-8",
-    );
+    fs.writeFileSync(openCodeConfigPath(home), JSON.stringify(value, null, 2), "utf-8");
 
     const r = runCli(["agent", "init", "--with-opencode"], home);
     expect(r.exitCode).toBe(0);
     const cfg = readOpenCodeConfig(home);
     expect(Array.isArray(cfg)).toBe(false);
+    expect(typeof cfg).toBe("object");
     expect(cfg.mcp?.rafter?.type).toBe("local");
-    expect(cfg.$schema).toBe("https://opencode.ai/config.json");
-  });
-
-  it("recovers from a valid-but-non-object top-level config (string)", () => {
-    fs.writeFileSync(openCodeConfigPath(home), JSON.stringify("hello"), "utf-8");
-
-    const r = runCli(["agent", "init", "--with-opencode"], home);
-    expect(r.exitCode).toBe(0);
-    const cfg = readOpenCodeConfig(home);
     expect(cfg.mcp?.rafter?.command).toEqual(["rafter", "mcp", "serve"]);
+    expect(cfg.$schema).toBe("https://opencode.ai/config.json");
   });
 
   it("warns when --with-opencode is requested but ~/.config/opencode does not exist", () => {
@@ -239,18 +232,16 @@ describe("OpenCode detection in verify / status / list", () => {
     expect(opencode.status).toBe("warn");
   });
 
-  it("agent list includes the opencode.mcp component", () => {
-    const r = runCli(["agent", "list", "--json"], home);
-    const parsed = JSON.parse(r.stdout);
-    const ids = parsed.components.map((c: any) => c.id);
-    expect(ids).toContain("opencode.mcp");
-  });
+  it("agent list includes the opencode.mcp component, installed=true after init", () => {
+    const before = runCli(["agent", "list", "--json"], home);
+    const beforeParsed = JSON.parse(before.stdout);
+    const beforeIds = beforeParsed.components.map((c: any) => c.id);
+    expect(beforeIds).toContain("opencode.mcp");
 
-  it("opencode.mcp reports installed=true in list after init", () => {
     runCli(["agent", "init", "--with-opencode"], home);
-    const r = runCli(["agent", "list", "--json"], home);
-    const parsed = JSON.parse(r.stdout);
-    const opencode = parsed.components.find((c: any) => c.id === "opencode.mcp");
+    const after = runCli(["agent", "list", "--json"], home);
+    const afterParsed = JSON.parse(after.stdout);
+    const opencode = afterParsed.components.find((c: any) => c.id === "opencode.mcp");
     expect(opencode).toBeDefined();
     expect(opencode.installed).toBe(true);
     expect(opencode.detected).toBe(true);

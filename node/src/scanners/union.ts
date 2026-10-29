@@ -11,14 +11,11 @@ import { PatternMatch } from "../core/pattern-engine.js";
  * Running only one silently degrades coverage; the union restores it.
  *
  * Dedup: two findings are "the same secret" when they share
- * `(file, line, column, matched-text)`. The key is deliberately conservative
- * — it errs toward keeping both findings rather than collapsing two genuinely
- * distinct secrets (e.g. the same token value pasted twice on one line at
- * different columns), because dropping a real finding is a security
- * regression for a scanner. The flip side: when the two engines extract
- * slightly different text/columns for the same secret it is reported twice
- * (once per engine) rather than merged — safe over-reporting, not a miss.
- * When both engines DO agree on `(line, column, text)` we keep the betterleaks
+ * `(file, line, column)`, or `(file, line, column, matched-text)` when the
+ * position is unknown. Distinct secrets on one line (the same token pasted
+ * twice) sit at different columns and are both kept, because dropping a real
+ * finding is a security regression for a scanner. When both engines report a
+ * position we keep the betterleaks
  * match — its `RuleID`-style `pattern.name` is the canonical id — and record
  * both engines in `engines`. Ordering is deterministic: betterleaks findings
  * first (in betterleaks's own order), then any patterns-only findings, grouped
@@ -30,6 +27,9 @@ export function unionScanResults(
 ): ScanResult[] {
   const fileOrder: string[] = [];
   const byFile = new Map<string, Map<string, PatternMatch>>();
+  // Carry a read failure through the union (sable-ilbx): a file one engine
+  // could not open must still be reported as unreadable, not dropped.
+  const readErrorByFile = new Map<string, string>();
 
   const ingest = (results: ScanResult[], engine: string): void => {
     for (const r of results) {
@@ -39,18 +39,23 @@ export function unionScanResults(
         byFile.set(r.file, fileMap);
         fileOrder.push(r.file);
       }
+      if (r.readError && !readErrorByFile.has(r.file)) {
+        readErrorByFile.set(r.file, r.readError);
+      }
       for (const m of r.matches) {
-        // `line` and `column` are always digits (or "?"), so the first two
-        // spaces unambiguously delimit them from the matched secret — no key
-        // collisions even when the secret itself contains spaces. Column is
-        // part of the key so two distinct secrets sharing a line+text but
-        // sitting at different columns are NOT collapsed.
-        const key = `${m.line ?? "?"} ${m.column ?? "?"} ${m.match}`;
+        // Two secrets cannot start at the same line and column, so a known
+        // position alone identifies the secret: the engines extract different
+        // text for it (betterleaks a whole PEM block, the regex pattern only
+        // its header). Without a position, fall back to the matched text.
+        const key = m.line != null && m.column != null
+          ? `${m.line} ${m.column}`
+          : `${m.line ?? "?"} ${m.column ?? "?"} ${m.match}`;
         const existing = fileMap.get(key);
         if (existing) {
           if (!existing.engines!.includes(engine)) existing.engines!.push(engine);
+          if (!existing.ruleNames!.includes(m.pattern.name)) existing.ruleNames!.push(m.pattern.name);
         } else {
-          fileMap.set(key, { ...m, engines: [engine] });
+          fileMap.set(key, { ...m, engines: [engine], ruleNames: [m.pattern.name] });
         }
       }
     }
@@ -59,8 +64,13 @@ export function unionScanResults(
   ingest(betterleaks, "betterleaks");
   ingest(patterns, "patterns");
 
-  return fileOrder.map((file) => ({
-    file,
-    matches: Array.from(byFile.get(file)!.values()),
-  }));
+  return fileOrder.map((file) => {
+    const out: ScanResult = {
+      file,
+      matches: Array.from(byFile.get(file)!.values()),
+    };
+    const readError = readErrorByFile.get(file);
+    if (readError) out.readError = readError;
+    return out;
+  });
 }

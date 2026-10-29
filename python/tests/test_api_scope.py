@@ -1,12 +1,10 @@
 """Tests for API key scope enforcement (403 handling)."""
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
 
-import click
-import pytest
 import typer
+import pytest
 
 from rafter_cli.utils.api import (
     EXIT_GENERAL_ERROR,
@@ -101,7 +99,7 @@ class TestExitCodes:
 class TestRemoteScan403:
     """Verify _do_remote_scan properly handles 403 scope errors."""
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("org/repo", "main", "github", "https://github.com/org/repo"))
     def test_scope_403_raises_exit_with_code_4(self, _mock_repo, mock_post, capsys):
         mock_post.return_value = _mock_response(
@@ -110,7 +108,7 @@ class TestRemoteScan403:
         )
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -124,13 +122,13 @@ class TestRemoteScan403:
         assert "read access" in err
         assert "https://rfrr.co/account" in err
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("org/repo", "main", "github", "https://github.com/org/repo"))
     def test_generic_403_raises_exit_with_code_4(self, _mock_repo, mock_post, capsys):
         mock_post.return_value = _mock_response(403, "forbidden")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -141,13 +139,13 @@ class TestRemoteScan403:
             )
         assert exc_info.value.exit_code == EXIT_INSUFFICIENT_SCOPE
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("org/repo", "main", "github", "https://github.com/org/repo"))
     def test_429_still_raises_quota_exhausted(self, _mock_repo, mock_post, capsys):
         mock_post.return_value = _mock_response(429, "quota exhausted")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -158,7 +156,7 @@ class TestRemoteScan403:
             )
         assert exc_info.value.exit_code == EXIT_QUOTA_EXHAUSTED
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("org/repo", "main", "github", "https://github.com/org/repo"))
     def test_200_succeeds(self, _mock_repo, mock_post):
         mock_post.return_value = _mock_response(200, "")
@@ -184,7 +182,7 @@ class TestReadOnlyEndpoints:
     The server returns 200 for valid keys of either scope on GET endpoints.
     These tests verify the CLI doesn't accidentally scope-check GET calls."""
 
-    @patch("rafter_cli.commands.backend.requests.get")
+    @patch("rafter_cli.commands.backend.api_get")
     def test_get_scan_200_with_read_key(self, mock_get):
         """GET /api/static/scan works fine — no scope check needed."""
         mock_get.return_value = _mock_response(200, "")
@@ -198,18 +196,6 @@ class TestReadOnlyEndpoints:
         result = _handle_scan_status_interactive("abc", {"x-api-key": "read_key"}, "json", True)
         assert result == 0
 
-    @patch("rafter_cli.commands.backend.requests.get")
-    def test_get_usage_200_with_read_key(self, mock_get, capsys):
-        """GET /api/static/usage works with read-only key."""
-        mock_get.return_value = _mock_response(200, "")
-        mock_get.return_value.json.return_value = {
-            "scans_used": 5,
-            "scans_limit": 100,
-        }
-        # Directly call the usage endpoint logic pattern
-        resp = mock_get.return_value
-        assert resp.status_code == 200
-
 
 # ── Backward compatibility: 401 still handled as before ──────────────
 
@@ -217,13 +203,13 @@ class TestReadOnlyEndpoints:
 class TestBackwardCompatibility:
     """Ensure existing 401 and other error paths are unaffected."""
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("org/repo", "main", "github", "https://github.com/org/repo"))
     def test_401_raises_general_error(self, _mock_repo, mock_post, capsys):
         mock_post.return_value = _mock_response(401, "invalid api key")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -235,13 +221,13 @@ class TestBackwardCompatibility:
         # 401 should NOT hit scope handler, falls through to general error
         assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
 
-    @patch("rafter_cli.commands.backend.requests.post")
+    @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("org/repo", "main", "github", "https://github.com/org/repo"))
     def test_500_raises_general_error(self, _mock_repo, mock_post, capsys):
         mock_post.return_value = _mock_response(500, "internal server error")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",

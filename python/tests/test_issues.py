@@ -18,6 +18,7 @@ from rafter_cli.commands.issues.dedup import (
     fingerprint,
 )
 from rafter_cli.commands.issues.github_client import GitHubIssue
+from rafter_cli.commands.issues.issues_app import _parse_natural_text
 from rafter_cli.commands.issues.issue_builder import (
     BackendVulnerability,
     IssueDraft,
@@ -54,10 +55,6 @@ class TestFingerprint:
         fp = fingerprint("src/path with spaces/file.ts", "rule:special/chars")
         assert len(fp) == 12
         assert all(c in "0123456789abcdef" for c in fp)
-
-    def test_consistent_across_calls(self):
-        results = [fingerprint("src/auth.ts", "sql-injection") for _ in range(5)]
-        assert len(set(results)) == 1
 
 
 class TestEmbedExtractFingerprint:
@@ -399,13 +396,6 @@ class TestDeduplicationFlow:
         filtered = [d for d in [d1, d2] if d.fingerprint not in dupes]
         assert len(filtered) == 0
 
-    def test_no_dedup_keeps_all(self):
-        """Simulates --no-dedup: skip findDuplicates entirely."""
-        d1 = self._make_draft("a.ts", "AWS_KEY")
-        d2 = self._make_draft("b.ts", "DB_PASS")
-        drafts = [d1, d2]  # No filtering applied
-        assert len(drafts) == 2
-
 
 # ── from-scan: dry-run output ─────────────────────────────────────────
 
@@ -449,85 +439,38 @@ class TestFromScanDryRun:
 
 
 class TestParseNaturalText:
-    """Mirrors _parse_natural_text from issues_app.py."""
-
-    def _parse(self, text: str) -> dict:
-        """Inline mirror of _parse_natural_text."""
-        import re
-        lines = text.strip().split("\n")
-        issue_labels: list[str] = []
-        title = ""
-        body_start = 0
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped:
-                title = re.sub(r"^#+\s*", "", stripped).strip()
-                body_start = i + 1
-                break
-        if not title:
-            title = "Security issue reported via Rafter CLI"
-        if len(title) > 120:
-            title = title[:117] + "..."
-        body_lines = lines[body_start:]
-        body = "\n".join(body_lines).strip() or text.strip()
-        text_lower = text.lower()
-        if "critical" in text_lower or "p0" in text_lower:
-            issue_labels.append("severity:critical")
-        elif "high severity" in text_lower or "high risk" in text_lower or "p1" in text_lower:
-            issue_labels.append("severity:high")
-        elif "medium" in text_lower or "p2" in text_lower:
-            issue_labels.append("severity:medium")
-        elif "low" in text_lower or "p3" in text_lower:
-            issue_labels.append("severity:low")
-        security_keywords = [
-            "security", "vulnerability", "cve", "cwe", "owasp",
-            "secret", "credential", "token", "password", "injection",
-            "xss", "csrf", "ssrf", "exploit",
-        ]
-        if any(kw in text_lower for kw in security_keywords):
-            issue_labels.append("security")
-        file_refs = re.findall(
-            r"(?:^|\s)([a-zA-Z0-9_./-]+\.[a-zA-Z]{1,10})(?::(\d+))?", text
-        )
-        if file_refs:
-            files = [f[0].strip() for f in file_refs if "/" in f[0] or "." in f[0]]
-            if files:
-                body += "\n\n### Referenced Files\n\n"
-                for f in files[:10]:
-                    body += f"- `{f}`\n"
-        body += "\n\n---\n*Created by [Rafter CLI](https://rafter.so) — security for AI builders*\n"
-        return {"title": title, "body": body, "labels": list(set(issue_labels))}
+    """Exercises the real _parse_natural_text from issues_app.py."""
 
     def test_extracts_first_line_as_title(self):
-        result = self._parse("SQL injection in login form\nDetails here")
+        result = _parse_natural_text("SQL injection in login form\nDetails here")
         assert result["title"] == "SQL injection in login form"
 
     def test_strips_markdown_headers(self):
-        result = self._parse("## Security Bug\nBody text")
+        result = _parse_natural_text("## Security Bug\nBody text")
         assert result["title"] == "Security Bug"
 
     def test_truncates_long_titles(self):
-        result = self._parse("A" * 150)
+        result = _parse_natural_text("A" * 150)
         assert len(result["title"]) <= 120
         assert result["title"].endswith("...")
 
     def test_default_title_for_blank_input(self):
-        result = self._parse("   \n   \n   ")
+        result = _parse_natural_text("   \n   \n   ")
         assert result["title"] == "Security issue reported via Rafter CLI"
 
     def test_single_line_uses_as_both_title_and_body(self):
-        result = self._parse("Single line issue")
+        result = _parse_natural_text("Single line issue")
         assert result["title"] == "Single line issue"
         assert "Single line issue" in result["body"]
 
     def test_adds_rafter_footer(self):
-        result = self._parse("Some issue")
+        result = _parse_natural_text("Some issue")
         assert "Rafter CLI" in result["body"]
 
 
 class TestFromTextSeverityDetection:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_critical(self):
         assert "severity:critical" in self._parse("Critical vulnerability")["labels"]
@@ -563,7 +506,7 @@ class TestFromTextSeverityDetection:
 
 class TestFromTextSecurityDetection:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     @pytest.mark.parametrize("keyword", [
         "security", "vulnerability", "cve", "cwe", "owasp",
@@ -581,7 +524,7 @@ class TestFromTextSecurityDetection:
 
 class TestFromTextFileExtraction:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_extracts_file_with_line_number(self):
         result = self._parse("Bug in src/auth/login.ts:42 causes crash")
@@ -607,7 +550,7 @@ class TestFromTextFileExtraction:
 
 class TestFromTextLabelsFlag:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_appends_extra_labels(self):
         parsed = self._parse("Critical security bug")
@@ -632,7 +575,7 @@ class TestFromTextLabelsFlag:
 
 class TestFromTextTitleOverride:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_title_override(self):
         parsed = self._parse("Original title\nBody text")
@@ -642,7 +585,7 @@ class TestFromTextTitleOverride:
 
 class TestFromTextDryRun:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_parsed_serializes_to_json(self):
         parsed = self._parse("XSS vulnerability in comments\nDetails")
@@ -653,7 +596,7 @@ class TestFromTextDryRun:
 
 class TestFromTextFileInput:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_reads_from_file(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -678,8 +621,169 @@ class TestFromTextFileInput:
 
 class TestFromTextLabelDedup:
     def _parse(self, text):
-        return TestParseNaturalText()._parse(text)
+        return _parse_natural_text(text)
 
     def test_labels_are_unique(self):
         result = self._parse("Critical security vulnerability with credentials and tokens")
         assert len(result["labels"]) == len(set(result["labels"]))
+
+
+# ── from-scan: a payload with no findings list is an error, not zero ──
+#
+# sable-fgk7. `data.get("vulnerabilities", [])` turned a still-running scan, a
+# failed scan, a 200 carrying an error object, and a schema-valid payload with
+# no key into "No findings to create issues for". Delete-the-subject test:
+# with the fallback restored, every case below except the first two passes
+# with [] and this class fails. Mirrors the Node suite of the same name.
+
+
+class TestVulnerabilitiesFromPayload:
+    SCAN = "scan-abc"
+
+    def _call(self, data):
+        from rafter_cli.commands.issues.issues_app import vulnerabilities_from_payload
+
+        return vulnerabilities_from_payload(data, self.SCAN)
+
+    def test_returns_the_list_when_present(self):
+        v = [{"ruleId": "r", "level": "error", "message": "m", "file": "f"}]
+        assert self._call({"status": "completed", "vulnerabilities": v}) is v
+
+    def test_empty_list_is_a_legitimate_clean_result(self):
+        assert self._call({"status": "completed", "vulnerabilities": []}) == []
+
+    def test_refuses_completed_payload_with_no_key(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        with pytest.raises(UnreadableScanPayload, match="no 'vulnerabilities' array"):
+            self._call({"scan_id": self.SCAN, "status": "completed"})
+
+    def test_names_the_status_when_not_completed(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        with pytest.raises(UnreadableScanPayload, match="is processing, not completed"):
+            self._call({"status": "processing"})
+        with pytest.raises(UnreadableScanPayload, match="is failed, not completed"):
+            self._call({"status": "failed"})
+
+    def test_refuses_error_object(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        with pytest.raises(UnreadableScanPayload, match="no 'vulnerabilities' array"):
+            self._call({"error": "Failed to fetch report from storage: Object not found"})
+
+    def test_refuses_vulnerabilities_that_is_not_a_list(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        with pytest.raises(UnreadableScanPayload):
+            self._call({"vulnerabilities": "3"})
+        with pytest.raises(UnreadableScanPayload):
+            self._call({"vulnerabilities": None})
+
+    def test_refuses_non_dict_payloads(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        with pytest.raises(UnreadableScanPayload):
+            self._call(None)
+        with pytest.raises(UnreadableScanPayload):
+            self._call("<html>502</html>")
+
+    def test_points_at_the_scan_id_in_every_refusal(self):
+        from rafter_cli.commands.issues.issues_app import UnreadableScanPayload
+
+        for bad in ({"status": "completed"}, {"status": "processing"}, {}):
+            with pytest.raises(UnreadableScanPayload, match=f"rafter get {self.SCAN}"):
+                self._call(bad)
+
+
+class TestFromScanCommandRefusesUnreadablePayload:
+    """The command surface: an unreadable payload exits 1 with the message on
+    stderr, and never reaches the "No findings to create issues for" path."""
+
+    def test_unreadable_payload_exits_1(self, monkeypatch, capsys):
+        from unittest.mock import MagicMock
+
+        import typer
+
+        from rafter_cli.commands.issues import issues_app as mod
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"scan_id": "scan-abc", "status": "completed"}
+        resp.raise_for_status.return_value = None
+        monkeypatch.setattr(mod, "api_get", lambda *a, **k: resp)
+        monkeypatch.setattr(mod, "resolve_key", lambda _k: "key")
+
+        with pytest.raises(typer.Exit) as exc:
+            mod.from_scan(
+                scan_id="scan-abc", from_local=None, repo="org/repo", api_key="k",
+                no_dedup=True, dry_run=True, quiet=False,
+            )
+        assert exc.value.exit_code == 1
+        err = capsys.readouterr().err
+        assert "no 'vulnerabilities' array" in err
+        assert "No findings to create issues for" not in err
+
+    def test_non_json_body_exits_1(self, monkeypatch, capsys):
+        from unittest.mock import MagicMock
+
+        import typer
+
+        from rafter_cli.commands.issues import issues_app as mod
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
+        resp.raise_for_status.return_value = None
+        monkeypatch.setattr(mod, "api_get", lambda *a, **k: resp)
+        monkeypatch.setattr(mod, "resolve_key", lambda _k: "key")
+
+        with pytest.raises(typer.Exit) as exc:
+            mod.from_scan(
+                scan_id="scan-abc", from_local=None, repo="org/repo", api_key="k",
+                no_dedup=True, dry_run=True, quiet=False,
+            )
+        assert exc.value.exit_code == 1
+        assert "No findings to create issues for" not in capsys.readouterr().err
+
+
+# sable-pqmw: detect_repo() can now raise a RuntimeError whose text embeds
+# the (attacker-influenceable) remote URL/host. That text reaches
+# print_stderr(fmt.error(...)), which renders through Rich with markup
+# parsing on -- a value containing a bracketed sequence like "[/bold]"
+# closes a tag that was never opened and crashes with an uncaught
+# rich.errors.MarkupError instead of a clean error + exit code.
+class TestDetectRepoFailureRendering:
+    def test_markup_like_error_text_does_not_crash_from_scan(self, monkeypatch):
+        import typer
+
+        from rafter_cli.commands.issues import issues_app as mod
+
+        def raise_malicious(*a, **k):
+            raise RuntimeError("Unsupported git remote host 'evil[/bold]host' (from '...').")
+
+        monkeypatch.setattr(mod, "detect_repo", raise_malicious)
+
+        with pytest.raises(typer.Exit) as exc:
+            mod.from_scan(
+                scan_id=None, from_local="/nonexistent.json", repo=None, api_key=None,
+                no_dedup=True, dry_run=True, quiet=False,
+            )
+        assert exc.value.exit_code == 1
+
+    def test_markup_like_error_text_does_not_crash_from_text(self, monkeypatch):
+        import typer
+
+        from rafter_cli.commands.issues import issues_app as mod
+
+        def raise_malicious(*a, **k):
+            raise RuntimeError("Unsupported git remote host 'evil[/bold]host' (from '...').")
+
+        monkeypatch.setattr(mod, "detect_repo", raise_malicious)
+
+        with pytest.raises(typer.Exit) as exc:
+            mod.from_text(
+                text="a bug", file=None, title=None, labels=None, repo=None,
+                dry_run=True, quiet=False,
+            )
+        assert exc.value.exit_code == 1

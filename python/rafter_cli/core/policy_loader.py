@@ -37,7 +37,10 @@ def find_policy_file(start_dir: str | Path | None = None) -> Path | None:
     declared by ``POLICY_FILE_CANDIDATES``.
     """
     cwd = Path(start_dir) if start_dir else Path.cwd()
-    root = get_git_root()
+    # Bound the walk by the git root of the START dir, not the process cwd
+    # (sable-lu0j) — otherwise discovering a policy for a scan target in another
+    # tree stops at the wrong root.
+    root = get_git_root(str(cwd))
     stop = Path(root) if root else cwd.anchor and Path(cwd.anchor)
 
     current = cwd
@@ -56,9 +59,14 @@ def find_policy_file(start_dir: str | Path | None = None) -> Path | None:
     return None
 
 
-def load_policy() -> dict | None:
-    """Load and parse the policy file, returning None if not found."""
-    path = find_policy_file()
+def load_policy(base_dir: str | Path | None = None) -> dict | None:
+    """Load and parse the policy file, returning None if not found.
+
+    ``base_dir`` is the scan target: the policy is discovered from there, not
+    the process cwd (sable-lu0j), so an ambient ``.rafter.yml`` in cwd cannot
+    govern a scan of a different tree.
+    """
+    path = find_policy_file(base_dir)
     if not path:
         return None
     try:
@@ -68,11 +76,15 @@ def load_policy() -> dict | None:
         if not raw or not isinstance(raw, dict):
             return None
         return _validate_policy(_map_policy(raw), raw)
-    except yaml.YAMLError as e:
-        print(f"Warning: Failed to parse policy file {path}: {e}", file=sys.stderr)
-        return None
     except OSError as e:
         print(f"Warning: Cannot read policy file {path}: {e}", file=sys.stderr)
+        return None
+    except Exception as e:
+        # Any failure to decode, parse or map the file — not just YAMLError —
+        # drops the WHOLE policy so the scan runs on defaults. Keeping the
+        # parts that did parse could apply a garbled suppression. Matches the
+        # Node loader.
+        print(f"Warning: Failed to parse policy file {path}: {e}", file=sys.stderr)
         return None
 
 
@@ -94,6 +106,13 @@ def _map_policy(raw: dict) -> dict:
             policy["command_policy"]["blocked_patterns"] = cp["blocked_patterns"]
         if isinstance(cp.get("require_approval"), list):
             policy["command_policy"]["require_approval"] = cp["require_approval"]
+        # Without this the allowlist is unreachable from .rafter.yml: the
+        # interceptor reads allowed_patterns off the merged config and nothing
+        # ever put it there. Any new command_policy key needs a line HERE and
+        # in config_manager's merge, or it is documentation for a feature that
+        # does not run. (rf-3n1i)
+        if isinstance(cp.get("allowed_patterns"), list):
+            policy["command_policy"]["allowed_patterns"] = cp["allowed_patterns"]
 
     scan = raw.get("scan")
     if isinstance(scan, dict):
@@ -107,6 +126,8 @@ def _map_policy(raw: dict) -> dict:
             ]
         if isinstance(scan.get("auto_update_betterleaks"), bool):
             policy["scan"]["auto_update_betterleaks"] = scan["auto_update_betterleaks"]
+        if isinstance(scan.get("plus_requires_approval"), bool):
+            policy["scan"]["plus_requires_approval"] = scan["plus_requires_approval"]
 
     # sable-c1c — backend flat-shape compat. rafter-backend reads
     # exclude_paths / custom_patterns at the top level (no `scan:` nesting),
@@ -134,6 +155,10 @@ def _map_policy(raw: dict) -> dict:
             paths = entry.get("paths")
             if not isinstance(paths, list) or not paths:
                 print('Warning: skipping ignore entry — "paths" must be a non-empty array of strings.', file=sys.stderr)
+                continue
+            # Dropping a non-list `rules` would widen the entry to every pattern.
+            if "rules" in entry and not isinstance(entry["rules"], list):
+                print('Warning: skipping ignore entry — "rules" must be an array of strings.', file=sys.stderr)
                 continue
             rule: dict = {"paths": [str(p) for p in paths]}
             if isinstance(entry.get("rules"), list):
@@ -250,6 +275,13 @@ def _validate_policy(policy: dict, raw: dict) -> dict:
         if "mode" in cp and cp["mode"] not in _VALID_COMMAND_MODES:
             print('Warning: "command_policy.mode" must be one of: allow-all, approve-dangerous, deny-list \u2014 ignoring.', file=sys.stderr)
             del cp["mode"]
+        if "allowed_patterns" in cp:
+            if not isinstance(cp["allowed_patterns"], list) or not all(isinstance(v, str) for v in cp["allowed_patterns"]):
+                print(
+                    'rafter: "command_policy.allowed_patterns" must be a list of strings — ignoring.',
+                    file=sys.stderr,
+                )
+                cp.pop("allowed_patterns", None)
         if "blocked_patterns" in cp:
             if not isinstance(cp["blocked_patterns"], list) or not all(isinstance(v, str) for v in cp["blocked_patterns"]):
                 print('Warning: "command_policy.blocked_patterns" must be an array of strings \u2014 ignoring.', file=sys.stderr)
@@ -287,6 +319,9 @@ def _validate_policy(policy: dict, raw: dict) -> dict:
     raw_scan = raw.get("scan")
     if isinstance(raw_scan, dict) and "auto_update_betterleaks" in raw_scan and not isinstance(raw_scan["auto_update_betterleaks"], bool):
         print('Warning: "scan.auto_update_betterleaks" must be a boolean — ignoring.', file=sys.stderr)
+    # sable-9ddf — same guard for the Plus-approval flag.
+    if isinstance(raw_scan, dict) and "plus_requires_approval" in raw_scan and not isinstance(raw_scan["plus_requires_approval"], bool):
+        print('Warning: "scan.plus_requires_approval" must be a boolean — ignoring.', file=sys.stderr)
 
     ignore = policy.get("ignore")
     if ignore is not None:

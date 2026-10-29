@@ -21,7 +21,7 @@ Requires Python 3.10+.
 ### Remote Code Analysis
 
 ```bash
-export RAFTER_API_KEY="your-key"   # or add to .env file
+export RAFTER_API_KEY="your-key"
 
 rafter run                                    # scan current repo (auto-detected)
 rafter scan --repo myorg/myrepo --branch main # scan specific repo
@@ -96,8 +96,8 @@ Alias: `rafter scan`
 
 Trigger a new security scan for your repository.
 
-- `-r, --repo <repo>` — org/repo (default: auto-detected from git remote)
-- `-b, --branch <branch>` — branch (default: current branch or 'main')
+- `-r, --repo <repo>` — org/repo (default: auto-detected from git remote; errors on an unrecognized remote host)
+- `-b, --branch <branch>` — branch (default: current branch; errors on a detached HEAD)
 - `-k, --api-key <key>` — API key (or `RAFTER_API_KEY` env var)
 - `-f, --format <format>` — `json` or `md` (default: `md`)
 - `--skip-interactive` — don't wait for scan completion

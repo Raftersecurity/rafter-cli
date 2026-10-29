@@ -4,11 +4,45 @@ from __future__ import annotations
 import json
 import os
 import sys
+from urllib.parse import urlparse
 
+import requests
 import typer
-from dotenv import load_dotenv
 
 API_BASE = "https://rafter.so/api/"
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_warned_api_override = False
+
+
+def _resolve_api_base() -> str:
+    """The API base in effect right now.
+
+    ``RAFTER_API_URL``, read fresh on every call rather than cached at import
+    time, overrides the production default. This is how the test suite points
+    the CLI at a local, non-routable port instead of the live backend — see
+    ``python/tests/conftest.py``. Production never sets the var, so this is a
+    no-op outside tests.
+
+    Every request carries the API key, so the override must be https, or plain
+    http to a loopback host. Anything else is ignored with a warning. A remote
+    https override is honored with a one-time notice, since the key goes there.
+    """
+    global _warned_api_override
+    override = os.environ.get("RAFTER_API_URL")
+    if not override:
+        return API_BASE
+    parsed = urlparse(override)
+    loopback = parsed.hostname in _LOOPBACK_HOSTS
+    allowed = (parsed.scheme == "https" and bool(parsed.hostname)) or (parsed.scheme == "http" and loopback)
+    if not loopback and not _warned_api_override:
+        _warned_api_override = True
+        if allowed:
+            print(f"rafter: RAFTER_API_URL is set; sending requests and your API key to "
+                  f"{parsed.scheme}://{parsed.netloc}", file=sys.stderr)
+        else:
+            print(f"rafter: ignoring RAFTER_API_URL (must be https, or http to localhost); "
+                  f"using {API_BASE}", file=sys.stderr)
+    return override if allowed else API_BASE
 
 # Exit codes
 EXIT_SUCCESS = 0
@@ -16,6 +50,9 @@ EXIT_GENERAL_ERROR = 1
 EXIT_SCAN_NOT_FOUND = 2
 EXIT_QUOTA_EXHAUSTED = 3
 EXIT_INSUFFICIENT_SCOPE = 4
+# sable-9ddf — a paid Plus scan was refused because approval is required and no
+# explicit confirmation (--yes / RAFTER_CONFIRM=1 / interactive yes) was given.
+EXIT_CONFIRMATION_REQUIRED = 5
 
 
 def handle_403(resp: "requests.Response") -> int:
@@ -59,11 +96,79 @@ API_TIMEOUT = (10, 300)
 API_TIMEOUT_SHORT = (10, 30)
 
 
+def _safe_for_terminal(value: "str | None") -> str:
+    """Strip non-printable bytes and cap length before echoing untrusted text.
+
+    A redirect target is attacker-controlled if the endpoint is. Header values
+    cannot contain CR/LF, but ESC is a legal byte, so an unsanitized Location
+    can emit ANSI sequences that rewrite the user's terminal.
+    """
+    if not isinstance(value, str):
+        return ""
+    printable = "".join(c for c in value if c.isprintable())
+    return printable[:200] + "\u2026" if len(printable) > 200 else printable
+
+
+def api_url(path: str) -> str:
+    """Join API_BASE with a path without producing a double slash.
+
+    Mirrors Node's ``apiUrl()``. This is not cosmetic: API_BASE ends in "/" and
+    call sites used to concatenate "/static/...", producing
+    ``https://rafter.so/api//static/scan``, which production answers with a 308
+    to the single-slash form. That worked only because the client followed the
+    redirect — so sable-2s6p's fix would have broken every core command.
+    """
+    return f"{_resolve_api_base().rstrip('/')}/{path.lstrip('/')}"
+
+
+def api_request(method: str, url: str, **kwargs) -> "requests.Response":
+    """sable-2s6p — the HTTP entry point for every authenticated Rafter API call.
+
+    ``allow_redirects=False`` is the point of it. ``requests`` replays headers on
+    a redirect and, unlike ``Authorization``, a custom ``x-api-key`` header is
+    NOT stripped when the host changes (``SessionRedirectMixin.rebuild_auth``
+    only handles ``Authorization``). Since the API base is user-settable
+    (``--rafter-url``, self-hosted installs), a 302 from a misconfigured or
+    hostile endpoint would walk the caller's API key to another host.
+
+    Nothing in this CLI needs to follow a redirect, so none of them do. A
+    redirect now arrives at the caller as a plain 3xx response, which every
+    caller already treats as a non-200 error.
+
+    Use this for anything that sends ``x-api-key``. Plain ``requests`` is fine
+    for user-supplied webhooks and other unauthenticated calls.
+    """
+    kwargs["allow_redirects"] = False
+    resp = requests.request(method, url, **kwargs)
+    if 300 <= resp.status_code < 400:
+        # Otherwise this surfaces as a bare non-200 with an empty body, which
+        # tells the user nothing about why.
+        target = _safe_for_terminal(resp.headers.get("location")) or "another host"
+        print(
+            f"The Rafter API redirected to {target}, and Rafter does not follow "
+            "redirects on authenticated requests — your API key would be sent to "
+            "the redirect target. If you are pointing Rafter at a self-hosted "
+            "instance, use its final URL.",
+            file=sys.stderr,
+        )
+    return resp
+
+
+def api_get(url: str, **kwargs) -> "requests.Response":
+    return api_request("GET", url, **kwargs)
+
+
+def api_post(url: str, **kwargs) -> "requests.Response":
+    return api_request("POST", url, **kwargs)
+
+
 def resolve_key(cli_opt: str | None) -> str:
     """Resolve API key: --api-key flag > RAFTER_API_KEY env > global config."""
     if cli_opt:
         return cli_opt
-    load_dotenv()
+    # No .env loading here: python-dotenv searches upward from this package's
+    # install path, which for a virtualenv inside a cloned repo reaches the
+    # repo's own .env. A repo must never supply the operator's credential.
     env_key = os.getenv("RAFTER_API_KEY")
     if env_key:
         return env_key

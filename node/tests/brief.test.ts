@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { execFileSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { execFileSync, spawnSync } from "child_process";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import path from "path";
 
 const CLI = path.resolve(__dirname, "../dist/index.js");
@@ -15,25 +15,24 @@ const RAFTER_SUBDOCS = [
   "shift-left",
   "finding-triage",
 ];
+const emojiRe =
+  /(?:[\u2600-\u27BF\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}]|[0-9#*]\uFE0F?\u20E3)/u;
 
 function rafter(
   args: string | string[],
+  env?: NodeJS.ProcessEnv,
 ): { stdout: string; stderr: string; exitCode: number } {
   const argList = Array.isArray(args) ? args : args.split(/\s+/);
-  try {
-    const result = execFileSync("node", [CLI, ...argList], {
-      encoding: "utf-8",
-      env: { ...process.env },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return { stdout: result, stderr: "", exitCode: 0 };
-  } catch (e: any) {
-    return {
-      stdout: e.stdout || "",
-      stderr: e.stderr || "",
-      exitCode: e.status ?? 1,
-    };
-  }
+  const result = spawnSync("node", [CLI, ...argList], {
+    encoding: "utf-8",
+    env: { ...process.env, ...env },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  return {
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    exitCode: result.status ?? 1,
+  };
 }
 
 beforeAll(() => {
@@ -85,6 +84,19 @@ describe("brief command — topic listing", () => {
 });
 
 describe("brief command — topic rendering", () => {
+  it("renders agent-mode output without terminal formatting", () => {
+    const r = rafter(["--agent", "brief", "scanning"], {
+      CI: "1",
+      FORCE_COLOR: "1",
+    });
+    const output = r.stdout + r.stderr;
+
+    expect(r.exitCode).toBe(0);
+    expect(output).toContain("# Rafter");
+    expect(output).not.toContain("\u001b");
+    expect(output).not.toMatch(emojiRe);
+  });
+
   it("renders scanning topic from skill file", () => {
     const r = rafter("brief scanning");
     expect(r.exitCode).toBe(0);
@@ -145,15 +157,21 @@ describe("brief command — setup guides", () => {
 });
 
 describe("rafter skill — CYOA hierarchy", () => {
-  it("top-level SKILL.md parses and stays under 120 lines", () => {
+  it("top-level SKILL.md parses and stays under 130 lines", () => {
     const skillPath = path.join(RAFTER_SKILL_DIR, "SKILL.md");
     const raw = readFileSync(skillPath, "utf-8");
     expect(raw.startsWith("---")).toBe(true);
     // frontmatter closes (two `---` markers)
     expect(raw.match(/^---$/gm)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    // 130-line budget, matching the Python suite. The limits had drifted apart:
+    // Python was bumped 120 -> 130 for the scanner-scope section, Node never was.
+    // The surface-scoping section ("when Rafter applies") has to live in the
+    // router itself — it decides whether the skill is entered at all — so it
+    // can't be pushed into a sub-doc. Budget is tight on purpose: trim before
+    // you add.
     const lines = raw.split("\n").length;
-    expect(lines, `SKILL.md is ${lines} lines; keep under 120`).toBeLessThan(
-      120,
+    expect(lines, `SKILL.md is ${lines} lines; keep under 130`).toBeLessThan(
+      130,
     );
   });
 
@@ -197,6 +215,42 @@ describe("rafter skill — CYOA hierarchy", () => {
       expect(r.stdout).toContain(slug);
     }
   });
+});
+
+describe("shipped resource docs — no reference to the nonexistent 'rafter audit' command", () => {
+  // issue #231 item 4a: there is no top-level `rafter audit` command (it's
+  // `rafter agent audit`), and an unknown subcommand used to print general
+  // help rather than erroring, so a wrong hint here was easy to miss. Scans
+  // both runtimes' shipped resource trees — the node/python copies of these
+  // platform-rule files are kept byte-identical, so one guard covers both.
+  function walk(dir: string): string[] {
+    if (!existsSync(dir)) return [];
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...walk(full));
+      else if (/\.(md|mdc)$/.test(entry.name)) out.push(full);
+    }
+    return out;
+  }
+
+  const roots = [
+    path.resolve(__dirname, "../resources"),
+    path.resolve(__dirname, "../../python/rafter_cli/resources"),
+  ];
+
+  for (const root of roots) {
+    const files = walk(root);
+    it(`none of ${files.length} doc(s) under ${path.relative(path.resolve(__dirname, "../.."), root)} say the bare command`, () => {
+      const offenders = files.filter((f) =>
+        readFileSync(f, "utf-8").includes("`rafter audit`"),
+      );
+      expect(
+        offenders,
+        `these docs reference a nonexistent 'rafter audit' command (it's 'rafter agent audit'): ${offenders.join(", ")}`,
+      ).toEqual([]);
+    });
+  }
 });
 
 describe("brief command — error handling", () => {

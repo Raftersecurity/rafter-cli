@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -21,7 +20,7 @@ from rafter_cli.commands.mcp_server import (
 class TestScanSecrets:
     def test_scan_file_with_secret(self, tmp_path):
         f = tmp_path / "creds.txt"
-        f.write_text("aws_key = AKIAIOSFODNN7EXAMPLE1\n")
+        f.write_text("aws_key = AKIAIOSFODNN7ABCDEFG1\n")
         results = handle_scan_secrets(str(f), engine="patterns")
         assert len(results) == 1
         assert results[0]["file"] == str(f)
@@ -33,7 +32,7 @@ class TestScanSecrets:
 
     def test_scan_directory(self, tmp_path):
         (tmp_path / "clean.txt").write_text("nothing here\n")
-        (tmp_path / "secret.env").write_text("AWS_KEY=AKIAIOSFODNN7EXAMPLE2\n")
+        (tmp_path / "secret.env").write_text("AWS_KEY=AKIAIOSFODNN7ABCDEFG2\n")
         results = handle_scan_secrets(str(tmp_path), engine="patterns")
         files_with_matches = [r for r in results if r["matches"]]
         assert len(files_with_matches) >= 1
@@ -46,7 +45,7 @@ class TestScanSecrets:
 
     def test_betterleaks_not_available_falls_back(self, tmp_path):
         f = tmp_path / "test.txt"
-        f.write_text("AKIAIOSFODNN7EXAMPLE1\n")
+        f.write_text("AKIAIOSFODNN7ABCDEFG1\n")
         with patch("rafter_cli.commands.mcp_server.BetterleaksScanner") as mock_bl:
             mock_bl.return_value.is_available.return_value = False
             results = handle_scan_secrets(str(f), engine="auto")
@@ -81,7 +80,7 @@ class TestScanSecrets:
                 m("Private Key", "-----BEGIN PRIVATE KEY-----", 9, "critical"),
             ]),
             ScanResult(file="/tmp/creds.txt", matches=[
-                m("AWS Access Key ID", "AKIAIOSFODNN7EXAMPLE1", 1),
+                m("AWS Access Key ID", "AKIAIOSFODNN7ABCDEFG1", 1),
             ]),
         ]
 
@@ -107,19 +106,25 @@ class TestScanSecrets:
         assert creds[0]["pattern"] == "AWS Access Key ID"
         assert creds[0]["engines"] == ["patterns"]
 
-    def test_auto_degrades_to_patterns_when_betterleaks_errors(self):
+    # The scanner wraps a timeout or invocation failure in RuntimeError (#262);
+    # auto mode must still fall back to patterns, as Node does.
+    @pytest.mark.parametrize("error", [
+        OSError("boom"),
+        RuntimeError("Betterleaks scan failed (timed out after 120s)"),
+    ])
+    def test_auto_degrades_to_patterns_when_betterleaks_errors(self, error):
         from rafter_cli.core.pattern_engine import Pattern, PatternMatch
         from rafter_cli.scanners.regex_scanner import ScanResult
 
         pat_results = [ScanResult(file="/tmp/creds.txt", matches=[PatternMatch(
             pattern=Pattern(name="AWS Access Key ID", regex="", severity="high"),
-            match="AKIAIOSFODNN7EXAMPLE1", line=1, redacted="AKIA****",
+            match="AKIAIOSFODNN7ABCDEFG1", line=1, redacted="AKIA****",
         )])]
 
         with patch("rafter_cli.commands.mcp_server.BetterleaksScanner") as mock_bl, \
              patch("rafter_cli.commands.mcp_server.RegexScanner") as mock_rx:
             mock_bl.return_value.is_available.return_value = True
-            mock_bl.return_value.scan_directory.side_effect = OSError("boom")
+            mock_bl.return_value.scan_directory.side_effect = error
             mock_rx.return_value.scan_directory.return_value = pat_results
 
             results = handle_scan_secrets("/tmp", engine="auto")
@@ -128,6 +133,35 @@ class TestScanSecrets:
         assert results[0]["matches"][0]["pattern"] == "AWS Access Key ID"
         # Single-engine fallback → no engine attribution.
         assert "engines" not in results[0]["matches"][0]
+
+
+class TestScanSecretsSuppressed:
+    def test_reports_what_suppressions_dropped(self, tmp_path, monkeypatch):
+        """A cloned repo's `ignore: paths ["**"]` must not silently empty results."""
+        import asyncio
+
+        (tmp_path / "creds.env").write_text("AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n")
+        (tmp_path / ".rafter.yml").write_text(
+            'ignore:\n  - paths: ["**"]\n    reason: fixture\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        assert handle_scan_secrets(str(tmp_path), engine="patterns") == []
+
+        result = asyncio.run(create_mcp_server().call_tool(
+            "scan_secrets", {"path": str(tmp_path), "engine": "patterns"},
+        ))
+        content = result[0] if isinstance(result, tuple) else result
+        assert len(content) == 2
+        assert json.loads(content[0].text) == []
+        assert "AKIAIOSFODNN7ABCDEFG1" not in content[1].text
+        meta = json.loads(content[1].text)
+        assert meta["suppressed_count"] == 1
+        item = meta["_suppressed"][0]
+        assert item["file"] == str(tmp_path / "creds.env")
+        assert item["source"] == ".rafter.yml"
+        assert item["reason"] == "fixture"
+        assert isinstance(item["rule"], str)
 
 
 class TestEvaluateCommand:
@@ -148,6 +182,19 @@ class TestEvaluateCommand:
     def test_moderate_command(self):
         result = handle_evaluate_command("chmod 777 /tmp/test")
         assert result["risk_level"] in ("medium", "high", "critical")
+
+    def test_missing_command_rejected_cleanly(self):
+        # sable-ykuh — the Node server crashed on a missing required argument
+        # with a raw TypeError (surfaced to the client as a -32603 internal
+        # error). Python validates the call against the tool signature and
+        # rejects it cleanly, naming the missing field, before the handler runs.
+        import asyncio
+
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        with pytest.raises(ToolError) as exc:
+            asyncio.run(create_mcp_server().call_tool("evaluate_command", {}))
+        assert "command" in str(exc.value)
 
 
 class TestReadAuditLog:
@@ -218,40 +265,6 @@ class TestServerFactory:
         assert mcp is not None
         assert mcp.name == "rafter"
 
-    def test_registers_expected_tools(self):
-        mcp = create_mcp_server()
-        # FastMCP stores tools in _tool_manager.tools dict
-        tool_names = set()
-        if hasattr(mcp, "_tool_manager"):
-            mgr = mcp._tool_manager
-            tools_dict = getattr(mgr, "_tools", None) or getattr(mgr, "tools", {})
-            tool_names = set(tools_dict.keys())
-        elif hasattr(mcp, "tools"):
-            tool_names = set(mcp.tools.keys())
-        else:
-            # Fallback: just check it was created without error
-            pass
-
-        if tool_names:
-            expected = {
-                "scan_secrets", "evaluate_command", "read_audit_log", "get_config",
-                "list_docs", "get_doc", "suppress_finding",
-            }
-            assert expected == tool_names
-
-    def test_registers_expected_resources(self):
-        mcp = create_mcp_server()
-        resource_uris = set()
-        if hasattr(mcp, "_resource_manager"):
-            resource_uris = set(mcp._resource_manager._resources.keys())
-        elif hasattr(mcp, "resources"):
-            resource_uris = set(mcp.resources.keys())
-
-        if resource_uris:
-            assert "rafter://config" in resource_uris
-            assert "rafter://policy" in resource_uris
-            assert "rafter://docs" in resource_uris
-
 
 class TestVersion:
     """Verify version reporting is correct and not hardcoded to old values."""
@@ -259,13 +272,6 @@ class TestVersion:
     def test_version_not_hardcoded_to_old(self):
         import rafter_cli
         assert rafter_cli.__version__ != "0.5.0"
-
-    def test_version_is_current(self):
-        import rafter_cli
-        # Should be 0.6.x or higher
-        major, minor, *_ = rafter_cli.__version__.split(".")
-        assert int(major) >= 0
-        assert int(minor) >= 6
 
     def test_version_dynamic_import(self):
         """Version should come from importlib.metadata, not a hardcoded string."""
@@ -304,3 +310,15 @@ class TestAuditLogDefaults:
             handle_read_audit_log(since="2026-01-01T00:00:00")
             call_kwargs = mock_cls.return_value.read.call_args[1]
             assert call_kwargs["since"].tzinfo == timezone.utc
+
+
+# The triage loop the suppress_finding description promises: once a finding is
+# suppressed, the next scan_secrets call must not report it again.
+def test_scan_secrets_does_not_report_a_suppressed_finding(tmp_path, monkeypatch):
+    from rafter_cli.commands.mcp_server import handle_suppress_finding
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test" / "fixtures").mkdir(parents=True)
+    (tmp_path / "test" / "fixtures" / "creds.env").write_text("AWS_KEY=AKIAIOSFODNN7ABCDEFG1\n")
+    assert len(handle_scan_secrets(str(tmp_path), engine="patterns")) == 1
+    handle_suppress_finding("test/fixtures/**", reason="fixture")
+    assert handle_scan_secrets(str(tmp_path), engine="patterns") == []

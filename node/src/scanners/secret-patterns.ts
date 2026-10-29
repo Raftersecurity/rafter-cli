@@ -8,13 +8,22 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   // AWS
   {
     name: "AWS Access Key ID",
-    regex: "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}",
+    // Negative lookahead excludes the canonical AWS-docs example key
+    // (AKIAIOSFODNN7EXAMPLE and its siblings, which all end in EXAMPLE).
+    // betterleaks skips these too (#230); matching that keeps the two
+    // engines from disagreeing on a well-known public non-secret.
+    regex: "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)(?![A-Z0-9]{9}EXAMPLE)[A-Z0-9]{16}",
     severity: "critical",
     description: "AWS Access Key ID detected"
   },
   {
     name: "AWS Secret Access Key",
-    regex: "(?i)aws(.{0,20})?['\"]?[0-9a-zA-Z/+]{40}['\"]?",
+    // Negative lookahead excludes the canonical AWS-docs example secret key
+    // (wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY, which ends in EXAMPLEKEY).
+    // betterleaks skips this too (#230); matching that keeps the two
+    // engines from disagreeing on a well-known public non-secret, mirroring
+    // the AWS Access Key ID exemption above.
+    regex: "(?i)aws(.{0,20})?['\"]?(?![0-9a-zA-Z/+]{30}EXAMPLEKEY)[0-9a-zA-Z/+]{40}['\"]?",
     severity: "critical",
     description: "AWS Secret Access Key detected"
   },
@@ -85,6 +94,36 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
     regex: "(?i)rk_live_[0-9a-zA-Z]{24}",
     severity: "critical",
     description: "Stripe Restricted API Key detected"
+  },
+
+  // OpenAI (rf-f5is / se-wagv, external report). The hook's Write gate is
+  // regex-only, and this file had NO OpenAI rule at all — so `sk-proj-` and
+  // legacy keys were ALLOWED through the gate at any length, while
+  // `rafter secrets` caught them via betterleaks. The two engines disagreed,
+  // and the one guarding writes was the blind one.
+  //
+  // No `(?i)`: these prefixes and their base62 bodies are case-sensitive, and
+  // the convention here is that prefixed vendor tokens (ghp_, AKIA, AIza, xox)
+  // match case-sensitively. Lower-casing them would only add false positives.
+  {
+    name: "OpenAI API Key",
+    regex: "sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{40,}",
+    severity: "critical",
+    description: "OpenAI project/service/admin API key detected"
+  },
+  {
+    name: "OpenAI API Key (legacy)",
+    regex: "sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}",
+    severity: "critical",
+    description: "OpenAI legacy API key detected"
+  },
+
+  // Supabase (rf-f5is / se-wagv). Detected by NEITHER engine at any length.
+  {
+    name: "Supabase Secret Key",
+    regex: "sb_secret_[A-Za-z0-9_-]{20,}",
+    severity: "critical",
+    description: "Supabase secret key detected"
   },
 
   // Twilio
@@ -167,6 +206,21 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
     regex: "dop_v1_[a-f0-9]{64}",
     severity: "critical",
     description: "DigitalOcean Personal Access Token detected"
+  },
+
+  // Mailchimp
+  {
+    name: "Mailchimp API Key",
+    regex: "[a-f0-9]{32}-us\\d{1,2}",
+    severity: "critical",
+    description: "Mailchimp API Key detected"
+  },
+  // SendGrid
+  {
+    name: "SendGrid API Key",
+    regex: "SG\\.[a-zA-Z0-9_-]{22}\\.[a-zA-Z0-9_-]{43}",
+    severity: "critical",
+    description: "SendGrid API Key detected"
   }
 ];
 

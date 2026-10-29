@@ -36,6 +36,9 @@ def union_scan_results(
     """
     file_order: list[str] = []
     by_file: dict[str, dict[str, PatternMatch]] = {}
+    # Carry a read failure through the union (sable-ilbx): a file one engine
+    # could not open must still be reported as unreadable, not dropped.
+    read_error_by_file: dict[str, str] = {}
 
     def ingest(results: list[ScanResult], engine: str) -> None:
         for r in results:
@@ -44,26 +47,35 @@ def union_scan_results(
                 file_map = {}
                 by_file[r.file] = file_map
                 file_order.append(r.file)
+            if r.read_error and r.file not in read_error_by_file:
+                read_error_by_file[r.file] = r.read_error
             for m in r.matches:
-                # `line`/`column` are always digits (or None→"?"), so the
-                # first two spaces unambiguously delimit them from the matched
-                # secret — no key collisions even when the secret contains
-                # spaces. Column is part of the key so two distinct secrets
-                # sharing a line+text but at different columns are NOT collapsed.
-                line = m.line if m.line is not None else "?"
-                col = m.column if m.column is not None else "?"
-                key = f"{line} {col} {m.match}"
+                # Two secrets cannot start at the same line and column, so a
+                # known position alone identifies the secret: the engines
+                # extract different text for it (betterleaks a whole PEM
+                # block, the regex pattern only its header). Without a
+                # position, fall back to the matched text.
+                if m.line is not None and m.column is not None:
+                    key = f"{m.line} {m.column}"
+                else:
+                    key = f"{m.line} {m.column} {m.match}"
                 existing = file_map.get(key)
                 if existing is not None:
                     if engine not in existing.engines:
                         existing.engines.append(engine)
+                    if m.pattern.name not in existing.rule_names:
+                        existing.rule_names.append(m.pattern.name)
                 else:
-                    file_map[key] = dataclasses.replace(m, engines=[engine])
+                    file_map[key] = dataclasses.replace(m, engines=[engine], rule_names=[m.pattern.name])
 
     ingest(betterleaks, "betterleaks")
     ingest(patterns, "patterns")
 
     return [
-        ScanResult(file=f, matches=list(by_file[f].values()))
+        ScanResult(
+            file=f,
+            matches=list(by_file[f].values()),
+            read_error=read_error_by_file.get(f),
+        )
         for f in file_order
     ]

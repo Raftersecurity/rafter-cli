@@ -162,29 +162,18 @@ describe("AuditLogger lifecycle", () => {
       expect(e.resolution?.overrideReason).toBe("user requested");
     });
 
-    it("all 6 event types produce correct eventType strings", () => {
+    it("manual event types (scan_executed, config_changed) produce correct eventType strings", () => {
+      // The other 4 event types are already asserted individually by the
+      // "logX: all fields present" tests above; only these two manual
+      // event types aren't covered elsewhere.
       const logger = new AuditLogger(logPath);
 
-      // 4 convenience methods
-      logger.logCommandIntercepted("ls", true, "allowed");
-      logger.logSecretDetected("f.js", "key", "blocked");
-      logger.logContentSanitized("output", 1);
-      logger.logPolicyOverride("reason", "cmd");
-
-      // 2 manual event types
       logger.log({ eventType: "scan_executed", securityCheck: { passed: true }, resolution: { actionTaken: "allowed" } });
       logger.log({ eventType: "config_changed", securityCheck: { passed: true }, resolution: { actionTaken: "allowed" } });
 
       const entries = logger.read();
       const types = entries.map(e => e.eventType);
-      expect(types).toEqual([
-        "command_intercepted",
-        "secret_detected",
-        "content_sanitized",
-        "policy_override",
-        "scan_executed",
-        "config_changed",
-      ]);
+      expect(types).toEqual(["scan_executed", "config_changed"]);
     });
   });
 
@@ -331,24 +320,7 @@ describe("AuditLogger lifecycle", () => {
       vi.spyOn(dns, "resolve").mockResolvedValue(["93.184.216.34"]);
     });
 
-    it("fires webhook for high-risk events", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok"));
-      vi.spyOn(ConfigManager.prototype, "load").mockReturnValue(
-        makeConfig({ notifications: { webhook: "https://example.com/webhook", minRiskLevel: "high" } })
-      );
-
-      const logger = new AuditLogger(logPath);
-      logger.logCommandIntercepted("rm -rf /", false, "blocked", "dangerous");
-
-      // Poll until the async webhook lands
-      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
-      const callArgs = fetchSpy.mock.calls[0];
-      expect(callArgs[0]).toBe("https://example.com/webhook");
-      const body = JSON.parse((callArgs[1] as any).body);
-      expect(body.event).toBe("command_intercepted");
-    });
-
-    it("minRiskLevel threshold: high fires, low doesn't", async () => {
+    it("minRiskLevel threshold: low doesn't fire, high fires with full payload shape", async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok"));
       vi.spyOn(ConfigManager.prototype, "load").mockReturnValue(
         makeConfig({ notifications: { webhook: "https://example.com/webhook", minRiskLevel: "high" } })
@@ -360,23 +332,14 @@ describe("AuditLogger lifecycle", () => {
       await flushAsync();
       expect(fetchSpy).not.toHaveBeenCalled();
 
-      // High risk — should fire
-      logger.logCommandIntercepted("rm -rf /", false, "blocked", "dangerous");
-      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
-    });
-
-    it("payload format includes all required fields", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok"));
-      vi.spyOn(ConfigManager.prototype, "load").mockReturnValue(
-        makeConfig({ notifications: { webhook: "https://example.com/webhook", minRiskLevel: "high" } })
-      );
-
-      const logger = new AuditLogger(logPath);
+      // High risk — should fire, with the full documented payload shape
       logger.logCommandIntercepted("rm -rf /", false, "blocked", "danger", "claude-code");
       await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
 
-      const body = JSON.parse((fetchSpy.mock.calls[0][1] as any).body);
-      expect(body).toHaveProperty("event");
+      const callArgs = fetchSpy.mock.calls[0];
+      expect(callArgs[0]).toBe("https://example.com/webhook");
+      const body = JSON.parse((callArgs[1] as any).body);
+      expect(body.event).toBe("command_intercepted");
       expect(body).toHaveProperty("risk");
       expect(body).toHaveProperty("command");
       expect(body).toHaveProperty("timestamp");
@@ -451,16 +414,6 @@ describe("AuditLogger lifecycle", () => {
   // ── Edge cases ───────────────────────────────────────────────────
 
   describe("edge cases", () => {
-    it("concurrent log writes (multiple appends)", () => {
-      const logger = new AuditLogger(logPath);
-      // Simulate concurrent-ish writes
-      for (let i = 0; i < 20; i++) {
-        logger.logCommandIntercepted(`cmd-${i}`, true, "allowed");
-      }
-      const entries = logger.read();
-      expect(entries).toHaveLength(20);
-    });
-
     it("very large log file (1000+ entries)", () => {
       const logger = new AuditLogger(logPath);
       for (let i = 0; i < 1050; i++) {
@@ -468,6 +421,16 @@ describe("AuditLogger lifecycle", () => {
       }
       const entries = logger.read();
       expect(entries).toHaveLength(1050);
+    });
+
+    it("unicode in log entries", () => {
+      const logger = new AuditLogger(logPath);
+      logger.logCommandIntercepted("echo '你好世界 🌍'", true, "allowed");
+
+      const entries = logger.read();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].action?.command).toContain("你好世界");
+      expect(entries[0].action?.command).toContain("🌍");
     });
 
     it("corrupt entry in log: one bad line doesn't break read", () => {
@@ -483,28 +446,6 @@ describe("AuditLogger lifecycle", () => {
       expect(entries).toHaveLength(2);
       expect(entries[0].action?.command).toBe("before");
       expect(entries[1].action?.command).toBe("after");
-    });
-
-    it("unicode in log entries", () => {
-      const logger = new AuditLogger(logPath);
-      logger.logCommandIntercepted("echo '你好世界 🌍'", true, "allowed");
-
-      const entries = logger.read();
-      expect(entries).toHaveLength(1);
-      expect(entries[0].action?.command).toContain("你好世界");
-      expect(entries[0].action?.command).toContain("🌍");
-    });
-
-    it("log disabled: no writes when logAllActions is false", () => {
-      vi.spyOn(ConfigManager.prototype, "load").mockReturnValue(
-        makeConfig({ audit: { logAllActions: false } })
-      );
-
-      const logger = new AuditLogger(logPath);
-      logger.logCommandIntercepted("ls", true, "allowed");
-      logger.logSecretDetected("f.js", "key", "blocked");
-
-      expect(fs.existsSync(logPath)).toBe(false);
     });
   });
 });

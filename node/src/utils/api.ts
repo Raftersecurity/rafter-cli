@@ -1,13 +1,104 @@
+import axios from "axios";
 import { ConfigManager } from "../core/config-manager.js";
 
 export const API = "https://rafter.so/api/";
 
+/**
+ * The API base in effect right now.
+ *
+ * `RAFTER_API_URL`, read fresh on every call rather than cached at import
+ * time, overrides the production default in `API`. This is how the test
+ * suite points the CLI at a local, non-routable port instead of the live
+ * backend — see `node/tests/env-isolation-setup.ts`. Production never sets
+ * the var, so this is a no-op outside tests.
+ *
+ * Every request carries the API key, so the override must be https, or plain
+ * http to a loopback host. Anything else is ignored with a warning. A remote
+ * https override is honored with a one-time notice, since the key goes there.
+ */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+let warnedApiOverride = false;
+
+function resolveApiBase(): string {
+  const override = process.env.RAFTER_API_URL;
+  if (!override) return API;
+  let url: URL | null = null;
+  try { url = new URL(override); } catch { /* reported below */ }
+  const loopback = url !== null && LOOPBACK_HOSTS.has(url.hostname);
+  const allowed = url !== null && (url.protocol === "https:" || (url.protocol === "http:" && loopback));
+  if (!loopback && !warnedApiOverride) {
+    warnedApiOverride = true;
+    console.error(allowed
+      ? `rafter: RAFTER_API_URL is set; sending requests and your API key to ${url!.origin}`
+      : `rafter: ignoring RAFTER_API_URL (must be https, or http to localhost); using ${API}`);
+  }
+  return allowed ? override : API;
+}
+
+/**
+ * sable-2s6p — the HTTP client for every authenticated Rafter API call.
+ *
+ * `maxRedirects: 0` is the point of it. axios (via follow-redirects) replays
+ * request headers on a redirect, and unlike `Authorization` the custom
+ * `x-api-key` header is not stripped when the host changes. Since the API base
+ * is user-settable (`--rafter-url`, self-hosted installs), a 302 from a
+ * misconfigured or hostile endpoint would walk the caller's API key to another
+ * host. Nothing in this CLI needs to follow a redirect, so none of them do.
+ *
+ * Use this for anything that sends `x-api-key`. Plain `axios` is fine for
+ * user-supplied webhooks and other unauthenticated calls.
+ */
+export const apiClient = axios.create({
+  maxRedirects: 0,
+});
+
+/**
+ * A redirect target is attacker-controlled if the endpoint is. Header values
+ * cannot contain CR/LF, but ESC is a legal byte, so an unsanitized Location can
+ * emit ANSI sequences that rewrite the user's terminal. Strip anything
+ * non-printable and cap the length.
+ */
+function safeForTerminal(value: unknown): string {
+  if (typeof value !== "string") return "";
+  // eslint-disable-next-line no-control-regex
+  const printable = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+  return printable.length > 200 ? `${printable.slice(0, 200)}…` : printable;
+}
+
+// A refused redirect otherwise surfaces as a bare "Request failed with status
+// code 302", which tells the user nothing about why. Name the cause.
+apiClient.interceptors.response.use(undefined, (error: any) => {
+  const status = error?.response?.status;
+  if (status >= 300 && status < 400) {
+    const target = safeForTerminal(error?.response?.headers?.location) || "another host";
+    error.message =
+      `The Rafter API redirected to ${target}, and Rafter does not follow redirects ` +
+      `on authenticated requests — your API key would be sent to the redirect target. ` +
+      `If you are pointing Rafter at a self-hosted instance, use its final URL.`;
+  }
+  return Promise.reject(error);
+});
+
+/** Join API with a path segment without producing a double slash, regardless of leading/trailing slashes on either side. */
+export function apiUrl(path: string): string {
+  return `${resolveApiBase().replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
 // Exit codes
+/**
+ * Read timeout for short-lived API calls (status polls and the like), in ms.
+ * Mirrors the read half of Python's `API_TIMEOUT_SHORT`.
+ */
+export const API_TIMEOUT_SHORT_MS = 30_000;
+
 export const EXIT_SUCCESS = 0;
 export const EXIT_GENERAL_ERROR = 1;
 export const EXIT_SCAN_NOT_FOUND = 2;
 export const EXIT_QUOTA_EXHAUSTED = 3;
 export const EXIT_INSUFFICIENT_SCOPE = 4;
+// sable-9ddf — a paid Plus scan was refused because approval is required and no
+// explicit confirmation (--yes / RAFTER_CONFIRM=1 / interactive yes) was given.
+export const EXIT_CONFIRMATION_REQUIRED = 5;
 
 /**
  * Detect a 403 error from the API and print a helpful message.

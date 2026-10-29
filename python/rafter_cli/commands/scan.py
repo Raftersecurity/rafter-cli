@@ -53,12 +53,13 @@ def scan_default(
     provider: Optional[str] = typer.Option(None, "--provider", help="git provider: gitlab | gitea | bitbucket (default: auto-detected; github requires nothing)"),
     repo_url: Optional[str] = typer.Option(None, "--repo-url", help="full https clone URL for non-github remotes (default: auto-detected)"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="confirm a paid Plus scan without prompting (when scan.plus_requires_approval is on)"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
     """Scan for security issues. Defaults to remote scan."""
     if ctx.invoked_subcommand is None:
         # No subcommand — run remote scan
-        _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token, provider, repo_url)
+        _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token, provider, repo_url, yes)
 
 
 # ── rafter scan remote ────────────────────────────────────────────────
@@ -74,16 +75,17 @@ def scan_remote(
     provider: Optional[str] = typer.Option(None, "--provider", help="git provider: gitlab | gitea | bitbucket (default: auto-detected; github requires nothing)"),
     repo_url: Optional[str] = typer.Option(None, "--repo-url", help="full https clone URL for non-github remotes (default: auto-detected)"),
     skip_interactive: bool = typer.Option(False, "--skip-interactive", help="do not wait for scan to complete"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="confirm a paid Plus scan without prompting (when scan.plus_requires_approval is on)"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
 ):
     """Trigger a remote backend security scan (explicit alias for 'rafter run')."""
-    _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token, provider, repo_url)
+    _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token, provider, repo_url, yes)
 
 
-def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode="fast", github_token=None, provider=None, repo_url=None):
+def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode="fast", github_token=None, provider=None, repo_url=None, yes=False):
     """Shared handler: invoke remote scan (same logic as `rafter run`)."""
     from ..commands.backend import _do_remote_scan
-    _do_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token=github_token, provider=provider, repo_url=repo_url)
+    _do_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode, github_token=github_token, provider=provider, repo_url=repo_url, yes=yes)
 
 
 # ── rafter scan local ─────────────────────────────────────────────────
@@ -96,16 +98,19 @@ def scan_local(
     format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
     staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
     diff: Optional[str] = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
+    range_: Optional[str] = typer.Option(None, "--range", help="Scan only files changed in a git commit range, e.g. main..HEAD"),
     engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
-    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
+    history: bool = typer.Option(False, "--history", help="Scan every commit on every ref instead of the working tree"),
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
     auto_update: bool = typer.Option(True, "--auto-update/--no-auto-update", help="Auto-update a stale managed betterleaks binary; --no-auto-update falls back to the patterns engine instead (default: on)"),
 ):
     """(deprecated alias for 'rafter secrets')."""
     from .agent import (
         _select_engine,
+        _engine_label,
+        _build_engine_report,
         _scan_file,
         _scan_directory,
         _output_scan_results,
@@ -115,12 +120,19 @@ def scan_local(
         _apply_exclude_paths,
         _load_baseline_entries,
         _run_git_added_line_scan,
+        _reject_option_like_ref,
     )
     from ..core.config_manager import ConfigManager
     from ..core.custom_patterns import load_suppressions, policy_ignore_to_suppressions
 
+    # Discover and anchor the policy from the scan TARGET, not the process cwd
+    # (sable-lu0j), so an ambient `.rafter.yml` in cwd cannot suppress real
+    # secrets in a scan of a different tree. For `--staged`/`--diff` the default
+    # target is "." (cwd), which is the repo the command runs in.
+    scan_base = os.path.abspath(path)
+    rafterignore_dir = scan_base if os.path.isdir(scan_base) else os.path.dirname(scan_base)
     manager = ConfigManager()
-    cfg = manager.load_with_policy()
+    cfg = manager.load_with_policy(scan_base)
     scan_cfg = cfg.agent.scan
 
     custom_patterns = (
@@ -134,7 +146,10 @@ def scan_local(
 
     # Combine policy-derived ignore rules with .rafterignore. Policy first so
     # an explicit reason wins over a bare .rafterignore line.
-    suppressions = policy_ignore_to_suppressions(scan_cfg.ignore) + load_suppressions()
+    suppressions = (
+        policy_ignore_to_suppressions(scan_cfg.ignore, scan_cfg.ignore_base_dir)
+        + load_suppressions(rafterignore_dir)
+    )
 
     baseline_entries = _load_baseline_entries() if baseline else []
 
@@ -144,6 +159,7 @@ def scan_local(
 
     # --diff
     if diff:
+        _reject_option_like_ref(diff)
         _run_git_added_line_scan(
             ["diff", "-U0", "--no-color", "--diff-filter=ACM", diff],
             git_cwd,
@@ -156,6 +172,27 @@ def scan_local(
             json_output=json_output,
             quiet=quiet,
             format=format,
+            engine_pref=engine,
+        )
+        return
+
+    # --range (a commit range a..b; reuses the diff plumbing so a user can scope
+    # the scan to the changed files on a huge repo)
+    if range_:
+        _reject_option_like_ref(range_)
+        _run_git_added_line_scan(
+            ["diff", "-U0", "--no-color", "--diff-filter=ACM", range_],
+            git_cwd,
+            custom_patterns,
+            scan_cfg,
+            baseline_entries,
+            suppressions,
+            f"files changed in {range_}",
+            f"No files changed in {range_}",
+            json_output=json_output,
+            quiet=quiet,
+            format=format,
+            engine_pref=engine,
         )
         return
 
@@ -174,6 +211,7 @@ def scan_local(
             quiet=quiet,
             format=format,
             not_repo_message="Error: Not in a git repository",
+            engine_pref=engine,
         )
         return
 
@@ -188,19 +226,20 @@ def scan_local(
         _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
-    eng = _select_engine(engine, quiet, auto_update_enabled)
+    eng, select_reason = _select_engine(engine, quiet, auto_update_enabled)
+    report = _build_engine_report(engine, eng, select_reason)
 
     if os.path.isdir(resolved_path):
         if not quiet:
-            print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
+            print(f"Scanning directory: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
+        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore, report=report)
     else:
         if not quiet:
-            print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_file(resolved_path, eng, custom_patterns)
+            print(f"Scanning file: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
+        results = _scan_file(resolved_path, eng, custom_patterns, report=report)
 
     filtered = _apply_baseline(results, baseline_entries)
-    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions)
+    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions, report=report)
 
 
 # ── rafter secrets — top-level alias for local secret scanning ────────
@@ -225,10 +264,11 @@ def secrets(
     format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
     staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
     diff: Optional[str] = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
+    range_: Optional[str] = typer.Option(None, "--range", help="Scan only files changed in a git commit range, e.g. main..HEAD"),
     engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
-    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
+    history: bool = typer.Option(False, "--history", help="Scan every commit on every ref instead of the working tree"),
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
     auto_update: bool = typer.Option(True, "--auto-update/--no-auto-update", help="Auto-update a stale managed betterleaks binary; --no-auto-update falls back to the patterns engine instead (default: on)"),
 ):
@@ -240,6 +280,7 @@ def secrets(
         format=format,
         staged=staged,
         diff=diff,
+        range_=range_,
         engine=engine,
         baseline=baseline,
         watch=watch,

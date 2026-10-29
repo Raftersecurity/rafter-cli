@@ -48,6 +48,8 @@ describe("scan --format sarif", () => {
     expect(sarif.$schema).toBe("https://json.schemastore.org/sarif-2.1.0.json");
     expect(sarif.runs).toHaveLength(1);
     expect(sarif.runs[0].tool.driver.name).toBe("rafter");
+    expect(sarif.runs[0].tool.driver.version).toBeTruthy();
+    expect(sarif.runs[0].tool.driver.informationUri).toBeTruthy();
     expect(sarif.runs[0].results).toHaveLength(0);
     expect(result.exitCode).toBe(0);
   });
@@ -56,7 +58,7 @@ describe("scan --format sarif", () => {
     // Create a file with a known secret pattern
     fs.writeFileSync(
       path.join(tmpDir, "secrets.ts"),
-      'const key = "AKIAIOSFODNN7EXAMPLE";\n',
+      'const key = "AKIAIOSFODNN7ABCDEFG";\n',
     );
 
     const result = runScan(`${tmpDir} --format sarif --engine patterns`);
@@ -77,23 +79,12 @@ describe("scan --format sarif", () => {
     // Rules should be populated
     expect(sarif.runs[0].tool.driver.rules.length).toBeGreaterThan(0);
 
-    expect(result.exitCode).toBe(1);
-  });
-
-  it("should map severity levels correctly", { timeout: 20000 }, () => {
-    // Create file with a secret
-    fs.writeFileSync(
-      path.join(tmpDir, "test.env"),
-      'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n',
-    );
-
-    const result = runScan(`${tmpDir} --format sarif --engine patterns`);
-    const sarif = JSON.parse(result.stdout);
-
-    // All results should have valid SARIF levels
+    // Every result's level must be a valid SARIF level.
     for (const r of sarif.runs[0].results) {
       expect(["error", "warning", "note"]).toContain(r.level);
     }
+
+    expect(result.exitCode).toBe(1);
   });
 
   it("should support --format json as equivalent to --json", { timeout: 30000 }, () => {
@@ -116,15 +107,5 @@ describe("scan --format sarif", () => {
     const result = runScan(`${tmpDir} --format xml`);
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Invalid format");
-  });
-
-  it("should include tool version in SARIF output", { timeout: 20000 }, () => {
-    fs.writeFileSync(path.join(tmpDir, "clean.ts"), 'const x = 1;\n');
-
-    const result = runScan(`${tmpDir} --format sarif`);
-    const sarif = JSON.parse(result.stdout);
-
-    expect(sarif.runs[0].tool.driver.version).toBeTruthy();
-    expect(sarif.runs[0].tool.driver.informationUri).toBeTruthy();
   });
 });

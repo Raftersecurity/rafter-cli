@@ -49,6 +49,27 @@ class CommandPolicyConfig:
     require_approval: list[str] = field(
         default_factory=lambda: list(_default_require_approval())
     )
+    #: Opt out of the project-policy floor (sable-nz4y).
+    #:
+    #: Read ONLY from the machine owner's global config — never from a project
+    #: ``.rafter.yml``, or a repo could grant itself the permission and the floor
+    #: would be no floor at all. Default (absent/False) keeps the floor: a
+    #: project policy may tighten command policy, never loosen it.
+    allow_project_override: bool = False
+    #: Positive allowlist: unanchored regexes that force a command to ``low``
+    #: and skip the approval prompt. For the known-safe command that would
+    #: otherwise trip a broad risk tier — the motivating case being
+    #: ``git push --force-with-lease`` to a feature branch on a repo whose main
+    #: is protected server-side.
+    #:
+    #: Three properties make this safe to put on a guard rail, and all three are
+    #: enforced in CommandInterceptor, not here:
+    #:   1. blocked_patterns always wins. An allowlist never re-opens what a
+    #:      deny rule closed.
+    #:   2. A ``critical`` command is never allowlistable.
+    #:   3. A match does not apply when the command contains a chain operator,
+    #:      so ``^git push`` cannot wave through ``rm -rf / && git push``.
+    allowed_patterns: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -74,6 +95,23 @@ class ScanConfig:
     # time. Default True. Set False (YAML: ``scan.auto_update_betterleaks``) to
     # opt out, e.g. in CI that provisions its own binary.
     auto_update_betterleaks: bool = True
+    # sable-9ddf — require explicit confirmation before a paid Plus scan
+    # (``rafter run --mode plus``). Default False — existing behavior is
+    # unchanged unless opted in. When True, a Plus scan refuses in a
+    # non-interactive/agent context unless ``--yes`` or ``RAFTER_CONFIRM=1`` is
+    # present, and prompts when a TTY is attached.
+    #
+    # SECURITY: honored additively (OR) across global config and project
+    # ``.rafter.yml`` — a project policy can turn this ON but can NEVER turn OFF
+    # a gate the machine owner enabled globally. YAML key:
+    # ``scan.plus_requires_approval``.
+    plus_requires_approval: bool = False
+    # Absolute directory the policy's ``ignore`` globs are relative to — the
+    # directory holding the ``.rafter.yml`` they came from (sable-lu0j). A
+    # runtime field set by ``load_with_policy``, never read from YAML. Ignore
+    # globs anchor to this so a rule cannot match files outside the policy's
+    # own tree.
+    ignore_base_dir: str | None = None
 
 
 @dataclass
