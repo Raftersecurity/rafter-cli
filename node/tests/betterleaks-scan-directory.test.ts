@@ -104,12 +104,28 @@ describe("BetterleaksScanner.scanDirectory and .gitignore", () => {
     );
   });
 
-  it("extends the target's own .betterleaks.toml", async () => {
-    fs.writeFileSync(path.join(repo, ".betterleaks.toml"), "[extend]\nuseDefault = true\n");
+  it("carries the config betterleaks would pick: env path, then env content, then the target's file", async () => {
+    fs.writeFileSync(path.join(repo, ".betterleaks.toml"), "# repo file\n");
+    vi.stubEnv("GITLEAKS_CONFIG_TOML", "# env content\n");
     await scanner.scanDirectory(repo);
-    expect(fs.readFileSync(cfgCopy, "utf-8")).toContain(
-      `path = ${JSON.stringify(path.join(repo, ".betterleaks.toml"))}`,
-    );
+    expect(fs.readFileSync(cfgCopy, "utf-8")).toContain("# env content\n");
+
+    const envFile = path.join(repo, "env-path.toml");
+    fs.writeFileSync(envFile, "# env path\n");
+    vi.stubEnv("BETTERLEAKS_CONFIG", envFile);
+    await scanner.scanDirectory(repo);
+    const cfg = fs.readFileSync(cfgCopy, "utf-8");
+    expect(cfg).toContain("# env path\n");
+    expect(cfg).not.toContain("# env content");
+    expect(cfg).not.toContain("# repo file");
+  });
+
+  it("carries the target's own .betterleaks.toml", async () => {
+    fs.writeFileSync(path.join(repo, ".betterleaks.toml"), "[extend]\nuseDefault = true\n\n[allowlist]\npaths = ['x']\n");
+    await scanner.scanDirectory(repo);
+    const cfg = fs.readFileSync(cfgCopy, "utf-8");
+    expect(cfg).toContain("[extend]\nuseDefault = true\n\n[[allowlists]]\npaths = ['x']\n");
+    expect(cfg).not.toMatch(/^\[allowlist\]/m);
   });
 });
 
@@ -154,7 +170,7 @@ describe("gitSkippedPaths and scanConfigToml", () => {
   });
 
   it("writes no character TOML forbids raw in a basic string", () => {
-    const toml = scanConfigToml(repo, ["d\x7fel.txt", "t\tab", "n\nl"], "/c\x7f/x.toml");
+    const toml = scanConfigToml(repo, ["d\x7fel.txt", "t\tab", "n\nl"], null);
     // Line feeds separate entries; any other control character must be escaped.
     expect(toml).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f]/);
     expect(patternsOf(toml)).toHaveLength(4);
@@ -190,6 +206,35 @@ describe.skipIf(!realBl)("BetterleaksScanner.scanDirectory with the real betterl
       (scanner as any).resolvedPath = "betterleaks";
       const files = (await scanner.scanDirectory(repo)).map((r) => path.relative(repo, r.file)).sort();
       expect(files).toEqual([path.join("trigger", "x.txt"), path.join("vendor", "v.js")]);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the default rules under a repo config two extends away from them, and its own allowlist", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-bl-real-"));
+    try {
+      execSync("git init -q", { cwd: repo });
+      // repo config -> shared org config -> default rules: a depth betterleaks
+      // follows itself, which a generated config that extended the repo's exceeded.
+      const org = path.join(repo, "org.toml");
+      fs.writeFileSync(org, "[extend]\nuseDefault = true\n");
+      fs.writeFileSync(path.join(repo, ".betterleaks.toml"), [
+        "[extend]", `path = ${JSON.stringify(org)}`, "",
+        "[[rules]]", 'id = "repo-custom"', "regex = 'REPOSECRET_[0-9]{6}'", "",
+        "[allowlist]", "paths = ['allowed\\.js$']", "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, ".gitignore"), ".env\n");
+      const gh = 'const t = "ghp_1111Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXyZ0";\n';
+      fs.writeFileSync(path.join(repo, "a.js"), gh + 'const r = "REPOSECRET_123456";\n');
+      fs.writeFileSync(path.join(repo, "allowed.js"), gh);
+      fs.writeFileSync(path.join(repo, ".env"), gh);
+      const scanner = new BetterleaksScanner();
+      (scanner as any).resolvedPath = "betterleaks";
+      const found = (await scanner.scanDirectory(repo))
+        .flatMap((r) => r.matches.map((m) => `${path.basename(r.file)}:${m.pattern.name}`))
+        .sort();
+      expect(found).toEqual(["a.js:github-pat", "a.js:repo-custom"]);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
