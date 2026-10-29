@@ -12,7 +12,6 @@ install state across all registered components.
 """
 from __future__ import annotations
 
-import importlib.resources
 import inspect
 import json
 import re
@@ -29,7 +28,12 @@ from .install_files import (
     RULE_SKILLS,
     InstallOutput,
     InstallSession,
+    cleanup_legacy_openclaw,
+    cleanup_retired_rules,
     cleanup_retired_skills,
+    cursor_agent_artifacts,
+    openclaw_skill_artifacts,
+    openclaw_skill_path,
     rule_artifacts,
     skill_artifacts,
 )
@@ -135,6 +139,20 @@ def _strip_marker_block(
     return True
 
 
+def _retire_instruction_file(file_path: Path) -> str | None:
+    """Take rafter's block out of an instruction file rafter no longer writes
+    (e.g. the consolidated .cursor/rules/rafter-security.mdc). The file is
+    deleted only when nothing else is left in it; a file without the block is
+    not rafter's and is left alone. Returns "removed", "stripped" or None.
+    """
+    if not _strip_marker_block(file_path):
+        return None
+    if file_path.read_text(encoding="utf-8").strip():
+        return "stripped"
+    file_path.unlink()
+    return "removed"
+
+
 # ── JSON helpers ──────────────────────────────────────────────────────
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -182,16 +200,6 @@ def _with_session(session: InstallSession | None, fn: Callable[[InstallSession],
     fn(s)
     if session is None:
         s.save()
-
-
-# ── Skill template lookup ─────────────────────────────────────────────
-
-def _skill_text(*segments: str) -> str | None:
-    try:
-        ref = importlib.resources.files("rafter_cli.resources").joinpath(*segments)
-        return ref.read_text(encoding="utf-8")
-    except Exception:
-        return None
 
 
 # ── Component spec dataclass ─────────────────────────────────────────
@@ -546,29 +554,39 @@ def _cursor_hooks() -> ComponentSpec:
 
 def _cursor_instructions() -> ComponentSpec:
     home = Path.home()
-    detect_dir = home / ".cursor"
-    file_path = detect_dir / "rules" / "rafter-security.mdc"
+    rules_dir = home / ".cursor" / "rules"
+    agent_path = home / ".cursor" / "agents" / "rafter.md"
+    legacy_path = rules_dir / "rafter-security.mdc"
+
+    def is_installed() -> bool:
+        return all((rules_dir / f"{n}.mdc").exists() for n in RULE_SKILLS) and agent_path.exists()
+
+    def install(session: InstallSession | None = None) -> None:
+        def run(s: InstallSession) -> None:
+            s.apply_all(rule_artifacts("cursor", home))
+            cleanup_retired_rules(s, "cursor")
+            _retire_instruction_file(legacy_path)
+            s.apply_all(cursor_agent_artifacts(home))
+        _with_session(session, run)
 
     def uninstall() -> None:
-        # Enable injects a marker block (coexists with user content), so disable
-        # must excise only that block, not unlink the whole file. Remove the file
-        # only when it was ours alone; a file with no markers is user-authored.
-        if file_path.exists() and _strip_marker_block(file_path):
-            try:
-                if not file_path.read_text(encoding="utf-8").strip():
-                    file_path.unlink()
-            except OSError:
-                pass
+        for name in RULE_SKILLS:
+            p = rules_dir / f"{name}.mdc"
+            if p.exists():
+                p.unlink()
+        _retire_instruction_file(legacy_path)
+        if agent_path.exists():
+            agent_path.unlink()
 
     return ComponentSpec(
         id="cursor.instructions",
         platform="cursor",
         kind="instructions",
-        description="Cursor global rule block (~/.cursor/rules/rafter-security.mdc)",
-        detect_dir=detect_dir,
-        path=file_path,
-        is_installed=lambda: _has_marker_block(file_path),
-        install=lambda: _inject_instruction_file(file_path),
+        description="Cursor per-skill rules + rafter sub-agent (~/.cursor/rules/, ~/.cursor/agents/rafter.md)",
+        detect_dir=home / ".cursor",
+        path=rules_dir,
+        is_installed=is_installed,
+        install=install,
         uninstall=uninstall,
     )
 
@@ -1111,15 +1129,13 @@ def _aider_read() -> ComponentSpec:
 
 def _openclaw_skill() -> ComponentSpec:
     home = Path.home()
-    detect_dir = home / ".openclaw"
-    skill_path = detect_dir / "skills" / "rafter-security.md"
+    skill_path = openclaw_skill_path(home)
 
-    def install() -> None:
-        skill_path.parent.mkdir(parents=True, exist_ok=True)
-        # Try primary skill location, then legacy resource name.
-        content = _skill_text("skills", "rafter", "SKILL.md") or _skill_text("rafter-security-skill.md")
-        if content is not None:
-            skill_path.write_text(content, encoding="utf-8")
+    def install(session: InstallSession | None = None) -> None:
+        def run(s: InstallSession) -> None:
+            s.apply_all(openclaw_skill_artifacts(home))
+            cleanup_legacy_openclaw(s)
+        _with_session(session, run)
 
     def uninstall() -> None:
         if skill_path.exists():
@@ -1129,8 +1145,8 @@ def _openclaw_skill() -> ComponentSpec:
         id="openclaw.skills",
         platform="openclaw",
         kind="skills",
-        description="OpenClaw rafter-security skill",
-        detect_dir=detect_dir,
+        description="OpenClaw rafter-security skill (~/.openclaw/workspace/skills/rafter-security/SKILL.md)",
+        detect_dir=home / ".openclaw",
         path=skill_path,
         is_installed=lambda: skill_path.exists(),
         install=install,

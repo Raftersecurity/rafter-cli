@@ -40,7 +40,6 @@ from pathlib import Path
 
 NPM_PACKAGE = "@rafter-security/cli"
 PYPI_PACKAGE = "rafter-cli"
-MIN_VERSION = (0, 8, 0)
 
 REPO = Path(__file__).resolve().parent.parent
 OUTPUTS = [
@@ -112,7 +111,7 @@ def npm_releases() -> list[tuple[str, str]]:
     out = []
     for v, info in meta.get("versions", {}).items():
         t = _version_tuple(v)
-        if t and t >= MIN_VERSION:
+        if t:
             out.append((v, info["dist"]["tarball"]))
     return sorted(out, key=lambda x: _version_tuple(x[0]))
 
@@ -122,7 +121,7 @@ def pypi_releases() -> list[tuple[str, str]]:
     out = []
     for v, files in meta.get("releases", {}).items():
         t = _version_tuple(v)
-        if not t or t < MIN_VERSION:
+        if not t:
             continue
         wheels = [f["url"] for f in files if f["filename"].endswith(".whl") and not f.get("yanked")]
         if wheels:

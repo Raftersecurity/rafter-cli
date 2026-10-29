@@ -47,9 +47,12 @@ from .install_files import (
     InstallOutput,
     InstallSession,
     claude_agent_artifacts,
+    cleanup_legacy_openclaw,
     cleanup_retired_rules,
     cleanup_retired_skills,
     cursor_agent_artifacts,
+    openclaw_skill_artifacts,
+    openclaw_skill_path,
     report_kept_summary,
     report_unchanged_summary,
     unchanged_line,
@@ -436,8 +439,12 @@ def _print_dry_run_plan(
     if want_openclaw:
         print()
         print("OpenClaw (--with-openclaw):")
-        W(home / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md", "ClawHub-shape")
-        R(home / ".openclaw" / "skills" / "rafter-security.md", "legacy file from rafter ≤ 0.7.7, if present")
+        F(openclaw_skill_artifacts(home))
+        legacy = cleanup_legacy_openclaw(session)
+        for p in legacy.removed:
+            R(p, "legacy file from rafter ≤ 0.7.7")
+        for p in legacy.kept:
+            S(p, "legacy file from rafter ≤ 0.7.7, but modified; kept")
 
     unchanged = session.count("unchanged")
     if unchanged:
@@ -545,61 +552,6 @@ def _install_global_instructions(
     # and _install_cursor_subagents (rf-svn3). The legacy consolidated
     # rafter-security.mdc was retired.
     _ = cursor  # parameter kept for call-site compatibility
-
-
-def _install_openclaw_skill(quiet: bool = False) -> tuple[bool, str, str, str]:
-    """Install Rafter Security skill to OpenClaw. Returns (ok, source, dest, error).
-
-    rf-zgwj: writes to the canonical ClawHub workspace location
-    (~/.openclaw/workspace/skills/rafter-security/SKILL.md) so OpenClaw
-    auto-discovers it at session start. Earlier versions wrote to
-    ~/.openclaw/skills/rafter-security.md — that file is removed on
-    reinstall as a migration step.
-    """
-    home = Path.home()
-    openclaw_root = home / ".openclaw"
-    skill_dir = openclaw_root / "workspace" / "skills" / "rafter-security"
-    dest_path = skill_dir / "SKILL.md"
-    legacy_path = openclaw_root / "skills" / "rafter-security.md"
-
-    try:
-        ref = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md")
-        source_path = str(ref)
-    except Exception:
-        source_path = "(bundled resource)"
-
-    if not openclaw_root.exists():
-        return False, source_path, str(dest_path), f"OpenClaw not found: {openclaw_root}"
-
-    skill_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        content = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md").read_text(encoding="utf-8")
-    except Exception as e:
-        return False, source_path, str(dest_path), f"Source skill file not found: {e}"
-
-    try:
-        dest_path.write_text(content, encoding="utf-8")
-    except Exception as e:
-        return False, source_path, str(dest_path), str(e)
-
-    # Migration: strip the rafter ≤ 0.7.7 install path (rf-zgwj). OpenClaw
-    # never read that path; remove it on reinstall.
-    if legacy_path.exists():
-        try:
-            legacy_path.unlink()
-            _init_print(quiet, fmt.success(f"Removed legacy {legacy_path} (superseded by ClawHub-shaped skill at {dest_path})"))
-            # Drop the empty parent if we just emptied it.
-            legacy_parent = legacy_path.parent
-            try:
-                if not any(legacy_parent.iterdir()):
-                    legacy_parent.rmdir()
-            except OSError:
-                pass
-        except OSError:
-            pass
-
-    return True, source_path, str(dest_path), ""
 
 
 def _install_codex_skills(root: Path, quiet: bool = False, session: InstallSession | None = None) -> tuple[bool, str]:
@@ -877,14 +829,17 @@ def _install_cursor_rules(root: Path, quiet: bool = False, session: InstallSessi
     if owned:
         s.save()
 
-    # Migrate away from the legacy consolidated rule on reinstall.
+    # Take rafter's block out of the legacy consolidated rule, so reinstall on
+    # top of an old layout migrates cleanly. Anything else in it is the user's.
     legacy = rules_dir / "rafter-security.mdc"
-    if legacy.exists():
-        try:
-            legacy.unlink()
-            _init_print(quiet, fmt.info(f"Removed legacy {legacy} (superseded by per-skill rules)"))
-        except OSError:
-            pass
+    try:
+        done = _retire_instruction_file(legacy)
+    except OSError:
+        done = None
+    if done == "removed":
+        _init_print(quiet, fmt.info(f"Removed legacy {legacy} (superseded by per-skill rules)"))
+    elif done == "stripped":
+        _init_print(quiet, fmt.info(f"Removed rafter's block from legacy {legacy}; kept the rest"))
 
 
 def _install_cursor_subagents(root: Path, quiet: bool = False, session: InstallSession | None = None) -> None:
@@ -1517,20 +1472,18 @@ def _run_agent_init(
                     "manually with 'uv tool install cisco-ai-skill-scanner'."
                 ))
 
-    # Install OpenClaw skill if opted in
+    # Install OpenClaw skill if opted in (user scope only, so session.root is home)
     openclaw_ok = False
     if has_openclaw and want_openclaw:
-        ok, source, dest, error = _install_openclaw_skill(quiet=quiet)
-        openclaw_ok = ok
-        if ok:
-            _init_print(quiet, fmt.success(f"Installed Rafter Security skill to {dest}"))
-            manager.set("agent.environments.openclaw.enabled", True)
-        else:
-            _init_alert(quiet, fmt.error("Failed to install Rafter Security skill"))
-            _init_alert(quiet, fmt.warning(f"  Source: {source}"))
-            _init_alert(quiet, fmt.warning(f"  Destination: {dest}"))
-            if error:
-                _init_alert(quiet, fmt.warning(f"  Error: {error}"))
+        try:
+            artifacts = openclaw_skill_artifacts(root, session.out)
+            session.apply_all(artifacts)
+            cleanup_legacy_openclaw(session)
+            openclaw_ok = bool(artifacts)
+            if openclaw_ok:
+                manager.set("agent.environments.openclaw.enabled", True)
+        except OSError as e:
+            _init_alert(quiet, fmt.error(f"Failed to install Rafter Security skill to {openclaw_skill_path(root)}: {e}"))
 
     def _local_unsupported(label: str) -> None:
         _init_alert(quiet, fmt.warning(
@@ -4558,6 +4511,7 @@ def baseline_add(
 from .agent_components import (  # noqa: E402
     _inject_aider_note,
     _inject_instruction_file,
+    _retire_instruction_file,
     get_registry as _components_get_registry,
     record_component_state as _components_record_state,
     resolve_component as _components_resolve,

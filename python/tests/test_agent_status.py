@@ -52,18 +52,22 @@ class TestAgentStatusJson:
         assert "pre-commit" in payload["hooks_installed"]
 
 
+def _install_openclaw(home: Path) -> None:
+    from rafter_cli.commands.install_files import InstallSession, openclaw_skill_artifacts
+    session = InstallSession(root=home)
+    assert session.apply_all(openclaw_skill_artifacts(home)) == ["added"]
+    session.save()
+
+
 class TestAgentStatusOpenClaw:
     """sable-1vq — `agent status` must report OpenClaw via the canonical
     ClawHub workspace path (rf-zgwj), matching the installer and `agent verify`.
     Checking the legacy flat path was a false negative."""
 
     def test_reports_skill_installed_at_canonical_path_after_init(self, tmp_path, monkeypatch):
-        from rafter_cli.commands.agent import _install_openclaw_skill
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         (tmp_path / ".openclaw").mkdir()
-
-        ok, _src, _dest, _err = _install_openclaw_skill()
-        assert ok
+        _install_openclaw(tmp_path)
 
         result = runner.invoke(agent_app, ["status"])
         assert result.exit_code == 0, result.output
@@ -121,15 +125,13 @@ class TestSkillManagerCanonicalPaths:
         assert sm.is_openclaw_installed()
 
     def test_detection_round_trip_via_installer(self, tmp_path, monkeypatch):
-        from rafter_cli.commands.agent import _install_openclaw_skill
         from rafter_cli.utils.skill_manager import SkillManager
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         (tmp_path / ".openclaw").mkdir()
         sm = SkillManager()
         assert not sm.is_rafter_skill_installed()
 
-        ok, _src, _dest, _err = _install_openclaw_skill()
-        assert ok
+        _install_openclaw(tmp_path)
         assert sm.is_rafter_skill_installed()
         assert not sm.has_legacy_rafter_skill()
 

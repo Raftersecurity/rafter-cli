@@ -19,10 +19,14 @@ from rafter_cli.commands.install_files import (
     FileArtifact,
     InstallSession,
     claude_agent_artifacts,
+    cleanup_legacy_openclaw,
     cleanup_retired_rules,
     cleanup_retired_skills,
     cursor_agent_artifacts,
     manifest_path,
+    openclaw_legacy_skill_path,
+    openclaw_skill_artifacts,
+    openclaw_skill_path,
     rule_artifacts,
     sha256,
     skill_artifacts,
@@ -228,6 +232,45 @@ def test_keeps_retired_skill_dir_and_rule_the_user_modified(home):
     assert (home / ".windsurf" / "rules" / "rafter.md").exists()
 
 
+def test_openclaw_older_recorded_skill_is_updated_and_edited_one_kept(home):
+    copy_fixture(home)
+    dest = openclaw_skill_path(home)
+    older = b"---\nname: rafter-security\nversion: 0.0.1\n---\nolder text\n"
+    dest.write_bytes(older)
+    manifest_path(home).parent.mkdir(parents=True, exist_ok=True)
+    manifest_path(home).write_text(json.dumps({"schema": 1, "cliVersion": "0.12.0", "files": {
+        str(dest.relative_to(home)): {"sha256": sha256(older), "component": "openclaw.skills", "platform": "openclaw", "cliVersion": "0.12.0"},
+    }}))
+    assert session(home)[0].apply_all(openclaw_skill_artifacts(home)) == ["updated"]
+    assert dest.read_bytes() == openclaw_skill_artifacts(home)[0].content
+
+    dest.write_bytes(dest.read_bytes() + b"\nmine\n")
+    edited = dest.read_bytes()
+    assert session(home)[0].apply_all(openclaw_skill_artifacts(home)) == ["kept"]
+    assert dest.read_bytes() == edited
+    assert Path(f"{dest}.rafter-new").exists()
+
+
+def test_openclaw_legacy_file_goes_only_when_it_is_rafters_content(home):
+    copy_fixture(home)
+    legacy = openclaw_legacy_skill_path(home)
+    legacy.parent.mkdir(parents=True)
+    # A published release's bytes (0.11.2's, from the fixture) count as rafter's.
+    shutil.copyfile(FIXTURE / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md", legacy)
+    result = cleanup_legacy_openclaw(session(home)[0])
+    assert (result.removed, result.kept) == ([legacy], [])
+    assert not legacy.exists()
+    assert not legacy.parent.exists()
+
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("---\nname: rafter-security\n---\nmy own notes\n")
+    s, out = session(home)
+    result = cleanup_legacy_openclaw(s)
+    assert (result.removed, result.kept) == ([], [legacy])
+    assert legacy.exists()
+    assert any("Kept legacy" in w for w in out.warnings)
+
+
 def test_node_and_python_ship_identical_hash_tables():
     node = (REPO / "node" / "resources" / "shipped-hashes.json").read_bytes()
     py = (REPO / "python" / "rafter_cli" / "resources" / "shipped-hashes.json").read_bytes()
@@ -239,7 +282,7 @@ def test_node_and_python_ship_identical_hash_tables():
 # marker-block / merged-config files (which do not go through the write
 # policy) surviving an upgrade intact.
 
-_FLAGS = ["--with-claude-code", "--with-codex", "--with-gemini", "--with-cursor", "--with-windsurf", "--with-continue", "--with-aider"]
+_FLAGS = ["--with-claude-code", "--with-codex", "--with-gemini", "--with-cursor", "--with-windsurf", "--with-continue", "--with-aider", "--with-openclaw"]
 _REAL = re.compile(r"(added|updated|kept|replaced) +(/\S+)")
 _PLAN = re.compile(r"^\s+WRITE\s+(\S+)\s+\((added|updated|(\S+) kept: modified)\)", re.MULTILINE)
 _UNCHANGED = re.compile(r"(\d+) files? unchanged")

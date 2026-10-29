@@ -1,7 +1,7 @@
 /**
  * Whole-file artifacts that `rafter agent init` installs (skill files and their
- * docs/, per-skill rule files, sub-agent files), and the policy for writing
- * them over whatever is already on disk.
+ * docs/, per-skill rule files, sub-agent files, the OpenClaw skill), and the
+ * policy for writing them over whatever is already on disk.
  *
  * A re-run used to overwrite these silently, so a user's hand edit vanished
  * behind the same "Installed" line as a fresh install. Now init overwrites a
@@ -495,7 +495,67 @@ export function cursorAgentArtifacts(root: string, out?: InstallOutput): FileArt
   }];
 }
 
+/**
+ * The OpenClaw skill, at the ClawHub workspace path OpenClaw discovers
+ * (<home>/.openclaw/workspace/skills/rafter-security/SKILL.md). User scope only.
+ */
+export function openclawSkillArtifacts(home: string, out?: InstallOutput): FileArtifact[] {
+  const src = path.join(resourcesDir(), "rafter-security-skill.md");
+  if (!fs.existsSync(src)) {
+    out?.warn(fmt.warning(`OpenClaw skill template not found at ${src}`));
+    return [];
+  }
+  return [{
+    dest: openclawSkillPath(home),
+    content: fs.readFileSync(src),
+    resourceKey: "rafter-security-skill.md",
+    component: "openclaw.skills",
+    platform: "openclaw",
+  }];
+}
+
+export function openclawSkillPath(home: string): string {
+  return path.join(home, ".openclaw", "workspace", "skills", "rafter-security", "SKILL.md");
+}
+
+/**
+ * Where rafter ≤ 0.7.7 put the OpenClaw skill, a path OpenClaw never reads.
+ * Removed only when it hashes to content rafter shipped.
+ */
+export function openclawLegacySkillPath(home: string): string {
+  return path.join(home, ".openclaw", "skills", "rafter-security.md");
+}
+
 // ── retired artifacts ────────────────────────────────────────────────
+
+/** Remove the legacy OpenClaw skill file if it hashes to rafter's own content; otherwise keep and report it. */
+export function cleanupLegacyOpenClaw(session: InstallSession): RetiredResult {
+  const result: RetiredResult = { removed: [], kept: [] };
+  const dest = openclawLegacySkillPath(session.root);
+  if (!fs.existsSync(dest)) return result;
+  if (session.owns(dest, "rafter-security-skill.md", fs.readFileSync(dest))) {
+    result.removed.push(dest);
+    if (!session.dryRun) {
+      fs.unlinkSync(dest);
+      session.forget(dest);
+      session.out.info(fmt.info(`Removed legacy ${dest} (OpenClaw reads ${openclawSkillPath(session.root)})`));
+    }
+  } else {
+    result.kept.push(dest);
+    if (!session.dryRun) {
+      session.out.warn(fmt.warning(`Kept legacy ${dest} (modified; OpenClaw never reads it, remove it yourself)`));
+    }
+  }
+  const dir = path.dirname(dest);
+  if (!session.dryRun && result.removed.length > 0) {
+    try {
+      if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+    } catch {
+      /* best-effort */
+    }
+  }
+  return result;
+}
 
 /** Every file in `dir` is provably rafter's own content for skill `name`. */
 function ownsSkillDir(session: InstallSession, dir: string, name: string): boolean {
@@ -577,7 +637,7 @@ export function cleanupRetiredRules(
 // ── per-platform artifact sets ───────────────────────────────────────
 
 /** Platforms that install whole-file artifacts, in init's install order. */
-export const WHOLE_FILE_PLATFORMS = ["claude-code", "codex", "gemini", "cursor", "windsurf", "continue"] as const;
+export const WHOLE_FILE_PLATFORMS = ["claude-code", "codex", "gemini", "cursor", "windsurf", "continue", "openclaw"] as const;
 
 /** Every whole-file artifact `agent init` installs for `platform` under `root`. */
 export function platformArtifacts(platform: string, root: string): FileArtifact[] {
@@ -593,6 +653,8 @@ export function platformArtifacts(platform: string, root: string): FileArtifact[
     case "windsurf":
     case "continue":
       return ruleArtifacts(platform, root);
+    case "openclaw":
+      return openclawSkillArtifacts(root);
     default:
       return [];
   }

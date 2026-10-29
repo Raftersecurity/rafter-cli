@@ -1,6 +1,6 @@
 """Whole-file artifacts that `rafter agent init` installs (skill files and
-their docs/, per-skill rule files, sub-agent files), and the policy for
-writing them over whatever is already on disk.
+their docs/, per-skill rule files, sub-agent files, the OpenClaw skill), and
+the policy for writing them over whatever is already on disk.
 
 A re-run used to overwrite these silently, so a user's hand edit vanished
 behind the same "Installed" line as a fresh install. Now init overwrites a
@@ -474,6 +474,31 @@ def cursor_agent_artifacts(root: Path, out: InstallOutput | None = None) -> list
     )]
 
 
+def openclaw_skill_path(home: Path) -> Path:
+    return home / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md"
+
+
+def openclaw_legacy_skill_path(home: Path) -> Path:
+    """Where rafter <= 0.7.7 put the OpenClaw skill, a path OpenClaw never reads."""
+    return home / ".openclaw" / "skills" / "rafter-security.md"
+
+
+def openclaw_skill_artifacts(home: Path, out: InstallOutput | None = None) -> list[FileArtifact]:
+    """The OpenClaw skill, at the ClawHub workspace path OpenClaw discovers. User scope only."""
+    src = _resources().joinpath("rafter-security-skill.md")
+    if not src.is_file():
+        if out:
+            out.warn(fmt.warning("OpenClaw skill template not found in package resources"))
+        return []
+    return [FileArtifact(
+        dest=openclaw_skill_path(home),
+        content=src.read_bytes(),
+        resource_key="rafter-security-skill.md",
+        component="openclaw.skills",
+        platform="openclaw",
+    )]
+
+
 # ── retired artifacts ────────────────────────────────────────────────
 
 
@@ -557,10 +582,34 @@ def cleanup_retired_rules(
     return result
 
 
+def cleanup_legacy_openclaw(session: InstallSession) -> RetiredResult:
+    """Remove the legacy OpenClaw skill file if it hashes to rafter's own content; otherwise keep and report it."""
+    result = RetiredResult()
+    dest = openclaw_legacy_skill_path(session.root)
+    if not dest.exists():
+        return result
+    if session.owns(dest, "rafter-security-skill.md", dest.read_bytes()):
+        result.removed.append(dest)
+        if not session.dry_run:
+            dest.unlink()
+            session.forget(dest)
+            session.out.info(fmt.info(f"Removed legacy {dest} (OpenClaw reads {openclaw_skill_path(session.root)})"))
+            try:
+                if not any(dest.parent.iterdir()):
+                    dest.parent.rmdir()
+            except OSError:
+                pass
+    else:
+        result.kept.append(dest)
+        if not session.dry_run:
+            session.out.warn(fmt.warning(f"Kept legacy {dest} (modified; OpenClaw never reads it, remove it yourself)"))
+    return result
+
+
 # ── per-platform artifact sets ───────────────────────────────────────
 
 # Platforms that install whole-file artifacts, in init's install order.
-WHOLE_FILE_PLATFORMS: tuple[str, ...] = ("claude-code", "codex", "gemini", "cursor", "windsurf", "continue")
+WHOLE_FILE_PLATFORMS: tuple[str, ...] = ("claude-code", "codex", "gemini", "cursor", "windsurf", "continue", "openclaw")
 
 
 def platform_artifacts(platform: str, root: Path) -> list[FileArtifact]:
@@ -575,4 +624,6 @@ def platform_artifacts(platform: str, root: Path) -> list[FileArtifact]:
         return rule_artifacts("cursor", root) + cursor_agent_artifacts(root)
     if platform in ("windsurf", "continue"):
         return rule_artifacts(platform, root)
+    if platform == "openclaw":
+        return openclaw_skill_artifacts(root)
     return []

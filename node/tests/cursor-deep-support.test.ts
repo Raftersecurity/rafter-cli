@@ -194,6 +194,20 @@ describe("Cursor deep support — rf-cia (rf-svn3)", () => {
       expect(fs.existsSync(legacy)).toBe(false);
     });
 
+    it("takes rafter's block out of a legacy rafter-security.mdc, keeping the user's text", () => {
+      const rules = path.join(testHomeDir, ".cursor", "rules");
+      fs.mkdirSync(rules, { recursive: true });
+      const block = "<!-- rafter:start -->\nold rafter text\n<!-- rafter:end -->\n";
+      const mixed = path.join(rules, "rafter-security.mdc");
+      fs.writeFileSync(mixed, `# Mine\nKeep this line.\n\n${block}`);
+      runCli("agent init --with-cursor", testHomeDir);
+      expect(fs.readFileSync(mixed, "utf-8")).toBe("# Mine\nKeep this line.\n");
+
+      fs.writeFileSync(mixed, block);
+      runCli("agent init --with-cursor", testHomeDir);
+      expect(fs.existsSync(mixed)).toBe(false);
+    });
+
     it("idempotent — repeated install does not duplicate or corrupt rules", () => {
       runCli("agent init --with-cursor", testHomeDir);
       const before: Record<string, string> = {};
