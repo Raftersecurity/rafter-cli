@@ -147,31 +147,56 @@ function lastIdent(expr: string): string {
   return m ? m[1] : "";
 }
 
-const LOOSE_EXAMPLES: Record<string, Record<string, string>> = {
-  prefix: {
-    host: "does it accept example.com.evil.com?",
-    url: "does it accept https://example.com.evil.com, https://example.com@evil.com or //evil.com?",
-    claim: "does it accept a longer value such as admin-x or https://issuer.evil?",
-    path: "does it accept /allowed-sibling or /allowed/../secret?",
-  },
-  suffix: {
-    host: "does it accept evilexample.com, with no dot boundary?",
-    url: "does it accept https://evil.com/?x=example.com?",
-    claim: "does it accept a value that only ends with the expected one?",
-    path: "does it accept /other/allowed?",
-  },
-  contains: {
-    host: "does it accept attacker.example.evil.com?",
-    url: "does it accept https://evil.com/?r=example.com?",
-    claim: "does it accept any value that merely contains the expected one?",
-    path: "does it accept any path that merely contains the allowed part?",
-  },
-  fold: {
-    claim: "should this comparison be exact (case-sensitive)?",
-    path: "should this comparison be exact (case-sensitive)?",
-    url: "should this comparison be exact (case-sensitive)?",
-  },
+/**
+ * A passing example with the real needle from the line (has letters, so it
+ * reads as an actual value rather than a bare symbol): names the specific
+ * value that would slip past the check at this line.
+ */
+function namedPassPhrase(kind: string, cls: string, n: string): string | null {
+  switch (`${kind}:${cls}`) {
+    case "prefix:host": return `a value starting with ${n}, e.g. ${n}.evil.com, also passes`;
+    case "prefix:url": return `a value starting with ${n}, e.g. ${n}.evil.com or ${n}@evil.com, also passes`;
+    case "prefix:claim": return `a value starting with ${n}, e.g. ${n}-x, also passes`;
+    case "prefix:path": return `a value starting with ${n}, e.g. ${n}-sibling or ${n}/../secret, also passes`;
+    case "suffix:host": return `a value ending in ${n} with no dot boundary, e.g. evil${n}, also passes`;
+    case "suffix:url": return `a value ending in ${n}, e.g. https://evil.com/?x=${n}, also passes`;
+    case "suffix:claim": return `a value merely ending in ${n} also passes`;
+    case "suffix:path": return `a value merely ending in ${n}, from another directory, also passes`;
+    case "contains:host": return `a value merely containing ${n}, e.g. attacker.${n}.evil.com, also passes`;
+    case "contains:url": return `a value merely containing ${n}, e.g. https://evil.com/?r=${n}, also passes`;
+    case "contains:claim": return `a value merely containing ${n} also passes`;
+    case "contains:path": return `a value merely containing ${n} also passes`;
+    default: return null; // case folding: no single value to name
+  }
+}
+
+/** Fallback when the needle is not a literal, or is a bare symbol with no letters (e.g. "/"). */
+const GENERIC_PASS_PHRASE: Record<string, string> = {
+  "prefix:host": "a value like example.com.evil.com also passes",
+  "prefix:url": "a value like //evil.com also passes",
+  "prefix:claim": "a value like admin-x also passes",
+  "prefix:path": "a value like /allowed/../secret also passes",
+  "suffix:host": "a value like evilexample.com, with no dot boundary, also passes",
+  "suffix:url": "a value like https://evil.com/?x=example.com also passes",
+  "suffix:claim": "a value that merely ends with the expected one also passes",
+  "suffix:path": "a value from another directory can still match the suffix",
+  "contains:host": "a value like attacker.example.evil.com also passes",
+  "contains:url": "a value like https://evil.com/?r=example.com also passes",
+  "contains:claim": "any value merely containing the expected one also passes",
+  "contains:path": "any path merely containing the allowed part also passes",
+  "fold:claim": "a differently-cased value also passes",
+  "fold:path": "a differently-cased value also passes",
+  "fold:url": "a differently-cased value also passes",
 };
+
+/** The passing-example phrase for this kind/class, grounded in the real needle when it names a concrete value. */
+function loosePhrase(kind: string, cls: string, lit: string | null): string | null {
+  if (lit && /[A-Za-z]/.test(lit)) {
+    const dyn = namedPassPhrase(kind, cls, lit);
+    if (dyn) return dyn;
+  }
+  return GENERIC_PASS_PHRASE[`${kind}:${cls}`] ?? null;
+}
 
 const LOOSE_WEIGHT: Record<string, number> = { host: 4, url: 4, claim: 4, path: 2 };
 
@@ -232,15 +257,22 @@ function literalIndex(code: string, pos: number): number {
   return pos < 0 ? -1 : code.slice(0, pos).split('""').length - 1;
 }
 
+/** The raw literal text the needle stands for, or null when it is not a literal at all. */
+function rawNeedle(needle: string, raw: string, litIndex: number): string | null {
+  if (needle.trim() !== '""') return null;
+  const lits = rawLiterals(raw);
+  return litIndex >= 0 && litIndex < lits.length ? lits[litIndex] : null;
+}
+
 function looseHit(op: string, ident: string, needle: string, raw: string, litIndex: number): Hit | null {
   const cls = matchClass(ident);
   if (!cls) return null;
   const kind = OP_KIND[op];
   if (literalNoise(kind, cls, needle, raw, litIndex)) return null;
-  const q = LOOSE_EXAMPLES[kind][cls];
-  if (!q) return null; // case folding a host, origin or domain is correct
+  const phrase = loosePhrase(kind, cls, rawNeedle(needle, raw, litIndex));
+  if (!phrase) return null; // case folding a host, origin or domain is correct
   const opLabel = op === "in" ? "`in`" : `${op}`;
-  return { rule: "loose-match", weight: LOOSE_WEIGHT[cls], question: `${opLabel} on ${ident}: ${q}` };
+  return { rule: "loose-match", weight: LOOSE_WEIGHT[cls], question: `${opLabel} on ${ident}: ${phrase}; is that intended?` };
 }
 
 function looseMatches(lang: string, code: string, raw: string): Hit[] {
@@ -278,7 +310,7 @@ function looseMatches(lang: string, code: string, raw: string): Hit[] {
   return hits;
 }
 
-const Q_TLS_OFF = "certificate verification is off here; can a network attacker impersonate the peer?";
+const Q_TLS_OFF = "certificate verification is off here, so a network attacker can impersonate the peer; is that intended?";
 
 interface LineRule {
   langs: string[];
@@ -304,14 +336,36 @@ const LINE_RULES: LineRule[] = [
   { langs: ["java"], re: /\b(NoopHostnameVerifier|ALLOW_ALL_HOSTNAME_VERIFIER|TrustAllStrategy|InsecureTrustManagerFactory)\b/, rule: "tls-verify-off", weight: 5, q: (m) => `${m[1]}: ${Q_TLS_OFF}` },
   { langs: ["ruby"], re: /\bVERIFY_NONE\b/, rule: "tls-verify-off", weight: 5, q: () => `VERIFY_NONE: ${Q_TLS_OFF}` },
   // TLS verification taken from a value: where does it come from?
-  { langs: ["go"], re: /\bInsecureSkipVerify\s*(?::|=)\s*(?!true\b|false\b)(!?[A-Za-z_][\w.]*(?:\(\s*\))?)/, rule: "tls-verify-config", weight: 4, q: (m) => `InsecureSkipVerify is set from ${m[1]}: what is its default, and who can turn it on?` },
-  { langs: ["javascript", "typescript"], re: /\brejectUnauthorized\s*:\s*(?!true\b|false\b)(!?[A-Za-z_$][\w$.]*)/, rule: "tls-verify-config", weight: 4, q: (m) => `rejectUnauthorized is set from ${m[1]}: what is its default, and who can turn it off?` },
-  // Client certificates requested but not verified.
-  { langs: ["go"], re: /\bClientAuth\s*(?::|=)\s*tls\.(RequestClientCert|RequireAnyClientCert|VerifyClientCertIfGiven)\b/, rule: "client-cert-unverified", weight: 5, q: (m) => `ClientAuth is tls.${m[1]}, which ${m[1] === "VerifyClientCertIfGiven" ? "lets clients skip the certificate" : "does not verify the certificate"}: does anything later trust it as identity?` },
+  { langs: ["go"], re: /\bInsecureSkipVerify\s*(?::|=)\s*(?!true\b|false\b)(!?[A-Za-z_][\w.]*(?:\(\s*\))?)/, rule: "tls-verify-config", weight: 4, q: (m) => `InsecureSkipVerify is set from ${m[1]} here, not fixed, so this path can disable verification; is that intended?` },
+  { langs: ["javascript", "typescript"], re: /\brejectUnauthorized\s*:\s*(?!true\b|false\b)(!?[A-Za-z_$][\w$.]*)/, rule: "tls-verify-config", weight: 4, q: (m) => `rejectUnauthorized is set from ${m[1]} here, not fixed, so this path can disable verification; is that intended?` },
   // A negatively named option ("insecure", "skip verify") that defaults to on.
-  { langs: ["go"], re: /\bflag\.Bool(?:Var)?\([^)]*?["'`]([\w-]*(?:insecure|skip-verify|skip_verify|no-verify|disable-tls|disable-ssl)[\w-]*)["'`]\s*,\s*true\b/, rule: "insecure-default", weight: 4, raw: true, q: (m) => `flag ${m[1]} defaults to true: does it turn off a check every deployment needs?` },
-  { langs: ["go", "python", "javascript", "typescript", "ruby"], re: new RegExp(`\\b(${NEG_SETTING})\\s*(?::\\s*bool\\s*)?(?:=|:)\\s*(true|True)\\b`), rule: "insecure-default", weight: 4, q: (m) => `${m[1]} is ${m[2]}: is this the default, and does it turn off a check every deployment needs?` },
+  { langs: ["go"], re: /\bflag\.Bool(?:Var)?\([^)]*?["'`]([\w-]*(?:insecure|skip-verify|skip_verify|no-verify|disable-tls|disable-ssl)[\w-]*)["'`]\s*,\s*true\b/, rule: "insecure-default", weight: 4, raw: true, q: (m) => `flag ${m[1]} defaults to true: every deployment that does not override it skips verification; is that intended?` },
+  { langs: ["go", "python", "javascript", "typescript", "ruby"], re: new RegExp(`\\b(${NEG_SETTING})\\s*(?::\\s*bool\\s*)?(?:=|:)\\s*(true|True)\\b`), rule: "insecure-default", weight: 4, q: (m) => `${m[1]} is ${m[2]}: if that is the default, every deployment that does not override it skips the check; is that intended?` },
 ];
+
+/** Lines scanned on each side of a ClientAuth line for a configured CA pool: the same window used elsewhere for "nearby" context, not a true struct-literal or function boundary. */
+const CLIENT_CA_WINDOW = 15;
+const GO_CLIENT_AUTH = /\bClientAuth\s*(?::|=)\s*tls\.(RequestClientCert|RequireAnyClientCert|VerifyClientCertIfGiven)\b/;
+const GO_CLIENT_CA_SET = /\bClientCAs\s*(?::|=)/;
+
+/** Client certificates requested but not verified: weight and wording depend on whether a CA pool is configured nearby. */
+function clientCertHit(lang: string, code: string[], i: number): Hit | null {
+  if (lang !== "go") return null;
+  const m = code[i].match(GO_CLIENT_AUTH);
+  if (!m) return null;
+  const mode = m[1];
+  const given = mode === "VerifyClientCertIfGiven";
+  let hasCA = false;
+  for (let j = Math.max(0, i - CLIENT_CA_WINDOW); j <= Math.min(code.length - 1, i + CLIENT_CA_WINDOW); j++) {
+    if (GO_CLIENT_CA_SET.test(code[j])) { hasCA = true; break; }
+  }
+  if (hasCA) {
+    const risk = given ? "lets a client skip presenting one" : "does not verify certificates against them";
+    return { rule: "client-cert-unverified", weight: 6, question: `client CAs are configured here, but ClientAuth=${mode} ${risk}; is that intended?` };
+  }
+  const risk = given ? "lets a client connect with no certificate at all" : "accepts a client certificate without verifying it against any CA";
+  return { rule: "client-cert-unverified", weight: 5, question: `ClientAuth=${mode} ${risk}; is that intended?` };
+}
 
 /**
  * A limit set to a value that usually means "unlimited", where it is a
@@ -328,8 +382,8 @@ function limitHit(code: string): Hit | null {
   if (!words(name).some((w) => w === "limit" || w === "max" || w.startsWith("maxi"))) return null;
   const setting = m[3] === ":" || m[1] === "(" || m[1] === "," || m[1] === "." || /^[A-Z][A-Z0-9_]*$/.test(name);
   if (!setting) return null;
-  const v = m[4] === 'float("")' ? "infinite" : m[4];
-  return { rule: "limit-disabled", weight: 2, question: `${name} is ${v}: if that means unlimited, can a client exhaust memory or time through it?` };
+  const v = m[4] === 'float("")' ? "infinite" : `${m[4]} (unlimited)`;
+  return { rule: "limit-disabled", weight: 2, question: `${name} is ${v}: a client can exhaust memory or time through it; is that intended?` };
 }
 
 /** Go: io.ReadAll / ioutil.ReadAll / json.NewDecoder on a request or response body. */
@@ -351,18 +405,20 @@ function bodyReadHit(lang: string, code: string[], raw: string[], i: number): Hi
     const recv = m[1] ? m[2] ?? "" : m[4] ?? "";
     const expr = m[1] ? `${m[1]}.ReadAll(${recv}${m[3]})` : `json.NewDecoder(${recv}Body)`;
     // A request body comes from the client; a response body from a server this code chose to call.
-    const weight = /^(r|req|request)\.$/.test(recv) ? 3 : 2;
-    return { rule: "unbounded-read", weight, question: `${expr} reads a whole body with no size limit nearby: can the sender make it arbitrarily large?` };
+    const isRequest = /^(r|req|request)\.$/.test(recv);
+    const weight = isRequest ? 3 : 2;
+    const who = isRequest ? "a client" : "the called server";
+    return { rule: "unbounded-read", weight, question: `${expr} reads the whole body with no size limit: ${who} can send a body of any size here; is that intended?` };
   }
   if (lang === "python") {
     const m = line.match(PY_BODY_READ);
     if (!m) return null;
-    return { rule: "unbounded-read", weight: 3, question: `${m[1] ?? ""}${m[2]}.read() has no size: can the sender make it arbitrarily large?` };
+    return { rule: "unbounded-read", weight: 3, question: `${m[1] ?? ""}${m[2]}.read() has no size limit: a client can send a body of any size here; is that intended?` };
   }
   if (lang === "javascript" || lang === "typescript") {
     if (!JS_DATA_EVENT.test(line) || !JS_DATA_RAW.test(raw[i])) return null;
     for (let j = i; j < Math.min(code.length, i + 8); j++) if (JS_SIZE_NEAR.test(code[j])) return null;
-    return { rule: "unbounded-read", weight: 3, question: "chunks from a 'data' event are collected with no size check nearby: can the sender make the body arbitrarily large?" };
+    return { rule: "unbounded-read", weight: 3, question: "chunks from a 'data' event are collected with no size check: a client can send a body of any size here; is that intended?" };
   }
   return null;
 }
@@ -425,6 +481,7 @@ export function scanLeads(state: LeadState, rel: string, lang: string, raw: stri
       const m = (r.raw ? pre[i] : c).match(r.re);
       if (m) offer({ rule: r.rule, weight: r.weight, question: r.q(m) });
     }
+    offer(clientCertHit(lang, code, i));
     offer(bodyReadHit(lang, code, pre, i));
     offer(limitHit(c));
     for (const h of looseMatches(lang, c, pre[i])) offer(h);
@@ -439,7 +496,7 @@ export function scanLeads(state: LeadState, rel: string, lang: string, raw: stri
           decl = m[1];
           const pb = c.match(GO_POSITIVE_BOOL);
           if (pb && goPositiveBool(pb[1])) {
-            add(i, { rule: "insecure-default", weight: 3, question: `${pb[1]} is a bool whose zero value, false, skips the check: does every way of building this config set it?` });
+            add(i, { rule: "insecure-default", weight: 3, question: `${pb[1]} defaults to false (the zero value), so any config that does not set it skips the check; is that intended?` });
           }
         }
         for (const ch of c) {
@@ -544,7 +601,7 @@ export function finishLeads(state: LeadState): { leads: Lead[]; found: number } 
       line: c.line,
       rule: "config-unread",
       weight: c.weight,
-      question: `${c.name} is declared here but never read in the scanned code: is the setting it names enforced anywhere?`,
+      question: `${c.name} is set in config but nothing reads it: the check it names never runs.`,
       snippet: c.snippet,
     });
   }

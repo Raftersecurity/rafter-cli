@@ -262,6 +262,45 @@ def test_leads_fire_on_positives_not_near_misses(tmp_path):
     assert [m["status"] for m in clean["members"]] == ["delegates", "checked"]
 
 
+def test_client_cert_boost_above_plain_case_when_cas_configured_nearby(tmp_path):
+    _write(tmp_path, {
+        "mtls/no_ca.go": (
+            "package mtls\n\n"
+            "import \"crypto/tls\"\n\n"
+            "func withoutCAs() *tls.Config {\n"
+            "\treturn &tls.Config{ClientAuth: tls.RequireAnyClientCert}\n"
+            "}\n"
+        ),
+        "mtls/with_ca.go": (
+            "package mtls\n\n"
+            "import \"crypto/tls\"\n\n"
+            "func withCAs(pool *x509.CertPool) *tls.Config {\n"
+            "\treturn &tls.Config{\n"
+            "\t\tClientCAs:  pool,\n"
+            "\t\tClientAuth: tls.RequireAnyClientCert,\n"
+            "\t}\n"
+            "}\n"
+        ),
+    })
+    out, _, code = rafter("gates", str(tmp_path), "--json")
+    assert code == 0
+    data = json.loads(out)
+    leads = [lead for lead in data["leads"] if lead["rule"] == "client-cert-unverified"]
+    weak = next(lead for lead in leads if lead["file"] == "mtls/no_ca.go")
+    strong = next(lead for lead in leads if lead["file"] == "mtls/with_ca.go")
+    assert weak["line"] == 6
+    assert weak["weight"] == 5
+    assert weak["question"] == (
+        "ClientAuth=RequireAnyClientCert accepts a client certificate without verifying it against any CA; is that intended?"
+    )
+    assert strong["line"] == 8
+    assert strong["weight"] == 6
+    assert strong["question"] == (
+        "client CAs are configured here, but ClientAuth=RequireAnyClientCert does not verify certificates against them; is that intended?"
+    )
+    assert strong["weight"] > weak["weight"]
+
+
 def test_leads_capped_per_file_and_in_text(tmp_path):
     line = "var _ = tls.Config{InsecureSkipVerify: true}\n"
     _write(tmp_path, {f"c{i:02d}.go": "package c\n\n" + line * 4 for i in range(10)})

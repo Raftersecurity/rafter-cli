@@ -149,31 +149,65 @@ def _last_ident(expr: str) -> str:
     return m.group(1) if m else ""
 
 
-LOOSE_EXAMPLES = {
-    "prefix": {
-        "host": "does it accept example.com.evil.com?",
-        "url": "does it accept https://example.com.evil.com, https://example.com@evil.com or //evil.com?",
-        "claim": "does it accept a longer value such as admin-x or https://issuer.evil?",
-        "path": "does it accept /allowed-sibling or /allowed/../secret?",
-    },
-    "suffix": {
-        "host": "does it accept evilexample.com, with no dot boundary?",
-        "url": "does it accept https://evil.com/?x=example.com?",
-        "claim": "does it accept a value that only ends with the expected one?",
-        "path": "does it accept /other/allowed?",
-    },
-    "contains": {
-        "host": "does it accept attacker.example.evil.com?",
-        "url": "does it accept https://evil.com/?r=example.com?",
-        "claim": "does it accept any value that merely contains the expected one?",
-        "path": "does it accept any path that merely contains the allowed part?",
-    },
-    "fold": {
-        "claim": "should this comparison be exact (case-sensitive)?",
-        "path": "should this comparison be exact (case-sensitive)?",
-        "url": "should this comparison be exact (case-sensitive)?",
-    },
+def _named_pass_phrase(kind: str, cls: str, n: str) -> str | None:
+    """A passing example with the real needle from the line: names the
+    specific value that would slip past the check at this line."""
+    key = f"{kind}:{cls}"
+    if key == "prefix:host":
+        return f"a value starting with {n}, e.g. {n}.evil.com, also passes"
+    if key == "prefix:url":
+        return f"a value starting with {n}, e.g. {n}.evil.com or {n}@evil.com, also passes"
+    if key == "prefix:claim":
+        return f"a value starting with {n}, e.g. {n}-x, also passes"
+    if key == "prefix:path":
+        return f"a value starting with {n}, e.g. {n}-sibling or {n}/../secret, also passes"
+    if key == "suffix:host":
+        return f"a value ending in {n} with no dot boundary, e.g. evil{n}, also passes"
+    if key == "suffix:url":
+        return f"a value ending in {n}, e.g. https://evil.com/?x={n}, also passes"
+    if key == "suffix:claim":
+        return f"a value merely ending in {n} also passes"
+    if key == "suffix:path":
+        return f"a value merely ending in {n}, from another directory, also passes"
+    if key == "contains:host":
+        return f"a value merely containing {n}, e.g. attacker.{n}.evil.com, also passes"
+    if key == "contains:url":
+        return f"a value merely containing {n}, e.g. https://evil.com/?r={n}, also passes"
+    if key == "contains:claim":
+        return f"a value merely containing {n} also passes"
+    if key == "contains:path":
+        return f"a value merely containing {n} also passes"
+    return None  # case folding: no single value to name
+
+
+# Fallback when the needle is not a literal, or is a bare symbol with no letters (e.g. "/").
+GENERIC_PASS_PHRASE = {
+    "prefix:host": "a value like example.com.evil.com also passes",
+    "prefix:url": "a value like //evil.com also passes",
+    "prefix:claim": "a value like admin-x also passes",
+    "prefix:path": "a value like /allowed/../secret also passes",
+    "suffix:host": "a value like evilexample.com, with no dot boundary, also passes",
+    "suffix:url": "a value like https://evil.com/?x=example.com also passes",
+    "suffix:claim": "a value that merely ends with the expected one also passes",
+    "suffix:path": "a value from another directory can still match the suffix",
+    "contains:host": "a value like attacker.example.evil.com also passes",
+    "contains:url": "a value like https://evil.com/?r=example.com also passes",
+    "contains:claim": "any value merely containing the expected one also passes",
+    "contains:path": "any path merely containing the allowed part also passes",
+    "fold:claim": "a differently-cased value also passes",
+    "fold:path": "a differently-cased value also passes",
+    "fold:url": "a differently-cased value also passes",
 }
+
+
+def _loose_phrase(kind: str, cls: str, lit: str | None) -> str | None:
+    """The passing-example phrase for this kind/class, grounded in the real needle when it names a concrete value."""
+    if lit and _LETTER_RE.search(lit):
+        dyn = _named_pass_phrase(kind, cls, lit)
+        if dyn:
+            return dyn
+    return GENERIC_PASS_PHRASE.get(f"{kind}:{cls}")
+
 
 LOOSE_WEIGHT = {"host": 4, "url": 4, "claim": 4, "path": 2}
 
@@ -234,6 +268,14 @@ def _literal_index(code: str, pos: int) -> int:
     return -1 if pos < 0 else code[:pos].count('""')
 
 
+def _raw_needle(needle: str, raw: str, lit_index: int) -> str | None:
+    """The raw literal text the needle stands for, or None when it is not a literal at all."""
+    if needle.strip() != '""':
+        return None
+    lits = _raw_literals(raw)
+    return lits[lit_index] if 0 <= lit_index < len(lits) else None
+
+
 def _loose_hit(op: str, ident: str, needle: str, raw: str, lit_index: int):
     cls = _match_class(ident)
     if not cls:
@@ -241,11 +283,11 @@ def _loose_hit(op: str, ident: str, needle: str, raw: str, lit_index: int):
     kind = OP_KIND[op]
     if _literal_noise(kind, cls, needle, raw, lit_index):
         return None
-    q = LOOSE_EXAMPLES[kind].get(cls)
-    if not q:
+    phrase = _loose_phrase(kind, cls, _raw_needle(needle, raw, lit_index))
+    if not phrase:
         return None  # case folding a host, origin or domain is correct
     op_label = "`in`" if op == "in" else op
-    return ("loose-match", LOOSE_WEIGHT[cls], f"{op_label} on {ident}: {q}")
+    return ("loose-match", LOOSE_WEIGHT[cls], f"{op_label} on {ident}: {phrase}; is that intended?")
 
 
 def _loose_matches(lang: str, code: str, raw: str) -> list:
@@ -286,14 +328,9 @@ def _loose_matches(lang: str, code: str, raw: str) -> list:
     return hits
 
 
-Q_TLS_OFF = "certificate verification is off here; can a network attacker impersonate the peer?"
+Q_TLS_OFF = "certificate verification is off here, so a network attacker can impersonate the peer; is that intended?"
 
 NEG_SETTING = r"(?:[A-Za-z_]\w*)?(?:[Ii]nsecure|[Ss]kip_?[Vv]erify|SKIP_VERIFY|[Nn]o_?[Vv]erify|NO_VERIFY|[Dd]isable_?(?:[Tt]ls|TLS|[Ss]sl|SSL)|DISABLE_(?:TLS|SSL)|INSECURE)\w*"
-
-
-def _client_cert_q(m) -> str:
-    what = "lets clients skip the certificate" if m.group(1) == "VerifyClientCertIfGiven" else "does not verify the certificate"
-    return f"ClientAuth is tls.{m.group(1)}, which {what}: does anything later trust it as identity?"
 
 
 # (langs, regex, rule, weight, question(m), match the raw line)
@@ -317,18 +354,43 @@ LINE_RULES = [
      lambda m: f"VERIFY_NONE: {Q_TLS_OFF}", False),
     # TLS verification taken from a value: where does it come from?
     (("go",), re.compile(r"\bInsecureSkipVerify\s*(?::|=)\s*(?!true\b|false\b)(!?[A-Za-z_][\w.]*(?:\(\s*\))?)", A), "tls-verify-config", 4,
-     lambda m: f"InsecureSkipVerify is set from {m.group(1)}: what is its default, and who can turn it on?", False),
+     lambda m: f"InsecureSkipVerify is set from {m.group(1)} here, not fixed, so this path can disable verification; is that intended?", False),
     (("javascript", "typescript"), re.compile(r"\brejectUnauthorized\s*:\s*(?!true\b|false\b)(!?[A-Za-z_$][\w$.]*)", A), "tls-verify-config", 4,
-     lambda m: f"rejectUnauthorized is set from {m.group(1)}: what is its default, and who can turn it off?", False),
-    # Client certificates requested but not verified.
-    (("go",), re.compile(r"\bClientAuth\s*(?::|=)\s*tls\.(RequestClientCert|RequireAnyClientCert|VerifyClientCertIfGiven)\b", A), "client-cert-unverified", 5,
-     _client_cert_q, False),
+     lambda m: f"rejectUnauthorized is set from {m.group(1)} here, not fixed, so this path can disable verification; is that intended?", False),
     # A negatively named option ("insecure", "skip verify") that defaults to on.
     (("go",), re.compile(r"\bflag\.Bool(?:Var)?\([^)]*?[\"'`]([\w-]*(?:insecure|skip-verify|skip_verify|no-verify|disable-tls|disable-ssl)[\w-]*)[\"'`]\s*,\s*true\b", A), "insecure-default", 4,
-     lambda m: f"flag {m.group(1)} defaults to true: does it turn off a check every deployment needs?", True),
+     lambda m: f"flag {m.group(1)} defaults to true: every deployment that does not override it skips verification; is that intended?", True),
     (("go", "python", "javascript", "typescript", "ruby"), re.compile(r"\b(" + NEG_SETTING + r")\s*(?::\s*bool\s*)?(?:=|:)\s*(true|True)\b", A), "insecure-default", 4,
-     lambda m: f"{m.group(1)} is {m.group(2)}: is this the default, and does it turn off a check every deployment needs?", False),
+     lambda m: f"{m.group(1)} is {m.group(2)}: if that is the default, every deployment that does not override it skips the check; is that intended?", False),
 ]
+
+# Lines scanned on each side of a ClientAuth line for a configured CA pool: the
+# same window used elsewhere for "nearby" context, not a true struct-literal
+# or function boundary.
+CLIENT_CA_WINDOW = 15
+GO_CLIENT_AUTH = re.compile(r"\bClientAuth\s*(?::|=)\s*tls\.(RequestClientCert|RequireAnyClientCert|VerifyClientCertIfGiven)\b", A)
+GO_CLIENT_CA_SET = re.compile(r"\bClientCAs\s*(?::|=)", A)
+
+
+def _client_cert_hit(lang: str, code: list[str], i: int):
+    """Client certificates requested but not verified: weight and wording depend on whether a CA pool is configured nearby."""
+    if lang != "go":
+        return None
+    m = GO_CLIENT_AUTH.search(code[i])
+    if not m:
+        return None
+    mode = m.group(1)
+    given = mode == "VerifyClientCertIfGiven"
+    has_ca = False
+    for j in range(max(0, i - CLIENT_CA_WINDOW), min(len(code), i + CLIENT_CA_WINDOW + 1)):
+        if GO_CLIENT_CA_SET.search(code[j]):
+            has_ca = True
+            break
+    if has_ca:
+        risk = "lets a client skip presenting one" if given else "does not verify certificates against them"
+        return ("client-cert-unverified", 6, f"client CAs are configured here, but ClientAuth={mode} {risk}; is that intended?")
+    risk = "lets a client connect with no certificate at all" if given else "accepts a client certificate without verifying it against any CA"
+    return ("client-cert-unverified", 5, f"ClientAuth={mode} {risk}; is that intended?")
 
 # A limit set to a value that usually means "unlimited", where it is a
 # setting rather than a local: a key, a keyword default, an attribute or a
@@ -347,8 +409,8 @@ def _limit_hit(code: str):
     setting = m.group(3) == ":" or m.group(1) in ("(", ",", ".") or bool(_CONST_RE.search(name))
     if not setting:
         return None
-    v = "infinite" if m.group(4) == 'float("")' else m.group(4)
-    return ("limit-disabled", 2, f"{name} is {v}: if that means unlimited, can a client exhaust memory or time through it?")
+    v = "infinite" if m.group(4) == 'float("")' else f"{m.group(4)} (unlimited)"
+    return ("limit-disabled", 2, f"{name} is {v}: a client can exhaust memory or time through it; is that intended?")
 
 
 # Go: io.ReadAll / ioutil.ReadAll / json.NewDecoder on a request or response body.
@@ -375,20 +437,22 @@ def _body_read_hit(lang: str, code: list[str], raw: list[str], i: int):
         recv = (m.group(2) or "") if m.group(1) else (m.group(4) or "")
         expr = f"{m.group(1)}.ReadAll({recv}{m.group(3)})" if m.group(1) else f"json.NewDecoder({recv}Body)"
         # A request body comes from the client; a response body from a server this code chose to call.
-        weight = 3 if _REQUEST_RECV.search(recv) else 2
-        return ("unbounded-read", weight, f"{expr} reads a whole body with no size limit nearby: can the sender make it arbitrarily large?")
+        is_request = bool(_REQUEST_RECV.search(recv))
+        weight = 3 if is_request else 2
+        who = "a client" if is_request else "the called server"
+        return ("unbounded-read", weight, f"{expr} reads the whole body with no size limit: {who} can send a body of any size here; is that intended?")
     if lang == "python":
         m = PY_BODY_READ.search(line)
         if not m:
             return None
-        return ("unbounded-read", 3, f"{m.group(1) or ''}{m.group(2)}.read() has no size: can the sender make it arbitrarily large?")
+        return ("unbounded-read", 3, f"{m.group(1) or ''}{m.group(2)}.read() has no size limit: a client can send a body of any size here; is that intended?")
     if lang in ("javascript", "typescript"):
         if not JS_DATA_EVENT.search(line) or not JS_DATA_RAW.search(raw[i]):
             return None
         for j in range(i, min(len(code), i + 8)):
             if JS_SIZE_NEAR.search(code[j]):
                 return None
-        return ("unbounded-read", 3, "chunks from a 'data' event are collected with no size check nearby: can the sender make the body arbitrarily large?")
+        return ("unbounded-read", 3, "chunks from a 'data' event are collected with no size check: a client can send a body of any size here; is that intended?")
     return None
 
 
@@ -465,6 +529,7 @@ def scan_leads(state: dict, rel: str, lang: str, raw: list[str], path_weight: in
             m = rx.search(pre[i] if use_raw else c)
             if m:
                 offer((rule, weight, q(m)))
+        offer(_client_cert_hit(lang, code, i))
         offer(_body_read_hit(lang, code, pre, i))
         offer(_limit_hit(c))
         for h in _loose_matches(lang, c, pre[i]):
@@ -482,7 +547,7 @@ def scan_leads(state: dict, rel: str, lang: str, raw: list[str], path_weight: in
                         decl = m.group(1)
                         pb = GO_POSITIVE_BOOL.search(c)
                         if pb and _go_positive_bool(pb.group(1)):
-                            add(i, ("insecure-default", 3, f"{pb.group(1)} is a bool whose zero value, false, skips the check: does every way of building this config set it?"))
+                            add(i, ("insecure-default", 3, f"{pb.group(1)} defaults to false (the zero value), so any config that does not set it skips the check; is that intended?"))
                 for ch in c:
                     if ch == "{":
                         go_struct_depth += 1
@@ -592,7 +657,7 @@ def finish_leads(state: dict) -> tuple[list[dict], int]:
     for c in unread[:MAX_CONFIG_UNREAD]:
         leads.append({
             "file": c["file"], "line": c["line"], "rule": "config-unread", "weight": c["weight"],
-            "question": f"{c['name']} is declared here but never read in the scanned code: is the setting it names enforced anywhere?",
+            "question": f"{c['name']} is set in config but nothing reads it: the check it names never runs.",
             "snippet": c["snippet"],
         })
     leads.sort(key=lambda lead: (-lead["weight"], lead["file"], lead["line"], lead["rule"]))

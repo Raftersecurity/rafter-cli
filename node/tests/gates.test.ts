@@ -85,6 +85,54 @@ describe("rafter gates", () => {
     }
   });
 
+  it("boosts client-cert-unverified above the plain case when client CAs are configured nearby", () => {
+    const tree = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gates-mtls-"));
+    try {
+      writeFixture(tree, {
+        "mtls/no_ca.go": [
+          "package mtls",
+          "",
+          'import "crypto/tls"',
+          "",
+          "func withoutCAs() *tls.Config {",
+          "\treturn &tls.Config{ClientAuth: tls.RequireAnyClientCert}",
+          "}",
+          "",
+        ].join("\n"),
+        "mtls/with_ca.go": [
+          "package mtls",
+          "",
+          'import "crypto/tls"',
+          "",
+          "func withCAs(pool *x509.CertPool) *tls.Config {",
+          "\treturn &tls.Config{",
+          "\t\tClientCAs:  pool,",
+          "\t\tClientAuth: tls.RequireAnyClientCert,",
+          "\t}",
+          "}",
+          "",
+        ].join("\n"),
+      });
+      const out = JSON.parse(rafter(["gates", tree, "--json"]).stdout);
+      const leads = out.leads.filter((l: any) => l.rule === "client-cert-unverified");
+      const weak = leads.find((l: any) => l.file === "mtls/no_ca.go");
+      const strong = leads.find((l: any) => l.file === "mtls/with_ca.go");
+      expect(weak.line).toBe(6);
+      expect(weak.weight).toBe(5);
+      expect(weak.question).toBe(
+        "ClientAuth=RequireAnyClientCert accepts a client certificate without verifying it against any CA; is that intended?"
+      );
+      expect(strong.line).toBe(8);
+      expect(strong.weight).toBe(6);
+      expect(strong.question).toBe(
+        "client CAs are configured here, but ClientAuth=RequireAnyClientCert does not verify certificates against them; is that intended?"
+      );
+      expect(strong.weight).toBeGreaterThan(weak.weight);
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
+    }
+  });
+
   it("caps leads per file and in text, and points to --json for the rest", () => {
     const tree = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gates-cap-"));
     try {
