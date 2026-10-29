@@ -101,18 +101,23 @@ export const RETIRED_SKILL_NAMES: readonly string[] = [];
  * itself as rafter-authored — a user skill that happens to reuse a retired
  * name is left alone. Returns the names actually removed.
  *
+ * `isOwned` is a second proof of ownership for directories without the tag
+ * (older releases shipped none): agent init passes a check that every file
+ * hashes to content rafter shipped or recorded in its install manifest.
+ *
  * `retiredNames` defaults to `RETIRED_SKILL_NAMES`; tests pass an explicit
  * list to simulate a rename without needing a real retired skill yet.
  */
 export function removeRetiredSkills(
   skillsBaseDir: string,
   retiredNames: readonly string[] = RETIRED_SKILL_NAMES,
+  isOwned?: (skillDir: string, name: string) => boolean,
 ): string[] {
   const removed: string[] = [];
   for (const name of retiredNames) {
     const dir = path.join(skillsBaseDir, name);
     if (!fs.existsSync(path.join(dir, "SKILL.md"))) continue;
-    if (!isRafterAuthoredSkillDir(dir)) continue;
+    if (!isRafterAuthoredSkillDir(dir) && !(isOwned?.(dir, name) ?? false)) continue;
     fs.rmSync(dir, { recursive: true, force: true });
     removed.push(name);
   }

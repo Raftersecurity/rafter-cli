@@ -13,7 +13,19 @@ import { createRequire } from "module";
 import { askYesNo } from "../../utils/prompt.js";
 import { fmt } from "../../utils/formatter.js";
 import { injectInstructionFile, injectAiderNote } from "./instruction-block.js";
-import { KNOWN_SKILL_NAMES, removeRetiredSkills } from "../skill/registry.js";
+import { KNOWN_SKILL_NAMES } from "../skill/registry.js";
+import {
+  InstallSession,
+  claudeAgentArtifacts,
+  cleanupRetiredRules,
+  cleanupRetiredSkills,
+  cursorAgentArtifacts,
+  reportKeptSummary,
+  ruleArtifacts,
+  skillArtifacts,
+  type FileArtifact,
+  type RuleKind,
+} from "./install-files.js";
 import yaml from "js-yaml";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -107,27 +119,6 @@ function installedHookWarnings(): string[] {
 }
 
 /**
- * Log-friendly label per skill, keyed off the single canonical skill-name
- * list (`KNOWN_SKILL_NAMES` in `../skill/registry.js`) so there's one place
- * that names the shipped skills, not several lists that can drift.
- */
-const SKILL_LABELS: Record<string, string> = {
-  rafter: "Rafter Remote",
-  "rafter-secure-design": "Rafter Secure Design",
-  "rafter-code-review": "Rafter Code Review",
-  "rafter-skill-review": "Rafter Skill Review",
-};
-
-/**
- * Skills installed by `rafter agent init` for Claude Code / Codex / Gemini.
- * Sourced from `resources/skills/<name>/SKILL.md` in the shipped package.
- */
-const AGENT_SKILLS: { name: string; description: string }[] = KNOWN_SKILL_NAMES.map((name) => ({
-  name,
-  description: SKILL_LABELS[name] ?? name,
-}));
-
-/**
  * Print every file path the install would touch — without writing anything.
  *
  * Lists are derived from the resolved want* booleans (which already account
@@ -154,6 +145,8 @@ function printDryRunPlan(plan: {
   wantSkillScanner: boolean;
   claudeCodeMcpDisabled: boolean;
   riskLevel: string;
+  /** Dry-run session: predicts each whole-file artifact's outcome without writing. */
+  session: InstallSession;
 }): void {
   const home = os.homedir();
   let writeCount = 0;
@@ -172,6 +165,29 @@ function printDryRunPlan(plan: {
   };
   const S = (p: string, note: string) => {
     console.log(`  SKIP      ${p}   (${note})`);
+  };
+  // Whole-file artifacts: the predicted outcome per file, from the same
+  // policy the real run applies (install-files.ts).
+  const F = (artifacts: FileArtifact[]) => {
+    for (const a of artifacts) {
+      const outcome = plan.session.apply(a);
+      if (outcome === "unchanged") S(a.dest, "unchanged");
+      else if (outcome === "kept") W(`${a.dest}.rafter-new`, `${a.dest} kept: modified`);
+      else if (outcome === "replaced") W(a.dest, `replaced; backup at ${a.dest}.bak`);
+      else W(a.dest, outcome);
+    }
+  };
+  const retired = (r: { removed: string[]; kept: string[] }) => {
+    for (const p of r.removed) R(p, "retired");
+    for (const p of r.kept) S(p, "retired, but modified; kept");
+  };
+  const skills = (dir: string, platform: string, component: string) => {
+    F(skillArtifacts(dir, platform, component));
+    retired(cleanupRetiredSkills(plan.session, dir));
+  };
+  const rules = (kind: RuleKind) => {
+    F(ruleArtifacts(kind, plan.root));
+    retired(cleanupRetiredRules(plan.session, kind));
   };
 
   console.log();
@@ -206,10 +222,8 @@ function printDryRunPlan(plan: {
     console.log();
     console.log("Claude Code (--with-claude-code):");
     W(path.join(plan.root, ".claude", "settings.json"), "PreToolUse + PostToolUse hooks merged");
-    for (const s of AGENT_SKILLS) {
-      W(path.join(plan.root, ".claude", "skills", s.name, "SKILL.md"));
-    }
-    W(path.join(plan.root, ".claude", "agents", "rafter.md"), "sub-agent");
+    skills(path.join(plan.root, ".claude", "skills"), "claude-code", "claude-code.skills");
+    F(claudeAgentArtifacts(plan.root));
     W(path.join(plan.root, ".claude", "CLAUDE.md"), "rafter:start/end marker block");
     // .mcp.json is a project-scope file; the user-scope install never writes it.
     if (plan.scope === "project") {
@@ -225,9 +239,7 @@ function printDryRunPlan(plan: {
     console.log();
     console.log("Codex CLI (--with-codex):");
     W(path.join(plan.root, ".codex", "hooks.json"), "PreToolUse: Bash|apply_patch, PostToolUse: Bash|apply_patch");
-    for (const s of AGENT_SKILLS) {
-      W(path.join(plan.root, ".agents", "skills", s.name, "SKILL.md"));
-    }
+    skills(path.join(plan.root, ".agents", "skills"), "codex", "codex.skills");
     const agentsMd = plan.scope === "user" ? path.join(plan.root, ".codex", "AGENTS.md") : path.join(plan.root, "AGENTS.md");
     W(agentsMd, "shared with Windsurf when --with-windsurf");
   }
@@ -236,9 +248,7 @@ function printDryRunPlan(plan: {
     console.log();
     console.log("Gemini CLI (--with-gemini):");
     W(path.join(plan.root, ".gemini", "settings.json"), "MCP + BeforeTool/AfterTool hooks");
-    for (const s of AGENT_SKILLS) {
-      W(path.join(plan.root, ".agents", "skills", s.name, "SKILL.md"), "shared with Codex");
-    }
+    skills(path.join(plan.root, ".agents", "skills"), "gemini", "gemini.skills");
     const geminiMd = plan.scope === "user" ? path.join(plan.root, ".gemini", "GEMINI.md") : path.join(plan.root, "GEMINI.md");
     W(geminiMd);
     if (plan.scope === "user") {
@@ -250,10 +260,8 @@ function printDryRunPlan(plan: {
     console.log();
     console.log("Cursor (--with-cursor):");
     W(path.join(plan.root, ".cursor", "hooks.json"), "preToolUse + postToolUse + beforeShellExecution");
-    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
-      W(path.join(plan.root, ".cursor", "rules", `${s}.mdc`));
-    }
-    W(path.join(plan.root, ".cursor", "agents", "rafter.md"), "sub-agent (Cursor reads .claude/agents/ too)");
+    rules("cursor");
+    F(cursorAgentArtifacts(plan.root));
     W(path.join(plan.root, ".cursor", "mcp.json"));
   }
 
@@ -263,9 +271,7 @@ function printDryRunPlan(plan: {
     if (plan.scope === "user") {
       W(path.join(home, ".codeium", "windsurf", "mcp_config.json"), "user-scope MCP only");
     }
-    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
-      W(path.join(plan.root, ".windsurf", "rules", `${s}.md`));
-    }
+    rules("windsurf");
     W(path.join(plan.root, "AGENTS.md"), "shared with Codex; idempotent if already written");
   }
 
@@ -275,9 +281,7 @@ function printDryRunPlan(plan: {
     if (plan.scope === "user") {
       W(path.join(home, ".continue", "config.json"), "MCP entry; preserves existing keys");
     }
-    for (const s of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
-      W(path.join(plan.root, ".continue", "rules", `${s}.md`));
-    }
+    rules("continue");
   }
 
   if (plan.wantAider) {
@@ -562,14 +566,6 @@ function installCursorHooks(root: string, out: InitOutput): void {
   out.info(fmt.success(`Installed hooks to ${hooksPath}`));
 }
 
-/** Skills shipped as both Cursor rules and (Claude Code / Codex / Gemini) skills. */
-const CURSOR_RULE_SKILLS = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
-
 /**
  * Install per-skill Cursor rules at <root>/.cursor/rules/<skill>.mdc.
  *
@@ -580,32 +576,11 @@ const CURSOR_RULE_SKILLS = [
  * Replaces the legacy consolidated `.cursor/rules/rafter-security.mdc` — that
  * single file is no longer written by the Cursor install path.
  */
-function installCursorRules(root: string, out: InitOutput): void {
+function installCursorRules(session: InstallSession, root: string, out: InitOutput): void {
   const rulesDir = path.join(root, ".cursor", "rules");
   fs.mkdirSync(rulesDir, { recursive: true });
-
-  // Resolve resources/cursor-rules relative to this module.
-  // After build: dist/commands/agent/init.js -> ../../../resources/cursor-rules
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "cursor-rules"),
-    path.resolve(__dirname, "..", "..", "resources", "cursor-rules"),
-  ];
-  const sourceDir = candidates.find((p) => fs.existsSync(p));
-  if (!sourceDir) {
-    out.warn(fmt.warning(`Cursor rule templates not found in resources/cursor-rules`));
-    return;
-  }
-
-  for (const name of CURSOR_RULE_SKILLS) {
-    const src = path.join(sourceDir, `${name}.mdc`);
-    const dest = path.join(rulesDir, `${name}.mdc`);
-    if (!fs.existsSync(src)) {
-      out.warn(fmt.warning(`Cursor rule template missing: ${src}`));
-      continue;
-    }
-    fs.copyFileSync(src, dest);
-    out.info(fmt.success(`Installed Cursor rule to ${dest}`));
-  }
+  session.applyAll(ruleArtifacts("cursor", root, out));
+  cleanupRetiredRules(session, "cursor");
 
   // Remove the legacy consolidated rule if present, so reinstall on top of
   // an old layout migrates cleanly.
@@ -629,40 +604,8 @@ function installCursorRules(root: string, out: InitOutput): void {
  * apply, since Cursor relies on prompt-level constraints rather than
  * structural restriction.
  */
-function installCursorSubAgents(root: string, out: InitOutput): void {
-  const agentsDir = path.join(root, ".cursor", "agents");
-  fs.mkdirSync(agentsDir, { recursive: true });
-
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "agents", "rafter.md"),
-    path.resolve(__dirname, "..", "..", "resources", "agents", "rafter.md"),
-  ];
-  const src = candidates.find((p) => fs.existsSync(p));
-  if (!src) {
-    out.warn(fmt.warning(`Rafter sub-agent template not found in resources/agents`));
-    return;
-  }
-
-  const raw = fs.readFileSync(src, "utf-8");
-  const cursored = stripToolsFromFrontmatter(raw);
-
-  const dest = path.join(agentsDir, "rafter.md");
-  fs.writeFileSync(dest, cursored, "utf-8");
-  out.info(fmt.success(`Installed Cursor sub-agent to ${dest}`));
-}
-
-/** Strip the Claude-Code `tools:` line from sub-agent frontmatter — Cursor doesn't have it. */
-function stripToolsFromFrontmatter(content: string): string {
-  if (!content.startsWith("---\n")) return content;
-  const fmEnd = content.indexOf("\n---", 4);
-  if (fmEnd === -1) return content;
-  const frontmatter = content.slice(4, fmEnd);
-  const body = content.slice(fmEnd);
-  const cleaned = frontmatter
-    .split("\n")
-    .filter((line) => !/^tools:\s/.test(line))
-    .join("\n");
-  return `---\n${cleaned}${body}`;
+function installCursorSubAgents(session: InstallSession, root: string, out: InitOutput): void {
+  session.applyAll(cursorAgentArtifacts(root, out));
 }
 
 function installGeminiHooks(root: string, out: InitOutput): void {
@@ -714,14 +657,6 @@ function installGeminiHooks(root: string, out: InitOutput): void {
   out.info(fmt.success(`Installed hooks to ${settingsPath}`));
 }
 
-/** Skills shipped as Windsurf per-workspace rules at .windsurf/rules/<skill>.md (rf-0vr3). */
-const WINDSURF_RULE_SKILLS = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
-
 /**
  * Install per-skill Windsurf rules at <root>/.windsurf/rules/<skill>.md.
  *
@@ -734,30 +669,9 @@ const WINDSURF_RULE_SKILLS = [
  * no-op — Windsurf has no documented hook surface as of v1.x (research bead
  * rf-s1n3, gap reports rf-p1ri / rf-vayl).
  */
-function installWindsurfRules(root: string, out: InitOutput): void {
-  const rulesDir = path.join(root, ".windsurf", "rules");
-  fs.mkdirSync(rulesDir, { recursive: true });
-
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "windsurf-rules"),
-    path.resolve(__dirname, "..", "..", "resources", "windsurf-rules"),
-  ];
-  const sourceDir = candidates.find((p) => fs.existsSync(p));
-  if (!sourceDir) {
-    out.warn(fmt.warning(`Windsurf rule templates not found in resources/windsurf-rules`));
-    return;
-  }
-
-  for (const name of WINDSURF_RULE_SKILLS) {
-    const src = path.join(sourceDir, `${name}.md`);
-    const dest = path.join(rulesDir, `${name}.md`);
-    if (!fs.existsSync(src)) {
-      out.warn(fmt.warning(`Windsurf rule template missing: ${src}`));
-      continue;
-    }
-    fs.copyFileSync(src, dest);
-    out.info(fmt.success(`Installed Windsurf rule to ${dest}`));
-  }
+function installWindsurfRules(session: InstallSession, root: string, out: InitOutput): void {
+  session.applyAll(ruleArtifacts("windsurf", root, out));
+  cleanupRetiredRules(session, "windsurf");
 }
 
 
@@ -875,14 +789,6 @@ function installWindsurfMcp(root: string, out: InitOutput): boolean {
   return true;
 }
 
-/** Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0). */
-const CONTINUE_RULE_SKILLS = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
-
 /**
  * Install per-skill Continue.dev rules at <root>/.continue/rules/<skill>.md.
  *
@@ -893,30 +799,9 @@ const CONTINUE_RULE_SKILLS = [
  * Continue.dev has no documented hook surface (the prior hooks install was
  * pruned in rf-cia phase b). Rules + MCP are the only intercepts.
  */
-function installContinueDevRules(root: string, out: InitOutput): void {
-  const rulesDir = path.join(root, ".continue", "rules");
-  fs.mkdirSync(rulesDir, { recursive: true });
-
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "continue-rules"),
-    path.resolve(__dirname, "..", "..", "resources", "continue-rules"),
-  ];
-  const sourceDir = candidates.find((p) => fs.existsSync(p));
-  if (!sourceDir) {
-    out.warn(fmt.warning(`Continue.dev rule templates not found in resources/continue-rules`));
-    return;
-  }
-
-  for (const name of CONTINUE_RULE_SKILLS) {
-    const src = path.join(sourceDir, `${name}.md`);
-    const dest = path.join(rulesDir, `${name}.md`);
-    if (!fs.existsSync(src)) {
-      out.warn(fmt.warning(`Continue.dev rule template missing: ${src}`));
-      continue;
-    }
-    fs.copyFileSync(src, dest);
-    out.info(fmt.success(`Installed Continue.dev rule to ${dest}`));
-  }
+function installContinueDevRules(session: InstallSession, root: string, out: InitOutput): void {
+  session.applyAll(ruleArtifacts("continue", root, out));
+  cleanupRetiredRules(session, "continue");
 }
 
 /**
@@ -1143,80 +1028,34 @@ function installAiderRead(root: string, out: InitOutput): boolean {
   return true;
 }
 
-// Copies an entire skill source directory (SKILL.md + any subfolders like docs/)
-// into the destination. Without this, `docs/` reference material referenced from
-// SKILL.md would never reach users — only SKILL.md would.
-function installSkillDir(sourceSkillDir: string, destSkillDir: string, label: string, out: InitOutput): void {
-  const sourceSkillFile = path.join(sourceSkillDir, "SKILL.md");
-  if (!fs.existsSync(sourceSkillFile)) {
-    out.warn(fmt.warning(`${label} skill template not found at ${sourceSkillFile}`));
-    return;
-  }
-  fs.mkdirSync(destSkillDir, { recursive: true });
-  fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true });
-  out.info(fmt.success(`Installed ${label} skill to ${destSkillDir}`));
-}
-
-function skillResourceDir(name: string): string {
-  return path.join(__dirname, "..", "..", "..", "resources", "skills", name);
-}
-
-function installSkillsTo(skillsDir: string, out: InitOutput): void {
+// Installs every file of every shipped skill (SKILL.md and its docs/) under
+// the write policy in install-files.ts, then retires renamed skills.
+function installSkillsTo(session: InstallSession, skillsDir: string, platform: string, component: string, out: InitOutput): void {
   fs.mkdirSync(skillsDir, { recursive: true });
-  for (const skill of AGENT_SKILLS) {
-    installSkillDir(skillResourceDir(skill.name), path.join(skillsDir, skill.name), skill.description, out);
-  }
-  // Clean up any rafter skill directory left over from a rename — never a
-  // user's own skill that happens to share a retired name (checked via the
-  // SKILL.md's `publisher` frontmatter in removeRetiredSkills itself).
-  for (const name of removeRetiredSkills(skillsDir)) {
-    out.info(fmt.info(`Removed retired skill ${name} from ${skillsDir}`));
-  }
+  session.applyAll(skillArtifacts(skillsDir, platform, component, out));
+  cleanupRetiredSkills(session, skillsDir);
 }
 
-async function installClaudeCodeSkills(root: string, out: InitOutput): Promise<void> {
-  installSkillsTo(path.join(root, ".claude", "skills"), out);
+async function installClaudeCodeSkills(session: InstallSession, root: string, out: InitOutput): Promise<void> {
+  installSkillsTo(session, path.join(root, ".claude", "skills"), "claude-code", "claude-code.skills", out);
 }
 
 /**
- * Sub-agents shipped by `rafter agent init --with-claude-code`.
- *
- * These land in <root>/.claude/agents/<name>.md and become first-class
- * delegation targets (Agent(subagent_type='<name>')) in the calling Claude
- * Code session — distinct from skills, which only surface in the activation
- * prompt. Source files live in `resources/agents/<name>.md`.
- *
- * Keep this list in sync with the Python installer.
+ * Sub-agents shipped by `rafter agent init --with-claude-code` land in
+ * <root>/.claude/agents/<name>.md and become first-class delegation targets
+ * (Agent(subagent_type='<name>')) — distinct from skills, which only surface
+ * in the activation prompt. The list lives in install-files.ts.
  */
-const CLAUDE_CODE_SUBAGENTS: { name: string; description: string }[] = [
-  { name: "rafter", description: "Rafter Security" },
-];
-
-function installClaudeCodeSubAgents(root: string, out: InitOutput): void {
-  const agentsDir = path.join(root, ".claude", "agents");
-  if (!fs.existsSync(agentsDir)) {
-    fs.mkdirSync(agentsDir, { recursive: true });
-  }
-  for (const sub of CLAUDE_CODE_SUBAGENTS) {
-    const destPath = path.join(agentsDir, `${sub.name}.md`);
-    const srcPath = path.join(
-      __dirname, "..", "..", "..", "resources", "agents", `${sub.name}.md`,
-    );
-    if (fs.existsSync(srcPath)) {
-      fs.copyFileSync(srcPath, destPath);
-      out.info(fmt.success(`Installed ${sub.description} sub-agent to ${destPath}`));
-    } else {
-      out.warn(fmt.warning(`${sub.description} sub-agent template not found at ${srcPath}`));
-    }
-  }
+function installClaudeCodeSubAgents(session: InstallSession, root: string, out: InitOutput): void {
+  session.applyAll(claudeAgentArtifacts(root, out));
 }
 
-function installCodexSkills(root: string, out: InitOutput): void {
-  installSkillsTo(path.join(root, ".agents", "skills"), out);
+function installCodexSkills(session: InstallSession, root: string, out: InitOutput): void {
+  installSkillsTo(session, path.join(root, ".agents", "skills"), "codex", "codex.skills", out);
 }
 
-function installGeminiSkills(root: string, out: InitOutput): void {
-  installSkillsTo(path.join(root, ".agents", "skills"), out);
+function installGeminiSkills(session: InstallSession, root: string, out: InitOutput): void {
+  installSkillsTo(session, path.join(root, ".agents", "skills"), "gemini", "gemini.skills", out);
 }
 
 /**
@@ -1249,8 +1088,8 @@ function registerGeminiSkills(skillsDir: string, out: InitOutput): void {
     return;
   }
 
-  for (const skill of AGENT_SKILLS) {
-    const absPath = path.resolve(skillsDir, skill.name);
+  for (const name of KNOWN_SKILL_NAMES) {
+    const absPath = path.resolve(skillsDir, name);
     if (!fs.existsSync(absPath)) continue;
     try {
       const execOpts = { stdio: ["ignore", "pipe", "pipe"] as any, timeout: 10000 };
@@ -1262,11 +1101,11 @@ function registerGeminiSkills(skillsDir: string, out: InitOutput): void {
       } else {
         execFileSync("gemini", ["skills", "link", absPath], execOpts);
       }
-      out.info(fmt.success(`Registered ${skill.name} with Gemini CLI`));
+      out.info(fmt.success(`Registered ${name} with Gemini CLI`));
     } catch (e: any) {
       const msg = (e?.stderr?.toString?.() || e?.message || "").trim();
       out.warn(fmt.warning(
-        `Failed to register ${skill.name} with Gemini CLI: ${msg.split("\n")[0] || "unknown error"}`,
+        `Failed to register ${name} with Gemini CLI: ${msg.split("\n")[0] || "unknown error"}`,
       ));
     }
   }
@@ -1300,6 +1139,11 @@ export function createInitCommand(): Command {
       "--dry-run",
       "Print every file path that would be created, modified, or downloaded — without making any changes (rf-hrtd).",
     )
+    .option(
+      "--force",
+      "Replace installed skill, rule and sub-agent files even if you modified them (the old file is saved as <file>.bak)",
+      false,
+    )
     .option("--quiet", "Suppress informational and success output (warnings and errors still go to stderr)", false)
     .action(async (opts) => {
       const out = createInitOutput(opts.quiet === true);
@@ -1310,6 +1154,9 @@ export function createInitCommand(): Command {
       const manager = new ConfigManager();
       const root = opts.local ? process.cwd() : os.homedir();
       const scope: "project" | "user" = opts.local ? "project" : "user";
+      // Every skill / rule / sub-agent file goes through this session's write
+      // policy and is recorded in <root>/.rafter/installed.json.
+      const session = new InstallSession({ root, out, force: opts.force === true, dryRun: opts.dryRun === true });
       if (opts.local) {
         out.info(fmt.info(`Project-local install — writing configs under ${root}`));
       }
@@ -1456,6 +1303,7 @@ export function createInitCommand(): Command {
           wantSkillScanner,
           claudeCodeMcpDisabled: components["claude-code.mcp"]?.enabled === false,
           riskLevel: opts.riskLevel,
+          session,
         });
         return;
       }
@@ -1611,8 +1459,8 @@ export function createInitCommand(): Command {
       let claudeCodeOk = false;
       if ((hasClaudeCode || opts.withClaudeCode || (opts.local && wantClaudeCode)) && wantClaudeCode) {
         try {
-          await installClaudeCodeSkills(root, out);
-          installClaudeCodeSubAgents(root, out);
+          await installClaudeCodeSkills(session, root, out);
+          installClaudeCodeSubAgents(session, root, out);
           installClaudeCodeHooks(root, out);
           if (scope === "project") {
             const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
@@ -1635,7 +1483,7 @@ export function createInitCommand(): Command {
       let codexOk = false;
       if ((hasCodex || (opts.local && wantCodex)) && wantCodex) {
         try {
-          installCodexSkills(root, out);
+          installCodexSkills(session, root, out);
           installCodexHooks(root, out);
           if (scope === "user") manager.set("agent.environments.codex.enabled", true);
           codexOk = true;
@@ -1649,7 +1497,7 @@ export function createInitCommand(): Command {
       if ((hasGemini || (opts.local && wantGemini)) && wantGemini) {
         try {
           geminiOk = installGeminiMcp(root, out);
-          installGeminiSkills(root, out);
+          installGeminiSkills(session, root, out);
           registerGeminiSkills(path.join(root, ".agents", "skills"), out);
           installGeminiHooks(root, out);
           if (geminiOk && scope === "user") manager.set("agent.environments.gemini.enabled", true);
@@ -1664,8 +1512,8 @@ export function createInitCommand(): Command {
         try {
           cursorOk = installCursorMcp(root, out);
           installCursorHooks(root, out);
-          installCursorRules(root, out);
-          installCursorSubAgents(root, out);
+          installCursorRules(session, root, out);
+          installCursorSubAgents(session, root, out);
           if (cursorOk && scope === "user") manager.set("agent.environments.cursor.enabled", true);
         } catch (e) {
           console.error(fmt.error(`Failed to install Cursor integration: ${e}`));
@@ -1687,7 +1535,7 @@ export function createInitCommand(): Command {
             windsurfOk = installWindsurfMcp(root, out);
             if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
           }
-          installWindsurfRules(root, out);
+          installWindsurfRules(session, root, out);
           // AGENTS.md is written below in installGlobalInstructions when
           // platforms.windsurf is true.
           if (!hasWindsurf) windsurfOk = true; // local-scope success: rules + AGENTS.md
@@ -1709,7 +1557,7 @@ export function createInitCommand(): Command {
             continueOk = installContinueDevMcp(root, out);
             if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
           }
-          installContinueDevRules(root, out);
+          installContinueDevRules(session, root, out);
           if (!hasContinueDev) continueOk = true; // local-scope success: rules only
         } catch (e) {
           console.error(fmt.error(`Failed to install Continue.dev integration: ${e}`));
@@ -1767,6 +1615,9 @@ export function createInitCommand(): Command {
         gemini: geminiOk,
         windsurf: windsurfOk,
       }, root, scope, out);
+
+      session.save();
+      reportKeptSummary(session);
 
       out.info();
       // rf-er8a: do not report a clean success if the hook we just wrote cannot

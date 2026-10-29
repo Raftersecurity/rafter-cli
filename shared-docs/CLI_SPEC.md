@@ -315,6 +315,37 @@ Initialize local security system. Creates config and detects available developme
 - `--quiet` — suppress informational, progress, and success output; warnings and errors remain visible on stderr. Initialization and integration installation still run normally. When combined with `--dry-run`, the dry-run plan remains visible.
 - `--update` — re-download betterleaks and reinstall integrations without resetting config
 - `--local` — install integration configs into the current working directory instead of the user home. Writes to `./.claude/`, `./.agents/`, `./.gemini/`, `./.cursor/` etc. Supports `--with-claude-code`, `--with-codex`, `--with-gemini`, `--with-cursor`. User-level side effects (global config, `agent.environments.*.enabled`, auto-detection, betterleaks download) are suppressed in this mode. Intended for benchmark harnesses, one-off project setup, and ephemeral containers.
+- `--force` — replace installed skill, rule and sub-agent files even when they were modified locally; the old file is saved as `<file>.bak`
+- `--dry-run` — print every path the run would write, with the predicted outcome for each skill, rule and sub-agent file (see below), without writing anything
+
+#### Installed files and local edits
+
+Skill files (`SKILL.md` and `docs/`), per-skill rule files (Cursor, Windsurf, Continue.dev) and sub-agent files are whole files rafter owns.
+Each run reports one line per file with its outcome:
+
+| Outcome | Meaning |
+|---------|---------|
+| `added` | The file did not exist; written |
+| `unchanged` | The file already holds the current content |
+| `updated` | The file held content rafter wrote (per the install manifest) or shipped in a published release; replaced |
+| `kept` | The file was modified locally or is not rafter's; left as is, new version written to `<file>.rafter-new` (stderr under `--quiet`) |
+| `replaced` | As `kept`, but `--force` was given; old file saved as `<file>.bak` (stderr under `--quiet`) |
+
+Rafter records what it wrote in an install manifest, `<root>/.rafter/installed.json` (`~/.rafter/` at user scope, `./.rafter/` with `--local`):
+
+```json
+{
+  "schema": 1,
+  "cliVersion": "x.y.z",
+  "files": {
+    ".claude/skills/rafter/SKILL.md": { "sha256": "…", "component": "claude-code.skills", "platform": "claude-code", "cliVersion": "x.y.z" }
+  }
+}
+```
+
+Keys are paths relative to the root, with forward slashes; Node and Python read and write the same file.
+A missing or unreadable manifest is treated as empty (with one warning), so ownership falls back to `resources/shipped-hashes.json`, the sha256 of every bundled resource in every published release.
+Marker-block files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `RAFTER.md`) and merged JSON/YAML configs are edited in place and keep user content as before; they are not listed in the manifest.
 
 ### rafter agent list [OPTIONS]
 

@@ -280,7 +280,7 @@ def _claude_code_instructions() -> ComponentSpec:
 
 # Canonical rafter-authored skills installed by a per-platform "skills"
 # component — the single `KNOWN_SKILL_NAMES` list in `.skill`, so this and
-# `_AGENT_SKILLS` in `agent.py` can't drift apart.
+# `agent init` (install_files.py) can't drift apart.
 _COMPONENT_SKILL_NAMES: tuple[str, ...] = KNOWN_SKILL_NAMES
 
 
