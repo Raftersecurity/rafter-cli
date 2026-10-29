@@ -238,16 +238,24 @@ def test_node_and_python_ship_identical_hash_tables():
 # policy) surviving an upgrade intact.
 
 _FLAGS = ["--with-claude-code", "--with-codex", "--with-gemini", "--with-cursor", "--with-windsurf", "--with-continue", "--with-aider"]
-_REAL = re.compile(r"(added|updated|unchanged|kept|replaced)\s+(\S+)")
-_PLAN = re.compile(r"^\s+(WRITE|SKIP)\s+(\S+)\s+\((added|updated|unchanged|(\S+) kept: modified)\)", re.MULTILINE)
+_REAL = re.compile(r"(added|updated|kept|replaced) +(/\S+)")
+_PLAN = re.compile(r"^\s+WRITE\s+(\S+)\s+\((added|updated|(\S+) kept: modified)\)", re.MULTILINE)
+_UNCHANGED = re.compile(r"(\d+) files? unchanged")
 
 
-def _real_outcomes(output: str) -> list[tuple[str, str]]:
-    return [(m.group(2), m.group(1)) for m in _REAL.finditer(output)]
+def _unchanged(output: str) -> int:
+    m = _UNCHANGED.search(output)
+    return int(m.group(1)) if m else 0
 
 
-def _planned_outcomes(output: str) -> list[tuple[str, str]]:
-    return [(m.group(4), "kept") if m.group(4) else (m.group(2), m.group(3)) for m in _PLAN.finditer(output)]
+def _real_outcomes(output: str) -> dict:
+    """[path, outcome] per reported file of a real run, plus the unchanged count."""
+    return {"files": [(m.group(2), m.group(1)) for m in _REAL.finditer(output)], "unchanged": _unchanged(output)}
+
+
+def _planned_outcomes(output: str) -> dict:
+    files = [(m.group(3), "kept") if m.group(3) else (m.group(1), m.group(2)) for m in _PLAN.finditer(output)]
+    return {"files": files, "unchanged": _unchanged(output)}
 
 
 def test_init_reports_each_file_keeps_edits_preserves_user_text_and_dedupes_hooks(home, monkeypatch):
@@ -275,8 +283,9 @@ def test_init_reports_each_file_keeps_edits_preserves_user_text_and_dedupes_hook
     plan = _planned_outcomes(init("--dry-run"))
     first = _real_outcomes(init())
     assert plan == first
-    assert (str(edited), "kept") in first
-    assert any(o == "updated" for _, o in first)
+    assert (str(edited), "kept") in first["files"]
+    assert any(o == "updated" for _, o in first["files"])
+    assert first["unchanged"] > 0
 
     for p in marker_files:
         text = p.read_text()
@@ -290,6 +299,38 @@ def test_init_reports_each_file_keeps_edits_preserves_user_text_and_dedupes_hook
     assert (home / ".aider.conf.yml").read_text().count("RAFTER.md") == 1
 
     second = _real_outcomes(init())
-    assert [x for x in second if x[1] not in ("unchanged", "kept")] == []
+    assert second["files"] == [(str(edited), "kept")]
+    assert second["unchanged"] == len(first["files"]) + first["unchanged"] - 1
     assert [hook_count(r) for r in HOOK_FILES] == hooks_before
     assert "rafter" in json.loads((home / ".cursor" / "mcp.json").read_text())["mcpServers"]
+
+
+def test_enable_keeps_edited_skill_and_rule_writing_new_version_beside(home, monkeypatch):
+    from typer.testing import CliRunner
+    from rafter_cli.__main__ import app
+    from rafter_cli.commands.agent_components import reset_registry_cache
+    from rafter_cli.commands.install_files import _resources
+
+    copy_fixture(home)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(home)
+    reset_registry_cache()
+    skill = home / ".claude" / "skills" / "rafter" / "SKILL.md"
+    rule = home / ".windsurf" / "rules" / "rafter.md"
+    for p in (skill, rule):
+        p.write_text(p.read_text() + "\nmine\n")
+    edited = [p.read_bytes() for p in (skill, rule)]
+
+    result = CliRunner().invoke(app, ["agent", "enable", "claude-code.skills", "windsurf.rules"])
+    reset_registry_cache()
+    assert result.exit_code == 0, result.output
+
+    fresh = [
+        _resources().joinpath("skills", "rafter", "SKILL.md").read_bytes(),
+        _resources().joinpath("windsurf-rules", "rafter.md").read_bytes(),
+    ]
+    for p, before, new in zip((skill, rule), edited, fresh):
+        assert p.read_bytes() == before, p
+        assert Path(f"{p}.rafter-new").read_bytes() == new, p
+        assert re.search(rf"kept +{re.escape(str(p))}", result.output), result.output

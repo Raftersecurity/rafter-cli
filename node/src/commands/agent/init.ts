@@ -21,6 +21,8 @@ import {
   cleanupRetiredSkills,
   cursorAgentArtifacts,
   reportKeptSummary,
+  reportUnchangedSummary,
+  unchangedLine,
   ruleArtifacts,
   skillArtifacts,
   type FileArtifact,
@@ -171,7 +173,7 @@ function printDryRunPlan(plan: {
   const F = (artifacts: FileArtifact[]) => {
     for (const a of artifacts) {
       const outcome = plan.session.apply(a);
-      if (outcome === "unchanged") S(a.dest, "unchanged");
+      if (outcome === "unchanged") continue; // summed into one line below
       else if (outcome === "kept") W(`${a.dest}.rafter-new`, `${a.dest} kept: modified`);
       else if (outcome === "replaced") W(a.dest, `replaced; backup at ${a.dest}.bak`);
       else W(a.dest, outcome);
@@ -308,6 +310,12 @@ function printDryRunPlan(plan: {
     console.log("OpenClaw (--with-openclaw):");
     W(path.join(home, ".openclaw", "workspace", "skills", "rafter-security", "SKILL.md"), "ClawHub-shape");
     R(path.join(home, ".openclaw", "skills", "rafter-security.md"), "legacy file from rafter ≤ 0.7.7, if present");
+  }
+
+  const unchanged = plan.session.count("unchanged");
+  if (unchanged > 0) {
+    console.log();
+    console.log(`  SKIP      ${unchangedLine(unchanged)}`);
   }
 
   console.log();
@@ -1617,6 +1625,7 @@ export function createInitCommand(): Command {
       }, root, scope, out);
 
       session.save();
+      reportUnchangedSummary(session);
       reportKeptSummary(session);
 
       out.info();

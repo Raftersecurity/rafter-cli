@@ -13,6 +13,7 @@ install state across all registered components.
 from __future__ import annotations
 
 import importlib.resources
+import inspect
 import json
 import re
 from dataclasses import dataclass
@@ -23,7 +24,15 @@ from typing import Any, Callable
 import yaml
 
 from ..core.config_manager import ConfigManager
-from .skill import KNOWN_SKILL_NAMES, remove_retired_skills
+from .skill import KNOWN_SKILL_NAMES
+from .install_files import (
+    RULE_SKILLS,
+    InstallOutput,
+    InstallSession,
+    cleanup_retired_skills,
+    rule_artifacts,
+    skill_artifacts,
+)
 
 
 # ── instruction block (mirrors node/src/commands/agent/instruction-block.ts) ──
@@ -167,6 +176,14 @@ RAFTER_OPENCODE_MCP_ENTRY: dict[str, Any] = {
 }
 
 
+def _with_session(session: InstallSession | None, fn: Callable[[InstallSession], None]) -> None:
+    """Run `fn` with the caller's session, or a fresh one that is saved afterwards."""
+    s = session or InstallSession(root=Path.home(), out=InstallOutput())
+    fn(s)
+    if session is None:
+        s.save()
+
+
 # ── Skill template lookup ─────────────────────────────────────────────
 
 def _skill_text(*segments: str) -> str | None:
@@ -188,8 +205,18 @@ class ComponentSpec:
     detect_dir: Path
     path: Path
     is_installed: Callable[[], bool]
-    install: Callable[[], None]
+    # Skill and rule files go through the session's write policy
+    # (install_files.py), so a locally edited file is kept, not overwritten.
+    # Called with no session, the component uses its own rooted at home.
+    install: Callable[..., None]
     uninstall: Callable[[], None]
+
+    def install_with(self, session: InstallSession) -> None:
+        """Install, passing `session` to components that write whole files."""
+        if "session" in inspect.signature(self.install).parameters:
+            self.install(session=session)
+        else:
+            self.install()
 
 
 # ── Per-component builders ────────────────────────────────────────────
@@ -299,22 +326,15 @@ def _skills_component(
     def is_installed() -> bool:
         return any(p.exists() for p in dest_paths)
 
-    def install() -> None:
-        for name in _COMPONENT_SKILL_NAMES:
-            dest = skills_base_dir / name / "SKILL.md"
-            content = _skill_text("skills", name, "SKILL.md")
-            if content is None and name == "rafter":
-                # Legacy fallback — older python packages used rafter-security-skill.md
-                content = _skill_text("rafter-security-skill.md")
-            if content is None:
-                continue
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(content, encoding="utf-8")
-        # Clean up any rafter skill directory left over from a rename —
-        # never a user's own skill that happens to share a retired name
-        # (checked via the SKILL.md's `publisher` frontmatter in
-        # remove_retired_skills itself).
-        remove_retired_skills(skills_base_dir)
+    def install(session: InstallSession | None = None) -> None:
+        def run(s: InstallSession) -> None:
+            # SKILL.md only, matching what uninstall removes (init also installs docs/).
+            s.apply_all([a for a in skill_artifacts(skills_base_dir, platform, cid) if a.dest.name == "SKILL.md"])
+            # Clean up any rafter skill directory left over from a rename —
+            # never a user's own or a modified one (publisher tag or hash proof).
+            cleanup_retired_skills(s, skills_base_dir)
+
+        _with_session(session, run)
 
     def uninstall() -> None:
         for p in dest_paths:
@@ -688,12 +708,7 @@ def _gemini_mcp() -> ComponentSpec:
 
 
 # Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3).
-_WINDSURF_RULE_SKILLS: tuple[str, ...] = (
-    "rafter",
-    "rafter-secure-design",
-    "rafter-code-review",
-    "rafter-skill-review",
-)
+_WINDSURF_RULE_SKILLS: tuple[str, ...] = RULE_SKILLS
 
 
 def _windsurf_rules() -> ComponentSpec:
@@ -710,18 +725,8 @@ def _windsurf_rules() -> ComponentSpec:
     def is_installed() -> bool:
         return all((rules_dir / f"{n}.md").exists() for n in _WINDSURF_RULE_SKILLS)
 
-    def install() -> None:
-        rules_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            res = importlib.resources.files("rafter_cli.resources")
-        except Exception:
-            return
-        for name in _WINDSURF_RULE_SKILLS:
-            try:
-                content = res.joinpath("windsurf-rules", f"{name}.md").read_text(encoding="utf-8")
-            except Exception:
-                continue
-            (rules_dir / f"{name}.md").write_text(content, encoding="utf-8")
+    def install(session: InstallSession | None = None) -> None:
+        _with_session(session, lambda s: s.apply_all(rule_artifacts("windsurf", Path.cwd())))
 
     def uninstall() -> None:
         for name in _WINDSURF_RULE_SKILLS:
@@ -780,12 +785,7 @@ def _windsurf_mcp() -> ComponentSpec:
 
 
 # Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0).
-_CONTINUE_RULE_SKILLS: tuple[str, ...] = (
-    "rafter",
-    "rafter-secure-design",
-    "rafter-code-review",
-    "rafter-skill-review",
-)
+_CONTINUE_RULE_SKILLS: tuple[str, ...] = RULE_SKILLS
 
 
 def _continue_rules() -> ComponentSpec:
@@ -804,18 +804,8 @@ def _continue_rules() -> ComponentSpec:
     def is_installed() -> bool:
         return all((rules_dir / f"{n}.md").exists() for n in _CONTINUE_RULE_SKILLS)
 
-    def install() -> None:
-        rules_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            res = importlib.resources.files("rafter_cli.resources")
-        except Exception:
-            return
-        for name in _CONTINUE_RULE_SKILLS:
-            try:
-                content = res.joinpath("continue-rules", f"{name}.md").read_text(encoding="utf-8")
-            except Exception:
-                continue
-            (rules_dir / f"{name}.md").write_text(content, encoding="utf-8")
+    def install(session: InstallSession | None = None) -> None:
+        _with_session(session, lambda s: s.apply_all(rule_artifacts("continue", Path.cwd())))
 
     def uninstall() -> None:
         for name in _CONTINUE_RULE_SKILLS:

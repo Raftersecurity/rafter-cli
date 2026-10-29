@@ -51,6 +51,8 @@ from .install_files import (
     cleanup_retired_skills,
     cursor_agent_artifacts,
     report_kept_summary,
+    report_unchanged_summary,
+    unchanged_line,
     rule_artifacts,
     skill_artifacts,
 )
@@ -312,8 +314,8 @@ def _print_dry_run_plan(
         for a in artifacts:
             outcome = session.apply(a)
             if outcome == "unchanged":
-                S(a.dest, "unchanged")
-            elif outcome == "kept":
+                continue  # summed into one line below
+            if outcome == "kept":
                 W(Path(f"{a.dest}.rafter-new"), f"{a.dest} kept: modified")
             elif outcome == "replaced":
                 W(a.dest, f"replaced; backup at {a.dest}.bak")
@@ -436,6 +438,11 @@ def _print_dry_run_plan(
         print("OpenClaw (--with-openclaw):")
         W(home / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md", "ClawHub-shape")
         R(home / ".openclaw" / "skills" / "rafter-security.md", "legacy file from rafter ≤ 0.7.7, if present")
+
+    unchanged = session.count("unchanged")
+    if unchanged:
+        print()
+        print(f"  SKIP      {unchanged_line(unchanged)}")
 
     rprint()
     rprint(fmt.divider())
@@ -1597,6 +1604,7 @@ def init(
     )
 
     session.save()
+    report_unchanged_summary(session)
     report_kept_summary(session)
 
     _init_print(quiet)
@@ -4498,6 +4506,8 @@ def components_enable(
 ):
     """Install a specific agent component."""
     exit_code = 0
+    # Skill / rule files keep local edits, as in `agent init`.
+    session = InstallSession(root=Path.home(), out=InstallOutput())
     seen: set[str] = set()
     for raw in components:
         if raw in seen:
@@ -4520,12 +4530,16 @@ def components_enable(
             continue
 
         try:
-            spec.install()
+            spec.install_with(session)
             _components_record_state(spec.id, True)
             rprint(fmt.success(f"Enabled {spec.id} → {spec.path}"))
         except Exception as err:
             rprint(fmt.error(f"Failed to enable {spec.id}: {err}"), file=sys.stderr)
             exit_code = 1
+
+    session.save()
+    report_unchanged_summary(session)
+    report_kept_summary(session, "remove the file and re-run 'rafter agent enable' to replace it")
 
     if exit_code:
         raise typer.Exit(code=exit_code)

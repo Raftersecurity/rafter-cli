@@ -248,13 +248,19 @@ describe("agent init over the 0.11.2 fixture (built CLI)", () => {
     return r.stdout;
   }
 
-  /** [path, outcome] per whole-file artifact line of a real run. */
-  const realOutcomes = (stdout: string) =>
-    [...stdout.matchAll(/(added|updated|unchanged|kept|replaced)\s+(\S+)/g)].map((m) => [m[2], m[1]]);
+  type Outcomes = { files: string[][]; unchanged: number };
+  const unchangedCount = (stdout: string) => Number(stdout.match(/(\d+) files? unchanged/)?.[1] ?? 0);
+  /** [path, outcome] per reported file of a real run, plus the unchanged count. */
+  const realOutcomes = (stdout: string): Outcomes => ({
+    files: [...stdout.matchAll(/(added|updated|kept|replaced) +(\/\S+)/g)].map((m) => [m[2], m[1]]),
+    unchanged: unchangedCount(stdout),
+  });
   /** The same, recovered from a dry-run plan. */
-  const plannedOutcomes = (stdout: string) =>
-    [...stdout.matchAll(/^\s+(WRITE|SKIP)\s+(\S+)\s+\((added|updated|unchanged|(\S+) kept: modified)\)/gm)]
-      .map((m) => (m[4] ? [m[4], "kept"] : [m[2], m[3]]));
+  const plannedOutcomes = (stdout: string): Outcomes => ({
+    files: [...stdout.matchAll(/^\s+WRITE\s+(\S+)\s+\((added|updated|(\S+) kept: modified)\)/gm)]
+      .map((m) => (m[3] ? [m[3], "kept"] : [m[1], m[2]])),
+    unchanged: unchangedCount(stdout),
+  });
 
   it("reports each file, keeps edits, preserves user text, and does not duplicate hooks", () => {
     copyFixture(home);
@@ -267,8 +273,9 @@ describe("agent init over the 0.11.2 fixture (built CLI)", () => {
     const plan = plannedOutcomes(init(["--dry-run"]));
     const first = realOutcomes(init());
     expect(plan).toEqual(first);
-    expect(first).toContainEqual([edited, "kept"]);
-    expect(first.filter(([, o]) => o === "updated").length).toBeGreaterThan(0);
+    expect(first.files).toContainEqual([edited, "kept"]);
+    expect(first.files.filter(([, o]) => o === "updated").length).toBeGreaterThan(0);
+    expect(first.unchanged).toBeGreaterThan(0);
 
     for (const p of markerFiles) {
       const text = fs.readFileSync(p, "utf-8");
@@ -280,8 +287,41 @@ describe("agent init over the 0.11.2 fixture (built CLI)", () => {
     expect(fs.readFileSync(path.join(home, ".aider.conf.yml"), "utf-8").match(/RAFTER\.md/g)).toHaveLength(1);
 
     const second = realOutcomes(init());
-    expect(second.filter(([, o]) => o !== "unchanged" && o !== "kept")).toEqual([]);
+    expect(second.files).toEqual([[edited, "kept"]]);
+    expect(second.unchanged).toBe(first.files.length + first.unchanged - 1);
     expect([".claude/settings.json", ".codex/hooks.json", ".cursor/hooks.json", ".gemini/settings.json"].map(hookCount)).toEqual(hooksBefore);
     expect(JSON.parse(fs.readFileSync(path.join(home, ".cursor", "mcp.json"), "utf-8")).mcpServers).toHaveProperty("rafter");
+  });
+});
+
+describe("agent enable over the 0.11.2 fixture (built CLI)", () => {
+  beforeAll(() => {
+    if (!fs.existsSync(CLI_DIST)) execSync("pnpm run build", { cwd: PROJECT_ROOT, stdio: "inherit" });
+  });
+
+  it("keeps an edited skill file and rule file, writing the new version beside each", () => {
+    copyFixture(home);
+    const skill = path.join(home, ".claude", "skills", "rafter", "SKILL.md");
+    const rule = path.join(home, ".windsurf", "rules", "rafter.md");
+    for (const p of [skill, rule]) fs.appendFileSync(p, "\nmine\n");
+    const edited = [skill, rule].map((p) => fs.readFileSync(p));
+
+    const r = spawnSync(process.execPath, [CLI_DIST, "agent", "enable", "claude-code.skills", "windsurf.rules"], {
+      cwd: home,
+      encoding: "utf-8",
+      timeout: 60_000,
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), CI: "1" },
+    });
+    expect(r.status, r.stderr).toBe(0);
+
+    const fresh = [
+      fs.readFileSync(path.join(PROJECT_ROOT, "resources", "skills", "rafter", "SKILL.md")),
+      fs.readFileSync(path.join(PROJECT_ROOT, "resources", "windsurf-rules", "rafter.md")),
+    ];
+    [skill, rule].forEach((p, i) => {
+      expect(fs.readFileSync(p).equals(edited[i]), p).toBe(true);
+      expect(fs.readFileSync(p + ".rafter-new").equals(fresh[i]), p).toBe(true);
+      expect(r.stdout + r.stderr).toMatch(new RegExp(`kept +${p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    });
   });
 });

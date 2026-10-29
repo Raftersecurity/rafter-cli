@@ -321,12 +321,13 @@ Initialize local security system. Creates config and detects available developme
 #### Installed files and local edits
 
 Skill files (`SKILL.md` and `docs/`), per-skill rule files (Cursor, Windsurf, Continue.dev) and sub-agent files are whole files rafter owns.
-Each run reports one line per file with its outcome:
+Each run reports one line per file with its outcome, except that unchanged files are summed into one `N files unchanged` line (in `--dry-run`, `SKIP      N files unchanged`).
+`rafter agent enable` applies the same rules to the skill and rule files of the component it installs.
 
 | Outcome | Meaning |
 |---------|---------|
 | `added` | The file did not exist; written |
-| `unchanged` | The file already holds the current content |
+| `unchanged` | The file already holds the current content (counted, not listed) |
 | `updated` | The file held content rafter wrote (per the install manifest) or shipped in a published release; replaced |
 | `kept` | The file was modified locally or is not rafter's; left as is, new version written to `<file>.rafter-new` (stderr under `--quiet`) |
 | `replaced` | As `kept`, but `--force` was given; old file saved as `<file>.bak` (stderr under `--quiet`) |

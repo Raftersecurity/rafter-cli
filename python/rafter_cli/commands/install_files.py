@@ -224,7 +224,8 @@ class InstallSession:
             self._record(a)
         else:  # kept
             Path(str(a.dest) + NEW_VERSION_SUFFIX).write_bytes(a.content)
-        report_outcome(self.out, a.dest, outcome)
+        if outcome != "unchanged":
+            report_outcome(self.out, a.dest, outcome)
         return outcome
 
     def apply_all(self, artifacts: list[FileArtifact]) -> list[FileOutcome]:
@@ -250,8 +251,8 @@ class InstallSession:
         p.write_bytes((json.dumps(doc, indent=2) + "\n").encode("utf-8"))
         self._dirty = False
 
-    def kept_count(self) -> int:
-        return sum(1 for _, o in self.outcomes if o == "kept")
+    def count(self, outcome: str) -> int:
+        return sum(1 for _, o in self.outcomes if o == outcome)
 
 
 def outcome_line(dest: Path, outcome: str) -> str:
@@ -264,7 +265,11 @@ def outcome_line(dest: Path, outcome: str) -> str:
 
 
 def report_outcome(out: InstallOutput, dest: Path, outcome: str) -> None:
-    """kept / replaced need the user's attention, so they print even under --quiet (to stderr)."""
+    """One line per file that changed or needs attention.
+
+    Unchanged files are summed into one line instead (report_unchanged_summary).
+    kept / replaced print even under --quiet (to stderr).
+    """
     line = outcome_line(dest, outcome)
     if outcome in ("kept", "replaced"):
         out.warn(fmt.warning(line))
@@ -272,14 +277,27 @@ def report_outcome(out: InstallOutput, dest: Path, outcome: str) -> None:
         out.info(fmt.success(line))
 
 
-def report_kept_summary(session: InstallSession) -> None:
-    n = session.kept_count()
+def unchanged_line(n: int) -> str:
+    return f"{n} file{'' if n == 1 else 's'} unchanged"
+
+
+def report_unchanged_summary(session: InstallSession) -> None:
+    n = session.count("unchanged")
+    if n > 0:
+        session.out.info(fmt.success(unchanged_line(n)))
+
+
+FORCE_HINT = f"re-run with --force to replace (the old version is saved as {BACKUP_SUFFIX})"
+
+
+def report_kept_summary(session: InstallSession, replace_hint: str = FORCE_HINT) -> None:
+    """Closing hint when any modified files were kept. `replace_hint` says how to replace them instead."""
+    n = session.count("kept")
     if n == 0:
         return
     session.out.warn(fmt.warning(
         f"{n} installed file{'' if n == 1 else 's'} had local changes and {'was' if n == 1 else 'were'} kept. "
-        f"Compare each with its {NEW_VERSION_SUFFIX} copy, or re-run with --force to replace "
-        f"(the old version is saved as {BACKUP_SUFFIX})."
+        f"Compare each with its {NEW_VERSION_SUFFIX} copy, or {replace_hint}."
     ))
 
 

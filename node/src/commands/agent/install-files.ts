@@ -229,7 +229,7 @@ export class InstallSession {
         fs.writeFileSync(a.dest + NEW_VERSION_SUFFIX, a.content);
         break;
     }
-    reportOutcome(this.out, a.dest, outcome);
+    if (outcome !== "unchanged") reportOutcome(this.out, a.dest, outcome);
     return outcome;
   }
 
@@ -265,8 +265,8 @@ export class InstallSession {
     this.dirty = false;
   }
 
-  keptCount(): number {
-    return this.outcomes.filter((o) => o.outcome === "kept").length;
+  count(outcome: FileOutcome): number {
+    return this.outcomes.filter((o) => o.outcome === outcome).length;
   }
 }
 
@@ -277,21 +277,35 @@ export function outcomeLine(dest: string, outcome: FileOutcome): string {
   return `${label} ${dest}`;
 }
 
-/** kept / replaced need the user's attention, so they print even under --quiet (to stderr). */
+/**
+ * One line per file that changed or needs attention; unchanged files are
+ * summed into one line instead (reportUnchangedSummary). kept / replaced
+ * print even under --quiet (to stderr).
+ */
 export function reportOutcome(out: InstallOutput, dest: string, outcome: FileOutcome): void {
   const line = outcomeLine(dest, outcome);
   if (outcome === "kept" || outcome === "replaced") out.warn(fmt.warning(line));
   else out.info(fmt.success(line));
 }
 
-/** Closing hint when init kept any modified files. */
-export function reportKeptSummary(session: InstallSession): void {
-  const n = session.keptCount();
+export function unchangedLine(n: number): string {
+  return `${n} file${n === 1 ? "" : "s"} unchanged`;
+}
+
+export function reportUnchangedSummary(session: InstallSession): void {
+  const n = session.count("unchanged");
+  if (n > 0) session.out.info(fmt.success(unchangedLine(n)));
+}
+
+export const FORCE_HINT = `re-run with --force to replace (the old version is saved as ${BACKUP_SUFFIX})`;
+
+/** Closing hint when any modified files were kept. `replaceHint` says how to replace them instead. */
+export function reportKeptSummary(session: InstallSession, replaceHint: string = FORCE_HINT): void {
+  const n = session.count("kept");
   if (n === 0) return;
   session.out.warn(fmt.warning(
     `${n} installed file${n === 1 ? "" : "s"} had local changes and ${n === 1 ? "was" : "were"} kept. ` +
-    `Compare each with its ${NEW_VERSION_SUFFIX} copy, or re-run with --force to replace ` +
-    `(the old version is saved as ${BACKUP_SUFFIX}).`,
+    `Compare each with its ${NEW_VERSION_SUFFIX} copy, or ${replaceHint}.`,
   ));
 }
 
