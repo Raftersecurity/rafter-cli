@@ -342,6 +342,8 @@ describe("runRemoteScan", () => {
     ).rejects.toThrow("process.exit");
 
     expect(exitSpy).toHaveBeenCalledWith(3); // EXIT_QUOTA_EXHAUSTED
+    // --quiet suppresses status, not the reason the scan failed.
+    expect(console.error).toHaveBeenCalledWith("Quota exhausted");
   });
 
   it("exits with EXIT_INSUFFICIENT_SCOPE on 403 with scope keyword", async () => {

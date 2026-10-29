@@ -197,6 +197,7 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
       if (forbiddenCode >= 0) {
         process.exit(forbiddenCode);
       } else if (e.response?.status === 429) {
+        console.error("Quota exhausted");
         process.exit(EXIT_QUOTA_EXHAUSTED);
       } else if (e.response?.data) {
         console.error(e.response.data);
