@@ -25,6 +25,7 @@ from rich import print as rprint
 from .. import __version__
 from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
+from ..core.usage_counters import count_scan
 from ..core.config_manager import (
     ConfigManager,
     is_secret_config_key,
@@ -2576,6 +2577,7 @@ def scan(
         _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
+    scan_start = time.monotonic()
     eng, select_reason = _select_engine(engine, quiet, auto_update_enabled)
     report = _build_engine_report(engine, eng, select_reason)
 
@@ -2588,6 +2590,7 @@ def scan(
             print(f"Scanning file: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
         results = _scan_file(resolved_path, eng, custom_patterns, report=report)
 
+    count_scan(report, time.monotonic() - scan_start)
     filtered = _apply_baseline(results, baseline_entries)
     _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions, report=report)
 
