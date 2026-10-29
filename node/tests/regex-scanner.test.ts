@@ -20,7 +20,7 @@ describe("RegexScanner", () => {
   // The Node and Python CLIs must skip the same directories by default: Python
   // once scanned vendor/ and reported 19,920 findings where Node reported 271.
   it("skips the same default directories as the Python CLI", () => {
-    const skipped = ["node_modules", ".git", "dist", "build", ".next", "coverage", ".vscode", ".idea", "vendor", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "results", ".terraform", "bower_components"];
+    const skipped = ["node_modules", ".git", "dist", "build", ".next", "coverage", ".vscode", ".idea", "vendor", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "results", ".terraform", "bower_components", ".trigger"];
     for (const dir of skipped) {
       fs.mkdirSync(path.join(tmpDir, dir), { recursive: true });
       fs.writeFileSync(path.join(tmpDir, dir, "creds.env"), "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n");
