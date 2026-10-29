@@ -521,6 +521,10 @@ def pretool(
         decision = _deny_on_error(exc)
     count_hook(decision.get("tool"), "error" if decision.get("error") else decision.get("decision"), decision.get("risk"))
     _write_pretool_decision(decision, format)
+    # Once a day after an upgrade: bring installed skill and rule files up to this version.
+    sys.stdout.flush()
+    from .auto_update import run_hook_auto_update
+    run_hook_auto_update()
 
 
 def decide_pretool(raw: str, fmt: str) -> dict:

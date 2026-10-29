@@ -39,7 +39,7 @@ from .skill import (
     remove_retired_skills,
 )
 
-FileOutcome = Literal["added", "updated", "unchanged", "kept", "replaced"]
+FileOutcome = Literal["added", "updated", "unchanged", "kept", "replaced", "reconciled"]
 
 # What init does with an installed file the user has modified (or that it
 # cannot prove it wrote). "keep" leaves the file alone and writes the new
@@ -156,8 +156,14 @@ class InstallSession:
     force: bool = False
     dry_run: bool = False
     version: str = field(default_factory=cli_version)
+    # save() keeps the manifest's cliVersion instead of stamping this CLI's.
+    # The hook's auto-update sets it: it refreshes skill and rule files only,
+    # so the install as a whole (hooks, MCP, instruction blocks) is still the
+    # old version until `rafter agent update` runs (None when the manifest had none).
+    keep_manifest_version: bool = False
     outcomes: list[tuple[Path, str]] = field(default_factory=list)
     _manifest: dict | None = None
+    _loaded_version: str | None = None
     _dirty: bool = False
     _virtual: dict[Path, bytes] = field(default_factory=dict)
 
@@ -173,6 +179,8 @@ class InstallSession:
                 if not isinstance(doc, dict) or not isinstance(doc.get("files"), dict):
                     raise ValueError("no files map")
                 files = doc["files"]
+                if isinstance(doc.get("cliVersion"), str):
+                    self._loaded_version = doc["cliVersion"]
             except Exception as e:  # noqa: BLE001 — any unreadable manifest is treated as absent
                 self.out.warn(fmt.warning(
                     f"Ignoring unreadable install manifest {p} ({e}); "
@@ -211,6 +219,19 @@ class InstallSession:
             return "updated"
         if self.force or MODIFIED_FILE_POLICY == "replace-with-backup":
             return "replaced"
+        # A modified file. The user reconciles it by merging into
+        # <file>.rafter-new and moving that over the file (it then matches,
+        # above), or by deleting <file>.rafter-new to keep their own version:
+        # that is "reconciled" once, then "unchanged" until a release ships a
+        # different version.
+        entry = self.manifest["files"].get(manifest_key(self.root, a.dest))
+        entry = entry if isinstance(entry, dict) else {}
+        new_sha = sha256(a.content)
+        if not Path(str(a.dest) + NEW_VERSION_SUFFIX).exists():
+            if entry.get("reconciledWith") == new_sha:
+                return "unchanged"
+            if entry.get("pendingSha") == new_sha:
+                return "reconciled"
         return "kept"
 
     def _record(self, a: FileArtifact) -> None:
@@ -222,12 +243,57 @@ class InstallSession:
         }
         self._dirty = True
 
+    def _record_reconcile(self, a: FileArtifact, **state: str) -> None:
+        """Record reconcile state for a modified file without claiming its content.
+
+        With no prior entry, sha256 is the version just written to .rafter-new:
+        rafter's content, so it never matches the user's file and owns() stays False.
+        """
+        key = manifest_key(self.root, a.dest)
+        prev = self.manifest["files"].get(key)
+        prev = prev if isinstance(prev, dict) else {}
+        self.manifest["files"][key] = {
+            "sha256": prev.get("sha256") or sha256(a.content),
+            "component": a.component,
+            "platform": a.platform,
+            "cliVersion": prev.get("cliVersion") or self.version,
+            **state,
+        }
+        self._dirty = True
+
+    def _may_write_new_version(self, a: FileArtifact) -> bool:
+        """Whether <dest>.rafter-new may be (re)written.
+
+        True when it is absent or holds a version rafter wrote; anything else
+        is the user's merge in progress.
+        """
+        try:
+            existing = Path(str(a.dest) + NEW_VERSION_SUFFIX).read_bytes()
+        except OSError:
+            return True
+        sha = sha256(existing)
+        entry = self.manifest["files"].get(manifest_key(self.root, a.dest))
+        return (
+            existing == a.content
+            or (isinstance(entry, dict) and entry.get("pendingSha") == sha)
+            or sha in shipped_hashes().get(a.resource_key, ())
+        )
+
+    def _drop_stale_new_version(self, a: FileArtifact) -> None:
+        """Drop a leftover <dest>.rafter-new that holds exactly what is now installed."""
+        pending = Path(str(a.dest) + NEW_VERSION_SUFFIX)
+        try:
+            if pending.read_bytes() == a.content:
+                pending.unlink()
+        except OSError:
+            pass  # absent or unreadable: nothing to drop
+
     def apply(self, a: FileArtifact) -> FileOutcome:
         """Install one artifact under the write policy (or, in a dry run, predict it)."""
         outcome = self.classify(a)
         self.outcomes.append((a.dest, outcome))
         if self.dry_run:
-            if outcome != "kept":
+            if outcome in ("added", "updated", "replaced"):
                 self._virtual[a.dest] = a.content
             return outcome
         self._make_dir(a.dest.parent)
@@ -236,15 +302,23 @@ class InstallSession:
         if outcome in ("added", "updated"):
             _write_no_follow(a.dest, a.content)
             self._record(a)
+            self._drop_stale_new_version(a)
         elif outcome == "unchanged":
-            self._record(a)
+            # Unchanged is also a modified file already reconciled against this
+            # version; only a file that holds rafter's content is recorded as such.
+            if self._read(a.dest) == a.content:
+                self._record(a)
+                self._drop_stale_new_version(a)
         elif outcome == "replaced":
             # Moving the old file (or link) aside, not copying it, never reads or writes through a link.
             os.replace(a.dest, Path(str(a.dest) + BACKUP_SUFFIX))
             _write_no_follow(a.dest, a.content)
             self._record(a)
-        else:  # kept
+        elif outcome == "reconciled":
+            self._record_reconcile(a, reconciledWith=sha256(a.content))
+        elif self._may_write_new_version(a):  # kept
             _write_no_follow(Path(str(a.dest) + NEW_VERSION_SUFFIX), a.content)
+            self._record_reconcile(a, pendingSha=sha256(a.content))
         if outcome != "unchanged":
             report_outcome(self.out, a.dest, outcome)
         return outcome
@@ -288,12 +362,17 @@ class InstallSession:
         p = manifest_path(self.root)
         self._make_dir(p.parent)
         files = dict(sorted(self.manifest["files"].items()))
-        doc = {"schema": MANIFEST_SCHEMA, "cliVersion": self.version, "files": files}
+        version = self._loaded_version if self.keep_manifest_version else self.version
+        doc = {"schema": MANIFEST_SCHEMA, "cliVersion": version, "files": files}
         _write_no_follow(p, (json.dumps(doc, indent=2) + "\n").encode("utf-8"))
         self._dirty = False
 
     def count(self, outcome: str) -> int:
         return sum(1 for _, o in self.outcomes if o == outcome)
+
+    def kept_files(self) -> list[Path]:
+        """Files kept as modified, each once (Codex and Gemini share .agents/skills)."""
+        return list(dict.fromkeys(d for d, o in self.outcomes if o == "kept"))
 
 
 def outcome_line(dest: Path, outcome: str) -> str:
@@ -302,6 +381,8 @@ def outcome_line(dest: Path, outcome: str) -> str:
         return f"{label} {dest} (modified; new version at {dest}{NEW_VERSION_SUFFIX})"
     if outcome == "replaced":
         return f"{label} {dest} (backup at {dest}{BACKUP_SUFFIX})"
+    if outcome == "reconciled":
+        return f"{label} {dest} ({NEW_VERSION_SUFFIX} gone; your version is kept for this release)"
     return f"{label} {dest}"
 
 
@@ -328,17 +409,34 @@ def report_unchanged_summary(session: InstallSession) -> None:
         session.out.info(fmt.success(unchanged_line(n)))
 
 
-FORCE_HINT = f"re-run with --force to replace (the old version is saved as {BACKUP_SUFFIX})"
+FORCE_HINT = f"re-run with --force (the old version is saved as {BACKUP_SUFFIX})"
 
 
-def report_kept_summary(session: InstallSession, replace_hint: str = FORCE_HINT) -> None:
-    """Closing hint when any modified files were kept. `replace_hint` says how to replace them instead."""
-    n = session.count("kept")
+def reconcile_instruction(update_command: str = "rafter agent update") -> str:
+    """The one-line instruction for reconciling a kept file; `update_command` is the command that records it."""
+    return (
+        f"To reconcile: merge your changes into <file>{NEW_VERSION_SUFFIX}, move it over <file>, "
+        f"then run '{update_command}' (or delete <file>{NEW_VERSION_SUFFIX} to keep yours as is)."
+    )
+
+
+def report_kept_summary(
+    session: InstallSession,
+    replace_hint: str = FORCE_HINT,
+    update_command: str = "rafter agent update",
+) -> None:
+    """Closing hint when any modified files were kept.
+
+    Gives the reconcile instruction, and `replace_hint`, how to discard the
+    local changes instead.
+    """
+    n = len(session.kept_files())
     if n == 0:
         return
     session.out.warn(fmt.warning(
-        f"{n} installed file{'' if n == 1 else 's'} had local changes and {'was' if n == 1 else 'were'} kept. "
-        f"Compare each with its {NEW_VERSION_SUFFIX} copy, or {replace_hint}."
+        f"{n} installed file{'' if n == 1 else 's'} had local changes and {'was' if n == 1 else 'were'} kept; "
+        f"rafter's new version is beside {'it' if n == 1 else 'each'} as <file>{NEW_VERSION_SUFFIX}. "
+        f"{reconcile_instruction(update_command)} To discard your changes instead, {replace_hint}."
     ))
 
 

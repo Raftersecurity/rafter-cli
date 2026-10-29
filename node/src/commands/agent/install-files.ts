@@ -29,7 +29,7 @@ import { KNOWN_SKILL_NAMES, RETIRED_SKILL_NAMES, isRafterAuthoredSkillDir, remov
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export type FileOutcome = "added" | "updated" | "unchanged" | "kept" | "replaced";
+export type FileOutcome = "added" | "updated" | "unchanged" | "kept" | "replaced" | "reconciled";
 
 /**
  * What init does with an installed file the user has modified (or that it
@@ -59,15 +59,24 @@ export interface FileArtifact {
 }
 
 export interface ManifestEntry {
+  /** sha256 of the content rafter last wrote for this path. */
   sha256: string;
   component: string;
   platform: string;
   cliVersion: string;
+  /** Set while a modified file is kept: sha256 of the version waiting in <file>.rafter-new. */
+  pendingSha?: string;
+  /** sha256 of the shipped version the user's modified file was reconciled against. */
+  reconciledWith?: string;
 }
 
 export interface InstallManifest {
   schema: number;
-  cliVersion: string;
+  /**
+   * The CLI version that last installed or updated the whole integration;
+   * null when only the hook's auto-update has written (see auto-update.ts).
+   */
+  cliVersion: string | null;
   files: Record<string, ManifestEntry>;
 }
 
@@ -161,12 +170,30 @@ export class InstallSession {
   readonly version: string;
   readonly outcomes: Array<{ dest: string; outcome: FileOutcome }> = [];
   private manifestCache: InstallManifest | null = null;
+  /** cliVersion the manifest on disk names, kept on save when keepManifestVersion is set. */
+  private loadedVersion: string | null = null;
+  private readonly keepManifestVersion: boolean;
   private dirty = false;
   private virtual = new Map<string, Buffer>();
 
-  constructor(opts: { root: string; out: InstallOutput; force?: boolean; dryRun?: boolean; version?: string }) {
+  /**
+   * keepManifestVersion: save() keeps the manifest's cliVersion instead of
+   * stamping this CLI's. The hook's auto-update sets it: it refreshes skill and
+   * rule files only, so the install as a whole (hooks, MCP, instruction blocks)
+   * is still the old version until `rafter agent update` runs (null when the
+   * manifest had none).
+   */
+  constructor(opts: {
+    root: string;
+    out: InstallOutput;
+    force?: boolean;
+    dryRun?: boolean;
+    version?: string;
+    keepManifestVersion?: boolean;
+  }) {
     this.root = opts.root;
     this.contained = path.resolve(opts.root) !== path.resolve(os.homedir());
+    this.keepManifestVersion = !!opts.keepManifestVersion;
     this.out = opts.out;
     this.force = !!opts.force;
     this.dryRun = !!opts.dryRun;
@@ -184,6 +211,7 @@ export class InstallSession {
           throw new Error("no files map");
         }
         empty.files = doc.files;
+        if (typeof doc.cliVersion === "string") this.loadedVersion = doc.cliVersion;
       } catch (e) {
         this.out.warn(fmt.warning(
           `Ignoring unreadable install manifest ${p} (${(e as Error).message}); ` +
@@ -222,7 +250,18 @@ export class InstallSession {
     if (current === null && !link) return "added";
     if (current?.equals(a.content)) return "unchanged";
     if (current !== null && !link && this.owns(a.dest, a.resourceKey, current)) return "updated";
-    return this.force || MODIFIED_FILE_POLICY === "replace-with-backup" ? "replaced" : "kept";
+    if (this.force || MODIFIED_FILE_POLICY === "replace-with-backup") return "replaced";
+    // A modified file. The user reconciles it by merging into <file>.rafter-new
+    // and moving that over the file (it then matches, above), or by deleting
+    // <file>.rafter-new to keep their own version: that is "reconciled" once,
+    // then "unchanged" until a release ships a different version.
+    const entry = this.manifest.files[manifestKey(this.root, a.dest)];
+    const newSha = sha256(a.content);
+    if (!fs.existsSync(a.dest + NEW_VERSION_SUFFIX)) {
+      if (entry?.reconciledWith === newSha) return "unchanged";
+      if (entry?.pendingSha === newSha) return "reconciled";
+    }
+    return "kept";
   }
 
   private record(a: FileArtifact): void {
@@ -235,12 +274,57 @@ export class InstallSession {
     this.dirty = true;
   }
 
+  /**
+   * Record reconcile state for a modified file without claiming its content.
+   * With no prior entry, sha256 is the version just written to .rafter-new:
+   * rafter's content, so it never matches the user's file and owns() stays false.
+   */
+  private recordReconcile(a: FileArtifact, state: { pendingSha?: string; reconciledWith?: string }): void {
+    const key = manifestKey(this.root, a.dest);
+    const prev = this.manifest.files[key];
+    this.manifest.files[key] = {
+      sha256: prev?.sha256 ?? sha256(a.content),
+      component: a.component,
+      platform: a.platform,
+      cliVersion: prev?.cliVersion ?? this.version,
+      ...state,
+    };
+    this.dirty = true;
+  }
+
+  /**
+   * Whether <dest>.rafter-new may be (re)written: it is absent or holds a
+   * version rafter wrote. Anything else is the user's merge in progress.
+   */
+  private mayWriteNewVersion(a: FileArtifact): boolean {
+    let existing: Buffer;
+    try {
+      existing = fs.readFileSync(a.dest + NEW_VERSION_SUFFIX);
+    } catch {
+      return true;
+    }
+    const sha = sha256(existing);
+    return existing.equals(a.content) ||
+      this.manifest.files[manifestKey(this.root, a.dest)]?.pendingSha === sha ||
+      (shippedHashes().get(a.resourceKey)?.has(sha) ?? false);
+  }
+
+  /** Drop a leftover <dest>.rafter-new that holds exactly what is now installed. */
+  private dropStaleNewVersion(a: FileArtifact): void {
+    const pending = a.dest + NEW_VERSION_SUFFIX;
+    try {
+      if (fs.readFileSync(pending).equals(a.content)) fs.unlinkSync(pending);
+    } catch {
+      /* absent or unreadable: nothing to drop */
+    }
+  }
+
   /** Install one artifact under the write policy (or, in a dry run, predict it). */
   apply(a: FileArtifact): FileOutcome {
     const outcome = this.classify(a);
     this.outcomes.push({ dest: a.dest, outcome });
     if (this.dryRun) {
-      if (outcome !== "kept") this.virtual.set(a.dest, a.content);
+      if (outcome === "added" || outcome === "updated" || outcome === "replaced") this.virtual.set(a.dest, a.content);
       return outcome;
     }
     this.makeDir(path.dirname(a.dest));
@@ -249,9 +333,15 @@ export class InstallSession {
       case "updated":
         writeNoFollow(a.dest, a.content);
         this.record(a);
+        this.dropStaleNewVersion(a);
         break;
       case "unchanged":
-        this.record(a);
+        // Unchanged is also a modified file already reconciled against this
+        // version; only a file that holds rafter's content is recorded as such.
+        if (this.read(a.dest)?.equals(a.content)) {
+          this.record(a);
+          this.dropStaleNewVersion(a);
+        }
         break;
       case "replaced":
         // Moving the old file (or link) aside, not copying it, never reads or writes through a link.
@@ -259,8 +349,14 @@ export class InstallSession {
         writeNoFollow(a.dest, a.content);
         this.record(a);
         break;
+      case "reconciled":
+        this.recordReconcile(a, { reconciledWith: sha256(a.content) });
+        break;
       case "kept":
-        writeNoFollow(a.dest + NEW_VERSION_SUFFIX, a.content);
+        if (this.mayWriteNewVersion(a)) {
+          writeNoFollow(a.dest + NEW_VERSION_SUFFIX, a.content);
+          this.recordReconcile(a, { pendingSha: sha256(a.content) });
+        }
         break;
     }
     if (outcome !== "unchanged") reportOutcome(this.out, a.dest, outcome);
@@ -317,7 +413,8 @@ export class InstallSession {
     const p = manifestPath(this.root);
     this.makeDir(path.dirname(p));
     const files = Object.fromEntries(Object.entries(this.manifest.files).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-    const doc: InstallManifest = { schema: MANIFEST_SCHEMA, cliVersion: this.version, files };
+    const version = this.keepManifestVersion ? this.loadedVersion : this.version;
+    const doc: InstallManifest = { schema: MANIFEST_SCHEMA, cliVersion: version, files };
     writeNoFollow(p, JSON.stringify(doc, null, 2) + "\n");
     this.dirty = false;
   }
@@ -325,12 +422,18 @@ export class InstallSession {
   count(outcome: FileOutcome): number {
     return this.outcomes.filter((o) => o.outcome === outcome).length;
   }
+
+  /** Files kept as modified, each once (Codex and Gemini share .agents/skills). */
+  keptFiles(): string[] {
+    return [...new Set(this.outcomes.filter((o) => o.outcome === "kept").map((o) => o.dest))];
+  }
 }
 
 export function outcomeLine(dest: string, outcome: FileOutcome): string {
   const label = outcome.padEnd(9);
   if (outcome === "kept") return `${label} ${dest} (modified; new version at ${dest}${NEW_VERSION_SUFFIX})`;
   if (outcome === "replaced") return `${label} ${dest} (backup at ${dest}${BACKUP_SUFFIX})`;
+  if (outcome === "reconciled") return `${label} ${dest} (${NEW_VERSION_SUFFIX} gone; your version is kept for this release)`;
   return `${label} ${dest}`;
 }
 
@@ -354,15 +457,29 @@ export function reportUnchangedSummary(session: InstallSession): void {
   if (n > 0) session.out.info(fmt.success(unchangedLine(n)));
 }
 
-export const FORCE_HINT = `re-run with --force to replace (the old version is saved as ${BACKUP_SUFFIX})`;
+export const FORCE_HINT = `re-run with --force (the old version is saved as ${BACKUP_SUFFIX})`;
 
-/** Closing hint when any modified files were kept. `replaceHint` says how to replace them instead. */
-export function reportKeptSummary(session: InstallSession, replaceHint: string = FORCE_HINT): void {
-  const n = session.count("kept");
+/** The one-line instruction for reconciling a kept file; `updateCommand` is the command that records it. */
+export function reconcileInstruction(updateCommand: string = "rafter agent update"): string {
+  return `To reconcile: merge your changes into <file>${NEW_VERSION_SUFFIX}, move it over <file>, then run '${updateCommand}' ` +
+    `(or delete <file>${NEW_VERSION_SUFFIX} to keep yours as is).`;
+}
+
+/**
+ * Closing hint when any modified files were kept: the reconcile instruction,
+ * and `replaceHint`, how to discard the local changes instead.
+ */
+export function reportKeptSummary(
+  session: InstallSession,
+  replaceHint: string = FORCE_HINT,
+  updateCommand: string = "rafter agent update",
+): void {
+  const n = session.keptFiles().length;
   if (n === 0) return;
   session.out.warn(fmt.warning(
-    `${n} installed file${n === 1 ? "" : "s"} had local changes and ${n === 1 ? "was" : "were"} kept. ` +
-    `Compare each with its ${NEW_VERSION_SUFFIX} copy, or ${replaceHint}.`,
+    `${n} installed file${n === 1 ? "" : "s"} had local changes and ${n === 1 ? "was" : "were"} kept; ` +
+    `rafter's new version is beside ${n === 1 ? "it" : "each"} as <file>${NEW_VERSION_SUFFIX}. ` +
+    `${reconcileInstruction(updateCommand)} To discard your changes instead, ${replaceHint}.`,
   ));
 }
 

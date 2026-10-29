@@ -53,6 +53,7 @@ from .install_files import (
     cursor_agent_artifacts,
     openclaw_skill_artifacts,
     openclaw_skill_path,
+    FORCE_HINT,
     report_kept_summary,
     report_unchanged_summary,
     unchanged_line,
@@ -322,6 +323,8 @@ def _print_dry_run_plan(
                 W(Path(f"{a.dest}.rafter-new"), f"{a.dest} kept: modified")
             elif outcome == "replaced":
                 W(a.dest, f"replaced; backup at {a.dest}.bak")
+            elif outcome == "reconciled":
+                S(a.dest, "modified, reconciled with this version; recorded")
             else:
                 W(a.dest, outcome)
 
@@ -1651,7 +1654,7 @@ def _run_agent_init(
 
     session.save()
     report_unchanged_summary(session)
-    report_kept_summary(session)
+    report_kept_summary(session, FORCE_HINT, "rafter agent update --local" if local else "rafter agent update")
 
     _init_print(quiet)
     _init_print(quiet, fmt.success("Agent security initialized!"))
@@ -3532,7 +3535,7 @@ def verify(
         results.append(_probe_claude_code())
 
     # Informational only: an out-of-date install never fails verify.
-    from .agent_update import install_staleness, staleness_line
+    from .agent_update import install_staleness, reconcile_lines, staleness_line
     staleness = install_staleness(Path.home(), "user")
 
     hard_failed = [r for r in results if not r.passed and not r.optional]
@@ -3558,6 +3561,7 @@ def verify(
             },
             "stale": staleness.stale,
             "installed_version": staleness.installed_version,
+            "needs_reconcile": [str(p) for p in staleness.needs_reconcile],
         }
         sys.stdout.write(json.dumps(payload) + "\n")
     else:
@@ -3592,6 +3596,9 @@ def verify(
             rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
         if staleness.stale:
             InstallOutput().warn(fmt.warning(staleness_line(staleness)))
+        reconcile = reconcile_lines(staleness)
+        if reconcile:
+            InstallOutput().warn(fmt.warning("\n".join(reconcile)))
         rprint()
 
     if hard_failed:
@@ -4055,10 +4062,13 @@ def status(
     print("Rafter Agent Status")
     print("=" * 50)
 
-    from .agent_update import install_staleness, staleness_line
+    from .agent_update import install_staleness, reconcile_lines, staleness_line
     staleness = install_staleness(Path.home(), "user")
     if staleness.stale:
         print(f"\n{staleness_line(staleness)}")
+    reconcile = reconcile_lines(staleness)
+    if reconcile:
+        print("\n" + "\n".join(reconcile))
 
     # --- Config ---
     if config_path.exists():
@@ -4230,7 +4240,11 @@ def _staleness_json() -> dict[str, Any]:
     from .agent_update import install_staleness
 
     st = install_staleness(Path.home(), "user")
-    return {"stale": st.stale, "installed_version": st.installed_version}
+    return {
+        "stale": st.stale,
+        "installed_version": st.installed_version,
+        "needs_reconcile": [str(p) for p in st.needs_reconcile],
+    }
 
 
 def _agent_status_json(config_path: Path, audit_path: Path) -> dict[str, Any]:

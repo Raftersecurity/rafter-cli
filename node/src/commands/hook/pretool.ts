@@ -10,6 +10,7 @@ import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
 import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
 import { shellQuote } from "../agent/exec.js";
+import { runHookAutoUpdate } from "../agent/auto-update.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
 import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
@@ -137,6 +138,8 @@ export function createHookPretoolCommand(): Command {
       }
       countHook(decision.tool, decision.error ? "error" : decision.decision, decision.risk);
       writeDecision(decision, format);
+      // Once a day after an upgrade: bring installed skill and rule files up to this version.
+      runHookAutoUpdate();
     });
 }
 
