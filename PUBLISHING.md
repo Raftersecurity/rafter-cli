@@ -159,8 +159,9 @@ git push && git push --tags
 ## 7. Post-release housekeeping
 
 1. **CHANGELOG.md** – append a header for 0.3.0 and note major tweaks.
-2. **README badges** – update version badge if you use one.
-3. **Announce** in Slack/Twitter/Changelog.
+2. **Shipped-hashes table** – once npm and PyPI both serve the new version, run `python3 scripts/gen-shipped-hashes.py` and commit the two `shipped-hashes.json` files it rewrites. `agent init` uses the table to recognize files an earlier release installed; a release missing from it makes `init` treat that release's files as user-modified (kept, not updated) for anyone upgrading from it without an install manifest. `--check` exits 1 when the table is stale.
+3. **README badges** – update version badge if you use one.
+4. **Announce** in Slack/Twitter/Changelog.
 
 ---
 
