@@ -25,6 +25,7 @@ import re
 import secrets
 import shutil
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -137,26 +138,100 @@ def discard_pending() -> None:
 # ── recorders (each swallows its own errors) ────────────────────────
 
 
-def count_unknown_command(token: object) -> None:
+@dataclass
+class Vocabulary:
+    """The CLI's own names, derived from its registered command tree: every
+    command name, every long option, and the ``-``-separated words of all of
+    them. No hand-maintained list."""
+    commands: list[str]
+    options: list[str]
+    words: set[str]
+
+
+# Injected by typer, not registered by rafter; Node offers completion as a
+# command instead, so leaving these out keeps both vocabularies the same.
+_FRAMEWORK_OPTIONS = frozenset({"--install-completion", "--show-completion"})
+
+
+def vocabulary_of(root: Any) -> Vocabulary:
+    commands: set[str] = set()
+    options: set[str] = set()
+
+    def visit(cmd: Any) -> None:
+        for p in getattr(cmd, "params", None) or []:
+            # A click on/off pair (``--x/--no-x``) is registered in Node as
+            # ``--no-x`` alone; count only that form so both trees match.
+            secondary = list(getattr(p, "secondary_opts", []))
+            for o in secondary or list(getattr(p, "opts", [])):
+                if o.startswith("--") and o not in _FRAMEWORK_OPTIONS:
+                    options.add(o)
+        for name, sub in (getattr(cmd, "commands", None) or {}).items():
+            commands.add(name)
+            visit(sub)
+
+    visit(root)
+    words = {w for n in [*commands, *(o[2:] for o in options)] for w in n.split("-") if w}
+    return Vocabulary(sorted(commands), sorted(options), words)
+
+
+def edit_distance(a: str, b: str) -> int:
+    """Optimal-string-alignment (restricted Damerau-Levenshtein) distance."""
+    d = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
+    for i in range(len(a) + 1):
+        d[i][0] = i
+    for j in range(len(b) + 1):
+        d[0][j] = j
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
+    return d[len(a)][len(b)]
+
+
+def _plausible(token: str, candidates: list[str], words: set[str], prefix: str) -> bool:
+    """Near a registered name (distance <= 2), or built entirely from the CLI's own words."""
+    if any(abs(len(c) - len(token)) <= 2 and edit_distance(token, c) <= 2 for c in candidates):
+        return True
+    return all(p and p in words for p in token[len(prefix):].split("-"))
+
+
+def _vetted(kind: str, token: object, vocab: Vocabulary | None) -> str:
+    v = _patterned(kind, token)
+    if v == _FALLBACK or vocab is None:
+        return _FALLBACK
+    if kind == "unknown_command":
+        return v if _plausible(v, vocab.commands, vocab.words, "") else _FALLBACK
+    return v if _plausible(v, vocab.options, vocab.words, "--") else _FALLBACK
+
+
+def count_unknown_command(token: object, vocab: Vocabulary | None = None) -> None:
     try:
-        _bump(f"unknown_command:{_patterned('unknown_command', token)}")
+        _bump(f"unknown_command:{_vetted('unknown_command', token, vocab)}")
     except Exception:
         pass
 
 
-def count_unknown_option(flag: object) -> None:
+def count_unknown_option(flag: object, vocab: Vocabulary | None = None) -> None:
     try:
         name = flag.split("=")[0] if isinstance(flag, str) else flag
-        _bump(f"unknown_option:{_patterned('unknown_option', name)}")
+        _bump(f"unknown_option:{_vetted('unknown_option', name, vocab)}")
     except Exception:
         pass
 
 
-def set_command_path(names: list[str]) -> None:
-    """Set the resolved command path from registered command names (not argv)."""
+def set_command_path(names: list[str], vocab: "Vocabulary | None") -> None:
+    """Set the resolved command path from registered command names (not argv).
+    A name that is not in the vocabulary makes the whole path ``other``."""
     global _command_path
     try:
-        _command_path = _patterned("command_path", ".".join(names) if names else "root")
+        if not names:
+            _command_path = "root"
+        elif vocab is None or not all(n in vocab.commands for n in names):
+            _command_path = _FALLBACK
+        else:
+            _command_path = _patterned("command_path", ".".join(names))
     except Exception:
         pass
 
@@ -399,6 +474,7 @@ def track_click_tree(root_ctx: Any) -> None:
     """
     try:
         seen: set[int] = set()
+        vocab = vocabulary_of(root_ctx.command)
 
         def visit(cmd: Any) -> None:
             if id(cmd) in seen:
@@ -408,14 +484,14 @@ def track_click_tree(root_ctx: Any) -> None:
 
             def make_context(*args: Any, **kwargs: Any) -> Any:
                 sub = original(*args, **kwargs)
-                set_command_path(_registered_path(sub))
+                set_command_path(_registered_path(sub), vocab)
                 return sub
 
             cmd.make_context = make_context
             for sub in (getattr(cmd, "commands", None) or {}).values():
                 visit(sub)
 
-        set_command_path([])
+        set_command_path([], vocab)
         for sub in (getattr(root_ctx.command, "commands", None) or {}).values():
             visit(sub)
     except Exception:
@@ -436,14 +512,17 @@ def note_system_exit(exc: SystemExit) -> None:
         names = {k.__name__ for k in type(err).__mro__}
         if "UsageError" not in names:
             return
-        if getattr(err, "ctx", None) is not None:
-            set_command_path(_registered_path(err.ctx))
+        ctx = getattr(err, "ctx", None)
+        if ctx is None:
+            return
+        vocab = vocabulary_of(ctx.find_root().command)
+        set_command_path(_registered_path(ctx), vocab)
         if "NoSuchOption" in names:
-            count_unknown_option(err.option_name)
+            count_unknown_option(err.option_name, vocab)
             return
         m = _NO_SUCH_COMMAND.search(getattr(err, "message", "") or "")
         if m:
-            count_unknown_command(m.group(2))
+            count_unknown_command(m.group(2), vocab)
     except Exception:
         pass
 

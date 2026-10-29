@@ -1404,14 +1404,23 @@ Delete `~/.rafter/usage`. Prints one line to stdout; exit code `0`. The `clear` 
 
 | Family | Key | Recorded |
 |---|---|---|
-| `unknown_command` | `unknown_command:<token>` | The CLI rejects an unknown subcommand. `<token>` is the first unknown token if it matches `^[a-z][a-z-]{0,31}$`, else `other`. Arguments after it are never read. The raw token is kept, since it stays local, so a bare lowercase word typed as a command (for example a project name) is stored. |
-| `unknown_option` | `unknown_option:<--name>` | The CLI rejects an unknown option. The name before any `=` if it matches `^--[a-z][a-z-]{0,31}$`, else `other`. The value is never read. |
-| `command` | `command:<path>:exit:<0\|1\|2\|other>` | Every invocation, at exit. `<path>` is the resolved command from the CLI's registered command tree joined with `.` (`secrets`, `agent.scan`, `hook.pretool`; `root` when no subcommand ran), never argv. |
+| `unknown_command` | `unknown_command:<token>` | The CLI rejects an unknown subcommand. `<token>` is the first unknown token if it passes the token rule below, else `other`. Arguments after it are never read. |
+| `unknown_option` | `unknown_option:<--name>` | The CLI rejects an unknown option. `<--name>` is the name before any `=` if it passes the token rule below, else `other`. The value is never read. |
+| `command` | `command:<path>:exit:<0\|1\|2\|other>` | Every invocation, at exit. `<path>` is the resolved command from the CLI's registered command tree joined with `.` (`secrets`, `agent.scan`, `hook.pretool`; `root` when no subcommand ran), never argv; a path with any name not in the tree is `other`. |
 | `hook` | `hook:<shell\|write\|other>:<allow\|deny\|defer\|ask\|error>:<low\|medium\|high\|critical\|none>` | Each `rafter hook pretool` decision. `error` is a fail-closed deny after an internal error. The risk tier is the command-policy tier for shell tools (`none` when command policy is off), `critical` for a blocked write to rafter's own config, else `none`. |
 | `scan_engine` | `scan_engine:<requested>:<used>` | Each local `rafter secrets` / `rafter scan local` / `rafter agent scan` of a path (not `--staged`, `--diff`, `--range` or `--watch`). Values: `auto`, `betterleaks`, `patterns`, `both`. |
 | `scan_fallback` | `scan_fallback:<missing\|timeout\|error\|stale\|other>` | That scan wanted betterleaks and fell back to patterns. The reason text is mapped to the enum and not stored. |
 | `scan_duration` | `scan_duration:<used>:<lt1s\|1-5s\|5-30s\|30-120s\|gt120s>` | That scan's wall time, bucketed. |
 | `error_class` | `error_class:<path>:<Class>` | An uncaught error. `<Class>` is the error's class name if it matches `^([A-Z][A-Za-z0-9]{0,29})?(Error\|Exception\|Exit\|Interrupt)$`, else `other`. Messages and stack traces are never read. |
+
+**Token rule** (unknown commands and options). A token is kept only if it matches its pattern (`^[a-z][a-z-]{0,31}$` for commands, `^--[a-z][a-z-]{0,31}$` for options) and either:
+
+1. it is within optimal-string-alignment (restricted Damerau-Levenshtein) distance 2 of a registered command name, or of a registered long option name for options; or
+2. every `-`-separated part (after the leading `--` for options) is a word that appears in the CLI's own registered command and option names.
+
+The names and words are derived at runtime from the CLI's own command tree; there is no hand-maintained list. So `scna` (near `scan`), `scan-secrets` (both words are registered) and `--jsn` (near `--json`) are kept, while a project or client name such as `acme-payroll` is recorded as `other`. A short token (three letters or fewer) is often within distance 2 of a short command such as `ci` or `get`, so it is kept.
+
+Both runtimes apply the same rule to their own trees. Two framework differences are normalized: Python leaves out typer's `--install-completion` / `--show-completion` (Node offers completion as a command), and counts a click on/off pair (`--x/--no-x`) as `--no-x` alone, which is how Node registers it. The trees otherwise match except for `rafter agent init-project` (with `--list`, `--only`), which only Node has; tokens matched only through those names can be kept by Node and recorded as `other` by Python.
 
 Never recorded: working directory, file paths, repo names or roots, branch names, command lines (including commands the hook evaluated), secrets, finding contents, error messages, usernames, hostnames. There is no install id and no network code.
 

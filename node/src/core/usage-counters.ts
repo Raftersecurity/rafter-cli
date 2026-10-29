@@ -127,21 +127,89 @@ export function discardPending(): void {
 
 // ── recorders ───────────────────────────────────────────────────────
 
-export function countUnknownCommand(token: unknown): void {
-  guard(() => bump(`unknown_command:${patterned("unknown_command", token)}`));
+/**
+ * The CLI's own names, derived from its registered command tree: every
+ * command name and alias, every long option, and the `-`-separated words of
+ * all of them. No hand-maintained list.
+ */
+export interface Vocabulary {
+  commands: string[];
+  options: string[];
+  words: Set<string>;
 }
 
-export function countUnknownOption(flag: unknown): void {
+export function vocabularyOf(root: Command): Vocabulary {
+  const commands = new Set<string>();
+  const options = new Set<string>();
+  const visit = (cmd: Command): void => {
+    for (const o of cmd.options) {
+      if (!o.long) continue;
+      options.add(o.long);
+    }
+    for (const sub of cmd.commands) {
+      commands.add(sub.name());
+      for (const a of sub.aliases()) commands.add(a);
+      visit(sub);
+    }
+  };
+  visit(root);
+  const words = new Set<string>();
+  for (const n of [...commands, ...[...options].map((o) => o.slice(2))]) for (const w of n.split("-")) if (w) words.add(w);
+  return { commands: [...commands], options: [...options], words };
+}
+
+/** Optimal-string-alignment (restricted Damerau-Levenshtein) distance. */
+export function editDistance(a: string, b: string): number {
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  }
+  return d[a.length][b.length];
+}
+
+/**
+ * Keep a token that already matched its pattern only if it is near a
+ * registered name (distance <= 2) or is built entirely from the CLI's own
+ * words. Anything else (a project or client name) becomes "other".
+ */
+function plausible(token: string, candidates: string[], words: Set<string>, prefix: string): boolean {
+  if (candidates.some((c) => Math.abs(c.length - token.length) <= 2 && editDistance(token, c) <= 2)) return true;
+  return token.slice(prefix.length).split("-").every((p) => p !== "" && words.has(p));
+}
+
+function vetted(kind: "unknown_command" | "unknown_option", token: unknown, vocab: Vocabulary | undefined): string {
+  const v = patterned(kind, token);
+  if (v === FALLBACK || !vocab) return FALLBACK;
+  return kind === "unknown_command"
+    ? plausible(v, vocab.commands, vocab.words, "") ? v : FALLBACK
+    : plausible(v, vocab.options, vocab.words, "--") ? v : FALLBACK;
+}
+
+export function countUnknownCommand(token: unknown, vocab?: Vocabulary): void {
+  guard(() => bump(`unknown_command:${vetted("unknown_command", token, vocab)}`));
+}
+
+export function countUnknownOption(flag: unknown, vocab?: Vocabulary): void {
   guard(() => {
     const name = typeof flag === "string" ? flag.split("=")[0] : flag;
-    bump(`unknown_option:${patterned("unknown_option", name)}`);
+    bump(`unknown_option:${vetted("unknown_option", name, vocab)}`);
   });
 }
 
-/** Set the resolved command path from registered command names (not argv). */
-export function setCommandPath(names: string[]): void {
+/**
+ * Set the resolved command path from registered command names (not argv).
+ * A name that is not in the vocabulary makes the whole path "other".
+ */
+export function setCommandPath(names: string[], vocab: Vocabulary | undefined): void {
   guard(() => {
-    commandPath = patterned("command_path", names.length ? names.join(".") : "root");
+    if (names.length === 0) commandPath = "root";
+    else if (!vocab || !names.every((n) => vocab.commands.includes(n))) commandPath = FALLBACK;
+    else commandPath = patterned("command_path", names.join("."));
   });
 }
 
@@ -366,15 +434,17 @@ const QUOTED = /'([^']*)'/;
  */
 export function installUsageCounters(program: Command): void {
   guard(() => {
+    let cached: Vocabulary | undefined;
+    const vocab = (): Vocabulary => (cached ??= vocabularyOf(program));
     const visit = (cmd: Command): void => {
-      cmd.hook("preAction", (_self, actionCommand) => setCommandPath(registeredPath(actionCommand)));
+      cmd.hook("preAction", (_self, actionCommand) => setCommandPath(registeredPath(actionCommand), vocab()));
       // A callback that returns lets commander exit exactly as it would have.
       cmd.exitOverride((err) => {
         guard(() => {
-          if (commandPath === null) setCommandPath(registeredPath(cmd));
+          if (commandPath === null) setCommandPath(registeredPath(cmd), vocab());
           const token = QUOTED.exec(err.message ?? "")?.[1];
-          if (err.code === "commander.unknownCommand") countUnknownCommand(token);
-          else if (err.code === "commander.unknownOption") countUnknownOption(token);
+          if (err.code === "commander.unknownCommand") countUnknownCommand(token, vocab());
+          else if (err.code === "commander.unknownOption") countUnknownOption(token, vocab());
         });
       });
       for (const sub of cmd.commands) visit(sub);

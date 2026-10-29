@@ -4,6 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
+import { Command } from "commander";
 import {
   USAGE_ALLOWLIST,
   countError,
@@ -12,10 +13,16 @@ import {
   countUnknownCommand,
   countUnknownOption,
   flush,
+  pendingCounts,
   resetPending,
   setCommandPath,
   writeCounts,
+  vocabularyOf,
 } from "../src/core/usage-counters.js";
+import { createAgentCommand } from "../src/commands/agent/index.js";
+import { createSecretsCommand } from "../src/commands/agent/scan.js";
+import { createHookCommand } from "../src/commands/hook/index.js";
+import { createIssuesCommand } from "../src/commands/issues/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(__dirname, "../dist/index.js");
@@ -23,10 +30,11 @@ const SHARED = path.resolve(__dirname, "../../shared-docs/usage-counters.json");
 
 // Built at runtime so no key-shaped literal sits in the repo.
 const FAKE_KEY = "AKIA" + "Z".repeat(16);
-// Each input carries the repo name "secret-repo" inside a path, URL or slug. A
-// bare lowercase token is the one documented exception: the unknown-command
-// counter keeps it locally (shared-docs/CLI_SPEC.md), so it is not fed here.
-const LEAKS = ["/home/x/secret-repo", "https://github.com/acme/secret-repo.git", `${FAKE_KEY}`, "acme/secret-repo", `secret-repo ${FAKE_KEY}`];
+// The bare names pass the token regex, so only the plausibility rule keeps them out.
+const LEAKS = [
+  "/home/x/secret-repo", "https://github.com/acme/secret-repo.git", FAKE_KEY, "acme/secret-repo",
+  `secret-repo ${FAKE_KEY}`, "secret-repo", "acme-payroll",
+];
 
 function tmpHome(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "rafter-usage-"));
@@ -71,19 +79,25 @@ describe("usage counters", () => {
     const home = tmpHome();
     const saved = process.env.HOME;
     process.env.HOME = home;
+    // A real slice of the command tree (it includes `secrets` and `--repo`).
+    const program = new Command("rafter");
+    for (const c of [createSecretsCommand(), createAgentCommand(), createHookCommand(), createIssuesCommand()]) program.addCommand(c);
+    const vocab = vocabularyOf(program);
     try {
       for (const s of LEAKS) {
-        countUnknownCommand(s);
-        countUnknownOption(`--${s}`);
-        countUnknownOption(`--engine=${s}`);
-        setCommandPath(["secrets", s]);
+        countUnknownCommand(s, vocab);
+        countUnknownOption(`--${s}`, vocab);
+        countUnknownOption(`--engine=${s}`, vocab);
+        setCommandPath(["secrets", s], vocab);
         countHook(s, s, s);
         countScan({ requested: s, used: s, degraded: true, reason: s }, 10);
         const Named = class extends Error {};
         Object.defineProperty(Named, "name", { value: s });
         countError(new Named(s));
         countError(new TypeError(s));
-        writeCounts({ [`unknown_command:${s}`]: 1, [`command:${s}:exit:0`]: 1, [s]: 1 });
+        // The store layer enforces the key patterns; the vocabulary rule lives in
+        // the recorders, so only feed it what the patterns must reject.
+        if (!/^[a-z][a-z-]*$/.test(s)) writeCounts({ [`unknown_command:${s}`]: 1, [`command:${s}:exit:0`]: 1, [s]: 1 });
       }
       flush(LEAKS[0]);
       const files = usageFiles(home);
@@ -92,6 +106,13 @@ describe("usage counters", () => {
       // Positive control: the recorders ran and wrote their fall-back values.
       expect(stored).toContain('"unknown_command:other"');
       expect(stored).toContain('"error_class:other:TypeError"');
+      // ...and the rule still keeps plausible tokens.
+      countUnknownCommand("scna", vocab);
+      countUnknownCommand("scan-secrets", vocab);
+      countUnknownOption("--jsn", vocab);
+      expect(pendingCounts()).toEqual({
+        "unknown_command:scna": 1, "unknown_command:scan-secrets": 1, "unknown_option:--jsn": 1,
+      });
       for (const s of [...LEAKS, "secret-repo", FAKE_KEY]) expect(stored).not.toContain(s);
     } finally {
       process.env.HOME = saved;
@@ -105,17 +126,22 @@ describe("usage counters", () => {
     fs.mkdirSync(proj);
     fs.writeFileSync(path.join(proj, "a.py"), "x = 1\n");
     rafter(home, ["acme-payroll"]);
+    rafter(home, ["scna"]);
+    rafter(home, ["secrets", "--jsn", proj]);
     expect(rafter(home, ["hook", "pretool"], { input: BASH_LS }).status).toBe(0);
     rafter(home, ["secrets", "--json", "--engine", "patterns", proj]);
     const out = execFileSync("node", [CLI, "telemetry", "show", "--json"], { env: cliEnv(home), encoding: "utf-8" });
     const report = JSON.parse(out);
     expect(report.store).toBe("~/.rafter/usage");
     expect(report.enabled).toBe(true);
-    expect(report.counters.unknown_command["unknown_command:acme-payroll"]).toBe(1);
+    expect(report.counters.unknown_command).toEqual({ "unknown_command:other": 1, "unknown_command:scna": 1 });
+    expect(report.counters.unknown_option).toEqual({ "unknown_option:--jsn": 1 });
     expect(report.counters.hook["hook:shell:allow:low"]).toBe(1);
     expect(report.counters.command["command:hook.pretool:exit:0"]).toBe(1);
     expect(report.counters.scan_engine["scan_engine:patterns:patterns"]).toBe(1);
-    expect(fs.readFileSync(usageFiles(home)[0], "utf-8")).not.toContain("secret-repo");
+    const stored = fs.readFileSync(usageFiles(home)[0], "utf-8");
+    expect(stored).not.toContain("secret-repo");
+    expect(stored).not.toContain("acme");
   });
 
   // Fails if a kill switch or the global setting stops working, or a project .rafter.yml can turn counting on.

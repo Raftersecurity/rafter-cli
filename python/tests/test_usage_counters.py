@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -15,10 +16,11 @@ SHARED = Path(__file__).resolve().parents[2] / "shared-docs" / "usage-counters.j
 
 # Built at runtime so no key-shaped literal sits in the repo.
 FAKE_KEY = "AKIA" + "Z" * 16
-# Each input carries the repo name "secret-repo" inside a path, URL or slug. A
-# bare lowercase token is the one documented exception: the unknown-command
-# counter keeps it locally (shared-docs/CLI_SPEC.md), so it is not fed here.
-LEAKS = ["/home/x/secret-repo", "https://github.com/acme/secret-repo.git", FAKE_KEY, "acme/secret-repo", f"secret-repo {FAKE_KEY}"]
+# The bare names pass the token regex, so only the plausibility rule keeps them out.
+LEAKS = [
+    "/home/x/secret-repo", "https://github.com/acme/secret-repo.git", FAKE_KEY, "acme/secret-repo",
+    f"secret-repo {FAKE_KEY}", "secret-repo", "acme-payroll",
+]
 
 BASH_LS = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls /home/x/secret-repo"}})
 
@@ -64,16 +66,24 @@ def test_never_stores_paths_urls_secrets_or_repo_names(tmp_path, monkeypatch):
             self.requested = self.used = self.reason = s
             self.degraded = True
 
+    import typer
+
+    from rafter_cli.__main__ import app
+
+    vocab = uc.vocabulary_of(typer.main.get_command(app))
     for s in LEAKS:
-        uc.count_unknown_command(s)
-        uc.count_unknown_option(f"--{s}")
-        uc.count_unknown_option(f"--engine={s}")
-        uc.set_command_path(["secrets", s])
+        uc.count_unknown_command(s, vocab)
+        uc.count_unknown_option(f"--{s}", vocab)
+        uc.count_unknown_option(f"--engine={s}", vocab)
+        uc.set_command_path(["secrets", s], vocab)
         uc.count_hook(s, s, s)
         uc.count_scan(Report(s), 0.01)
         uc.count_error(type(s.replace("/", "_").replace(":", "_").replace(".", "_").replace(" ", "_"), (Exception,), {})(s))
         uc.count_error(TypeError(s))
-        uc.write_counts({f"unknown_command:{s}": 1, f"command:{s}:exit:0": 1, s: 1})
+        # The store layer enforces the key patterns; the vocabulary rule lives in
+        # the recorders, so only feed it what the patterns must reject.
+        if not re.fullmatch(r"[a-z][a-z-]*", s):
+            uc.write_counts({f"unknown_command:{s}": 1, f"command:{s}:exit:0": 1, s: 1})
     uc.flush(LEAKS[0])
 
     files = _usage_files(tmp_path)
@@ -82,6 +92,13 @@ def test_never_stores_paths_urls_secrets_or_repo_names(tmp_path, monkeypatch):
     # Positive control: the recorders ran and wrote their fall-back values.
     assert '"unknown_command:other"' in stored
     assert '"error_class:other:TypeError"' in stored
+    # ...and the rule still keeps plausible tokens.
+    uc.count_unknown_command("scna", vocab)
+    uc.count_unknown_command("scan-secrets", vocab)
+    uc.count_unknown_option("--jsn", vocab)
+    assert uc.pending_counts() == {
+        "unknown_command:scna": 1, "unknown_command:scan-secrets": 1, "unknown_option:--jsn": 1,
+    }
     for s in [*LEAKS, "secret-repo", FAKE_KEY]:
         assert s not in stored
 
@@ -92,6 +109,8 @@ def test_counts_a_real_cli_session(tmp_path):
     proj.mkdir()
     (proj / "a.py").write_text("x = 1\n")
     _rafter(tmp_path, "acme-payroll")
+    _rafter(tmp_path, "scna")
+    _rafter(tmp_path, "secrets", "--jsn", str(proj))
     assert _rafter(tmp_path, "hook", "pretool", stdin=BASH_LS).returncode == 0
     _rafter(tmp_path, "secrets", "--json", "--engine", "patterns", str(proj))
     out = _rafter(tmp_path, "telemetry", "show", "--json")
@@ -99,11 +118,14 @@ def test_counts_a_real_cli_session(tmp_path):
     report = json.loads(out.stdout)
     assert report["store"] == "~/.rafter/usage"
     assert report["enabled"] is True
-    assert report["counters"]["unknown_command"]["unknown_command:acme-payroll"] == 1
+    assert report["counters"]["unknown_command"] == {"unknown_command:other": 1, "unknown_command:scna": 1}
+    assert report["counters"]["unknown_option"] == {"unknown_option:--jsn": 1}
     assert report["counters"]["hook"]["hook:shell:allow:low"] == 1
     assert report["counters"]["command"]["command:hook.pretool:exit:0"] == 1
     assert report["counters"]["scan_engine"]["scan_engine:patterns:patterns"] == 1
-    assert "secret-repo" not in _usage_files(tmp_path)[0].read_text()
+    stored = _usage_files(tmp_path)[0].read_text()
+    assert "secret-repo" not in stored
+    assert "acme" not in stored
 
 
 def test_writes_nothing_when_disabled_whatever_rafter_yml_says(tmp_path):
