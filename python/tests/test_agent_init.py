@@ -1083,6 +1083,32 @@ class TestGeminiWithSkillsEndToEnd:
             skill = tmp_path / ".agents" / "skills" / name / "SKILL.md"
             assert skill.exists(), f"{name} SKILL.md should be installed via --with-gemini"
 
+    def test_installs_gemini_hooks(self, tmp_path, monkeypatch):
+        # Without BeforeTool hooks, Gemini's shell and write tools bypass the
+        # command policy and the secret gate entirely; Node always installed them.
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".gemini").mkdir()
+        (tmp_path / ".gemini" / "settings.json").write_text(json.dumps({"theme": "dark"}))
+        monkeypatch.setattr("rafter_cli.commands.agent.shutil.which", lambda name: None if name == "gemini" else "/usr/bin/" + name)
+
+        runner = CliRunner()
+        for _ in range(2):  # a re-run must not duplicate entries
+            result = runner.invoke(app, ["agent", "init", "--with-gemini"])
+            assert result.exit_code == 0, result.output
+
+        settings = json.loads((tmp_path / ".gemini" / "settings.json").read_text())
+        assert settings["theme"] == "dark"
+        assert "rafter" in settings["mcpServers"]
+        before = settings["hooks"]["BeforeTool"]
+        after = settings["hooks"]["AfterTool"]
+        assert len(before) == 1 and len(after) == 1
+        assert before[0]["matcher"] == "run_shell_command|write_file|replace|edit"
+        assert before[0]["hooks"][0]["command"].endswith("hook pretool --format gemini")
+        assert after[0]["hooks"][0]["command"].endswith("hook posttool --format gemini")
+
     def test_calls_gemini_skills_link_when_gemini_available(self, tmp_path, monkeypatch):
         from typer.testing import CliRunner
         from rafter_cli.__main__ import app

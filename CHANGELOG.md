@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Python: `rafter agent init --with-gemini` now installs Gemini CLI's `BeforeTool`/`AfterTool` hooks.** It installed only the MCP server and skills, so Gemini's shell and file-write tools were not checked by the command policy or the secret gate, although the dry-run plan listed the hooks. Node already installed them; Python now writes the same entries, and a re-run replaces rather than duplicates them.
+
 ## [0.11.2] - 2026-10-27
 
 ### Added
