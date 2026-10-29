@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **betterleaks scanned most files with no rules when the repo had its own config, and was slow without one (#262).** `rafter secrets <dir>` handed betterleaks the git-visible files as path arguments, 64 per call. betterleaks 1.1.x rebuilds its config and detector for every path argument, which made a scan with the default rules cost about 0.2 s per file, and its config-extend depth counter is never reset between them, so under a `.betterleaks.toml` with `[extend] useDefault = true` only the first two paths of each call got any rules. betterleaks now walks the scan root once, under a generated config that extends the config it would otherwise use and skips what git ignores. On a 1,037-file repo, `rafter secrets` now takes about 1.5 s (Node) or 3 s (Python), down from about 220 s without a repo config and 55 s with one, and a scan under `[extend] useDefault = true` reports the same findings as one with no config (before: betterleaks found 6 of 158). Node + Python.
+
 ## [0.11.2] - 2026-10-27
 
 ### Added
