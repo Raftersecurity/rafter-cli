@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The patterns engine skips `.trigger/` by default**, next to `.next/` and `dist/` (#262). It holds Trigger.dev build output (bundled JS and source maps), which produced thousands of false AWS Secret Access Key matches under `--no-gitignore`. Both Node and Python.
+- **The Python CLI's Cursor hooks run the resolved `rafter` path**, as its Claude Code and Codex hooks and Node's `agent init` already did. `agent init --with-cursor` wrote a bare `rafter hook ...` command, which fails when Cursor runs hooks without the shell PATH that holds `rafter`. Python only.
 
 ## [0.11.2] - 2026-10-27
 
