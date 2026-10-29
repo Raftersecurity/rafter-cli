@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The bundled `rafter` skill and agent tell agents to scan within the user's quota.** Run `rafter run` once per task or before a PR rather than after every edit (it scans the pushed commit, so a re-run without a new push repeats the scan), scan only changed files with `rafter secrets --staged` / `--diff` while iterating, never loop or retry scans, and stop on exit `3` (quota exhausted). Both Node and Python.
+
+### Fixed
+
+- **`rafter run --quiet` now prints `Quota exhausted` before exiting `3` on HTTP 429** (Node). It exited silently; Python already printed the reason.
+
 ## [0.11.2] - 2026-10-27
 
 ### Added

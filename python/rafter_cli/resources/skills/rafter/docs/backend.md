@@ -24,7 +24,7 @@ echo "RAFTER_API_KEY=..." >> .env
 
 Private GitHub repos need `RAFTER_GITHUB_TOKEN` (or `--github-token`) so the backend can clone the ref.
 
-Check quota with `rafter usage` before firing a batch of scans.
+Check quota with `rafter usage` before firing a batch of scans. Each `rafter run` counts against it, and it scans the pushed commit, so re-running without a new push spends quota for the same result; reuse it with `rafter get <scan-id>`. Exit `3` (HTTP 429, quota exhausted) means stop and tell the user; do not retry.
 
 If the key is missing, `rafter run` exits with a clear error — **do not** prompt the user mid-flow; recommend `rafter secrets` and move on.
 

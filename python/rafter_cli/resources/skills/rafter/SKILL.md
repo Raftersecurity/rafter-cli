@@ -113,6 +113,14 @@ rafter usage                 # check API quota
 
 Full CLI tree: **Read `docs/cli-reference.md`**. Full digest: `rafter brief commands`.
 
+### Scan budget
+
+Remote scans spend the user's quota. Scan deliberately, not reflexively.
+
+- `rafter run` scans the **pushed** branch, so running it again without a new push repeats the same scan. Run it once per task or before a PR, not after every edit; refer back to that result (`rafter get <scan-id>`) until you push again.
+- While iterating, scan only what changed: `rafter secrets --staged` or `rafter secrets --diff <ref>`.
+- Never loop or retry scans, and don't start `--watch` from an agent session. Exit `3` means the scan quota is exhausted: stop, tell the user, and check `rafter usage`.
+
 ## Configuration
 
 `rafter run` (the full code scan) needs an API key:

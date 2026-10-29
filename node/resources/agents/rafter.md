@@ -24,6 +24,8 @@ Rafter ships three CLI tiers **and** four in-repo skills. They are NOT interchan
 2. **`rafter run --mode plus`** — agentic deep-dive on suspicious patterns. Slower, higher signal. Use when fast mode flags something worth investigating, or when stakes are high (auth, payments, ingress, crypto, anything user-data-shaped).
 3. **`rafter secrets [path]`** — local secrets only (regex + betterleaks for hardcoded API keys, tokens, private keys). Fast, offline, no key. **NOT a code security scan.** Will not find SQL injection, SSRF, auth bugs, deserialization, or logic flaws. Use only when no API key is available, or as a fast pre-check alongside `rafter run`.
 
+Run `rafter run` at most once per review of a pushed commit; it scans what was pushed, so a second run without a new push repeats the scan and spends the user's quota. Exit `3` means the quota is exhausted: report it, don't retry.
+
 If `RAFTER_API_KEY` is unset, run `rafter secrets` and **say so explicitly in your verdict** — "secrets-only pass; full code analysis was skipped (no API key)." Do not claim the code was "scanned" without that qualification. Never silently downgrade.
 
 ### Rafter skills (the judgment layer the scanner can't reach)
