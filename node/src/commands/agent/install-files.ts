@@ -573,3 +573,27 @@ export function cleanupRetiredRules(
   }
   return result;
 }
+
+// ── per-platform artifact sets ───────────────────────────────────────
+
+/** Platforms that install whole-file artifacts, in init's install order. */
+export const WHOLE_FILE_PLATFORMS = ["claude-code", "codex", "gemini", "cursor", "windsurf", "continue"] as const;
+
+/** Every whole-file artifact `agent init` installs for `platform` under `root`. */
+export function platformArtifacts(platform: string, root: string): FileArtifact[] {
+  switch (platform) {
+    case "claude-code":
+      return [...skillArtifacts(path.join(root, ".claude", "skills"), "claude-code", "claude-code.skills"), ...claudeAgentArtifacts(root)];
+    case "codex":
+      return skillArtifacts(path.join(root, ".agents", "skills"), "codex", "codex.skills");
+    case "gemini":
+      return skillArtifacts(path.join(root, ".agents", "skills"), "gemini", "gemini.skills");
+    case "cursor":
+      return [...ruleArtifacts("cursor", root), ...cursorAgentArtifacts(root)];
+    case "windsurf":
+    case "continue":
+      return ruleArtifacts(platform, root);
+    default:
+      return [];
+  }
+}

@@ -555,3 +555,24 @@ def cleanup_retired_rules(
             if not session.dry_run:
                 session.out.warn(fmt.warning(f"Kept retired rule {dest} (modified; remove it yourself if unused)"))
     return result
+
+
+# ── per-platform artifact sets ───────────────────────────────────────
+
+# Platforms that install whole-file artifacts, in init's install order.
+WHOLE_FILE_PLATFORMS: tuple[str, ...] = ("claude-code", "codex", "gemini", "cursor", "windsurf", "continue")
+
+
+def platform_artifacts(platform: str, root: Path) -> list[FileArtifact]:
+    """Every whole-file artifact `agent init` installs for `platform` under `root`."""
+    if platform == "claude-code":
+        return skill_artifacts(root / ".claude" / "skills", "claude-code", "claude-code.skills") + claude_agent_artifacts(root)
+    if platform == "codex":
+        return skill_artifacts(root / ".agents" / "skills", "codex", "codex.skills")
+    if platform == "gemini":
+        return skill_artifacts(root / ".agents" / "skills", "gemini", "gemini.skills")
+    if platform == "cursor":
+        return rule_artifacts("cursor", root) + cursor_agent_artifacts(root)
+    if platform in ("windsurf", "continue"):
+        return rule_artifacts(platform, root)
+    return []

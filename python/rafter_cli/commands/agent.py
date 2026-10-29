@@ -1202,7 +1202,98 @@ def init(
     quiet: bool = typer.Option(False, "--quiet", help="Suppress informational and success output (warnings and errors still go to stderr)"),
 ):
     """Initialize agent security system."""
-    _init_print(quiet, fmt.header("Rafter Agent Security Setup"))
+    _run_agent_init(
+        risk_level=risk_level,
+        with_betterleaks=with_betterleaks,
+        with_skill_scanner=with_skill_scanner,
+        with_openclaw=with_openclaw,
+        with_claude_code=with_claude_code,
+        with_codex=with_codex,
+        with_gemini=with_gemini,
+        with_aider=with_aider,
+        with_cursor=with_cursor,
+        with_windsurf=with_windsurf,
+        with_continue=with_continue,
+        with_hermes=with_hermes,
+        with_opencode=with_opencode,
+        all_integrations=all_integrations,
+        update=update,
+        local=local,
+        dry_run=dry_run,
+        force=force,
+        quiet=quiet,
+    )
+
+
+_UPDATE_INIT_FLAG = {
+    "claude-code": "with_claude_code",
+    "codex": "with_codex",
+    "gemini": "with_gemini",
+    "cursor": "with_cursor",
+    "windsurf": "with_windsurf",
+    "continue": "with_continue",
+    "aider": "with_aider",
+    "hermes": "with_hermes",
+    "opencode": "with_opencode",
+    "openclaw": "with_openclaw",
+}
+
+
+@agent_app.command("update")
+def update_installed(
+    local: bool = typer.Option(False, "--local", help="Update the project-local install in the current directory instead of the user-global one"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print what would change, per file, without writing anything"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace installed skill, rule and sub-agent files even if you modified them (the old file is saved as <file>.bak)",
+    ),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress informational and success output (warnings and errors still go to stderr)"),
+):
+    """Re-apply every installed rafter integration (skills, rules, instructions, hooks, MCP) with this version."""
+    from .agent_update import detect_installed_platforms
+
+    root = Path.cwd() if local else Path.home()
+    platforms = detect_installed_platforms(root, "project" if local else "user")
+    if not platforms:
+        _init_print(quiet, fmt.info(f"No rafter integrations found under {root}; nothing to update."))
+        _init_print(quiet, fmt.info(f"To install, run: rafter agent init{' --local' if local else ''} --with-<platform>"))
+        return
+    flags = {_UPDATE_INIT_FLAG[p]: True for p in platforms}
+    _run_agent_init(risk_level=None, local=local, dry_run=dry_run, force=force, quiet=quiet, mode="update", **flags)
+
+
+def _run_agent_init(
+    *,
+    risk_level: str | None = "moderate",
+    with_betterleaks: bool = False,
+    with_skill_scanner: bool = False,
+    with_openclaw: bool = False,
+    with_claude_code: bool = False,
+    with_codex: bool = False,
+    with_gemini: bool = False,
+    with_aider: bool = False,
+    with_cursor: bool = False,
+    with_windsurf: bool = False,
+    with_continue: bool = False,
+    with_hermes: bool = False,
+    with_opencode: bool = False,
+    all_integrations: bool = False,
+    update: bool = False,
+    local: bool = False,
+    dry_run: bool = False,
+    force: bool = False,
+    quiet: bool = False,
+    mode: str = "init",
+) -> None:
+    """The body of `rafter agent init`.
+
+    `rafter agent update` calls it with the with_<platform> flags of the
+    platforms already installed, so both commands refresh skills, rules,
+    marker blocks, hooks and MCP entries through one code path. `mode="update"`
+    changes the header; `risk_level=None` leaves the configured level alone.
+    """
+    _init_print(quiet, fmt.header("Rafter Agent Update" if mode == "update" else "Rafter Agent Security Setup"))
     _init_print(quiet, fmt.divider())
     _init_print(quiet)
 
@@ -1344,7 +1435,7 @@ def init(
             want_opencode=want_opencode and has_opencode,
             want_betterleaks=want_betterleaks,
             want_skill_scanner=want_skill_scanner,
-            risk_level=risk_level,
+            risk_level=risk_level if risk_level is not None else "unchanged",
             betterleaks_existing=_bl_existing,
             betterleaks_supported=BinaryManager().is_platform_supported(),
             claude_code_mcp_disabled=_components.get("claude-code.mcp", {}).get("enabled") is False,
@@ -1356,15 +1447,16 @@ def init(
     manager.initialize()
     _init_print(quiet, fmt.success("Created config at ~/.rafter/config.json"))
 
-    # Validate + set risk level
-    valid = ("minimal", "moderate", "aggressive")
-    if risk_level not in valid:
-        _init_alert(quiet, fmt.error(f"Invalid risk level: {risk_level}"))
-        print(f"Valid options: {', '.join(valid)}", file=sys.stderr)
-        raise typer.Exit(code=1)
+    # Validate + set risk level (update leaves it as configured)
+    if risk_level is not None:
+        valid = ("minimal", "moderate", "aggressive")
+        if risk_level not in valid:
+            _init_alert(quiet, fmt.error(f"Invalid risk level: {risk_level}"))
+            print(f"Valid options: {', '.join(valid)}", file=sys.stderr)
+            raise typer.Exit(code=1)
 
-    manager.set("agent.risk_level", risk_level)
-    _init_print(quiet, fmt.success(f"Set risk level: {risk_level}"))
+        manager.set("agent.risk_level", risk_level)
+        _init_print(quiet, fmt.success(f"Set risk level: {risk_level}"))
 
     # Betterleaks check (opt-in via --with-betterleaks or --all)
     if want_betterleaks:
@@ -3485,6 +3577,10 @@ def verify(
         # hook payloads can be added in follow-ups.
         results.append(_probe_claude_code())
 
+    # Informational only: an out-of-date install never fails verify.
+    from .agent_update import install_staleness, staleness_line
+    staleness = install_staleness(Path.home(), "user")
+
     hard_failed = [r for r in results if not r.passed and not r.optional]
     warned = [r for r in results if not r.passed and r.optional]
     passed = [r for r in results if r.passed]
@@ -3506,6 +3602,8 @@ def verify(
                 "total": len(results),
                 "probe": probe,
             },
+            "stale": staleness.stale,
+            "installed_version": staleness.installed_version,
         }
         sys.stdout.write(json.dumps(payload) + "\n")
     else:
@@ -3538,6 +3636,8 @@ def verify(
             rprint(fmt.success(f"{len(passed)}/{len(core_results)} core checks passed{warn_note}"))
         else:
             rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
+        if staleness.stale:
+            InstallOutput().warn(fmt.warning(staleness_line(staleness)))
         rprint()
 
     if hard_failed:
@@ -4001,6 +4101,11 @@ def status(
     print("Rafter Agent Status")
     print("=" * 50)
 
+    from .agent_update import install_staleness, staleness_line
+    staleness = install_staleness(Path.home(), "user")
+    if staleness.stale:
+        print(f"\n{staleness_line(staleness)}")
+
     # --- Config ---
     if config_path.exists():
         try:
@@ -4167,6 +4272,13 @@ def status(
     print()
 
 
+def _staleness_json() -> dict[str, Any]:
+    from .agent_update import install_staleness
+
+    st = install_staleness(Path.home(), "user")
+    return {"stale": st.stale, "installed_version": st.installed_version}
+
+
 def _agent_status_json(config_path: Path, audit_path: Path) -> dict[str, Any]:
     from ..core.hook_control import resolve_hook_control
 
@@ -4174,6 +4286,7 @@ def _agent_status_json(config_path: Path, audit_path: Path) -> dict[str, Any]:
     return {
         "installed": config_path.exists(),
         "version": __version__,
+        **_staleness_json(),
         "agents_detected": _detect_agent_platforms(),
         "hooks_installed": _detect_git_hooks(),
         "betterleaks_available": _betterleaks_available(),

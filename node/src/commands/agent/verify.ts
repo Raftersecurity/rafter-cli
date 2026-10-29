@@ -9,6 +9,7 @@ import path from "path";
 import os from "os";
 import yaml from "js-yaml";
 import { fmt } from "../../utils/formatter.js";
+import { installStaleness, stalenessLine } from "./update.js";
 
 /**
  * Run a configured PreToolUse hook command EXACTLY as Claude Code would — through
@@ -612,6 +613,9 @@ export function createVerifyCommand(): Command {
         results.push(probeClaudeCode());
       }
 
+      // Informational only: an out-of-date install never fails verify.
+      const staleness = installStaleness(os.homedir(), "user");
+
       const hardFailed = results.filter((r) => !r.passed && !r.optional);
       const warned = results.filter((r) => !r.passed && r.optional);
       const passed = results.filter((r) => r.passed);
@@ -630,6 +634,8 @@ export function createVerifyCommand(): Command {
             total: results.length,
             probe: !!opts.probe,
           },
+          stale: staleness.stale,
+          installed_version: staleness.installedVersion,
         };
         process.stdout.write(JSON.stringify(payload) + "\n");
       } else {
@@ -667,6 +673,7 @@ export function createVerifyCommand(): Command {
         } else {
           console.log(fmt.error(`${passed.length}/${coreResults.length} checks passed — ${hardFailed.length} failed`));
         }
+        if (staleness.stale) console.log(fmt.warning(stalenessLine(staleness)));
         console.log();
       }
 
