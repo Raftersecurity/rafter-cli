@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The patterns engine skips `.trigger/` by default**, next to `.next/` and `dist/` (#262). It holds Trigger.dev build output (bundled JS and source maps), which produced thousands of false AWS Secret Access Key matches under `--no-gitignore`. Both Node and Python.
+
 ## [0.11.2] - 2026-10-27
 
 ### Added

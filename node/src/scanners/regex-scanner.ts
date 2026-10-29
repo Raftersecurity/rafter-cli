@@ -112,7 +112,8 @@ export class RegexScanner {
       ".ruff_cache",
       "results",
       ".terraform",
-      "bower_components"
+      "bower_components",
+      ".trigger", // Trigger.dev build output (bundled JS + source maps)
     ];
 
     // Merge policy excludePaths into the exclude list
