@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Python CLI's Cursor hooks run the resolved `rafter` path**, as its Claude Code and Codex hooks and Node's `agent init` already did. `agent init --with-cursor` wrote a bare `rafter hook ...` command, which fails when Cursor runs hooks without the shell PATH that holds `rafter`. Python only.
+
 ## [0.11.2] - 2026-10-27
 
 ### Added

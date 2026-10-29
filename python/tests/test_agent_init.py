@@ -1211,8 +1211,9 @@ _CURSOR_SHIPPED_SKILLS = (
 class TestInstallCursorHooks:
     """Cursor hooks must cover preToolUse, postToolUse, and beforeShellExecution."""
 
-    def test_writes_all_three_events_from_scratch(self, tmp_path):
+    def test_writes_all_three_events_from_scratch(self, tmp_path, monkeypatch):
         from rafter_cli.commands.agent import _install_cursor_hooks
+        monkeypatch.setattr("rafter_cli.commands.agent._resolve_rafter_path", lambda: "/opt/rafter/bin/rafter")
         _install_cursor_hooks(tmp_path)
 
         hooks_path = tmp_path / ".cursor" / "hooks.json"
@@ -1224,9 +1225,9 @@ class TestInstallCursorHooks:
             assert isinstance(entries, list) and entries, f"missing {event}"
 
         pre = next(e for e in cfg["hooks"]["preToolUse"] if "rafter" in e.get("command", ""))
-        assert pre["command"] == "rafter hook pretool --format cursor"
+        assert pre["command"] == "/opt/rafter/bin/rafter hook pretool --format cursor"
         post = next(e for e in cfg["hooks"]["postToolUse"] if "rafter" in e.get("command", ""))
-        assert post["command"] == "rafter hook posttool --format cursor"
+        assert post["command"] == "/opt/rafter/bin/rafter hook posttool --format cursor"
 
     def test_idempotent_no_duplicates(self, tmp_path):
         from rafter_cli.commands.agent import _install_cursor_hooks
