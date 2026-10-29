@@ -111,11 +111,30 @@ def test_scans_gitignored_files_when_asked(setup):
     )
 
 
-def test_extends_the_targets_own_config(setup):
+def test_carries_the_targets_own_config(setup):
     scanner, repo, _, cfg = setup
-    (repo / ".betterleaks.toml").write_text("[extend]\nuseDefault = true\n")
+    (repo / ".betterleaks.toml").write_text("[extend]\nuseDefault = true\n\n[allowlist]\npaths = ['x']\n")
     scanner.scan_directory(str(repo))
-    assert f"path = {json.dumps(str(repo / '.betterleaks.toml'))}" in cfg.read_text()
+    toml = cfg.read_text()
+    assert "[extend]\nuseDefault = true\n\n[[allowlists]]\npaths = ['x']\n" in toml
+    assert not re.search(r"^\[allowlist\]", toml, re.M)
+
+
+def test_carries_the_config_betterleaks_would_pick(setup, monkeypatch):
+    scanner, repo, _, cfg = setup
+    (repo / ".betterleaks.toml").write_text("# repo file\n")
+    monkeypatch.setenv("GITLEAKS_CONFIG_TOML", "# env content\n")
+    scanner.scan_directory(str(repo))
+    assert "# env content\n" in cfg.read_text()
+
+    env_file = repo / "env-path.toml"
+    env_file.write_text("# env path\n")
+    monkeypatch.setenv("BETTERLEAKS_CONFIG", str(env_file))
+    scanner.scan_directory(str(repo))
+    toml = cfg.read_text()
+    assert "# env path\n" in toml
+    assert "# env content" not in toml
+    assert "# repo file" not in toml
 
 
 # The skip list and the generated config decide what betterleaks never reads,
@@ -157,8 +176,8 @@ def test_config_keeps_a_backslash_in_a_posix_filename_literal(tmp_path):
 
 
 def test_config_is_valid_toml_whatever_the_filenames(tmp_path):
-    toml = scan_config_toml(str(tmp_path), ["d\x7fel.txt", "t\tab", "n\nl"], "/c\x7f/x.toml")
-    assert tomllib.loads(toml)["extend"]["path"] == "/c\x7f/x.toml"
+    toml = scan_config_toml(str(tmp_path), ["d\x7fel.txt", "t\tab", "n\nl"], None)
+    assert tomllib.loads(toml)["extend"]["useDefault"] is True
     assert _skips(toml, os.path.join(str(tmp_path), "d\x7fel.txt"))
 
 
@@ -204,6 +223,34 @@ def test_real_betterleaks_applies_extended_rules_to_every_file(tmp_path):
     scanner._path = shutil.which("betterleaks")
     files = sorted(os.path.basename(r.file) for r in scanner.scan_directory(str(repo)))
     assert files == ["f1.js", "f2.js", "f3.js", "f4.js"]
+
+
+# A repo config that extends a shared config, which extends the default
+# rules: a depth betterleaks follows itself, which a generated config that
+# extended the repo's exceeded (sable-v6f0).
+@pytest.mark.skipif(shutil.which("betterleaks") is None, reason="needs the betterleaks binary")
+def test_real_betterleaks_keeps_default_rules_two_extends_away_and_the_repo_allowlist(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    org = repo / "org.toml"
+    org.write_text("[extend]\nuseDefault = true\n")
+    (repo / ".betterleaks.toml").write_text("\n".join([
+        "[extend]", f"path = {json.dumps(str(org))}", "",
+        "[[rules]]", 'id = "repo-custom"', "regex = 'REPOSECRET_[0-9]{6}'", "",
+        "[allowlist]", "paths = ['allowed\\.js$']", "",
+    ]))
+    (repo / ".gitignore").write_text(".env\n")
+    gh = 'const t = "ghp_1111Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXyZ0";\n'
+    (repo / "a.js").write_text(gh + 'const r = "REPOSECRET_123456";\n')
+    (repo / "allowed.js").write_text(gh)
+    (repo / ".env").write_text(gh)
+    scanner = BetterleaksScanner()
+    scanner._path = shutil.which("betterleaks")
+    found = sorted(
+        f"{os.path.basename(r.file)}:{m.pattern.name}" for r in scanner.scan_directory(str(repo)) for m in r.matches
+    )
+    assert found == ["a.js:github-pat", "a.js:repo-custom"]
 
 
 def test_timeout_is_an_error_not_a_clean_scan(setup, monkeypatch):
