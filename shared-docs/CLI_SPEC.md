@@ -1065,9 +1065,13 @@ With `--probe`, an additional `Claude Code (probe)` check appears as the last en
     "failed": 1,
     "total": 3,
     "probe": false
-  }
+  },
+  "stale": false,
+  "installed_version": "0.11.2"
 }
 ```
+
+`stale` and `installed_version` report whether installed integrations are older than this CLI (see `rafter agent update`); staleness alone never changes the exit code. Without `--json`, a stale install adds one line naming `rafter agent update` after the summary.
 
 `status` is one of `pass | warn | fail`. `warn` is reserved for optional integrations that aren't installed; `fail` is reserved for hard failures (Config, Betterleaks, or any failing `--probe` check).
 
@@ -1083,6 +1087,8 @@ Show agent security status dashboard. Displays config summary, installed integra
 {
   "installed": true,
   "version": "0.8.3",
+  "stale": false,
+  "installed_version": "0.8.3",
   "agents_detected": ["claude-code", "cursor"],
   "hooks_installed": ["pre-commit"],
   "betterleaks_available": true,
@@ -1097,8 +1103,25 @@ Show agent security status dashboard. Displays config summary, installed integra
 }
 ```
 
+`stale` is true when installed integrations are older than this CLI ships (see `rafter agent update`); `installed_version` is the CLI version in the install manifest, or `null` for an install made before rafter kept one. Without `--json`, a stale install adds one line near the top naming `rafter agent update`.
+
 `hook_control` reports the runtime hook off-switch (see the *hook off-switch* note
 under `rafter hook pretool`). Each `source` is `default`, `global-config`, or `env`.
+
+### rafter agent update [OPTIONS]
+
+Re-apply every rafter integration that is already installed, with this CLI's skills, rules, sub-agents, instruction blocks, hooks and MCP entries. Run it after upgrading the CLI.
+
+Installed platforms are read from the install manifest (`<root>/.rafter/installed.json`) and from rafter's own files on disk, for installs made before the manifest existed: a platform's rafter skills, rules or sub-agent, its `<!-- rafter:start -->` block, or a rafter hook or MCP entry in its config. A platform whose directory exists but holds none of these is not installed and is left alone. The work is the same as `rafter agent init --with-<platform>` for each installed platform, except that the configured risk level is kept and nothing is downloaded (Betterleaks and skill-scanner are not touched).
+
+- `--local` — update the project-local install in the current directory (`./.rafter/installed.json`) instead of the user-global one
+- `--dry-run` — print each file's predicted outcome without writing, as `agent init --dry-run` does
+- `--force` — replace modified skill, rule and sub-agent files, saving the old file as `<file>.bak` (as `agent init --force`)
+- `--quiet` — as `agent init --quiet`
+
+**Output:** the `agent init` report, headed `Rafter Agent Update`: one line per added, updated, kept or replaced file, one `N files unchanged` line, and the kept-file hint (see *Installed files and local edits* under `rafter agent init`). With nothing installed it prints `No rafter integrations found under <root>; nothing to update.` and how to install, and writes nothing.
+
+**Exit codes:** `0` on success, including when files were kept or nothing was installed; non-zero only when setup itself fails (as `agent init`).
 
 ### rafter agent update-betterleaks [OPTIONS]
 
