@@ -148,6 +148,21 @@ class TestHookAutoUpdate:
         maybe_auto_update(home, None, "99.0.0")
         assert not (home / ".claude" / "skills" / "rafter-code-review").exists()
 
+    def test_does_not_write_through_a_symlink(self, home):
+        copy_fixture(home)
+        outside = home / "outside"
+        outside.mkdir()
+        skill = home / ".claude" / "skills" / "rafter" / "SKILL.md"
+        skill.unlink()
+        skill.symlink_to(outside / "dangling")
+        rule = home / ".cursor" / "rules" / "rafter.mdc"
+        rule.write_bytes(rule.read_bytes() + b"\nmine\n")
+        (outside / "victim").write_text("keep me")
+        Path(f"{rule}.rafter-new").symlink_to(outside / "victim")
+        maybe_auto_update(home, None, "99.0.0")
+        assert not (outside / "dangling").exists()
+        assert (outside / "victim").read_text() == "keep me"
+
     def test_nothing_when_current_empty_or_disabled(self, home, monkeypatch):
         assert maybe_auto_update(home, None, "99.0.0") is None  # empty home
         assert auto_update_stamp_path(home).exists()

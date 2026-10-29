@@ -143,7 +143,13 @@ def maybe_auto_update(
         for platform in platforms:
             artifacts = platform_artifacts(platform, home)
             present = {_unit_of(a) for a in artifacts if a.dest.exists()}
-            session.apply_all([a for a in artifacts if _unit_of(a) in present])
+            # A symlink at a file or its .rafter-new is skipped: an unattended
+            # write must not follow a link to a path nobody chose. `agent update` still does.
+            session.apply_all([
+                a for a in artifacts
+                if _unit_of(a) in present and not a.dest.is_symlink()
+                and not Path(f"{a.dest}{NEW_VERSION_SUFFIX}").is_symlink()
+            ])
         # Retired rule files and the legacy OpenClaw file go only when their
         # hash is rafter's. Retired skill directories are left to `agent
         # update`: there a publisher tag alone is enough to remove one, and

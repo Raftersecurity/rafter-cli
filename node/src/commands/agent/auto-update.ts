@@ -98,6 +98,14 @@ function unitOf(a: FileArtifact): string {
   return a.dest.slice(0, a.dest.length - rel.length - 1);
 }
 
+function isSymlink(p: string): boolean {
+  try {
+    return fs.lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Apply this CLI's whole-file content to the user-scope install if it is older.
  * Returns null when nothing ran (checked recently, already current, nothing
@@ -132,7 +140,10 @@ export function maybeAutoUpdate(opts: { home?: string; now?: number; version?: s
     for (const platform of platforms) {
       const artifacts = platformArtifacts(platform, home);
       const present = new Set(artifacts.filter((a) => fs.existsSync(a.dest)).map(unitOf));
-      session.applyAll(artifacts.filter((a) => present.has(unitOf(a))));
+      // A symlink at a file or its .rafter-new is skipped: an unattended write
+      // must not follow a link to a path nobody chose. `agent update` still does.
+      session.applyAll(artifacts.filter((a) =>
+        present.has(unitOf(a)) && !isSymlink(a.dest) && !isSymlink(a.dest + NEW_VERSION_SUFFIX)));
     }
     // Retired rule files and the legacy OpenClaw file go only when their hash
     // is rafter's. Retired skill directories are left to `agent update`: there

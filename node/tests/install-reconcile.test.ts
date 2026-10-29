@@ -142,6 +142,21 @@ describe("hook auto-update over the 0.11.2 fixture", () => {
     expect(fs.existsSync(path.join(home, ".claude", "skills", "rafter-code-review"))).toBe(false);
   });
 
+  it("does not write through a symlink at a file or its .rafter-new", () => {
+    copyFixture();
+    const outside = path.join(home, "outside");
+    fs.mkdirSync(outside);
+    fs.rmSync(skill());
+    fs.symlinkSync(path.join(outside, "dangling"), skill());
+    const rule = path.join(home, ".cursor", "rules", "rafter.mdc");
+    fs.appendFileSync(rule, "\nmine\n");
+    fs.writeFileSync(path.join(outside, "victim"), "keep me");
+    fs.symlinkSync(path.join(outside, "victim"), rule + ".rafter-new");
+    maybeAutoUpdate({ home, version: "99.0.0" });
+    expect(fs.existsSync(path.join(outside, "dangling"))).toBe(false);
+    expect(fs.readFileSync(path.join(outside, "victim"), "utf-8")).toBe("keep me");
+  });
+
   it("does nothing when the install is current, when nothing is installed, or when disabled", () => {
     expect(maybeAutoUpdate({ home, version: "99.0.0" })).toBeNull(); // empty home
     expect(fs.existsSync(autoUpdateStampPath(home))).toBe(true);
