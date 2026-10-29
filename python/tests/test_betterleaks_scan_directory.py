@@ -1,12 +1,15 @@
 """#262 — `betterleaks dir` ignores .gitignore, so handed a directory it walked
 node_modules / build output / .env: slow enough to hit the timeout, and it
 reported gitignored local secret stores. A fake binary stands in for
-betterleaks: it logs its argv and reports every scanned file containing AKIA.
+betterleaks: it logs its argv, keeps a copy of its -c config, and reports
+every file under its targets containing AKIA.
 Mirrors node/tests/betterleaks-scan-directory.test.ts.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -16,8 +19,12 @@ import pytest
 
 from rafter_cli.scanners.betterleaks import BetterleaksScanner
 
+# The developer's own betterleaks config must not leak into these tests.
+CONFIG_ENV_VARS = ("BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG", "BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML")
+
 FAKE_BL = r"""#!/bin/sh
 printf '%s\n' "$@" >> "$FAKE_BL_ARGV"
+prev=""; for a in "$@"; do [ "$prev" = "-c" ] && cp "$a" "$FAKE_BL_CFG"; prev="$a"; done
 [ -n "$FAKE_BL_SLEEP" ] && sleep "$FAKE_BL_SLEEP"
 report=""
 while [ $# -gt 0 ]; do
@@ -54,6 +61,9 @@ def setup(tmp_path, monkeypatch):
     bin_path.chmod(0o755)
     argv_log = tmp_path / "argv.log"
     monkeypatch.setenv("FAKE_BL_ARGV", str(argv_log))
+    monkeypatch.setenv("FAKE_BL_CFG", str(tmp_path / "scan.toml"))
+    for v in CONFIG_ENV_VARS:
+        monkeypatch.delenv(v, raising=False)
 
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     (repo / ".gitignore").write_text(".env\nbuild/\n")
@@ -65,7 +75,7 @@ def setup(tmp_path, monkeypatch):
 
     scanner = BetterleaksScanner()
     scanner._path = str(bin_path)
-    yield scanner, repo, argv_log
+    yield scanner, repo, argv_log, tmp_path / "scan.toml"
     shutil.rmtree(bin_dir, ignore_errors=True)
 
 
@@ -73,31 +83,62 @@ def _reported(results, repo):
     return sorted(os.path.relpath(r.file, repo) for r in results)
 
 
-def test_skips_gitignored_files_by_default(setup):
-    scanner, repo, _ = setup
-    assert _reported(scanner.scan_directory(str(repo)), repo) == ["tracked.js", "untracked.js"]
+def _skipped_by(toml, repo):
+    # The fake ignores the config, so read off it what betterleaks would skip.
+    pats = [re.compile(json.loads(m)) for m in re.findall(r"^  (\".*\"),$", toml, re.M)]
+    return lambda rel: any(p.search(os.path.join(str(repo), rel)) for p in pats)
+
+
+def test_walks_the_target_once_under_a_config_that_skips_what_git_ignores(setup):
+    scanner, repo, argv_log, cfg = setup
+    scanner.scan_directory(str(repo))
+    argv = argv_log.read_text().strip().split("\n")
+    assert argv[argv.index("--") + 1:] == [str(repo)]
+    toml = cfg.read_text()
+    assert re.search(r"^useDefault = true$", toml, re.M)
+    files = [".env", os.path.join("build", "out.js"), "tracked.js", "untracked.js"]
+    assert [f for f in files if _skipped_by(toml, repo)(f)] == [".env", os.path.join("build", "out.js")]
 
 
 def test_scans_gitignored_files_when_asked(setup):
-    scanner, repo, _ = setup
+    scanner, repo, _, _ = setup
     results = scanner.scan_directory(str(repo), respect_gitignore=False)
     assert _reported(results, repo) == sorted(
         [".env", os.path.join("build", "out.js"), "tracked.js", "untracked.js"]
     )
 
 
-def test_still_applies_the_targets_own_config(setup):
-    scanner, repo, argv_log = setup
+def test_extends_the_targets_own_config(setup):
+    scanner, repo, _, cfg = setup
     (repo / ".betterleaks.toml").write_text("[extend]\nuseDefault = true\n")
     scanner.scan_directory(str(repo))
-    argv = argv_log.read_text().split("\n")
-    assert argv[argv.index("-c") + 1] == str(repo / ".betterleaks.toml")
+    assert f"path = {json.dumps(str(repo / '.betterleaks.toml'))}" in cfg.read_text()
+
+
+# #262 — betterleaks 1.1.x never resets its extend-depth counter, so handed many
+# paths under a config that extends the default rules, it applied rules to the
+# first two paths only. Needs the real binary on PATH; skipped without it.
+@pytest.mark.skipif(shutil.which("betterleaks") is None, reason="needs the betterleaks binary")
+def test_real_betterleaks_applies_extended_rules_to_every_file(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / ".betterleaks.toml").write_text("[extend]\nuseDefault = true\n")
+    (repo / ".gitignore").write_text(".env\n")
+    pat = lambda i: f'const t = "ghp_{str(i) * 4}Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXyZ0";\n'
+    for i in range(1, 5):
+        (repo / f"f{i}.js").write_text(pat(i))
+    (repo / ".env").write_text(pat(9))
+    scanner = BetterleaksScanner()
+    scanner._path = shutil.which("betterleaks")
+    files = sorted(os.path.basename(r.file) for r in scanner.scan_directory(str(repo)))
+    assert files == ["f1.js", "f2.js", "f3.js", "f4.js"]
 
 
 def test_timeout_is_an_error_not_a_clean_scan(setup, monkeypatch):
     # A timed-out scan used to return [] — read as "no secrets" by the
     # betterleaks-only engine instead of falling back to patterns.
-    scanner, repo, _ = setup
+    scanner, repo, _, _ = setup
 
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(args[0], 60)

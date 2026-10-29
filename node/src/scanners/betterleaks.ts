@@ -11,79 +11,78 @@ const execFileAsync = promisify(execFile);
 /** Per-invocation timeout for the betterleaks subprocess. */
 const SCAN_TIMEOUT_MS = 60_000;
 
-/**
- * Budget for the path arguments of one `betterleaks dir` call. Windows caps a
- * whole command line at 32,767 characters; elsewhere the limit is far larger.
- */
-const ARG_CHARS_PER_CALL = process.platform === "win32" ? 24_000 : 500_000;
+/** Config env vars betterleaks consults before the target's own .toml, in its order. */
+const CONFIG_PATH_ENV_VARS = ["BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG"];
+const CONFIG_TOML_ENV_VARS = ["BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML"];
 
 /**
- * Maximum number of file paths handed to one `betterleaks dir` invocation.
- *
- * sable-jiqb — betterleaks' run time scales with the length of the explicit
- * file list it is given (measured ~0.2s/file: 50 files ~10s, 300 files ~60s),
- * not with the size of the files. A whole git-tracked list on a few-hundred-file
- * repo therefore exceeds SCAN_TIMEOUT_MS in a single call and the engine falls
- * back to patterns. Capping each call at this many files keeps every invocation
- * well under the timeout (~0.2s * 64 ~= 13s, roughly a fifth of the 60s floor,
- * leaving headroom on a loaded box); the full tree is covered across as many
- * sequential calls as it takes, and their findings are unioned by file.
+ * Paths under `dirPath` that a git-aware scan must skip, relative to it: what
+ * git ignores (a wholly ignored directory as one `dir/` entry), plus submodules
+ * and nested repositories, whose files git does not list. Returns null when
+ * `dirPath` is not inside a git work tree or git is unavailable, so the caller
+ * scans the directory whole.
  */
-export const MAX_FILES_PER_CALL = 64;
-
-/** Config env vars betterleaks consults before the target's own .toml. */
-const CONFIG_ENV_VARS = [
-  "BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG", "BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML",
-];
-
-/**
- * Files under `dirPath` that git does not ignore (tracked, plus untracked and
- * not ignored), as absolute paths. Returns null when `dirPath` is not inside a
- * git work tree or git is unavailable, so the caller scans the directory whole.
- */
-export function gitVisibleFiles(dirPath: string): string[] | null {
-  const r = spawnSync(
-    "git",
-    ["-C", dirPath, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."],
-    { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000, maxBuffer: 256 * 1024 * 1024 },
-  );
-  if (r.status !== 0 || typeof r.stdout !== "string") return null;
-  const files = new Set<string>();
-  for (const rel of r.stdout.split("\0")) {
-    if (!rel) continue;
-    const abs = path.join(dirPath, rel);
+export function gitSkippedPaths(dirPath: string): string[] | null {
+  const ls = (...args: string[]): string[] | null => {
+    const r = spawnSync("git", ["-C", dirPath, "ls-files", "-z", ...args, "--", "."], {
+      encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000, maxBuffer: 256 * 1024 * 1024,
+    });
+    if (r.status !== 0 || typeof r.stdout !== "string") return null;
+    return r.stdout.split("\0").filter(Boolean);
+  };
+  const ignored = ls("--others", "--ignored", "--exclude-standard", "--directory");
+  const visible = ls("--cached", "--others", "--exclude-standard");
+  if (ignored === null || visible === null) return null;
+  const nested = visible.filter((rel) => {
+    if (rel.endsWith("/")) return true;
     try {
-      // Skip deleted-but-tracked paths, submodule dirs and symlinks (betterleaks
-      // does not follow symlinks by default either).
-      if (fs.lstatSync(abs).isFile()) files.add(abs);
+      return fs.lstatSync(path.join(dirPath, rel)).isDirectory();
     } catch {
-      // deleted from the work tree
+      return false; // deleted from the work tree
     }
-  }
-  return [...files];
+  });
+  return [...ignored, ...nested];
+}
+
+/** A regex (RE2, JS and Python read it alike) matching `p` and everything below it. */
+function pathPrefixPattern(p: string): string {
+  const slashed = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  return "^" + slashed.replace(/[\\.+*?()|[\]{}^$]/g, "\\$&") + "(?:/.*)?$";
 }
 
 /**
- * Split `paths` into groups that stay within both bounds: at most `maxCount`
- * paths per group (sable-jiqb — betterleaks' cost scales with the file count,
- * so this is what keeps each invocation under the timeout) and a joined length
- * under `budget` chars (the OS command-line cap, the original #262 constraint).
+ * The betterleaks config for one git-aware directory scan. It extends the
+ * config the scan would otherwise use (`base`, or betterleaks' default rules
+ * when null) and adds a global path allowlist for `skipped`, so one
+ * `betterleaks dir <root>` walk passes over those paths without reading them.
+ *
+ * #262 — rafter used to hand betterleaks the git-visible files as path
+ * arguments, 64 per call. betterleaks 1.1.x rebuilds its config and detector
+ * for every path argument (~0.2s each with the default rules), and its
+ * `extend` depth counter is a process global it never resets, so with a config
+ * that extends another (`[extend] useDefault = true`) only the first two path
+ * arguments of a call got the extended rules: every later file was scanned
+ * with the repo's own rules alone. A single walk builds one detector and
+ * applies the full rule set to every file.
  */
-function chunkFiles(paths: string[], budget: number, maxCount: number): string[][] {
-  const chunks: string[][] = [];
-  let cur: string[] = [];
-  let len = 0;
-  for (const p of paths) {
-    if (cur.length > 0 && (cur.length >= maxCount || len + p.length + 1 > budget)) {
-      chunks.push(cur);
-      cur = [];
-      len = 0;
-    }
-    cur.push(p);
-    len += p.length + 1;
-  }
-  if (cur.length > 0) chunks.push(cur);
-  return chunks;
+export function scanConfigToml(dirPath: string, skipped: string[], base: string | null): string {
+  const patterns = [
+    "(?:^|/)\\.git(?:/.*)?$",
+    ...skipped.map((rel) => pathPrefixPattern(path.join(dirPath, rel))),
+  ];
+  // A JSON string literal is a valid TOML basic string.
+  return [
+    "# Generated by rafter for one scan (scanConfigToml, rafter's betterleaks scanner).",
+    "[extend]",
+    base === null ? "useDefault = true" : `path = ${JSON.stringify(base)}`,
+    "",
+    "[[allowlists]]",
+    'description = "rafter: paths git ignores"',
+    "paths = [",
+    ...patterns.map((p) => `  ${JSON.stringify(p)},`),
+    "]",
+    "",
+  ].join("\n");
 }
 
 /** Name why a betterleaks subprocess failed: a timeout reads differently from a crash. */
@@ -242,8 +241,8 @@ export class BetterleaksScanner {
    * walks node_modules, build output and local secret stores (.env) alike:
    * slow enough to hit the timeout on an ordinary checkout, and noisy (#262).
    * With respectGitignore (the default, matching the patterns engine) and a
-   * target inside a git work tree, it is handed git's own list of non-ignored
-   * files instead.
+   * target inside a git work tree, it walks the tree once under a generated
+   * config that skips what git ignores (see scanConfigToml).
    */
   async scanDirectory(
     dirPath: string,
@@ -258,27 +257,37 @@ export class BetterleaksScanner {
       return this.groupByFile(await this.runDir(blPath, "git", [dirPath], []));
     }
 
-    const files = opts?.respectGitignore === false ? null : gitVisibleFiles(dirPath);
-    if (files === null) {
+    const skipped = opts?.respectGitignore === false ? null : gitSkippedPaths(dirPath);
+    if (skipped === null) {
       return this.groupByFile(await this.runDir(blPath, "dir", [dirPath], []));
     }
 
-    // Given file paths instead of a directory, betterleaks no longer finds the
-    // target's own .betterleaks.toml / .gitleaks.toml, so pass it explicitly
-    // unless an env var already chooses the config (it outranks the file).
-    const configArgs: string[] = [];
-    if (!CONFIG_ENV_VARS.some((v) => process.env[v])) {
-      const cfg = [".betterleaks.toml", ".gitleaks.toml"]
+    // Private 0700 dir, atomically created — see scanFile for the TOCTOU rationale (CWE-367).
+    const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "betterleaks-cfg-"));
+    try {
+      // The generated config is passed as -c, which outranks every other
+      // source, so it extends whichever config betterleaks would have chosen,
+      // in betterleaks' own order: env path, env content, the target's file.
+      let base: string | null =
+        CONFIG_PATH_ENV_VARS.map((v) => process.env[v]).find(Boolean) ?? null;
+      const content = CONFIG_TOML_ENV_VARS.map((v) => process.env[v]).find(Boolean);
+      if (base === null && content) {
+        base = path.join(cfgDir, "env.toml");
+        fs.writeFileSync(base, content);
+      }
+      base ??= [".betterleaks.toml", ".gitleaks.toml"]
         .map((n) => path.join(dirPath, n))
-        .find((p) => fs.existsSync(p));
-      if (cfg) configArgs.push("-c", cfg);
+        .find((p) => fs.existsSync(p)) ?? null;
+      const cfg = path.join(cfgDir, "scan.toml");
+      fs.writeFileSync(cfg, scanConfigToml(dirPath, skipped, base));
+      return this.groupByFile(await this.runDir(blPath, "dir", [dirPath], ["-c", cfg]));
+    } finally {
+      try {
+        fs.rmSync(cfgDir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
     }
-
-    const findings: BetterleaksResult[] = [];
-    for (const chunk of chunkFiles(files, ARG_CHARS_PER_CALL, MAX_FILES_PER_CALL)) {
-      findings.push(...(await this.runDir(blPath, "dir", chunk, configArgs)));
-    }
-    return this.groupByFile(findings);
   }
 
   /** One betterleaks invocation; returns its findings or throws with the cause. */
