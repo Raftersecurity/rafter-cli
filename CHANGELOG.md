@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`rafter notify` read the wrong fields from a scan and always reported "Clean".** It looked for a `findings` array and `summary.critical`/`summary.high`, but a completed scan returns a `vulnerabilities[]` array and a `summary` keyed on `errors`/`warnings`/`notes`. Every webhook therefore posted "Clean — no issues found" even when the scan found critical issues. It now reads `vulnerabilities[]` and maps each severity the way the GitHub Action and `rafter get` do (`critical`; `error`/`high`; `warning`/`medium`; `note`/`low`), falling back to a legacy `findings` array for old cached payloads. "Clean" is posted only for a completed scan with zero findings. Both Node and Python.
 - **Codex `apply_patch` writes to rafter's own configuration are refused, Claude Code's `MultiEdit` reaches the PreToolUse hook, and the Gemini CLI hook matcher names only Gemini's real tools.** The hook now checks every path in an `apply_patch`'s file headers against the rafter-config guard. The Claude Code installer and `policy export --format claude` register `Write|Edit|MultiEdit` instead of `Write|Edit`. The Gemini installer drops `edit`, which is not a Gemini CLI tool name. Rerun `rafter agent init` to update an existing install. Both Node and Python.
+- **The Python CLI's Cursor hooks run the resolved `rafter` path**, as its Claude Code and Codex hooks and Node's `agent init` already did. `agent init --with-cursor` wrote a bare `rafter hook ...` command, which fails when Cursor runs hooks without the shell PATH that holds `rafter`. Python only.
 
 ## [0.11.3] - 2026-10-29
 
@@ -25,7 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The patterns engine skips `.trigger/` by default**, next to `.next/` and `dist/` (#262). It holds Trigger.dev build output (bundled JS and source maps), which produced thousands of false AWS Secret Access Key matches under `--no-gitignore`. Both Node and Python.
-- **The Python CLI's Cursor hooks run the resolved `rafter` path**, as its Claude Code and Codex hooks and Node's `agent init` already did. `agent init --with-cursor` wrote a bare `rafter hook ...` command, which fails when Cursor runs hooks without the shell PATH that holds `rafter`. Python only.
 
 ## [0.11.2] - 2026-10-27
 
