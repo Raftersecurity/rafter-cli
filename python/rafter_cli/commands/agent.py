@@ -803,7 +803,7 @@ def _install_gemini_hooks(root: Path, quiet: bool = False) -> None:
     hooks = settings.setdefault("hooks", {})
     rafter_bin = _resolve_rafter_path()
     for event, sub, matcher in (
-        ("BeforeTool", "pretool", "run_shell_command|write_file|replace|edit"),
+        ("BeforeTool", "pretool", "run_shell_command|write_file|replace"),
         ("AfterTool", "posttool", ".*"),
     ):
         entries = hooks.get(event) or []
