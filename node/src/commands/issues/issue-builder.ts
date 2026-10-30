@@ -14,12 +14,34 @@ export interface IssueDraft {
   fingerprint: string;
 }
 
-/** Backend vulnerability from `rafter get <id> --format json` */
+/**
+ * Backend vulnerability from `GET /api/static/scan` (`rafter get <id> --format json`).
+ *
+ * The real API shape (`toRafterFindings()` on the backend) is
+ * `rule_id`/`severity`/`title`/`description`/`file_path`/`line_start`/`line_end`
+ * plus optional `cwe`/`confidence`. The `ruleId`/`level`/`message`/`file`/`line`
+ * names below are the pre-rename shape; kept as a fallback for old cached
+ * payloads and existing tests, never the primary source.
+ */
 export interface BackendVulnerability {
-  ruleId: string;
-  level: string;
-  message: string;
-  file: string;
+  rule_id?: string;
+  severity?: string;
+  title?: string;
+  description?: string;
+  file_path?: string | null;
+  line_start?: number | null;
+  line_end?: number | null;
+  cwe?: string;
+  confidence?: string;
+  /** @deprecated pre-rename name — use `rule_id` */
+  ruleId?: string;
+  /** @deprecated pre-rename name — use `severity` */
+  level?: string;
+  /** @deprecated pre-rename name — use `title`/`description` */
+  message?: string;
+  /** @deprecated pre-rename name — use `file_path` */
+  file?: string;
+  /** @deprecated pre-rename name — use `line_start` */
   line?: number;
   result?: any;
 }
@@ -62,26 +84,33 @@ function severityEmoji(level: string): string {
 export function buildFromBackendVulnerability(
   vuln: BackendVulnerability
 ): IssueDraft {
-  const sev = severityLabel(vuln.level);
-  const emoji = severityEmoji(vuln.level);
-  const fp = fingerprint(vuln.file, vuln.ruleId);
+  const ruleId = vuln.rule_id ?? vuln.ruleId ?? "unknown-rule";
+  const level = vuln.severity ?? vuln.level ?? "note";
+  const summary = vuln.title ?? vuln.message ?? "Security finding";
+  const details = vuln.description ?? vuln.message ?? summary;
+  const file = vuln.file_path ?? vuln.file ?? "unknown file";
+  const line = vuln.line_start ?? vuln.line;
 
-  const title = `${emoji} [${sev.toUpperCase()}] ${vuln.ruleId}: ${truncate(vuln.message, 80)}`;
+  const sev = severityLabel(level);
+  const emoji = severityEmoji(level);
+  const fp = fingerprint(file, ruleId);
+
+  const title = `${emoji} [${sev.toUpperCase()}] ${ruleId}: ${truncate(summary, 80)}`;
 
   let body = `## Security Finding\n\n`;
-  body += `**Rule:** \`${vuln.ruleId}\`\n`;
+  body += `**Rule:** \`${ruleId}\`\n`;
   body += `**Severity:** ${sev}\n`;
-  body += `**File:** \`${vuln.file}\``;
-  if (vuln.line) body += ` (line ${vuln.line})`;
+  body += `**File:** \`${file}\``;
+  if (line) body += ` (line ${line})`;
   body += `\n\n`;
-  body += `### Description\n\n${vuln.message}\n\n`;
-  body += `### Remediation\n\nReview and fix the finding in \`${vuln.file}\`.\n`;
+  body += `### Description\n\n${details}\n\n`;
+  body += `### Remediation\n\nReview and fix the finding in \`${file}\`.\n`;
   body += `\n---\n*Created by [Rafter CLI](https://rafter.so) — security for AI builders*\n`;
 
   const labels = [
     "security",
     `severity:${sev}`,
-    `rule:${vuln.ruleId}`,
+    `rule:${ruleId}`,
   ];
 
   return {

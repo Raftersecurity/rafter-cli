@@ -12,6 +12,10 @@ interface Vulnerability {
   ruleId?: string;
   message?: string;
   location?: string;
+  // Real API shape (GET /api/static/scan).
+  file_path?: string | null;
+  line_start?: number | null;
+  // Pre-rename names — fallback for old cached payloads.
   file?: string;
   line?: number;
 }
@@ -90,8 +94,10 @@ function normalizeScan(scan: ScanData): NormalizedScan {
     else if (tier === "low") low++;
 
     const title = v.title ?? v.rule_id ?? v.ruleId ?? v.message ?? "Unknown";
-    let location = v.location ?? v.file ?? "";
-    if (!v.location && v.file && v.line != null) location = `${v.file}:${v.line}`;
+    const file = v.file_path ?? v.file;
+    const line = v.line_start ?? v.line;
+    let location = v.location ?? file ?? "";
+    if (!v.location && file && line != null) location = `${file}:${line}`;
 
     return { severity: tier, title, location };
   });

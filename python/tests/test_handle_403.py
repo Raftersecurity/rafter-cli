@@ -53,6 +53,12 @@ class TestHandle403:
         err = capsys.readouterr().err
         assert "10/10" in err
 
+    def test_scan_mode_derives_used_from_remaining(self, capsys):
+        resp = _mock_response(403, "", json_body={"scan_mode": "fast", "limit": 10, "remaining": 3})
+        handle_403(resp)
+        err = capsys.readouterr().err
+        assert "7/10" in err
+
     def test_scope_error_returns_insufficient_scope(self):
         resp = _mock_response(
             403,
