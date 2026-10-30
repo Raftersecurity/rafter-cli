@@ -978,8 +978,230 @@ def modifies_rafter_security_config(command: str) -> bool:
     """
     if _disarms_rafter(command):
         return True
+    if _writes_rafter_dir(command):
+        return True
     sanitized = sanitize_command_for_matching(command)
     return sanitized != command and _disarms_rafter(sanitized)
+
+
+def _writes_rafter_dir(command: str) -> bool:
+    """sable-36oe: the SHELL route to rafter's own directory (``~/.rafter``).
+
+    The Write/Edit route already refuses it (rf-vnxs, ``_writes_rafter_security_config``
+    in commands/hook.py); ``rm ~/.rafter/config.json`` disarms the gate exactly
+    as ``rafter agent config set agent.hooks.enabled false`` does.
+
+    Deny-by-default scoped to the path, NOT a blocklist of write verbs, which
+    are unbounded. A command is protected when some statement NAMES the rafter
+    dir and ANY statement in the command is not a known read-only command
+    without an output redirect, so ``cd ~/.rafter && echo x > config.json`` is
+    caught by the cd's reference. Checked on the raw text (a quoted reference
+    counts) and on the normalized view (brace lists, ANSI-C quotes). Mirrors
+    node/src/core/risk-rules.ts ``writesRafterDir`` decision for decision.
+    """
+    if _rafter_dir_scan(command):
+        return True
+    normalized = normalize_for_matching(command)
+    return normalized != command and _rafter_dir_scan(normalized)
+
+
+_RAFTER_DIR_NAME = ".rafter"
+_NAME_CHAR = re.compile(r"[a-z0-9_.-]", re.IGNORECASE)
+_GLOB_CHAR = re.compile(r"[*?\[]")
+
+
+def _is_name_char(c: str) -> bool:
+    """Characters that continue a file name: ``.rafter.yml`` is not ``.rafter``."""
+    return bool(_NAME_CHAR.fullmatch(c))
+
+
+def _names_rafter_dir(text: str, globs: bool) -> bool:
+    """True if ``text`` names the rafter dir as a whole path component.
+
+    Case-insensitive (macOS file systems are). With ``globs``, an unquoted
+    component that could glob to it (``.raf*``, ``.r?fter``, ``.*``) counts:
+    bash never lets a wildcard match a leading dot, so only a component that
+    starts with a literal "." qualifies, and the match is over-approximated as
+    "the literal characters outside brackets appear in order in 'rafter'".
+    """
+    t = text.lower()
+    n = len(_RAFTER_DIR_NAME)
+    i = t.find(_RAFTER_DIR_NAME)
+    while i != -1:
+        before = t[i - 1] if i > 0 else ""
+        after = t[i + n] if i + n < len(t) else ""
+        if (before == "" or not _is_name_char(before)) and (after == "" or not _is_name_char(after)):
+            return True
+        i = t.find(_RAFTER_DIR_NAME, i + 1)
+    if not globs:
+        return False
+    for comp in t.split("/"):
+        if not comp or comp[0] != "." or not _GLOB_CHAR.search(comp):
+            continue
+        want = "rafter"
+        k = 0
+        in_bracket = False
+        ok = True
+        for c in comp[1:]:
+            if in_bracket:
+                if c == "]":
+                    in_bracket = False
+                continue
+            if c == "[":
+                in_bracket = True
+                continue
+            if c in ("*", "?"):
+                continue
+            while k < len(want) and want[k] != c:
+                k += 1
+            if k == len(want):
+                ok = False
+                break
+            k += 1
+        if ok:
+            return True
+    return False
+
+
+#: Read-only commands: with no output redirect they can neither write a file
+#: nor run another program. NOT here: sed (its ``w``/``e`` commands write and
+#: execute without -i), less (``-o`` writes a log), tee/cp/mv/rm/ln/chmod/
+#: touch/truncate/dd, and anything that runs a program.
+_READ_ONLY_EXECS = {
+    "cat", "more", "head", "tail", "ls", "stat", "file", "wc",
+    "grep", "egrep", "fgrep", "rg", "jq", "diff", "cmp",
+    "md5sum", "sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum",
+    "shasum", "b2sum", "cksum",
+    "find", "test", "[", "realpath", "readlink", "du",
+    "cd", "pushd", "popd",
+}
+#: find actions that delete, run a program, or write a file.
+_FIND_WRITE_ACTIONS = {
+    "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls",
+}
+#: Only a bare name or a system bin dir: ``./cat`` is whatever the agent wrote there.
+_SYSTEM_BIN = re.compile(r"^(?:/usr(?:/local)?|/opt/homebrew)?/s?bin/[^/]+$")
+_WRITE_REDIRECTS = {">", ">>"}
+_FILE_COMPILE_FLAG = re.compile(r"^-[A-Za-z]*C")
+_FD_DUP_TARGET = re.compile(r"^(?:\d+|-)$")
+
+
+class _RafterDirScan:
+    __slots__ = ("references", "unsafe")
+
+    def __init__(self) -> None:
+        self.references = False
+        self.unsafe = False
+
+
+def _rafter_dir_scan(command: str) -> bool:
+    """True if the command names the rafter dir and is not entirely read-only."""
+    acc = _RafterDirScan()
+    _scan_rafter_dir_statements(command, 0, acc)
+    return acc.references and acc.unsafe
+
+
+def _scan_rafter_dir_statements(command: str, depth: int, acc: _RafterDirScan) -> None:
+    # Past the recursion cap, or on a desynchronized parse, the structure is
+    # unknown: FAIL CLOSED, a reference anywhere in the text protects it.
+    if depth > _MAX_SANITIZE_DEPTH:
+        if _names_rafter_dir(command, False):
+            acc.references = True
+            acc.unsafe = True
+        return
+    pieces, unterminated = _tokenize(command)
+    if unterminated and _names_rafter_dir(command, False):
+        acc.references = True
+        acc.unsafe = True
+
+    stmt: list[_Piece] = []
+    for i, p in enumerate(pieces):
+        for sub in p.substs:
+            _scan_rafter_dir_statements(sub, depth + 1, acc)
+        if p.op is not None and p.op in _CHAIN_OPS:
+            # ``>|``, ``>&``, ``&>``, ``&>>`` are redirects spelled with a chain
+            # character; splitting on them would orphan the target from its ``>``.
+            prev = pieces[i - 1] if i > 0 else None
+            nxt = pieces[i + 1] if i + 1 < len(pieces) else None
+            after_redirect = (
+                p.op not in ("&&", "||") and prev is not None
+                and prev.end == p.start and prev.op in _WRITE_REDIRECTS
+            )
+            before_redirect = (
+                p.op == "&" and nxt is not None
+                and nxt.start == p.end and nxt.op in _WRITE_REDIRECTS
+            )
+            if not after_redirect and not before_redirect:
+                _scan_rafter_dir_statement(stmt, acc)
+                stmt = []
+                continue
+        stmt.append(p)
+    _scan_rafter_dir_statement(stmt, acc)
+
+
+def _scan_rafter_dir_statement(stmt: list[_Piece], acc: _RafterDirScan) -> None:
+    argv0 = -1
+    redirect = False
+    for i, p in enumerate(stmt):
+        if p.op is not None:
+            if p.op in _WRITE_REDIRECTS and not _discards_output(stmt, i):
+                redirect = True
+            continue
+        prev_op = stmt[i - 1].op if i > 0 else None
+        is_redirect_target = prev_op is not None and prev_op in _REDIRECT_OPS
+        # Executing a binary that lives in the dir (``~/.rafter/bin/betterleaks
+        # version``) is not a reference; its arguments still are. Only an
+        # UNQUOTED argv0 is a path the shell runs: a quoted one is a heredoc
+        # body line or other code, never a binary.
+        if argv0 == -1 and not is_redirect_target:
+            argv0 = i
+            if not p.quoted and not _ENV_ASSIGNMENT.match(p.text):
+                continue
+        if _names_rafter_dir(p.text, not p.quoted):
+            acc.references = True
+    if redirect or not _statement_read_only(stmt, argv0):
+        acc.unsafe = True
+
+
+def _discards_output(stmt: list[_Piece], i: int) -> bool:
+    """``2>/dev/null``, ``2>&1``, ``>&-``: an output redirect that writes no file."""
+    j = i + 1
+    dup = False
+    if j < len(stmt) and stmt[j].op == "&" and stmt[j].start == stmt[i].end:
+        dup = True
+        j += 1
+    if j >= len(stmt):
+        return False
+    target = stmt[j]
+    if target.op is not None or target.substs:
+        return False
+    return bool(_FD_DUP_TARGET.match(target.text)) if dup else target.text == "/dev/null"
+
+
+def _statement_read_only(stmt: list[_Piece], argv0: int) -> bool:
+    if argv0 == -1:
+        return True  # empty, or only an input redirect
+    head = stmt[argv0]
+    if not head.quoted and _ENV_ASSIGNMENT.match(head.text):
+        return False
+    if "/" in head.text and not _SYSTEM_BIN.match(head.text):
+        return False
+    exec_ = head.text[head.text.rfind("/") + 1:]
+    if exec_ not in _READ_ONLY_EXECS:
+        return False
+    args = [p for p in stmt[argv0 + 1:] if p.op is None]
+    if exec_ == "find":
+        return not any(a.text in _FIND_WRITE_ACTIONS for a in args)
+    if exec_ == "rg":  # --pre runs a program on every file searched
+        return not any(a.text.startswith("--pre") for a in args)
+    if exec_ == "file":  # -C compiles a magic file, writing it
+        return not any(a.text == "--compile" or _FILE_COMPILE_FLAG.match(a.text) for a in args)
+    if exec_ in ("cd", "pushd", "popd"):
+        # Claude Code's Bash tool keeps its cwd between calls, so a cd INTO the
+        # dir would make the next call's bare ``config.json`` a write there
+        # with no reference left to catch. cd elsewhere stays read-only.
+        return not any(a.substs or _names_rafter_dir(a.text, not a.quoted) for a in args)
+    return True
 
 
 def shell_program_from_stream(command: str) -> bool:
@@ -1013,10 +1235,13 @@ def shell_program_from_stream(command: str) -> bool:
     cur: list[_Piece] = []
     for piece in pieces:
         if piece.op is not None and piece.op in _CHAIN_OPS:
-            segments.append(cur); enders.append(piece.op); cur = []
+            segments.append(cur)
+            enders.append(piece.op)
+            cur = []
             continue
         cur.append(piece)
-    segments.append(cur); enders.append(None)
+    segments.append(cur)
+    enders.append(None)
 
     def _resolve(seg: list[_Piece]) -> str:
         """Exec of a segment, skipping wrappers, their flags and env assignments.

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A shell command could write rafter's own config, which the Write tool could not** (sable-36oe). The hook denied a Write/Edit into `~/.rafter` (rf-vnxs) but allowed `rm ~/.rafter/config.json`, `echo x > ~/.rafter/config.json`, `sed -i`, `cp` and `tee` onto it, each of which disarms the gate. The command path now protects the directory itself rather than listing write verbs: a command that names the rafter dir (`~/.rafter`, `$HOME/.rafter`, an absolute path, a bare `.rafter` component, a quoted path in `python -c` code, a glob or brace list that expands to it) is critical unless every statement in it is a known read-only command with no output redirect. Reading stays allowed: `cat ~/.rafter/config.json | jq .`, `tail ~/.rafter/audit.jsonl`, `ls -la ~/.rafter`, and running `~/.rafter/bin/betterleaks`. `.rafter.yml` and `.rafterignore` are not the dir and are unaffected. The read-only list is in CLI_SPEC.md. Both Node and Python.
+
 - **`rafter notify` read the wrong fields from a scan and always reported "Clean".** It looked for a `findings` array and `summary.critical`/`summary.high`, but a completed scan returns a `vulnerabilities[]` array and a `summary` keyed on `errors`/`warnings`/`notes`. Every webhook therefore posted "Clean — no issues found" even when the scan found critical issues. It now reads `vulnerabilities[]` and maps each severity the way the GitHub Action and `rafter get` do (`critical`; `error`/`high`; `warning`/`medium`; `note`/`low`), falling back to a legacy `findings` array for old cached payloads. "Clean" is posted only for a completed scan with zero findings. Both Node and Python.
 
 ## [0.11.3] - 2026-10-29
