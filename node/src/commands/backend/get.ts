@@ -6,7 +6,8 @@ import {
   EXIT_GENERAL_ERROR,
   EXIT_SCAN_NOT_FOUND
 } from "../../utils/api.js";
-import { handleScanStatus, fetchScanWithRetry, PollGaveUpError, reportFailedScan, warnIfPartial } from "./scan-status.js";
+import { fmt } from "../../utils/formatter.js";
+import { handleScanStatus, fetchScanWithRetry, PollGaveUpError, reportFailedScan, warnIfPartial, describeHttpError } from "./scan-status.js";
 
 export function createGetCommand(): Command {
   return new Command("get")
@@ -35,16 +36,16 @@ export function createGetCommand(): Command {
           process.exit(exitCode);
         } catch (e: any) {
           if (e.response?.status === 404) {
-            console.error(`Scan '${scan_id}' not found`);
+            console.error(fmt.error(`Scan '${scan_id}' not found`));
             process.exit(EXIT_SCAN_NOT_FOUND);
           } else if (e instanceof PollGaveUpError) {
-            console.error(e.message);
+            console.error(fmt.error(e.message));
           } else if (e.response?.data) {
-            console.error(e.response.data);
+            console.error(fmt.error(describeHttpError(e)));
           } else if (e instanceof Error) {
-            console.error(e.message);
+            console.error(fmt.error(e.message));
           } else {
-            console.error(e);
+            console.error(fmt.error(describeHttpError(e)));
           }
           process.exit(EXIT_GENERAL_ERROR);
         }

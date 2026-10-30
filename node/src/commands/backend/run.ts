@@ -13,7 +13,8 @@ import {
 import { ConfigManager } from "../../core/config-manager.js";
 import { loadPolicy } from "../../core/policy-loader.js";
 import { askYesNo } from "../../utils/prompt.js";
-import { handleScanStatus } from "./scan-status.js";
+import { fmt } from "../../utils/formatter.js";
+import { handleScanStatus, describeHttpError } from "./scan-status.js";
 
 export interface RunOpts {
   repo?: string;
@@ -105,9 +106,9 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
     }));
   } catch (e) {
     if (e instanceof Error) {
-      console.error(e.message);
+      console.error(fmt.error(e.message));
     } else {
-      console.error(e);
+      console.error(fmt.error(describeHttpError(e)));
     }
     process.exit(EXIT_GENERAL_ERROR);
   }
@@ -117,10 +118,10 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
   if (localBranch) {
     const remoteSha = remoteBranchSha(branch!);
     if (remoteSha === null) {
-      console.error(
+      console.error(fmt.error(
         `Branch "${branch}" does not exist on the remote (origin). Rafter scans the remote ` +
           "repository: push the branch first, or pass --branch to scan one that exists."
-      );
+      ));
       process.exit(EXIT_GENERAL_ERROR);
     }
     if (remoteSha && !opts.quiet) {
@@ -171,14 +172,10 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
       if (forbiddenCode >= 0) {
         process.exit(forbiddenCode);
       } else if (e.response?.status === 429) {
-        console.error("Quota exhausted");
+        console.error(fmt.error("Quota exhausted"));
         process.exit(EXIT_QUOTA_EXHAUSTED);
-      } else if (e.response?.data) {
-        console.error(e.response.data);
-      } else if (e instanceof Error) {
-        console.error(e.message);
       } else {
-        console.error(e);
+        console.error(fmt.error(describeHttpError(e)));
       }
       process.exit(EXIT_GENERAL_ERROR);
     }
@@ -198,12 +195,8 @@ export async function runRemoteScan(opts: RunOpts): Promise<void> {
         process.exit(forbiddenCode);
       } else if (e.response?.status === 429) {
         process.exit(EXIT_QUOTA_EXHAUSTED);
-      } else if (e.response?.data) {
-        console.error(e.response.data);
-      } else if (e instanceof Error) {
-        console.error(e.message);
       } else {
-        console.error(e);
+        console.error(fmt.error(describeHttpError(e)));
       }
       process.exit(EXIT_GENERAL_ERROR);
     }
