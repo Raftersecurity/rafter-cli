@@ -125,9 +125,9 @@ class TestToolListing:
         await cleanup(self.session, self.cm)
 
     @pytest.mark.asyncio
-    async def test_registers_exactly_11_tools(self):
+    async def test_registers_exactly_12_tools(self):
         result = await self.session.list_tools()
-        assert len(result.tools) == 11
+        assert len(result.tools) == 12
 
     @pytest.mark.asyncio
     async def test_tool_names_match_expected_set(self):
@@ -143,6 +143,7 @@ class TestToolListing:
             "sites_create",
             "sites_get",
             "sites_list",
+            "sites_report",
             "sites_scan",
             "suppress_finding",
         ]
@@ -417,5 +418,5 @@ class TestLifecycle:
         for _ in range(3):
             session, cm = await create_connected_session()
             result = await session.list_tools()
-            assert len(result.tools) == 11
+            assert len(result.tools) == 12
             await cleanup(session, cm)
