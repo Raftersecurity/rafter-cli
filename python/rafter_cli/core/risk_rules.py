@@ -992,10 +992,11 @@ def _writes_rafter_dir(command: str) -> bool:
     as ``rafter agent config set agent.hooks.enabled false`` does.
 
     Deny-by-default scoped to the path, NOT a blocklist of write verbs, which
-    are unbounded. A command is protected when some statement NAMES the rafter
-    dir and ANY statement in the command is not a known read-only command
-    without an output redirect, so ``cd ~/.rafter && echo x > config.json`` is
-    caught by the cd's reference. Checked on the raw text (a quoted reference
+    are unbounded. A command is protected when a statement that NAMES the
+    rafter dir is not a known read-only command without an output redirect.
+    Statements that do not name it are not constrained; a cd INTO the dir is
+    itself not read-only, which keeps ``cd ~/.rafter && echo x > config.json``
+    blocked. Checked on the raw text (a quoted reference
     counts) and on the normalized view (brace lists, ANSI-C quotes). Mirrors
     node/src/core/risk-rules.ts ``writesRafterDir`` decision for decision.
     """
@@ -1087,18 +1088,17 @@ _FD_DUP_TARGET = re.compile(r"^(?:\d+|-)$")
 
 
 class _RafterDirScan:
-    __slots__ = ("references", "unsafe")
+    __slots__ = ("protected",)
 
     def __init__(self) -> None:
-        self.references = False
-        self.unsafe = False
+        self.protected = False
 
 
 def _rafter_dir_scan(command: str) -> bool:
-    """True if the command names the rafter dir and is not entirely read-only."""
+    """True if some statement names the rafter dir and is not read-only."""
     acc = _RafterDirScan()
     _scan_rafter_dir_statements(command, 0, acc)
-    return acc.references and acc.unsafe
+    return acc.protected
 
 
 def _scan_rafter_dir_statements(command: str, depth: int, acc: _RafterDirScan) -> None:
@@ -1106,13 +1106,11 @@ def _scan_rafter_dir_statements(command: str, depth: int, acc: _RafterDirScan) -
     # unknown: FAIL CLOSED, a reference anywhere in the text protects it.
     if depth > _MAX_SANITIZE_DEPTH:
         if _names_rafter_dir(command, False):
-            acc.references = True
-            acc.unsafe = True
+            acc.protected = True
         return
     pieces, unterminated = _tokenize(command)
     if unterminated and _names_rafter_dir(command, False):
-        acc.references = True
-        acc.unsafe = True
+        acc.protected = True
 
     stmt: list[_Piece] = []
     for i, p in enumerate(pieces):
@@ -1142,6 +1140,7 @@ def _scan_rafter_dir_statements(command: str, depth: int, acc: _RafterDirScan) -
 def _scan_rafter_dir_statement(stmt: list[_Piece], acc: _RafterDirScan) -> None:
     argv0 = -1
     redirect = False
+    names = False
     for i, p in enumerate(stmt):
         if p.op is not None:
             if p.op in _WRITE_REDIRECTS and not _discards_output(stmt, i):
@@ -1158,9 +1157,9 @@ def _scan_rafter_dir_statement(stmt: list[_Piece], acc: _RafterDirScan) -> None:
             if not p.quoted and not _ENV_ASSIGNMENT.match(p.text):
                 continue
         if _names_rafter_dir(p.text, not p.quoted):
-            acc.references = True
-    if redirect or not _statement_read_only(stmt, argv0):
-        acc.unsafe = True
+            names = True
+    if names and (redirect or not _statement_read_only(stmt, argv0)):
+        acc.protected = True
 
 
 def _discards_output(stmt: list[_Piece], i: int) -> bool:

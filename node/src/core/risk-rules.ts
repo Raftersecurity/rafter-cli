@@ -942,10 +942,11 @@ export function modifiesRafterSecurityConfig(command: string): boolean {
  *
  * Deny-by-default scoped to the path, NOT a blocklist of write verbs: the
  * verbs are unbounded (`>`, sed -i, cp, tee, dd, install, rsync, perl -i,
- * python -c …). A command is protected when some statement NAMES the rafter
- * dir and ANY statement in the command is not a known read-only command
- * without an output redirect. "Any", not "the same one", so that
- * `cd ~/.rafter && echo x > config.json` is caught by the cd's reference.
+ * python -c …). A command is protected when a statement that NAMES the
+ * rafter dir is not a known read-only command without an output redirect.
+ * Statements that do not name it are not constrained, so
+ * `cat ~/.rafter/x && npm test` stays allowed; a cd INTO the dir is itself
+ * not read-only, which keeps `cd ~/.rafter && echo x > config.json` blocked.
  *
  * Checked on the raw text (a reference inside quotes counts — python -c
  * code, heredoc bodies) and on the normalized view, which expands brace
@@ -1026,24 +1027,24 @@ const FIND_WRITE_ACTIONS = new Set([
 const SYSTEM_BIN = /^(?:\/usr(?:\/local)?|\/opt\/homebrew)?\/s?bin\/[^/]+$/;
 const WRITE_REDIRECTS = new Set([">", ">>"]);
 
-interface RafterDirScan { references: boolean; unsafe: boolean; }
+interface RafterDirScan { protected: boolean; }
 
-/** True if the command names the rafter dir and is not entirely read-only. */
+/** True if some statement names the rafter dir and is not read-only. */
 function rafterDirScan(command: string): boolean {
-  const acc: RafterDirScan = { references: false, unsafe: false };
+  const acc: RafterDirScan = { protected: false };
   scanRafterDirStatements(command, 0, acc);
-  return acc.references && acc.unsafe;
+  return acc.protected;
 }
 
 function scanRafterDirStatements(command: string, depth: number, acc: RafterDirScan): void {
   // Past the recursion cap, or on a desynchronized parse, the structure is
   // unknown: FAIL CLOSED — a reference anywhere in the text protects it.
   if (depth > MAX_SANITIZE_DEPTH) {
-    if (namesRafterDir(command, false)) { acc.references = true; acc.unsafe = true; }
+    if (namesRafterDir(command, false)) acc.protected = true;
     return;
   }
   const { pieces, unterminated } = tokenize(command);
-  if (unterminated && namesRafterDir(command, false)) { acc.references = true; acc.unsafe = true; }
+  if (unterminated && namesRafterDir(command, false)) acc.protected = true;
 
   let stmt: Piece[] = [];
   const flush = () => { scanRafterDirStatement(stmt, acc); stmt = []; };
@@ -1067,6 +1068,7 @@ function scanRafterDirStatements(command: string, depth: number, acc: RafterDirS
 function scanRafterDirStatement(stmt: Piece[], acc: RafterDirScan): void {
   let argv0 = -1;
   let redirect = false;
+  let names = false;
   for (let i = 0; i < stmt.length; i++) {
     const p = stmt[i];
     if (p.op !== null) {
@@ -1083,9 +1085,9 @@ function scanRafterDirStatement(stmt: Piece[], acc: RafterDirScan): void {
       argv0 = i;
       if (!p.quoted && !ENV_ASSIGNMENT.test(p.text)) continue;
     }
-    if (namesRafterDir(p.text, !p.quoted)) acc.references = true;
+    if (namesRafterDir(p.text, !p.quoted)) names = true;
   }
-  if (redirect || !statementReadOnly(stmt, argv0)) acc.unsafe = true;
+  if (names && (redirect || !statementReadOnly(stmt, argv0))) acc.protected = true;
 }
 
 /** `2>/dev/null`, `2>&1`, `>&-`: an output redirect that writes no file. */

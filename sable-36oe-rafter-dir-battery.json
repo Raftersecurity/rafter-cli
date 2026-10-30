@@ -248,5 +248,20 @@
     "label": "project ignore file .rafterignore",
     "cmd": "echo x > .rafterignore",
     "protected": false
+  },
+  {
+    "label": "read the config, then an unrelated build",
+    "cmd": "cat ~/.rafter/x && npm test",
+    "protected": false
+  },
+  {
+    "label": "tail the audit log, then make",
+    "cmd": "tail ~/.rafter/audit.jsonl; make",
+    "protected": false
+  },
+  {
+    "label": "bare-name write with no dir mention (documented limit)",
+    "cmd": "echo x > config.json",
+    "protected": false
   }
 ]

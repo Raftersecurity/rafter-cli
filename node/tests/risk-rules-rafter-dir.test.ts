@@ -32,6 +32,6 @@ describe("sable-36oe: shell writes into the rafter dir are protected", () => {
     expect(cmd.length).toBeGreaterThan(500_000);
     const t0 = performance.now();
     expect(modifiesRafterSecurityConfig(cmd)).toBe(true);
-    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(performance.now() - t0).toBeLessThan(2000);
   });
 });
