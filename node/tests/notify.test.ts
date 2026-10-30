@@ -114,3 +114,29 @@ describe("notify vulnerabilities payload (rf-x3vj)", () => {
     expect(payload.text).not.toContain("Clean");
   });
 });
+
+// sable-ur8k: the real scan API shape uses `file_path`/`line_start`, not the
+// pre-rename `file`/`line`. Before the fix, normalizeScan's location logic only
+// read file/line, so a real finding's location was always blank.
+const SCAN_VULNERABILITIES_FILE_PATH = {
+  status: "completed",
+  repository_name: "acme/payments",
+  scan_id: "scan-vuln2",
+  branch_name: "main",
+  vulnerabilities: [
+    {
+      severity: "error",
+      rule_id: "sql-injection",
+      title: "SQL injection in query builder",
+      file_path: "src/db.ts",
+      line_start: 42,
+    },
+  ],
+};
+
+describe("notify location fields (sable-ur8k)", () => {
+  it("shows file_path:line_start in the location", () => {
+    const blob = JSON.stringify(formatSlackPayload(SCAN_VULNERABILITIES_FILE_PATH));
+    expect(blob).toContain("src/db.ts:42");
+  });
+});

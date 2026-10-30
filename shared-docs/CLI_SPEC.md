@@ -246,12 +246,16 @@ With no topic, lists available topics and usage examples.
 
 | Topic | Description |
 |-------|-------------|
-| `security` | Local security toolkit — scanning, auditing, policy enforcement |
-| `scanning` | Remote SAST/SCA code analysis via Rafter API |
+| `scanning` | Rafter scanning (local + remote SAST/SCA) + guardrails |
 | `commands` | Condensed command reference for all rafter commands |
 | `setup` | Setup instructions for all supported platforms |
 | `setup/<platform>` | Platform-specific setup (claude-code, codex, gemini, cursor, windsurf, aider, openclaw, continue, generic) |
-| `all` | Everything — full security + scanning + setup briefing |
+| `cli-reference` | Full rafter CLI tree by category |
+| `guardrails` | PreToolUse hooks, risk tiers, overrides |
+| `backend` | Remote fast vs plus, setup, cost/latency |
+| `shift-left` | Pointers to secure-design & code-review skills |
+| `finding-triage` | How to read a finding and decide next steps |
+| `all` | Everything — full scanning + setup briefing |
 
 **Examples:**
 
@@ -259,14 +263,14 @@ With no topic, lists available topics and usage examples.
 # List available topics
 rafter brief
 
-# Get the local security briefing
-rafter brief security
+# Scanning + guardrails briefing
+rafter brief scanning
 
 # Platform-specific setup guide
 rafter brief setup/claude-code
 
 # For agents without native skill support — load context manually
-rafter brief security    # save to memory/instructions
+rafter brief scanning    # save to memory/instructions
 rafter brief commands    # save command reference
 
 # Pipe to a file for manual skill creation
@@ -1118,13 +1122,15 @@ Cursor is the one exception: its permission hooks block the action on an empty o
 | Platform (format) | Shell tool → command policy | File-write tools → write checks |
 |-------------------|-----------------------------|---------------------------------|
 | Claude Code (`claude`) | `Bash` (`tool_input.command`) | `Write` (`content`), `Edit` (`new_string`), `MultiEdit` (`edits[].new_string`) |
-| Codex (`claude`) | `Bash` (`tool_input.command`) | `apply_patch` (the patch text in `tool_input.command`) |
+| Codex (`claude`) | `Bash` (`tool_input.command`) | `apply_patch` (the patch text in `tool_input.command`; target paths from its `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` headers) |
 | Continue (`claude`) | `Bash` (`tool_input.command`) | `Write` (`filepath`, `content`), `Edit`, `MultiEdit` |
-| Gemini CLI (`gemini`) | `run_shell_command` (`tool_input.command`) | `write_file` (`content`), `replace` (`new_string`) |
+| Gemini CLI (`gemini`) | `run_shell_command` (`tool_input.command`) | `write_file` (`content`), `replace` (`new_string`); Gemini has no tool named `edit` |
 | Cursor (`cursor`) | `beforeShellExecution` (`command`); `preToolUse` with `Shell` (`tool_input.command`) | `preToolUse` with `Write`; `afterFileEdit` |
 | Windsurf (`windsurf`) | `pre_run_command` (`tool_info.command_line`) | `pre_write_code` (`tool_info.edits[].new_string`) |
 
-The write checks read the target from `file_path` (or `filepath`) and scan `content`, else `new_string`, else the joined `edits[].new_string`, else (for `apply_patch`) the patch text.
+The write checks read the target from `file_path` (or `filepath`) and scan `content`, else `new_string`, else the joined `edits[].new_string`, else (for `apply_patch`) the patch text. For `apply_patch`, the rafter-config guard checks every path named in the patch headers, after `~` expansion and resolution against the working directory, and denies with the same reason as a `Write` to that path.
+
+**Installed matchers.** A platform calls the hook only for tools its matcher names, so each installer's matcher covers the tools above. `agent init --with-claude-code` (and `agent enable claude-code.hooks`) registers PreToolUse matchers `Bash` and `Write|Edit|MultiEdit`; `rafter policy export --format claude` emits the same. The Codex installer registers `Bash|apply_patch`. The Gemini installer (`agent init --with-gemini` and `agent enable gemini.hooks`) registers BeforeTool matcher `run_shell_command|write_file|replace`. `agent verify` and `agent status` check that a rafter hook command is installed, not the matcher, so an install made before a matcher change keeps its old matcher until `agent init` is rerun.
 
 **Approval-required commands are denied, not asked.** A Bash command the policy marks as requiring approval (for example `curl … | sh`, which is high risk) gets `deny`, the same decision as a blocked command; the hook never returns `ask`. The reason says a person must run `rafter agent exec '<command>'` at an interactive terminal to approve it (see the approval model under `rafter agent exec`). Both runtimes.
 
@@ -1440,7 +1446,7 @@ rafter scan --repo myorg/myrepo --branch main
 rafter get SCAN_ID --format json
 
 # Pipe to jq
-rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="error")'
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.severity=="error")'
 
 # Count vulnerabilities
 rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
@@ -1449,7 +1455,7 @@ rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
 rafter get SCAN_ID > scan_results.json
 
 # CSV export
-rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
+rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.severity, .rule_id, .file_path, .line_start] | @csv'
 
 # CI gate
 if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then

@@ -261,3 +261,29 @@ class TestVulnerabilitiesPayload:
         payload = _format_slack_payload(SAMPLE_SCAN_WITH_FINDINGS)
         assert "3 issues found" in payload["text"]
         assert "Clean" not in payload["text"]
+
+
+# sable-ur8k: the real scan API shape uses `file_path`/`line_start`, not the
+# pre-rename `file`/`line`. Before the fix, _normalize_scan's location logic
+# only read file/line, so a real finding's location was always blank.
+SAMPLE_SCAN_FILE_PATH = {
+    "status": "completed",
+    "repository_name": "acme/payments",
+    "scan_id": "scan-vuln2",
+    "branch_name": "main",
+    "vulnerabilities": [
+        {
+            "severity": "error",
+            "rule_id": "sql-injection",
+            "title": "SQL injection in query builder",
+            "file_path": "src/db.py",
+            "line_start": 42,
+        },
+    ],
+}
+
+
+class TestNotifyLocationFields:
+    def test_location_uses_file_path_and_line_start(self):
+        blob = json.dumps(_format_slack_payload(SAMPLE_SCAN_FILE_PATH))
+        assert "src/db.py:42" in blob
