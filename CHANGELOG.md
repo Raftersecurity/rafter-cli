@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-10-30
+
 ### Fixed
 
 - **A shell command could write rafter's own config, which the Write tool could not** (sable-36oe). The hook denied a Write/Edit into `~/.rafter` (rf-vnxs) but allowed `rm ~/.rafter/config.json`, `echo x > ~/.rafter/config.json`, `sed -i`, `cp` and `tee` onto it, each of which disarms the gate. The command path now protects the directory itself rather than listing write verbs: a command that names the rafter dir (`~/.rafter`, `$HOME/.rafter`, an absolute path, a bare `.rafter` component, a quoted path in `python -c` code, a glob or brace list that expands to it) is critical when the statement that names it is not a known read-only command with no output redirect, and a `cd` into the dir is critical in itself. Statements that do not name the dir are unaffected, so `cat ~/.rafter/config.json && npm test` still runs. Reading stays allowed: `cat ~/.rafter/config.json | jq .`, `tail ~/.rafter/audit.jsonl`, `ls -la ~/.rafter`, and running `~/.rafter/bin/betterleaks`. `.rafter.yml` and `.rafterignore` are not the dir and are unaffected. The read-only list is in CLI_SPEC.md. Both Node and Python.
