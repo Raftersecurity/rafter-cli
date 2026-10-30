@@ -57,6 +57,22 @@ export function rejectUnsupportedFormat(fmt: string | undefined): boolean {
 }
 
 /**
+ * Strip ASCII/Latin-1 control characters from text before it is printed to a
+ * terminal, keeping `\n` and `\t`. A Sites report's titles, descriptions and
+ * recommendations come from scanning a third-party site and could carry
+ * terminal escape sequences (e.g. an OSC/CSI sequence that rewrites the
+ * prompt or hides later output) — same hazard as the redirect-target message
+ * in utils/api.ts, but preserving layout instead of flattening to one line.
+ * JSON output never goes through this: JSON's own escaping already
+ * neutralizes control characters, and stripping there would corrupt
+ * byte-faithful output.
+ */
+export function stripControlCharsForDisplay(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "");
+}
+
+/**
  * Map a Sites API (/api/static/sites*) error to a CLI-friendly message + exit code.
  *
  * Unlike the remote-scan API (see handle403 in utils/api.ts, which infers "quota"

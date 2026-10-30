@@ -40,6 +40,7 @@ import { runSitesCreate } from "../src/commands/sites/create.js";
 import { runSitesScan } from "../src/commands/sites/scan.js";
 import { runSitesList } from "../src/commands/sites/list.js";
 import { runSitesGet } from "../src/commands/sites/get.js";
+import { runSitesReport } from "../src/commands/sites/report.js";
 import { EXIT_SUCCESS, EXIT_GENERAL_ERROR, EXIT_INSUFFICIENT_SCOPE, EXIT_SCAN_NOT_FOUND, EXIT_QUOTA_EXHAUSTED, apiUrl } from "../src/utils/api.js";
 
 // The code calls `apiClient` — the instance `create()` returns.
@@ -231,11 +232,73 @@ describe("sites get", () => {
   });
 
   it("rejects --format md without calling the API", async () => {
+    // report is the one sites command where md is valid; get must keep
+    // rejecting it — this fails if that rejection ever gets dropped.
     const code = await runSitesGet("p1", { ...opts, format: "md" });
     expect(code).toBe(EXIT_GENERAL_ERROR);
     expect(mockedAxios.get).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(
       "Error: Sites does not support --format md yet, use --format json"
     );
+  });
+});
+
+describe("sites report", () => {
+  it("requests format=json and writes the JSON report body", async () => {
+    mockedAxios.get.mockResolvedValueOnce({ data: { report: { project: "p1", siteScore: 90 } } });
+    const code = await runSitesReport("p1", opts);
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      apiUrl("static/sites/p1/report"),
+      { params: { format: "json" }, headers: { "x-api-key": "test-key" } }
+    );
+    expect(process.stdout.write).toHaveBeenCalledWith(
+      JSON.stringify({ report: { project: "p1", siteScore: 90 } })
+    );
+  });
+
+  it("requests format=md and writes the raw markdown body (not JSON-wrapped)", async () => {
+    // This fails if report's md path reuses writePayload's `data.markdown`
+    // branch, which would JSON.stringify the raw string instead of printing
+    // it as-is (wrapping it in quotes).
+    mockedAxios.get.mockResolvedValueOnce({ data: "# Report\n\nAll clear." });
+    const code = await runSitesReport("p1", { ...opts, format: "md" });
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      apiUrl("static/sites/p1/report"),
+      { params: { format: "md" }, headers: { "x-api-key": "test-key" } }
+    );
+    expect(process.stdout.write).toHaveBeenCalledWith("# Report\n\nAll clear.");
+  });
+
+  it("does NOT reject --format md — report is the one sites command where it's valid", async () => {
+    mockedAxios.get.mockResolvedValueOnce({ data: "# ok" });
+    const code = await runSitesReport("p1", { ...opts, format: "md" });
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(mockedAxios.get).toHaveBeenCalled();
+  });
+
+  it("strips control characters other than \\n/\\t from md output", async () => {
+    // Report titles/descriptions come from scanning a third-party site and
+    // could carry terminal escape sequences; this fails if an ESC or BEL
+    // byte reaches the terminal unstripped.
+    const malicious = "# Report\n\tfinding: \u001b[31mFAKE\u001b[0m\u0007 bell";
+    mockedAxios.get.mockResolvedValueOnce({ data: malicious });
+    await runSitesReport("p1", { ...opts, format: "md" });
+    expect(process.stdout.write).toHaveBeenCalledWith("# Report\n\tfinding: [31mFAKE[0m bell");
+  });
+
+  it("leaves JSON output byte-faithful (no control-char stripping)", async () => {
+    const withEsc = { report: { title: "x\u001by" } };
+    mockedAxios.get.mockResolvedValueOnce({ data: withEsc });
+    await runSitesReport("p1", opts);
+    expect(process.stdout.write).toHaveBeenCalledWith(JSON.stringify(withEsc));
+  });
+
+  it("returns EXIT_SCAN_NOT_FOUND for 404 (not owned/disabled/not found)", async () => {
+    mockedAxios.get.mockRejectedValueOnce({ response: { status: 404, data: { error: "Site not found." } } });
+    const code = await runSitesReport("nonexistent", opts);
+    expect(code).toBe(EXIT_SCAN_NOT_FOUND);
+    expect(console.error).toHaveBeenCalledWith("Error: Not found — Site not found.");
   });
 });

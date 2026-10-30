@@ -20,7 +20,7 @@ import { writeSuppression } from "../../core/suppression-writer.js";
 import { applySuppressions } from "../../core/custom-patterns.js";
 import { collectSuppressions } from "../agent/scan.js";
 import { apiUrl, apiClient} from "../../utils/api.js";
-import { describeSitesError, resolveMcpApiKey } from "../sites/errors.js";
+import { describeSitesError, resolveMcpApiKey, stripControlCharsForDisplay } from "../sites/errors.js";
 import { createRequire } from "module";
 
 const _require = createRequire(import.meta.url);
@@ -208,6 +208,18 @@ export function createServer(): Server {
           type: "object" as const,
           properties: {
             id: { type: "string", description: "The site's project id" },
+          },
+          required: ["id"],
+        },
+      },
+      {
+        name: "sites_report",
+        description: "Get a Rafter Site's full security report by its project id, as JSON or Markdown. Use for a detailed writeup beyond sites_get's summary.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            id: { type: "string", description: "The site's project id" },
+            format: { type: "string", enum: ["json", "md"], description: "Report format (default: json)" },
           },
           required: ["id"],
         },
@@ -467,6 +479,27 @@ export function createServer(): Server {
         if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
         try {
           const { data } = await apiClient.get(apiUrl(`static/sites/${encodeURIComponent(id)}`), { headers: { "x-api-key": key } });
+          return textResult(data);
+        } catch (e: any) {
+          return errorResult(describeSitesError(e).message);
+        }
+      }
+
+      case "sites_report": {
+        const id = args?.id as string | undefined;
+        if (!id) return errorResult("id is required");
+        const fmt = (args?.format as string) === "md" ? "md" : "json";
+        const key = resolveMcpApiKey();
+        if (!key) return errorResult("No API key configured. Set RAFTER_API_KEY or run 'rafter agent config set backend.apiKey <key>'.");
+        try {
+          const { data } = await apiClient.get(
+            apiUrl(`static/sites/${encodeURIComponent(id)}/report`),
+            { params: { format: fmt }, headers: { "x-api-key": key } }
+          );
+          if (fmt === "md") {
+            const text = typeof data === "string" ? data : String(data);
+            return { content: [{ type: "text" as const, text: stripControlCharsForDisplay(text) }] };
+          }
           return textResult(data);
         } catch (e: any) {
           return errorResult(describeSitesError(e).message);

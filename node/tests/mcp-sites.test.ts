@@ -193,6 +193,42 @@ describe("MCP sites_* tools", () => {
     const result = await client.callTool({ name: "sites_get", arguments: {} });
     expect(result.isError).toBe(true);
   });
+
+  it("sites_report json success", async () => {
+    mockedAxios.get.mockResolvedValueOnce({ data: { report: { project: "p1", siteScore: 90 } } });
+    const result = await client.callTool({ name: "sites_report", arguments: { id: "p1" } });
+    expect(result.isError).toBeFalsy();
+    expect(parseResult(result)).toEqual({ report: { project: "p1", siteScore: 90 } });
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      apiUrl("static/sites/p1/report"),
+      { params: { format: "json" }, headers: { "x-api-key": "test-key" } }
+    );
+  });
+
+  it("sites_report md returns raw markdown text, stripped of control chars", async () => {
+    // Fails if the tool JSON-encodes the markdown string instead of
+    // returning it as the content text, or forwards an escape sequence.
+    mockedAxios.get.mockResolvedValueOnce({ data: "# Report\n\u001b[31mFAKE\u001b[0m" });
+    const result = await client.callTool({ name: "sites_report", arguments: { id: "p1", format: "md" } });
+    expect(result.isError).toBeFalsy();
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      apiUrl("static/sites/p1/report"),
+      { params: { format: "md" }, headers: { "x-api-key": "test-key" } }
+    );
+    expect((result.content as any)[0].text).toBe("# Report\n[31mFAKE[0m");
+  });
+
+  it("sites_report requires id", async () => {
+    const result = await client.callTool({ name: "sites_report", arguments: {} });
+    expect(result.isError).toBe(true);
+  });
+
+  it("sites_report 404", async () => {
+    mockedAxios.get.mockRejectedValueOnce({ response: { status: 404, data: { error: "Site not found." } } });
+    const result = await client.callTool({ name: "sites_report", arguments: { id: "nonexistent" } });
+    expect(result.isError).toBe(true);
+    expect(parseResult(result).error).toBe("Not found — Site not found.");
+  });
 });
 
 describe("MCP sites_* tools — missing API key", () => {
