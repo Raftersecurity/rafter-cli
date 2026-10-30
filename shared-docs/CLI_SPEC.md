@@ -134,6 +134,10 @@ A scan whose status is `failed` exits `1` from `rafter run`, `rafter get` and `r
 
 A completed scan that the API marks `partial: true` or `warning_code: "SCAN_PARTIAL"` (some scanners did not finish) still exits `0` with its payload on stdout, but stderr warns that findings may be missing, names `missing_scanners` when the API lists them, and says not to treat the result as clean. The warning prints even with `--quiet`. Both runtimes.
 
+#### Error messages
+
+Errors that `rafter run`, `rafter get` (with or without `--interactive`) and `rafter usage` report through the shared formatter go to stderr as `[ERROR] <message>` in agent mode (`-a`) and as a red `✗ <message>` otherwise; the Python runtime escapes server-supplied text so bracketed content prints literally. An HTTP failure described by the shared HTTP helper generally reads `HTTP <status> — <detail>`, where `<detail>` is the `error` field of a JSON response body when present and otherwise the body itself, flattened to one line and truncated to 200 characters. Exit codes are those listed under [Exit Codes](#exit-codes); the formatting does not change them. Not every error path uses this format: HTTP 403 messages (insufficient scope and scan-mode limits) are printed by the shared 403 handler as `Error: …`, and a multi-line message such as the poll give-up message carries the prefix on its first line only. Both runtimes.
+
 #### Poll-loop retry contract
 
 A report is not necessarily durable the instant a scan flips to `completed`, so a poll can hit a 5xx on a scan that is readable seconds later. Both runtimes retry transient read failures instead of aborting. This applies to `rafter run`, `rafter get --interactive`, and plain `rafter get <scan_id>`:

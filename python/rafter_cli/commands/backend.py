@@ -7,6 +7,7 @@ import time
 
 import requests
 import typer
+from rich.markup import escape
 
 from ..utils.api import (
     api_url,
@@ -24,6 +25,7 @@ from ..utils.api import (
     resolve_key,
     write_payload,
 )
+from ..utils.formatter import fmt as output_fmt, is_agent_mode, print_stderr
 from ..utils.git import _run, branch_from_env, detect_repo, remote_branch_sha
 
 
@@ -312,6 +314,16 @@ def fetch_scan_with_retry(scan_id: str, headers: dict, fmt: str, quiet: bool):
     )
 
 
+def _print_error(message: str) -> None:
+    """Print a formatted error to stderr.
+
+    Human mode renders Rich markup, so server-supplied text is escaped to show
+    literally (an unescaped ``[/]`` would even raise). Agent mode prints plain
+    text, where escaping would leave stray backslashes.
+    """
+    print_stderr(output_fmt.error(message if is_agent_mode() else escape(message)))
+
+
 def _handle_scan_status_interactive(
     scan_id: str, headers: dict, fmt: str, quiet: bool
 ) -> int:
@@ -326,12 +338,12 @@ def _handle_scan_status_interactive(
         )
     except PollFatalError as e:
         if e.status_code == 404:
-            print(f"Scan '{scan_id}' not found", file=sys.stderr)
+            _print_error(f"Scan '{scan_id}' not found")
             raise typer.Exit(code=EXIT_SCAN_NOT_FOUND)
-        print(f"Error: {e}", file=sys.stderr)
+        _print_error(str(e))
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
     except PollGaveUpError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        _print_error(str(e))
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     data = poll.json()
@@ -350,7 +362,7 @@ def _handle_scan_status_interactive(
                     scan_id, headers, fmt, quiet, budget, scan_exists=True
                 )
             except (PollGaveUpError, PollFatalError) as e:
-                print(f"Error: {e}", file=sys.stderr)
+                _print_error(str(e))
                 raise typer.Exit(code=EXIT_GENERAL_ERROR)
             data = poll.json()
             status = data.get("status")
@@ -431,7 +443,7 @@ def _do_remote_scan(
     try:
         repo_slug, branch_name, detected_provider, detected_repo_url = detect_repo(repo, branch)
     except RuntimeError as e:
-        print(str(e), file=sys.stderr)
+        _print_error(str(e))
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     if not (repo and branch) and not quiet:
@@ -443,10 +455,9 @@ def _do_remote_scan(
     if detected_repo_url and not branch and not branch_from_env():
         remote_sha = remote_branch_sha(branch_name)
         if remote_sha is None:
-            print(
+            _print_error(
                 f'Branch "{branch_name}" does not exist on the remote (origin). Rafter scans '
-                "the remote repository: push the branch first, or pass --branch to scan one that exists.",
-                file=sys.stderr,
+                "the remote repository: push the branch first, or pass --branch to scan one that exists."
             )
             raise typer.Exit(code=EXIT_GENERAL_ERROR)
         if remote_sha and not quiet:
@@ -489,10 +500,10 @@ def _do_remote_scan(
     if forbidden_code >= 0:
         raise typer.Exit(code=forbidden_code)
     elif resp.status_code == 429:
-        print("Quota exhausted", file=sys.stderr)
+        _print_error("Quota exhausted")
         raise typer.Exit(code=EXIT_QUOTA_EXHAUSTED)
     elif resp.status_code != 200:
-        print(f"Error: {resp.text}", file=sys.stderr)
+        _print_error(_describe_http_error(resp.status_code, resp.text))
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     scan_id = resp.json()["scan_id"]
@@ -545,12 +556,12 @@ def register_backend_commands(app: typer.Typer) -> None:
                 resp = fetch_scan_with_retry(scan_id, headers, fmt, quiet)
             except PollFatalError as e:
                 if e.status_code == 404:
-                    print(f"Scan '{scan_id}' not found", file=sys.stderr)
+                    _print_error(f"Scan '{scan_id}' not found")
                     raise typer.Exit(code=EXIT_SCAN_NOT_FOUND)
-                print(f"Error: {e}", file=sys.stderr)
+                _print_error(str(e))
                 raise typer.Exit(code=EXIT_GENERAL_ERROR)
             except PollGaveUpError as e:
-                print(f"Error: {e}", file=sys.stderr)
+                _print_error(str(e))
                 raise typer.Exit(code=EXIT_GENERAL_ERROR)
             data = resp.json()
             if data.get("status") == "failed":
@@ -571,6 +582,6 @@ def register_backend_commands(app: typer.Typer) -> None:
             api_url("static/usage"), headers=headers, timeout=API_TIMEOUT_SHORT
         )
         if resp.status_code != 200:
-            print(f"Error: {resp.text}", file=sys.stderr)
+            _print_error(_describe_http_error(resp.status_code, resp.text))
             raise typer.Exit(code=EXIT_GENERAL_ERROR)
         print(json.dumps(resp.json(), indent=2))
