@@ -46,7 +46,7 @@ function generateClaudeConfig(): string {
           hooks: [{ type: "command", command: "rafter hook pretool" }],
         },
         {
-          matcher: "Write|Edit",
+          matcher: "Write|Edit|MultiEdit",
           hooks: [{ type: "command", command: "rafter hook pretool" }],
         },
       ],
