@@ -44,6 +44,44 @@ SAMPLE_SCAN_FAILED = {
     "summary": {},
 }
 
+# The real scan API shape: a `vulnerabilities[]` array (NOT `findings`) whose
+# `summary` carries `errors`/`warnings`/`notes` (NOT critical/high/...). The old
+# code read `findings` and `summary.critical`/`summary.high`, all absent here,
+# so it always reported "Clean" even with real findings (rf-x3vj).
+SAMPLE_SCAN_VULNERABILITIES = {
+    "status": "completed",
+    "repository_name": "acme/payments",
+    "scan_id": "scan-vuln1",
+    "branch_name": "main",
+    "vulnerabilities": [
+        {
+            "severity": "critical",
+            "level": "critical",
+            "rule_id": "sql-injection",
+            "message": "SQL injection in query builder",
+            "file": "src/db.py",
+            "line": 42,
+        },
+        {
+            "severity": "error",
+            "level": "error",
+            "rule_id": "hardcoded-secret",
+            "message": "Hardcoded credential",
+            "file": "config/prod.yaml",
+            "line": 7,
+        },
+    ],
+    "summary": {"errors": 2, "warnings": 0, "notes": 0},
+}
+
+SAMPLE_SCAN_EMPTY_VULNS = {
+    "status": "completed",
+    "repository_name": "acme/clean",
+    "scan_id": "scan-clean1",
+    "vulnerabilities": [],
+    "summary": {"errors": 0, "warnings": 0, "notes": 0},
+}
+
 
 class TestDetectPlatform:
     def test_slack_hooks(self):
@@ -171,3 +209,55 @@ class TestFindingsTruncation:
         embed = discord["embeds"][0]
         findings_field = next(f for f in embed["fields"] if f["name"] == "Top Findings")
         assert "and 3 more" in findings_field["value"]
+
+
+class TestVulnerabilitiesPayload:
+    """rf-x3vj: notify must read the real `vulnerabilities[]` shape, map
+    severities the way the GitHub Action does (critical / error|high /
+    warning|medium / note|low), and never report "Clean" when findings exist.
+    """
+
+    def test_slack_reports_vulnerabilities_not_clean(self):
+        payload = _format_slack_payload(SAMPLE_SCAN_VULNERABILITIES)
+        blob = json.dumps(payload)
+        assert "Clean" not in payload["text"]
+        assert "2 issues found" in payload["text"]
+        # Red-alert header, because a critical/high finding is present.
+        assert "rotating_light" in payload["blocks"][0]["text"]["text"]
+        # critical stays critical; error maps to high (the action's mapping).
+        assert "Critical: *1*" in blob
+        assert "High: *1*" in blob
+        # Findings are listed, sourced from rule_id + file:line.
+        assert "sql-injection" in blob
+        assert "hardcoded-secret" in blob
+        assert "src/db.py:42" in blob
+
+    def test_discord_reports_vulnerabilities_not_clean(self):
+        payload = _format_discord_payload(SAMPLE_SCAN_VULNERABILITIES)
+        blob = json.dumps(payload)
+        assert "2 issues found" in payload["content"]
+        assert payload["embeds"][0]["color"] == 0xE74C3C  # red: has critical/high
+        assert "Critical: **1**" in blob
+        assert "High: **1**" in blob
+        assert "sql-injection" in blob
+
+    def test_generic_reports_vulnerabilities_not_clean(self):
+        payload = _format_generic_payload(SAMPLE_SCAN_VULNERABILITIES)
+        assert "Clean" not in payload["text"]
+        assert "2 issues" in payload["text"]
+
+    def test_empty_vulnerabilities_is_clean(self):
+        # Don't over-correct: a genuinely empty scan is still Clean.
+        slack = _format_slack_payload(SAMPLE_SCAN_EMPTY_VULNS)
+        assert "Clean" in slack["text"]
+        discord = _format_discord_payload(SAMPLE_SCAN_EMPTY_VULNS)
+        assert discord["embeds"][0]["color"] == 0x2ECC71  # green
+        generic = _format_generic_payload(SAMPLE_SCAN_EMPTY_VULNS)
+        assert "Clean" in generic["text"]
+
+    def test_legacy_findings_still_counted(self):
+        # Back-compat: an old cached payload using `findings` (no `vulnerabilities`)
+        # must still report its findings, not "Clean".
+        payload = _format_slack_payload(SAMPLE_SCAN_WITH_FINDINGS)
+        assert "3 issues found" in payload["text"]
+        assert "Clean" not in payload["text"]
