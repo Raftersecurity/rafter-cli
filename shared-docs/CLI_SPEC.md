@@ -36,12 +36,12 @@ The CLI follows UNIX principles:
 | 1 | Findings — one or more secrets detected |
 | 2 | Runtime error — path not found, not a git repo, invalid ref |
 
-### Sites Commands (`rafter sites create|scan|list|get`)
+### Sites Commands (`rafter sites create|scan|list|get|report`)
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
-| 1 | General error (HTTP 400/401/500, or an invalid `--sections` value, or unsupported `--format md`) |
+| 0 | Success. For `create --wait`/`scan --wait`, this means the waited-for run **succeeded**. |
+| 1 | General error (HTTP 400/401/500, an invalid `--sections`/`--timeout` value, or unsupported `--format md` on `create`/`scan`/`list`/`get`). For `create --wait`/`scan --wait`: the waited-for run **failed**, a different run started on the site before ours finished, or the wait **timed out**. |
 | 2 | Not found (HTTP 404) — site not found, or not owned by this account (deliberately not distinguished) |
 | 3 | Quota / rate limited (HTTP 429) |
 | 4 | Insufficient scope / forbidden (HTTP 403) — the Sites API returns 403 for both wrong API-key scope and plan/site limits; the only signal is the free-text `error` message |
@@ -172,7 +172,7 @@ Check API quota and usage statistics.
 
 Rafter Sites scans a registered domain the way it actually runs in production — exposed backends, DNS misconfiguration, SEO, and accessibility — as opposed to the remote code analysis commands above, which scan a git repository. All Sites routes live under `https://rafter.so/api/static/sites` and require the `x-api-key` header, same as remote code analysis.
 
-**`--format` note:** the Sites API never returns a `markdown` field, so `--format md` has nothing to render. Rather than silently falling back to JSON (which would look like success while producing the wrong format), all four commands reject `--format md` up front with an error and exit code `1`. Default format is `json`.
+**`--format` note:** `create`, `scan`, `list`, and `get` never return a `markdown` field, so `--format md` has nothing to render on those four — rather than silently falling back to JSON (which would look like success while producing the wrong format), they reject `--format md` up front with an error and exit code `1`. `report` is the exception: its `format=md` request genuinely returns a markdown document, so `report` supports and defaults differently — see below. Default format is `json` everywhere.
 
 **404 is deliberately ambiguous.** A 404 from any Sites endpoint means "not found, or not owned by this API key's account" — the API does not distinguish the two, so as not to leak the existence of sites belonging to other accounts.
 
@@ -183,6 +183,8 @@ Register a URL as a Site and kick off its first scan.
 - `-k, --api-key TEXT` — API key. Same resolution order as `rafter run`.
 - `-f, --format [json]` — output format (default: `json`; `md` is rejected, see above)
 - `--quiet` — suppress status messages on stderr
+- `--wait` — after the create succeeds, poll `rafter sites get` every 10s until the kicked-off run finishes. See "Waiting for a run" below.
+- `--timeout SECONDS` — max time to wait with `--wait` (default: `900`). Rejected locally with exit code `1` if not a positive number.
 - `-h, --help`
 
 Request: `POST /api/static/sites` with body `{"url": string}`.
@@ -197,11 +199,24 @@ Trigger a re-scan of an existing site. The single positional argument is interpr
 - `-f, --format [json]` — output format (default: `json`; `md` is rejected, see above)
 - `--sections TEXT` — comma-separated subset of `flight`, `security`, `dns` (default: all). An invalid value is rejected locally with exit code `1` before any request is made.
 - `--quiet` — suppress status messages on stderr
+- `--wait` — after the scan is triggered, poll `rafter sites get` every 10s until the triggered run finishes. See "Waiting for a run" below.
+- `--timeout SECONDS` — max time to wait with `--wait` (default: `900`). Rejected locally with exit code `1` if not a positive number.
 - `-h, --help`
 
 Request: `POST /api/static/sites/scan` with body `{"projectId": string}` XOR `{"url": string}` (exactly one), plus optional `"sections": [...]`.
 
 Response (200): `{"run": {...}}`.
+
+#### Waiting for a run (`--wait`/`--timeout`)
+
+`create --wait` and `scan --wait` poll `GET /api/static/sites/:id` every 10 seconds until the run's `latest_run.status` is `succeeded` or `failed`, or until `--timeout` seconds elapse (default 900). The final status payload is printed the same way `rafter sites get` prints it.
+
+- **Succeeded:** prints the payload, exits `0`.
+- **Failed:** prints the payload, exits `1`.
+- **A different run starts on the site before ours finishes** (its `latest_run.id` no longer matches the run id we started): stops immediately, prints an error naming both run ids, exits `1`. It never reports that other run's status as if it were the one requested.
+- **Timeout:** prints an error naming the run id and site id (so the result can be checked later with `rafter sites get <id>`), exits `1`.
+- **`create --wait` when no run was started** (`run` is `null` — the site already existed, or the first scan failed to kick off): prints a message that there is nothing to wait for and exits with the normal (non-`--wait`) create result; no polling happens.
+- `scan --wait` needs the site's id to poll; when the scan response doesn't name one and the command's argument was a URL rather than a project id, it exits `1` with an error rather than guessing.
 
 ### rafter sites list [OPTIONS]
 
@@ -231,6 +246,21 @@ Get a site's status, latest scan run, and findings summary.
 Request: `GET /api/static/sites/:id`.
 
 Response (200): `{"site": {...}, "latest_run": {...}|null, "security": {"critical", "warn", "info", "total"}}`.
+
+### rafter sites report <ID> [OPTIONS]
+
+Get a site's full security report — the same data `get` summarizes, in detail (findings, hygiene, DNS, pages, previews).
+
+- `-k, --api-key TEXT` — API key. Same resolution order as `rafter run`.
+- `-f, --format [json|md]` — output format (default: `json`). **This is the only Sites command where `md` is valid** — see the `--format` note above.
+- `--quiet` — suppress status messages on stderr
+- `-h, --help`
+
+Request: `GET /api/static/sites/:id/report?format=json|md`.
+
+Response (200, `format=json`): `application/json` body `{"report": {...}}`, printed the same way the other Sites commands print their JSON.
+
+Response (200, `format=md`): `text/markdown` body — the raw report text, printed to stdout as-is. Before printing, control characters other than `\n`/`\t` are stripped: report titles, descriptions, and recommendations come from scanning a third-party site and could otherwise carry terminal escape sequences. `--format json`'s output is unaffected — JSON's own escaping already neutralizes control characters, and stripping there would corrupt byte-faithful output.
 
 ---
 
@@ -1141,7 +1171,7 @@ PostToolUse hook handler. Reads tool output from stdin, redacts any secrets foun
 
 ### rafter mcp serve [OPTIONS]
 
-Start MCP server over stdio transport. Exposes 11 tools and 3 resources.
+Start MCP server over stdio transport. Exposes 12 tools and 3 resources.
 
 - `--transport <type>` — transport type (currently only `stdio`, default: `stdio`)
 
@@ -1160,6 +1190,7 @@ Start MCP server over stdio transport. Exposes 11 tools and 3 resources.
 | `sites_scan` | Trigger a re-scan of an existing Rafter Site | exactly one of `projectId` or `url` (string); optional: `sections` (string[]) |
 | `sites_list` | List Rafter Sites registered for monitoring, paginated | none (optional: `limit`, `offset`, `include_archived`) |
 | `sites_get` | Get a Rafter Site's status, latest scan run, and findings summary | `id` (string) |
+| `sites_report` | Get a Rafter Site's full security report, as JSON or Markdown | `id` (string); optional: `format` (`json` default, or `md`) |
 
 **`scan_secrets` inputs:**
 - `path` (required) — file or directory path to scan
@@ -1198,9 +1229,11 @@ The block is absent when nothing was suppressed.
 
 **`suppress_finding` output schema:** `{ ok, file, action, entry, suppression_count }` where `action` is `"created"` (new `.rafter.yml` written), `"appended"` (rule added to an existing file), or `"updated"` (an existing rule with the same path+rules scope had its reason refreshed). `entry` is the persisted ignore rule `{ paths, rules?, reason? }`. The tool resolves the existing policy file via the loader's precedence; if none exists it creates a canonical `.rafter.yml` at the git root. It never appends a duplicate rule for the same path+rules scope.
 
-**Sites tools** (`sites_create`, `sites_scan`, `sites_list`, `sites_get`) call the same `https://rafter.so/api/static/sites*` backend as the `rafter sites` CLI commands below — see that section for request/response shapes and error semantics. Unlike CLI commands, these tools have no `--api-key` flag: the key resolves from `RAFTER_API_KEY` or the stored `backend.apiKey` config value. A missing or rejected key returns a normal tool error (`isError: true`) rather than exiting the process, so one tool call failing never takes the rest of the MCP server down.
+**Sites tools** (`sites_create`, `sites_scan`, `sites_list`, `sites_get`, `sites_report`) call the same `https://rafter.so/api/static/sites*` backend as the `rafter sites` CLI commands below — see that section for request/response shapes and error semantics. Unlike CLI commands, these tools have no `--api-key` flag: the key resolves from `RAFTER_API_KEY` or the stored `backend.apiKey` config value. A missing or rejected key returns a normal tool error (`isError: true`) rather than exiting the process, so one tool call failing never takes the rest of the MCP server down.
 
 **`sites_scan` inputs:** exactly one of `projectId` or `url` is required — providing both, or neither, is a tool error. `sections` (optional, string[]) restricts the scan to a subset of `flight`, `security`, `dns`; omit to run all.
+
+**`sites_report` inputs:** `id` (required, string) — the site's project id. `format` (optional, string) — `json` (default) or `md`; any other value is treated as `json`. `format: "md"` returns the raw markdown report text as the tool's content, with control characters other than `\n`/`\t` stripped (see the CLI `report` command above for why); `format: "json"` returns the `{"report": {...}}` body unmodified.
 
 #### MCP Resources
 

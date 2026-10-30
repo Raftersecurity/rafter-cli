@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`rafter sites report <id>`** fetches a site's full security report as JSON (default) or Markdown — `--format md` renders here, unlike `create`/`scan`/`list`/`get`, which still reject it. Markdown output strips control characters other than `\n`/`\t` before printing, since the report's content comes from scanning a third-party site. Node + Python, plus a new `sites_report` MCP tool.
+- **`--wait`/`--timeout` on `rafter sites create` and `rafter sites scan`.** After the triggered run starts, `--wait` polls `rafter sites get` every 10s (default timeout 900s, `--timeout <seconds>` to override) until it succeeds or fails, printing the final status and exiting `0`/`1` accordingly; a run started by someone else in the meantime, or a timeout, exits `1` with an error naming the run and site ids rather than reporting the wrong outcome. Node + Python.
+
 ## [0.11.3] - 2026-10-29
 
 ### Added
