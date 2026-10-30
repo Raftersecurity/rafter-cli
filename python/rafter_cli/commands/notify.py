@@ -103,9 +103,11 @@ def _normalize_scan(scan_data: dict) -> dict:
             or v.get("message")
             or "Unknown"
         )
-        location = v.get("location") or v.get("file") or ""
-        if not v.get("location") and v.get("file") and v.get("line") is not None:
-            location = f"{v['file']}:{v['line']}"
+        file = v.get("file_path") or v.get("file")
+        line = v.get("line_start") if v.get("line_start") is not None else v.get("line")
+        location = v.get("location") or file or ""
+        if not v.get("location") and file and line is not None:
+            location = f"{file}:{line}"
         findings.append({"severity": tier, "title": title, "location": location})
 
     return {

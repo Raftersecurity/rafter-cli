@@ -268,10 +268,19 @@ def _drafts_from_backend(scan_id: str, api_key: str | None) -> list[IssueDraft]:
     return [
         build_from_backend_vulnerability(
             BackendVulnerability(
-                rule_id=v["ruleId"],
-                level=v.get("level", "warning"),
-                message=v.get("message", ""),
-                file=v.get("file", ""),
+                rule_id=v.get("rule_id") or v.get("ruleId") or "",
+                severity=v.get("severity") or "",
+                title=v.get("title") or "",
+                description=v.get("description") or "",
+                file_path=v.get("file_path"),
+                line_start=v.get("line_start"),
+                line_end=v.get("line_end"),
+                cwe=v.get("cwe"),
+                confidence=v.get("confidence"),
+                # Pre-rename names — fallback for old cached payloads.
+                level=v.get("level") or "",
+                message=v.get("message") or "",
+                file=v.get("file") or "",
                 line=v.get("line"),
             )
         )

@@ -133,16 +133,16 @@ rafter usage                                  # check quota
 
 ```sh
 # Filter high-severity vulnerabilities (SARIF levels: error, warning, note)
-rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="error")'
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.severity=="error")'
 
 # Count vulnerabilities
 rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
 
 # Extract all affected file paths
-rafter get SCAN_ID --format json | jq -r '.vulnerabilities[].file' | sort | uniq
+rafter get SCAN_ID --format json | jq -r '.vulnerabilities[].file_path' | sort | uniq
 
 # CSV export
-rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
+rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.severity, .rule_id, .file_path, .line_start] | @csv'
 
 # CI gate: fail if vulnerabilities found
 if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then
