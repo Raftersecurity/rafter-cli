@@ -295,7 +295,6 @@ Rafter ships four first-party skills you can install into any supported agent:
 ```sh
 rafter skill list                              # show installed + available skills
 rafter skill install rafter-code-review        # install one
-rafter skill install --all                     # install all four
 rafter skill uninstall rafter-secure-design    # remove one
 ```
 

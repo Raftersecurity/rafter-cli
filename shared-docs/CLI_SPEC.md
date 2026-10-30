@@ -246,12 +246,16 @@ With no topic, lists available topics and usage examples.
 
 | Topic | Description |
 |-------|-------------|
-| `security` | Local security toolkit — scanning, auditing, policy enforcement |
-| `scanning` | Remote SAST/SCA code analysis via Rafter API |
+| `scanning` | Rafter scanning (local + remote SAST/SCA) + guardrails |
 | `commands` | Condensed command reference for all rafter commands |
 | `setup` | Setup instructions for all supported platforms |
 | `setup/<platform>` | Platform-specific setup (claude-code, codex, gemini, cursor, windsurf, aider, openclaw, continue, generic) |
-| `all` | Everything — full security + scanning + setup briefing |
+| `cli-reference` | Full rafter CLI tree by category |
+| `guardrails` | PreToolUse hooks, risk tiers, overrides |
+| `backend` | Remote fast vs plus, setup, cost/latency |
+| `shift-left` | Pointers to secure-design & code-review skills |
+| `finding-triage` | How to read a finding and decide next steps |
+| `all` | Everything — full scanning + setup briefing |
 
 **Examples:**
 
@@ -259,14 +263,14 @@ With no topic, lists available topics and usage examples.
 # List available topics
 rafter brief
 
-# Get the local security briefing
-rafter brief security
+# Scanning + guardrails briefing
+rafter brief scanning
 
 # Platform-specific setup guide
 rafter brief setup/claude-code
 
 # For agents without native skill support — load context manually
-rafter brief security    # save to memory/instructions
+rafter brief scanning    # save to memory/instructions
 rafter brief commands    # save command reference
 
 # Pipe to a file for manual skill creation
