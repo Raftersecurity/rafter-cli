@@ -223,7 +223,7 @@ def _install_claude_code_hooks(root: Path, quiet: bool = False) -> None:
     post_hook = {"type": "command", "command": post_command}
     settings["hooks"]["PreToolUse"].extend([
         {"matcher": "Bash", "hooks": [pre_hook]},
-        {"matcher": "Write|Edit", "hooks": [pre_hook]},
+        {"matcher": "Write|Edit|MultiEdit", "hooks": [pre_hook]},
     ])
     # Narrow to tools that produce scannable output (shell output + file
     # writes). Firing posttool on every tool — including Read and MCP calls —
@@ -803,7 +803,7 @@ def _install_gemini_hooks(root: Path, quiet: bool = False) -> None:
     hooks = settings.setdefault("hooks", {})
     rafter_bin = _resolve_rafter_path()
     for event, sub, matcher in (
-        ("BeforeTool", "pretool", "run_shell_command|write_file|replace|edit"),
+        ("BeforeTool", "pretool", "run_shell_command|write_file|replace"),
         ("AfterTool", "posttool", ".*"),
     ):
         entries = hooks.get(event) or []

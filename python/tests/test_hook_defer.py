@@ -53,6 +53,10 @@ def home(tmp_path_factory):
 
 
 def _run(home: str, fmt: str, payload: dict) -> subprocess.CompletedProcess:
+    return _cli(home, ["hook", "pretool", "--format", fmt], json.dumps(payload))
+
+
+def _cli(home: str, args: list[str], stdin: str = "") -> subprocess.CompletedProcess:
     # Isolate HOME so a developer's ~/.rafter config cannot change the result.
     # Moving HOME also moves user site-packages, so pass sys.path through.
     env = {
@@ -62,8 +66,8 @@ def _run(home: str, fmt: str, payload: dict) -> subprocess.CompletedProcess:
         "PYTHONPATH": os.pathsep.join([_PKG_ROOT, *(p for p in sys.path if p)]),
     }
     return subprocess.run(
-        [sys.executable, "-m", "rafter_cli", "hook", "pretool", "--format", fmt],
-        input=json.dumps(payload), capture_output=True, text=True, cwd=home, env=env, timeout=30,
+        [sys.executable, "-m", "rafter_cli", *args],
+        input=stdin, capture_output=True, text=True, cwd=home, env=env, timeout=60,
     )
 
 
@@ -139,6 +143,18 @@ _NATIVE_TOOLS = {
     "continue MultiEdit": ("claude", lambda bad, home: {
         "tool_name": "MultiEdit",
         "tool_input": {"file_path": "a.ts", "edits": [{"old_string": "x", "new_string": _FAKE_KEY if bad else "hello"}]}}),
+    # apply_patch names its files only in its headers; the rafter-config guard
+    # must see each one: Add (~), Update + Move to (absolute), Delete (relative).
+    "codex apply_patch Add File": ("claude", lambda bad, home: {
+        "tool_name": "apply_patch", "tool_input": {"command": (
+            f"*** Begin Patch\n*** Add File: {'~/.rafter/config.json' if bad else 'a.json'}\n+{{}}\n*** End Patch")}}),
+    "codex apply_patch Move to": ("claude", lambda bad, home: {
+        "tool_name": "apply_patch", "tool_input": {"command": (
+            "*** Begin Patch\n*** Update File: a.json\n"
+            f"*** Move to: {os.path.join(home, '.rafter', 'config.json') if bad else 'b.json'}\n@@\n-x\n+{{}}\n*** End Patch")}}),
+    "codex apply_patch Delete File": ("claude", lambda bad, home: {
+        "tool_name": "apply_patch", "tool_input": {"command": (
+            f"*** Begin Patch\n*** Delete File: {'.rafter/config.json' if bad else 'a.json'}\n*** End Patch")}}),
     "windsurf pre_write_code edits": ("windsurf", lambda bad, home: {
         "agent_action_name": "pre_write_code",
         "tool_info": {"file_path": "a.ts", "edits": [{"old_string": "x", "new_string": _FAKE_KEY if bad else "hello"}]}}),
@@ -163,3 +179,25 @@ def test_platform_tool_names_are_evaluated(home, name):
     ok = _run(home, fmt, payload(False, home))
     assert ok.returncode == 0, ok.stderr
     assert not _is_deny(fmt, ok)
+
+
+def test_apply_patch_to_rafter_config_gets_the_write_guard_reason(home):
+    r = _run(home, "claude", {"tool_name": "apply_patch", "tool_input": {
+        "command": "*** Begin Patch\n*** Update File: ~/.rafter/config.json\n@@\n-x\n+{}\n*** End Patch"}})
+    reason = json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "write to rafter's own configuration" in reason
+
+
+# The platform only calls the hook for tools its matcher names, so each
+# installer's matcher must name the write tools the hook evaluates.
+@pytest.mark.parametrize("args,settings,event,expected", [
+    (["agent", "init", "--with-claude-code"], ".claude/settings.json", "PreToolUse",
+     ["Bash", "Write|Edit|MultiEdit"]),
+    (["agent", "enable", "gemini.hooks", "--force"], ".gemini/settings.json", "BeforeTool",
+     ["run_shell_command|write_file|replace"]),
+])
+def test_installer_registers_every_evaluated_write_tool(tmp_path, args, settings, event, expected):
+    r = _cli(str(tmp_path), args)
+    assert r.returncode == 0, r.stderr
+    hooks = json.loads((tmp_path / settings).read_text())["hooks"]
+    assert [e["matcher"] for e in hooks[event]] == expected
