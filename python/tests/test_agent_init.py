@@ -314,7 +314,7 @@ class TestInstallClaudeCodeHooks:
 
         matchers = [e["matcher"] for e in settings["hooks"]["PreToolUse"]]
         assert "Bash" in matchers
-        assert "Write|Edit" in matchers
+        assert "Write|Edit|MultiEdit" in matchers
 
         # PostToolUse is scoped to tools that produce scannable output (shell
         # output + file writes), not every tool call — avoids firing posttool
@@ -1105,7 +1105,7 @@ class TestGeminiWithSkillsEndToEnd:
         before = settings["hooks"]["BeforeTool"]
         after = settings["hooks"]["AfterTool"]
         assert len(before) == 1 and len(after) == 1
-        assert before[0]["matcher"] == "run_shell_command|write_file|replace|edit"
+        assert before[0]["matcher"] == "run_shell_command|write_file|replace"
         assert before[0]["hooks"][0]["command"].endswith("hook pretool --format gemini")
         assert after[0]["hooks"][0]["command"].endswith("hook posttool --format gemini")
 
