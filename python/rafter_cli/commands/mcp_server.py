@@ -23,7 +23,12 @@ from ..scanners.betterleaks import BetterleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.union import union_scan_results
 from ..utils.api import API_TIMEOUT, api_get, api_post
-from .sites import describe_sites_error, sites_api_url, resolve_mcp_api_key
+from .sites import (
+    describe_sites_error,
+    resolve_mcp_api_key,
+    sites_api_url,
+    strip_control_chars_for_display,
+)
 
 mcp_app = typer.Typer(
     name="mcp",
@@ -315,6 +320,28 @@ def handle_sites_get(id: str) -> dict:
     return resp.json()
 
 
+def handle_sites_report(id: str, format: str = "json") -> "dict | str":
+    """Get a Rafter Site's full security report, as JSON or Markdown."""
+    from urllib.parse import quote
+
+    fmt = "md" if format == "md" else "json"
+    key = _require_mcp_api_key()
+    resp = api_get(
+        sites_api_url(f"/{quote(id, safe='')}/report"),
+        headers={"x-api-key": key},
+        params={"format": fmt},
+        timeout=API_TIMEOUT,
+    )
+    if resp.status_code != 200:
+        message, _ = describe_sites_error(resp)
+        raise RuntimeError(message)
+    if fmt == "md":
+        # The report's content comes from scanning a third-party site and is
+        # not trusted terminal/display input — strip control chars.
+        return strip_control_chars_for_display(resp.text)
+    return resp.json()
+
+
 # ── MCP server factory ────────────────────────────────────────────────
 
 
@@ -483,6 +510,19 @@ def create_mcp_server():
             id: The site's project id.
         """
         return json.dumps(handle_sites_get(id))
+
+    @mcp.tool()
+    def sites_report(id: str, format: str = "json") -> str:
+        """Get a Rafter Site's full security report by its project id, as
+        JSON or Markdown. Use for a detailed writeup beyond sites_get's
+        summary.
+
+        Args:
+            id: The site's project id.
+            format: Report format, 'json' or 'md' (default: json).
+        """
+        result = handle_sites_report(id, format)
+        return result if isinstance(result, str) else json.dumps(result)
 
     @mcp.resource("rafter://config")
     def config_resource() -> str:

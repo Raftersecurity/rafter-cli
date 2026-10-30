@@ -11,6 +11,7 @@ was built against.
 """
 from __future__ import annotations
 
+import re
 import sys
 from urllib.parse import quote, urlparse
 
@@ -86,6 +87,24 @@ def describe_sites_error(resp: "requests.Response") -> tuple[str, int]:
     return msg or "Request failed", EXIT_GENERAL_ERROR
 
 
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def strip_control_chars_for_display(value: str) -> str:
+    """Strip ASCII/Latin-1 control characters before printing to a terminal,
+    keeping ``\\n`` and ``\\t``.
+
+    A Sites report's titles, descriptions and recommendations come from
+    scanning a third-party site and could carry terminal escape sequences
+    (e.g. an OSC/CSI sequence that rewrites the prompt or hides later
+    output) — same hazard as ``_safe_for_terminal`` in ``utils/api.py``, but
+    preserving layout instead of flattening to one line. JSON output never
+    goes through this: JSON's own escaping already neutralizes control
+    characters, and stripping there would corrupt byte-faithful output.
+    """
+    return _CONTROL_CHARS_RE.sub("", value)
+
+
 def reject_unsupported_format(fmt: str) -> bool:
     """The Sites API never returns a ``markdown`` field, so ``--format md`` has
     nothing to render. Rather than silently falling back to JSON (which looks
@@ -134,10 +153,22 @@ def sites_create(
     api_key: "str | None" = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
     fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
+    wait: bool = typer.Option(False, "--wait", help="poll until the triggered run finishes (succeeded or failed)"),
+    timeout: "str | None" = typer.Option(None, "--timeout", help="max seconds to wait with --wait (default: 900)"),
 ):
     """Register a site for live monitoring and kick off its first scan."""
     if reject_unsupported_format(fmt):
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
+
+    from .sites_wait import parse_wait_timeout, wait_for_site_run
+
+    timeout_seconds = None
+    if wait:
+        timeout_seconds, timeout_error = parse_wait_timeout(timeout)
+        if timeout_error:
+            print(timeout_error, file=sys.stderr)
+            raise typer.Exit(code=EXIT_GENERAL_ERROR)
+
     key = resolve_key(api_key)
     resp = api_post(
         sites_api_url(),
@@ -149,7 +180,25 @@ def sites_create(
         message, exit_code = describe_sites_error(resp)
         print(f"Error: {message}", file=sys.stderr)
         raise typer.Exit(code=exit_code)
-    write_payload(resp.json(), fmt, quiet)
+
+    data = resp.json()
+    if not wait:
+        write_payload(data, fmt, quiet)
+        return
+
+    run = data.get("run") or {}
+    run_id = run.get("id")
+    if not run_id:
+        # No run was started — the site already existed, or the first scan
+        # failed to kick off (`scan_error`). Either way there is nothing to
+        # poll; report the create result as-is.
+        print("Error: no run was started; nothing to wait for.", file=sys.stderr)
+        write_payload(data, fmt, quiet)
+        return
+
+    site_id = (data.get("site") or {}).get("id")
+    exit_code = wait_for_site_run(site_id, run_id, api_key, fmt, quiet, timeout_seconds=timeout_seconds)
+    raise typer.Exit(code=exit_code)
 
 
 @sites_app.command("scan")
@@ -159,12 +208,24 @@ def sites_scan(
     fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
     sections: "str | None" = typer.Option(None, "--sections", help="comma-separated subset of flight,security,dns (default: all)"),
     quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
+    wait: bool = typer.Option(False, "--wait", help="poll until the triggered run finishes (succeeded or failed)"),
+    timeout: "str | None" = typer.Option(None, "--timeout", help="max seconds to wait with --wait (default: 900)"),
 ):
     """Trigger a re-scan of an existing site."""
     if reject_unsupported_format(fmt):
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
-    body: dict = {"url": project_id_or_url} if _looks_like_url(project_id_or_url) else {"projectId": project_id_or_url}
+    from .sites_wait import parse_wait_timeout, wait_for_site_run
+
+    timeout_seconds = None
+    if wait:
+        timeout_seconds, timeout_error = parse_wait_timeout(timeout)
+        if timeout_error:
+            print(timeout_error, file=sys.stderr)
+            raise typer.Exit(code=EXIT_GENERAL_ERROR)
+
+    is_url = _looks_like_url(project_id_or_url)
+    body: dict = {"url": project_id_or_url} if is_url else {"projectId": project_id_or_url}
 
     if sections:
         section_list = [s.strip() for s in sections.split(",") if s.strip()]
@@ -188,7 +249,34 @@ def sites_scan(
         message, exit_code = describe_sites_error(resp)
         print(f"Error: {message}", file=sys.stderr)
         raise typer.Exit(code=exit_code)
-    write_payload(resp.json(), fmt, quiet)
+
+    data = resp.json()
+    if not wait:
+        write_payload(data, fmt, quiet)
+        return
+
+    run = data.get("run") or {}
+    run_id = run.get("id")
+    if not run_id:
+        print("Error: no run was started; nothing to wait for.", file=sys.stderr)
+        write_payload(data, fmt, quiet)
+        return
+
+    # The scan response carries only `run`, not the site itself. Prefer a
+    # site id the response names explicitly; fall back to the argument only
+    # when it was already a project id (not a URL we'd have no site id for).
+    site_id = run.get("siteId") or run.get("projectId") or (project_id_or_url if not is_url else None)
+    if not site_id:
+        print(
+            "Error: cannot determine the site id to wait on (the scan response named none, "
+            "and a URL was given instead of a project id). Use 'rafter sites list' to find it, "
+            f"then 'rafter sites get <id>' to check run {run_id}.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=EXIT_GENERAL_ERROR)
+
+    exit_code = wait_for_site_run(site_id, run_id, api_key, fmt, quiet, timeout_seconds=timeout_seconds)
+    raise typer.Exit(code=exit_code)
 
 
 @sites_app.command("list")
@@ -247,4 +335,37 @@ def sites_get(
         message, exit_code = describe_sites_error(resp)
         print(f"Error: {message}", file=sys.stderr)
         raise typer.Exit(code=exit_code)
+    write_payload(resp.json(), fmt, quiet)
+
+
+@sites_app.command("report")
+def sites_report(
+    id: str = typer.Argument(..., help="site's project id"),
+    api_key: "str | None" = typer.Option(None, "--api-key", "-k", envvar="RAFTER_API_KEY", help="API key"),
+    fmt: str = typer.Option("json", "--format", "-f", help="json | md"),
+    quiet: bool = typer.Option(False, "--quiet", help="suppress status messages"),
+):
+    """Get a site's full security report (JSON or Markdown).
+
+    Unlike create/scan/list/get, --format md is valid here — the report
+    route actually renders one — so this does NOT call reject_unsupported_format.
+    """
+    resolved_fmt = "md" if fmt == "md" else "json"
+    key = resolve_key(api_key)
+    site_id = quote(id, safe="")
+    resp = api_get(
+        sites_api_url(f"/{site_id}/report"),
+        headers={"x-api-key": key},
+        params={"format": resolved_fmt},
+        timeout=API_TIMEOUT,
+    )
+    if resp.status_code != 200:
+        message, exit_code = describe_sites_error(resp)
+        print(f"Error: {message}", file=sys.stderr)
+        raise typer.Exit(code=exit_code)
+    if resolved_fmt == "md":
+        # The report's content comes from scanning a third-party site and is
+        # not trusted terminal input — strip control chars before printing.
+        sys.stdout.write(strip_control_chars_for_display(resp.text))
+        return
     write_payload(resp.json(), fmt, quiet)
