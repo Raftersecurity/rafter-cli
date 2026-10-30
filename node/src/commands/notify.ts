@@ -4,25 +4,99 @@ import { validateWebhookUrl } from "../core/audit-logger.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { fmt, isAgentMode } from "../utils/formatter.js";
 
+interface Vulnerability {
+  severity?: string;
+  level?: string;
+  title?: string;
+  rule_id?: string;
+  ruleId?: string;
+  message?: string;
+  location?: string;
+  file?: string;
+  line?: number;
+}
+
 interface ScanData {
   status?: string;
   repository_name?: string;
   scan_id?: string;
   branch_name?: string;
-  findings?: Array<{
-    severity?: string;
-    title?: string;
-    rule_id?: string;
-    location?: string;
-    file?: string;
-  }>;
-  summary?: {
-    critical?: number;
-    high?: number;
-    medium?: number;
-    low?: number;
-  };
+  // Real scan API shape. `findings` is a legacy fallback for old cached payloads.
+  vulnerabilities?: Vulnerability[];
+  findings?: Vulnerability[];
+  summary?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+interface NormalizedFinding {
+  severity: string;
+  title: string;
+  location: string;
+}
+
+interface NormalizedScan {
+  findings: NormalizedFinding[];
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  total: number;
+}
+
+// Map a raw severity/level to a display tier, using the same rules as the
+// GitHub Action (github-action/action.yml) and `rafter get`, so notify agrees
+// with both. A value outside the known set is kept verbatim so a finding is
+// never silently dropped.
+function severityTier(raw?: string): string {
+  switch ((raw ?? "").toLowerCase()) {
+    case "critical":
+      return "critical";
+    case "error":
+    case "high":
+      return "high";
+    case "warning":
+    case "medium":
+      return "medium";
+    case "note":
+    case "low":
+      return "low";
+    default:
+      return (raw ?? "unknown").toLowerCase();
+  }
+}
+
+// Read findings from the real scan shape (`vulnerabilities[]`), falling back to
+// the legacy `findings[]` for old cached payloads. Counts are derived from each
+// finding's own severity — never from `summary` — so a finding cannot be lost
+// to a summary field this code does not read. "Clean" is therefore reported
+// only when there are genuinely zero findings.
+function normalizeScan(scan: ScanData): NormalizedScan {
+  const raw: Vulnerability[] = Array.isArray(scan.vulnerabilities)
+    ? scan.vulnerabilities
+    : Array.isArray(scan.findings)
+      ? scan.findings
+      : [];
+
+  let critical = 0;
+  let high = 0;
+  let medium = 0;
+  let low = 0;
+
+  const findings: NormalizedFinding[] = raw.map((v) => {
+    const tier = severityTier(v.severity ?? v.level);
+    if (tier === "critical") critical++;
+    else if (tier === "high") high++;
+    else if (tier === "medium") medium++;
+    else if (tier === "low") low++;
+
+    const title = v.title ?? v.rule_id ?? v.ruleId ?? v.message ?? "Unknown";
+    let location = v.location ?? v.file ?? "";
+    if (!v.location && v.file && v.line != null) location = `${v.file}:${v.line}`;
+
+    return { severity: tier, title, location };
+  });
+
+  return { findings, critical, high, medium, low, total: findings.length };
 }
 
 function resolveWebhook(cliOpt?: string): string {
@@ -48,17 +122,11 @@ function detectPlatform(url: string): string {
   return "generic";
 }
 
-function formatSlackPayload(scan: ScanData): Record<string, unknown> {
+export function formatSlackPayload(scan: ScanData): Record<string, unknown> {
   const status = scan.status ?? "unknown";
   const repo = scan.repository_name ?? "unknown";
   const scanId = scan.scan_id ?? "";
-  const findings = scan.findings ?? [];
-  const summary = scan.summary ?? {};
-  const critical = summary.critical ?? 0;
-  const high = summary.high ?? 0;
-  const medium = summary.medium ?? 0;
-  const low = summary.low ?? 0;
-  const total = critical + high + medium + low;
+  const { findings, critical, high, medium, low, total } = normalizeScan(scan);
 
   let statusIcon: string;
   let statusText: string;
@@ -102,11 +170,8 @@ function formatSlackPayload(scan: ScanData): Record<string, unknown> {
 
   if (findings.length > 0) {
     const lines = findings.slice(0, 5).map((f) => {
-      const sev = (f.severity ?? "unknown").toUpperCase();
-      const title = f.title ?? f.rule_id ?? "Unknown";
-      const loc = f.location ?? f.file ?? "";
-      let line = `• \`[${sev}]\` ${title}`;
-      if (loc) line += ` — ${loc}`;
+      let line = `• \`[${f.severity.toUpperCase()}]\` ${f.title}`;
+      if (f.location) line += ` — ${f.location}`;
       return line;
     });
     if (findings.length > 5) lines.push(`_... and ${findings.length - 5} more_`);
@@ -123,17 +188,11 @@ function formatSlackPayload(scan: ScanData): Record<string, unknown> {
   return { text: `[rafter] ${repo}: ${statusText}`, blocks };
 }
 
-function formatDiscordPayload(scan: ScanData): Record<string, unknown> {
+export function formatDiscordPayload(scan: ScanData): Record<string, unknown> {
   const status = scan.status ?? "unknown";
   const repo = scan.repository_name ?? "unknown";
   const scanId = scan.scan_id ?? "";
-  const findings = scan.findings ?? [];
-  const summary = scan.summary ?? {};
-  const critical = summary.critical ?? 0;
-  const high = summary.high ?? 0;
-  const medium = summary.medium ?? 0;
-  const low = summary.low ?? 0;
-  const total = critical + high + medium + low;
+  const { findings, critical, high, medium, low, total } = normalizeScan(scan);
 
   let color: number;
   let statusText: string;
@@ -172,11 +231,8 @@ function formatDiscordPayload(scan: ScanData): Record<string, unknown> {
 
   if (findings.length > 0) {
     const lines = findings.slice(0, 5).map((f) => {
-      const sev = (f.severity ?? "unknown").toUpperCase();
-      const title = f.title ?? f.rule_id ?? "Unknown";
-      const loc = f.location ?? f.file ?? "";
-      let line = `• \`[${sev}]\` ${title}`;
-      if (loc) line += ` — ${loc}`;
+      let line = `• \`[${f.severity.toUpperCase()}]\` ${f.title}`;
+      if (f.location) line += ` — ${f.location}`;
       return line;
     });
     if (findings.length > 5) lines.push(`*... and ${findings.length - 5} more*`);
@@ -189,11 +245,10 @@ function formatDiscordPayload(scan: ScanData): Record<string, unknown> {
   };
 }
 
-function formatGenericPayload(scan: ScanData): Record<string, unknown> {
+export function formatGenericPayload(scan: ScanData): Record<string, unknown> {
   const status = scan.status ?? "unknown";
   const repo = scan.repository_name ?? "unknown";
-  const summary = scan.summary ?? {};
-  const total = (summary.critical ?? 0) + (summary.high ?? 0) + (summary.medium ?? 0) + (summary.low ?? 0);
+  const { total } = normalizeScan(scan);
 
   let statusText: string;
   if (status === "completed" && total === 0) statusText = "Clean — no issues found";

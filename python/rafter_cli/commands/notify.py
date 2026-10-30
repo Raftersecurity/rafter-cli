@@ -57,19 +57,79 @@ def _detect_platform(url: str) -> str:
     return "generic"
 
 
+def _severity_tier(raw: str | None) -> str:
+    """Map a raw severity/level to a display tier.
+
+    Uses the same rules as the GitHub Action (github-action/action.yml) and
+    ``rafter get``, so notify agrees with both. A value outside the known set is
+    kept verbatim so a finding is never silently dropped.
+    """
+    s = (raw or "").lower()
+    if s == "critical":
+        return "critical"
+    if s in ("error", "high"):
+        return "high"
+    if s in ("warning", "medium"):
+        return "medium"
+    if s in ("note", "low"):
+        return "low"
+    return s or "unknown"
+
+
+def _normalize_scan(scan_data: dict) -> dict:
+    """Read findings from the real scan shape (``vulnerabilities[]``).
+
+    Falls back to the legacy ``findings[]`` for old cached payloads. Counts are
+    derived from each finding's own severity — never from ``summary`` — so a
+    finding cannot be lost to a summary field this code does not read. "Clean"
+    is therefore reported only when there are genuinely zero findings.
+    """
+    raw = scan_data.get("vulnerabilities")
+    if not isinstance(raw, list):
+        raw = scan_data.get("findings")
+    if not isinstance(raw, list):
+        raw = []
+
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    findings = []
+    for v in raw:
+        tier = _severity_tier(v.get("severity") or v.get("level"))
+        if tier in counts:
+            counts[tier] += 1
+        title = (
+            v.get("title")
+            or v.get("rule_id")
+            or v.get("ruleId")
+            or v.get("message")
+            or "Unknown"
+        )
+        location = v.get("location") or v.get("file") or ""
+        if not v.get("location") and v.get("file") and v.get("line") is not None:
+            location = f"{v['file']}:{v['line']}"
+        findings.append({"severity": tier, "title": title, "location": location})
+
+    return {
+        "findings": findings,
+        "critical": counts["critical"],
+        "high": counts["high"],
+        "medium": counts["medium"],
+        "low": counts["low"],
+        "total": len(findings),
+    }
+
+
 def _format_slack_payload(scan_data: dict) -> dict:
     """Format scan results as a Slack message with Block Kit."""
     status = scan_data.get("status", "unknown")
     repo = scan_data.get("repository_name", "unknown")
     scan_id = scan_data.get("scan_id", "")
-    findings = scan_data.get("findings", [])
-    summary = scan_data.get("summary", {})
-
-    critical = summary.get("critical", 0)
-    high = summary.get("high", 0)
-    medium = summary.get("medium", 0)
-    low = summary.get("low", 0)
-    total = critical + high + medium + low
+    norm = _normalize_scan(scan_data)
+    findings = norm["findings"]
+    critical = norm["critical"]
+    high = norm["high"]
+    medium = norm["medium"]
+    low = norm["low"]
+    total = norm["total"]
 
     # Status emoji
     if status == "completed" and total == 0:
@@ -140,12 +200,9 @@ def _format_slack_payload(scan_data: dict) -> dict:
     if findings:
         finding_lines = []
         for f in findings[:5]:
-            sev = f.get("severity", "unknown").upper()
-            title = f.get("title", f.get("rule_id", "Unknown"))
-            location = f.get("location", f.get("file", ""))
-            line = f"• `[{sev}]` {title}"
-            if location:
-                line += f" — {location}"
+            line = f"• `[{f['severity'].upper()}]` {f['title']}"
+            if f["location"]:
+                line += f" — {f['location']}"
             finding_lines.append(line)
 
         if len(findings) > 5:
@@ -179,14 +236,13 @@ def _format_discord_payload(scan_data: dict) -> dict:
     status = scan_data.get("status", "unknown")
     repo = scan_data.get("repository_name", "unknown")
     scan_id = scan_data.get("scan_id", "")
-    findings = scan_data.get("findings", [])
-    summary = scan_data.get("summary", {})
-
-    critical = summary.get("critical", 0)
-    high = summary.get("high", 0)
-    medium = summary.get("medium", 0)
-    low = summary.get("low", 0)
-    total = critical + high + medium + low
+    norm = _normalize_scan(scan_data)
+    findings = norm["findings"]
+    critical = norm["critical"]
+    high = norm["high"]
+    medium = norm["medium"]
+    low = norm["low"]
+    total = norm["total"]
 
     # Embed color
     if status == "completed" and total == 0:
@@ -237,12 +293,9 @@ def _format_discord_payload(scan_data: dict) -> dict:
     if findings:
         finding_lines = []
         for f in findings[:5]:
-            sev = f.get("severity", "unknown").upper()
-            title = f.get("title", f.get("rule_id", "Unknown"))
-            location = f.get("location", f.get("file", ""))
-            line = f"• `[{sev}]` {title}"
-            if location:
-                line += f" — {location}"
+            line = f"• `[{f['severity'].upper()}]` {f['title']}"
+            if f["location"]:
+                line += f" — {f['location']}"
             finding_lines.append(line)
 
         if len(findings) > 5:
@@ -271,8 +324,7 @@ def _format_generic_payload(scan_data: dict) -> dict:
     """Format scan results as a plain JSON payload with text field."""
     status = scan_data.get("status", "unknown")
     repo = scan_data.get("repository_name", "unknown")
-    summary = scan_data.get("summary", {})
-    total = sum(summary.get(k, 0) for k in ("critical", "high", "medium", "low"))
+    total = _normalize_scan(scan_data)["total"]
 
     if status == "completed" and total == 0:
         status_text = "Clean — no issues found"
