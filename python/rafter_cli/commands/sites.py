@@ -265,7 +265,7 @@ def sites_scan(
     # The scan response carries only `run`, not the site itself. Prefer a
     # site id the response names explicitly; fall back to the argument only
     # when it was already a project id (not a URL we'd have no site id for).
-    site_id = run.get("siteId") or run.get("projectId") or (project_id_or_url if not is_url else None)
+    site_id = run.get("project_id") or (project_id_or_url if not is_url else None)
     if not site_id:
         print(
             "Error: cannot determine the site id to wait on (the scan response named none, "

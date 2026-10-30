@@ -81,7 +81,7 @@ export async function runSitesScan(
     // The scan response carries only `run`, not the site itself. Prefer a
     // site id the response names explicitly; fall back to the argument only
     // when it was already a project id (not a URL we'd have no site id for).
-    const siteId = data?.run?.siteId ?? data?.run?.projectId ?? (!isUrl ? projectIdOrUrl : undefined);
+    const siteId = data?.run?.project_id ?? (!isUrl ? projectIdOrUrl : undefined);
     if (!siteId) {
       console.error(
         "Error: cannot determine the site id to wait on (the scan response named none, " +

@@ -182,8 +182,8 @@ describe("sites scan --wait", () => {
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("r1"));
   });
 
-  it("uses run.siteId from the response when given a URL", async () => {
-    mockedAxios.post.mockResolvedValueOnce({ data: { run: { id: "r1", siteId: "p1" } } });
+  it("uses run.project_id from the response when given a URL", async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { run: { id: "r1", project_id: "p1" } } });
     mockedAxios.get.mockResolvedValueOnce({ data: { latest_run: { id: "r1", status: "succeeded" } } });
 
     const code = await runSitesScan("https://example.com", { ...opts, wait: true }, instantDeps([0, 0]));

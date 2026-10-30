@@ -254,8 +254,8 @@ class TestSitesScanWait:
 
     @patch("rafter_cli.commands.sites_wait.wait_for_site_run")
     @patch("rafter_cli.commands.sites.api_post")
-    def test_uses_run_site_id_when_given_a_url(self, mock_post, mock_wait):
-        mock_post.return_value = _mock_response(200, {"run": {"id": "r1", "siteId": "p1"}})
+    def test_uses_run_project_id_when_given_a_url(self, mock_post, mock_wait):
+        mock_post.return_value = _mock_response(200, {"run": {"id": "r1", "project_id": "p1"}})
         mock_wait.return_value = EXIT_SUCCESS
         result = runner.invoke(
             sites_app, ["scan", "https://example.com", "-k", "test-key", "--wait"]
