@@ -733,9 +733,9 @@ def _install_gemini_mcp(root: Path, quiet: bool = False) -> bool:
 
 # Cursor hook events covered by rafter (rf-svn3).
 _CURSOR_HOOK_EVENTS: tuple[tuple[str, str], ...] = (
-    ("preToolUse", "rafter hook pretool --format cursor"),
-    ("postToolUse", "rafter hook posttool --format cursor"),
-    ("beforeShellExecution", "rafter hook pretool --format cursor"),
+    ("preToolUse", "hook pretool --format cursor"),
+    ("postToolUse", "hook posttool --format cursor"),
+    ("beforeShellExecution", "hook pretool --format cursor"),
 )
 
 # Skills shipped as both Cursor rules and Claude Code / Codex / Gemini skills.
@@ -842,7 +842,11 @@ def _install_cursor_hooks(root: Path, quiet: bool = False) -> None:
     config.setdefault("version", 1)
     config.setdefault("hooks", {})
 
-    for event, command in _CURSOR_HOOK_EVENTS:
+    # The resolved path, as for the Claude Code and Codex hooks: Cursor runs
+    # hooks without the user's shell PATH, where a bare `rafter` may not resolve.
+    rafter_bin = _resolve_rafter_path()
+    for event, args in _CURSOR_HOOK_EVENTS:
+        command = f"{rafter_bin} {args}"
         entries = config["hooks"].get(event)
         if not isinstance(entries, list):
             entries = []
