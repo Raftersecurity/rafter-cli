@@ -47,6 +47,10 @@ interface ScanOpts {
    * sable-o4k — opt out of auto-updating a stale managed betterleaks binary.
    */
   autoUpdate?: boolean;
+  /** Write the --json/--format json|sarif payload to this file instead of
+   * stdout. Agents in a sandbox without shell redirects still get the status
+   * line on stderr. No effect on text format. */
+  out?: string;
 }
 
 interface BaselineEntry {
@@ -153,10 +157,11 @@ function applyBaseline(results: ScanResult[], entries: BaselineEntry[]): ScanRes
 export function createScanCommand(): Command {
   return new Command("scan")
     .description("Scan files or directories for secrets")
-    .argument("[path]", "File or directory to scan", ".")
+    .argument("[paths...]", "File(s) or directory(ies) to scan", ["."])
     .option("-q, --quiet", "Only output if secrets found")
     .option("--json", "Output as JSON")
     .option("--format <format>", "Output format: text, json, sarif", "text")
+    .option("--out <file>", "Write the --json/--format output to this file instead of stdout (status lines still go to stderr)")
     .option("--staged", "Scan only git staged files")
     .option("--diff <ref>", "Scan files changed since a git ref")
     .option("--range <range>", "Scan only files changed in a git commit range, e.g. main..HEAD")
@@ -166,7 +171,7 @@ export function createScanCommand(): Command {
     .option("--history", "Scan every commit on every ref instead of the working tree")
     .option("--no-gitignore", "Scan files even if .gitignore would exclude them (default: respect .gitignore)")
     .option("--no-auto-update", "Do not auto-update a stale managed betterleaks binary; fall back to the patterns engine instead")
-    .action(async (scanPath, opts: ScanOpts) => {
+    .action(async (scanPaths: string[], opts: ScanOpts) => {
       // Validate flags before doing any work.
       const validEngines = ["auto", "betterleaks", "patterns"];
       const engineValue = opts.engine || "auto";
@@ -191,6 +196,13 @@ export function createScanCommand(): Command {
           "Warning: rafter agent scan is deprecated and will be removed in a future major version. Use rafter secrets instead.\n"
         );
       }
+      // Multiple paths (`rafter secrets app/a.py app/b.py infra/c.tf`): scan
+      // each and merge into one report below. --diff/--range/--staged/--watch
+      // scope to the repo (or a single watch root), not a file list, so they
+      // use the first path only — the same thing they did before this command
+      // could take more than one path at all.
+      const scanPath = scanPaths[0];
+
       // Load policy-merged config for excludePaths/customPatterns/ignore.
       // Discover and anchor the policy from the scan TARGET, not the process
       // cwd (sable-lu0j), so an ambient `.rafter.yml` in cwd cannot suppress
@@ -241,7 +253,8 @@ export function createScanCommand(): Command {
         return;
       }
 
-      // Determine scan engine
+      // Determine scan engine (once for every path, so the engine report in
+      // the merged output describes the whole run, not just the last path).
       const requestedEngine = opts.engine || "auto";
       const scanStart = Date.now();
       const selected = await selectEngine(requestedEngine, opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
@@ -250,24 +263,34 @@ export function createScanCommand(): Command {
       // timeout) updates it before the output reports the engine actually used.
       const report = buildEngineReport(requestedEngine, engine, selected.reason);
 
-      // Determine if path is file or directory
-      const stats = fs.statSync(resolvedPath);
-      let results;
+      // Resolve and validate every path up front — same error, same exit code
+      // as the single-path check above, just repeated per path.
+      const resolvedPaths = scanPaths.map((p) => path.resolve(p));
+      for (const p of resolvedPaths) {
+        if (!fs.existsSync(p)) {
+          console.error(`Error: Path not found: ${p}`);
+          process.exit(2);
+        }
+      }
 
-      if (stats.isDirectory()) {
-        if (!opts.quiet) {
-          console.error(`Scanning directory: ${resolvedPath} (${engineLabel(engine)})`);
+      const allResults: ScanResult[] = [];
+      for (const p of resolvedPaths) {
+        const stats = fs.statSync(p);
+        if (stats.isDirectory()) {
+          if (!opts.quiet) {
+            console.error(`Scanning directory: ${p} (${engineLabel(engine)})`);
+          }
+          allResults.push(...(await scanDirectory(p, engine, scanCfg, opts.history, opts.gitignore, report)));
+        } else {
+          if (!opts.quiet) {
+            console.error(`Scanning file: ${p} (${engineLabel(engine)})`);
+          }
+          allResults.push(...(await scanFile(p, engine, scanCfg, report)));
         }
-        results = await scanDirectory(resolvedPath, engine, scanCfg, opts.history, opts.gitignore, report);
-      } else {
-        if (!opts.quiet) {
-          console.error(`Scanning file: ${resolvedPath} (${engineLabel(engine)})`);
-        }
-        results = await scanFile(resolvedPath, engine, scanCfg, report);
       }
 
       countScan(report, Date.now() - scanStart);
-      outputScanResults(applyBaseline(results, baselineEntries), opts, undefined, true, suppressions, report);
+      outputScanResults(applyBaseline(allResults, baselineEntries), opts, undefined, true, suppressions, report);
     });
 }
 
@@ -305,9 +328,29 @@ export function collectSuppressions(
 }
 
 /**
+ * Write a JSON/SARIF payload to `--out <file>` instead of stdout, so an agent
+ * in a sandbox without shell redirects can still get the result onto disk.
+ * Status lines keep going to stderr regardless. Returns true when it wrote
+ * the file (caller then skips its normal stdout `console.log`).
+ */
+function writeJsonOutput(text: string, outPath: string | undefined, quiet: boolean | undefined): boolean {
+  if (!outPath) return false;
+  fs.writeFileSync(outPath, text.endsWith("\n") ? text : `${text}\n`);
+  if (!quiet) {
+    console.error(fmt.info(`Results written to ${outPath}`));
+  }
+  return true;
+}
+
+/**
  * Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration
  */
-function outputSarif(results: ScanResult[], emptyExitCode: number = 0): void {
+function outputSarif(
+  results: ScanResult[],
+  emptyExitCode: number = 0,
+  outPath?: string,
+  quiet?: boolean,
+): void {
   const rules = new Map<string, { id: string; name: string; shortDescription: string }>();
   const sarifResults: object[] = [];
 
@@ -355,7 +398,10 @@ function outputSarif(results: ScanResult[], emptyExitCode: number = 0): void {
     ],
   };
 
-  console.log(JSON.stringify(sarif, null, 2));
+  const sarifText = JSON.stringify(sarif, null, 2);
+  if (!writeJsonOutput(sarifText, outPath, quiet)) {
+    console.log(sarifText);
+  }
   // A read error (sable-ilbx) makes an otherwise-empty scan non-clean; the
   // caller passes that exit code in.
   process.exit(results.length > 0 ? 1 : emptyExitCode);
@@ -420,7 +466,7 @@ function outputScanResults(
   logScanToAudit(keptResults, context);
 
   if (format === "sarif") {
-    outputSarif(keptResults, scanExitCode);
+    outputSarif(keptResults, scanExitCode, opts.out, opts.quiet);
     return;
   }
 
@@ -474,7 +520,10 @@ function outputScanResults(
     if (readErrors.length > 0) {
       out.unreadable = readErrors;
     }
-    console.log(JSON.stringify(out, null, 2));
+    const jsonText = JSON.stringify(out, null, 2);
+    if (!writeJsonOutput(jsonText, opts.out, opts.quiet)) {
+      console.log(jsonText);
+    }
     if (exitOnFindings) process.exit(scanExitCode);
     return;
   }
@@ -494,7 +543,8 @@ function outputScanResults(
       }
     } else if (!opts.quiet) {
       const msg = context ? `No secrets detected in ${context}` : "No secrets detected";
-      console.log(`\n${fmt.success(msg)}\n`);
+      console.log(`\n${fmt.success(msg)}`);
+      console.log("This covers secrets only — it is not a code security review.\n");
     }
     if (exitOnFindings) process.exit(scanExitCode);
     return;
@@ -688,7 +738,13 @@ async function runGitAddedLineScan(
     const filtered = applyExcludePaths(allResults, scanCfg?.excludePaths, repoRoot);
     outputScanResults(applyBaseline(filtered, baselineEntries), opts, contextLabel, true, suppressions, diffReport);
   } catch (error: any) {
-    if (error.status === 128) {
+    // 128 is git's own "fatal: not a repository / bad ref". 129 is git's
+    // usage-error code, which is what `git diff --cached`/`--diff-filter`
+    // actually exits with outside a work tree (git falls back to its
+    // two-file `--no-index` mode, where those flags are invalid) — without
+    // it, a plain "cwd is not a git repo" run fell through to the generic
+    // "could not run" branch below and printed git's raw usage text.
+    if (error.status === 128 || error.status === 129) {
       console.error(errorOpts?.notRepoMessage ?? "Error: Not in a git repository or invalid ref");
       process.exit(2);
     }

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 
 import typer
@@ -17,7 +18,8 @@ def gates_main(
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Honor .gitignore (default: on)"),
 ) -> None:
     """Map a codebase's security gates (functions that decide whether something is allowed) and their twins, for an audit."""
-    if not limit.isdigit() or int(limit) < 1:
+    # fullmatch, not isdigit(): isdigit() accepts "²", which int() then rejects.
+    if not re.fullmatch(r"[0-9]+", limit) or int(limit) < 1:
         typer.echo(f"Error: --limit must be a positive integer, got: {limit}", err=True)
         raise typer.Exit(code=2)
     resolved = os.path.abspath(path)
@@ -25,6 +27,8 @@ def gates_main(
         typer.echo(f"Error: Path not found: {resolved}", err=True)
         raise typer.Exit(code=2)
     gate_map = map_gates(resolved, limit=int(limit), respect_gitignore=gitignore)
+    if gate_map["stats"]["files_scanned"] == 0:
+        typer.echo(f"Warning: no source files scanned under {resolved} (none found, unreadable, oversize or generated)", err=True)
     if json_output:
         sys.stdout.write(json.dumps(gate_map, indent=2, ensure_ascii=False) + "\n")
     else:
