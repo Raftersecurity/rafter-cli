@@ -224,16 +224,68 @@ function evaluateToolCall(payload: HookInput): HookDecision {
   const control = resolveHookControl();
   if (!control.hookEnabled) return { decision: "allow" };
 
-  if (tool_name === "Bash") {
+  if (SHELL_TOOLS.has(tool_name)) {
     return evaluateBash(tool_input?.command || "", control);
   }
 
-  if (tool_name === "Write" || tool_name === "Edit") {
+  if (WRITE_TOOLS.has(tool_name)) {
     if (!control.secretScanEnabled) return { decision: "allow" };
-    return evaluateWrite(tool_input || {});
+    return evaluateWrite(normalizeWriteInput(tool_name, tool_input || {}));
   }
 
   return { decision: "allow" };
+}
+
+/**
+ * Shell and file-write tools under each platform's own name, so the same
+ * policy applies whatever the tool is called.
+ *   Shell: Bash (Claude Code, Codex, Continue), Shell (Cursor preToolUse),
+ *          run_shell_command (Gemini CLI).
+ *   Write: Write/Edit (Claude Code, Continue, Cursor), MultiEdit (Claude Code,
+ *          Continue), write_file/replace (Gemini CLI), apply_patch (Codex).
+ */
+const SHELL_TOOLS = new Set(["Bash", "Shell", "run_shell_command"]);
+const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "write_file", "replace", "apply_patch"]);
+
+/**
+ * Map each write tool's input onto the { file_path, content } shape that
+ * evaluateWrite reads: Continue's Write names its path `filepath`; MultiEdit
+ * and Windsurf's pre_write_code carry `edits[].new_string`; Codex's
+ * apply_patch carries the whole patch in `command`, with its target paths
+ * in the patch headers (`patch_paths`).
+ */
+function normalizeWriteInput(toolName: string, input: Record<string, any>): Record<string, any> {
+  const out = { ...input };
+  if (out.file_path === undefined && typeof input.filepath === "string") out.file_path = input.filepath;
+  if (!out.content && !out.new_string) {
+    if (Array.isArray(input.edits)) {
+      out.content = input.edits.map((e: any) => (typeof e?.new_string === "string" ? e.new_string : "")).join("\n");
+    } else if (toolName === "apply_patch" && typeof input.command === "string") {
+      out.content = input.command;
+    }
+  }
+  if (toolName === "apply_patch" && typeof input.command === "string") {
+    out.patch_paths = applyPatchPaths(input.command);
+  }
+  return out;
+}
+
+/**
+ * Every path an apply_patch names. The patch format carries its targets only
+ * in hunk headers, which Codex matches on the trimmed line:
+ * `*** Add File: <path>`, `*** Update File: <path>`, `*** Delete File: <path>`
+ * and `*** Move to: <path>` (codex-rs/apply-patch, apply_patch.lark).
+ */
+const APPLY_PATCH_HEADERS = ["*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "];
+
+function applyPatchPaths(patch: string): string[] {
+  const paths: string[] = [];
+  for (const raw of patch.split("\n")) {
+    const line = raw.trim();
+    const header = APPLY_PATCH_HEADERS.find((h) => line.startsWith(h));
+    if (header) paths.push(line.slice(header.length).trim());
+  }
+  return paths;
 }
 
 function evaluateBash(command: string, control: HookControl): HookDecision {
@@ -311,19 +363,35 @@ function writesRafterSecurityConfig(filePath: string): boolean {
     const expanded = filePath.startsWith("~")
       ? path.join(os.homedir(), filePath.slice(1))
       : filePath;
-    const target = path.resolve(expanded);
-    const rafterDir = path.resolve(getRafterDir());
+    // Compare real paths, as Python's Path.resolve() does: a symlink into the
+    // rafter dir must not be a way around this check (sable-rxqr).
+    const target = realpathNearest(path.resolve(expanded));
+    const rafterDir = realpathNearest(path.resolve(getRafterDir()));
     return target === rafterDir || target.startsWith(rafterDir + path.sep);
   } catch {
     return false;
   }
 }
 
+/** Real path of `p`, resolving symlinks in its longest existing prefix. */
+function realpathNearest(p: string): string {
+  let head = p;
+  const tail: string[] = [];
+  while (!fs.existsSync(head)) {
+    const parent = path.dirname(head);
+    if (parent === head) return p;
+    tail.unshift(path.basename(head));
+    head = parent;
+  }
+  return path.join(fs.realpathSync(head), ...tail);
+}
+
 function evaluateWrite(toolInput: Record<string, any>): HookDecision {
   // rf-vnxs: checked FIRST, and before the no-content early return, because a
   // truncating write with empty content disables the hook just as well as one
-  // carrying JSON.
-  if (writesRafterSecurityConfig(toolInput.file_path ?? "")) {
+  // carrying JSON. apply_patch names its targets only in the patch headers.
+  const targets: string[] = [toolInput.file_path ?? "", ...(toolInput.patch_paths ?? [])];
+  if (targets.some(writesRafterSecurityConfig)) {
     return {
       decision: "deny",
       reason:

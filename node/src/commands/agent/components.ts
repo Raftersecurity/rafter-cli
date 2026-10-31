@@ -172,7 +172,7 @@ function claudeCodeHooks(): ComponentSpec {
 
       settings.hooks.PreToolUse.push(
         { matcher: "Bash", hooks: [pre] },
-        { matcher: "Write|Edit", hooks: [pre] },
+        { matcher: "Write|Edit|MultiEdit", hooks: [pre] },
       );
       // Narrow to tools that produce scannable output (shell output + file
       // writes); avoids firing posttool on every Read/MCP call (latency).
@@ -638,8 +638,9 @@ function geminiHooks(): ComponentSpec {
       );
       // Explicit Gemini built-in tool names per geminicli.com/docs/hooks/reference
       // (rf-044o verification).
+      // No tool is named `edit`: Gemini's edit tool is `replace`.
       s.hooks.BeforeTool.push({
-        matcher: "run_shell_command|write_file|replace|edit",
+        matcher: "run_shell_command|write_file|replace",
         hooks: [{ type: "command", command: "rafter hook pretool --format gemini", timeout: 5000 }],
       });
       s.hooks.AfterTool.push({
@@ -1058,8 +1059,15 @@ function aiderRead(): ComponentSpec {
       fs.writeFileSync(configPath, yaml.dump(parsed), "utf-8");
     },
     uninstall: () => {
-      if (fs.existsSync(rafterMdPath)) {
-        try { fs.rmSync(rafterMdPath, { force: true }); } catch { /* best-effort */ }
+      // Excise only the managed block; any user content in RAFTER.md survives.
+      // If the file was ours alone (nothing but the block), remove it.
+      // A RAFTER.md with no markers is user-authored — leave it untouched.
+      if (fs.existsSync(rafterMdPath) && stripMarkerBlock(rafterMdPath)) {
+        try {
+          if (fs.readFileSync(rafterMdPath, "utf-8").trim() === "") {
+            fs.rmSync(rafterMdPath, { force: true });
+          }
+        } catch { /* best-effort */ }
       }
       if (!fs.existsSync(configPath)) return;
       const raw = fs.readFileSync(configPath, "utf-8");

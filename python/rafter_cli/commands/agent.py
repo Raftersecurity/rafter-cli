@@ -223,7 +223,7 @@ def _install_claude_code_hooks(root: Path, quiet: bool = False) -> None:
     post_hook = {"type": "command", "command": post_command}
     settings["hooks"]["PreToolUse"].extend([
         {"matcher": "Bash", "hooks": [pre_hook]},
-        {"matcher": "Write|Edit", "hooks": [pre_hook]},
+        {"matcher": "Write|Edit|MultiEdit", "hooks": [pre_hook]},
     ])
     # Narrow to tools that produce scannable output (shell output + file
     # writes). Firing posttool on every tool — including Read and MCP calls —
@@ -733,9 +733,9 @@ def _install_gemini_mcp(root: Path, quiet: bool = False) -> bool:
 
 # Cursor hook events covered by rafter (rf-svn3).
 _CURSOR_HOOK_EVENTS: tuple[tuple[str, str], ...] = (
-    ("preToolUse", "rafter hook pretool --format cursor"),
-    ("postToolUse", "rafter hook posttool --format cursor"),
-    ("beforeShellExecution", "rafter hook pretool --format cursor"),
+    ("preToolUse", "hook pretool --format cursor"),
+    ("postToolUse", "hook posttool --format cursor"),
+    ("beforeShellExecution", "hook pretool --format cursor"),
 )
 
 # Skills shipped as both Cursor rules and Claude Code / Codex / Gemini skills.
@@ -783,6 +783,44 @@ def _install_codex_hooks(root: Path, quiet: bool = False) -> None:
     _init_print(quiet, fmt.success(f"Installed PostToolUse hooks to {hooks_path}"))
 
 
+def _install_gemini_hooks(root: Path, quiet: bool = False) -> None:
+    """Install Rafter BeforeTool/AfterTool hooks into <root>/.gemini/settings.json.
+
+    Mirrors Node's installGeminiHooks. Gemini matchers are regexes against its
+    built-in tool names; the mutating ones are matched explicitly.
+    """
+    gemini_dir = root / ".gemini"
+    gemini_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = gemini_dir / "settings.json"
+
+    settings: dict[str, Any] = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            _init_alert(quiet, fmt.warning("Existing Gemini settings.json was unreadable, creating new one"))
+
+    hooks = settings.setdefault("hooks", {})
+    rafter_bin = _resolve_rafter_path()
+    for event, sub, matcher in (
+        ("BeforeTool", "pretool", "run_shell_command|write_file|replace"),
+        ("AfterTool", "posttool", ".*"),
+    ):
+        entries = hooks.get(event) or []
+        entries = [
+            e for e in entries
+            if not any(f"hook {sub}" in str(h.get("command", "")) for h in (e.get("hooks") or []))
+        ]
+        entries.append({
+            "matcher": matcher,
+            "hooks": [{"type": "command", "command": f"{rafter_bin} hook {sub} --format gemini", "timeout": 5000}],
+        })
+        hooks[event] = entries
+
+    settings_path.write_text(json.dumps(settings, indent=2))
+    _init_print(quiet, fmt.success(f"Installed hooks to {settings_path}"))
+
+
 def _install_cursor_hooks(root: Path, quiet: bool = False) -> None:
     """Install Cursor hooks at <root>/.cursor/hooks.json.
 
@@ -804,7 +842,11 @@ def _install_cursor_hooks(root: Path, quiet: bool = False) -> None:
     config.setdefault("version", 1)
     config.setdefault("hooks", {})
 
-    for event, command in _CURSOR_HOOK_EVENTS:
+    # The resolved path, as for the Claude Code and Codex hooks: Cursor runs
+    # hooks without the user's shell PATH, where a bare `rafter` may not resolve.
+    rafter_bin = _resolve_rafter_path()
+    for event, args in _CURSOR_HOOK_EVENTS:
+        command = f"{rafter_bin} {args}"
         entries = config["hooks"].get(event)
         if not isinstance(entries, list):
             entries = []
@@ -1505,6 +1547,7 @@ def init(
                 _init_alert(quiet, fmt.error(f"Failed to install Gemini CLI skills: {skills_error}"))
             else:
                 _register_gemini_skills(root / ".agents" / "skills", quiet=quiet)
+            _install_gemini_hooks(root, quiet=quiet)
             if gemini_ok and scope == "user":
                 manager.set("agent.environments.gemini.enabled", True)
         except Exception as e:
@@ -2130,6 +2173,11 @@ def _output_scan_results(
     # that could not complete cleanly (2); a clean, complete scan is 0.
     scan_exit_code = 1 if kept_results else (2 if read_errors else 0)
 
+    # Before the format branches, so --json and SARIF runs are recorded too. A
+    # clean scan is recorded as well: "we looked on this date and found nothing"
+    # is what a postmortem needs.
+    _log_scan_to_audit(kept_results, context)
+
     # No silent downgrade (sable-jiqb): when betterleaks was requested/auto but
     # patterns ran instead, say so on stderr (visible in every format without
     # corrupting a JSON/SARIF stdout payload). The JSON body also carries it.
@@ -2232,6 +2280,48 @@ def _output_scan_results(
 
     if exit_on_findings:
         raise typer.Exit(code=scan_exit_code)
+
+
+def _log_scan_to_audit(results: list[ScanResult], context: str | None = None) -> None:
+    """Record that a scan ran, so ``rafter agent audit`` has something in it.
+
+    ``rafter secrets`` told the user "Run 'rafter agent audit' to see the
+    security log" and the log was always empty, because only command
+    interception ever wrote to it — three of seven beta users followed that
+    hint and hit a dead end, one of them immediately after a correct and useful
+    scan result. The first thing a careful person does with a security finding
+    is look for the record of it.
+
+    Counts and pattern NAMES only — never a matched value, not even redacted.
+    The audit log is a postmortem artifact that outlives the terminal, so it
+    must not become a second place secrets live.
+    """
+    try:
+        total_matches = sum(len(r.matches) for r in results)
+        patterns = sorted({m.pattern.name for r in results for m in r.matches})
+        details = {
+            "filesWithFindings": len(results),
+            "totalMatches": total_matches,
+            "patterns": patterns,
+        }
+        if context:
+            details["context"] = context
+        AuditLogger().log({
+            "eventType": "scan_executed",
+            "securityCheck": {
+                "passed": total_matches == 0,
+                "reason": (
+                    "Secret scan completed with no findings"
+                    if total_matches == 0
+                    else f"Secret scan found {total_matches} secret(s) in {len(results)} file(s)"
+                ),
+                "details": details,
+            },
+            "resolution": {"actionTaken": "allowed" if total_matches == 0 else "blocked"},
+        })
+    except Exception:
+        # Never let audit logging break a scan — the scan result is the product.
+        pass
 
 
 def _watch_and_scan(

@@ -205,7 +205,7 @@ def _claude_code_hooks() -> ComponentSpec:
                 del hooks["SessionStart"]
         hooks["PreToolUse"].extend([
             {"matcher": "Bash", "hooks": [pre]},
-            {"matcher": "Write|Edit", "hooks": [pre]},
+            {"matcher": "Write|Edit|MultiEdit", "hooks": [pre]},
         ])
         # Narrow to tools that produce scannable output (shell output + file
         # writes); avoids firing posttool on every Read/MCP call (latency).
@@ -509,8 +509,15 @@ def _cursor_instructions() -> ComponentSpec:
     file_path = detect_dir / "rules" / "rafter-security.mdc"
 
     def uninstall() -> None:
-        if file_path.exists():
-            file_path.unlink()
+        # Enable injects a marker block (coexists with user content), so disable
+        # must excise only that block, not unlink the whole file. Remove the file
+        # only when it was ours alone; a file with no markers is user-authored.
+        if file_path.exists() and _strip_marker_block(file_path):
+            try:
+                if not file_path.read_text(encoding="utf-8").strip():
+                    file_path.unlink()
+            except OSError:
+                pass
 
     return ComponentSpec(
         id="cursor.instructions",
@@ -587,8 +594,9 @@ def _gemini_hooks() -> ComponentSpec:
         h["AfterTool"] = _filter_hooks(h["AfterTool"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
         # Explicit Gemini built-in tool names per geminicli.com/docs/hooks/reference
         # (rf-044o verification).
+        #  No tool is named `edit`: Gemini's edit tool is `replace`.
         h["BeforeTool"].append({
-            "matcher": "run_shell_command|write_file|replace|edit",
+            "matcher": "run_shell_command|write_file|replace",
             "hooks": [{"type": "command", "command": "rafter hook pretool --format gemini", "timeout": 5000}],
         })
         h["AfterTool"].append({
@@ -1046,9 +1054,13 @@ def _aider_read() -> ComponentSpec:
         config_path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
 
     def uninstall() -> None:
-        if rafter_md_path.exists():
+        # Excise only the managed block; any user content in RAFTER.md survives.
+        # If the file was ours alone (nothing but the block), remove it.
+        # A RAFTER.md with no markers is user-authored — leave it untouched.
+        if rafter_md_path.exists() and _strip_marker_block(rafter_md_path):
             try:
-                rafter_md_path.unlink()
+                if not rafter_md_path.read_text(encoding="utf-8").strip():
+                    rafter_md_path.unlink()
             except OSError:
                 pass
         if not config_path.exists():

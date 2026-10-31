@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import click.exceptions
+import typer
 import pytest
 
 from rafter_cli.commands.backend import _do_remote_scan, _handle_scan_status_interactive
@@ -280,7 +280,7 @@ class TestDoRemoteScan:
         """HTTP 429 → exit code 3 (quota exhausted)."""
         mock_post.return_value = _mock_response(429, "quota exhausted")
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="owner/repo",
                 branch="main",
@@ -290,6 +290,33 @@ class TestDoRemoteScan:
                 quiet=True,
             )
         assert exc_info.value.exit_code == EXIT_QUOTA_EXHAUSTED
+
+    @patch("rafter_cli.commands.backend.api_get")
+    @patch("rafter_cli.commands.backend.api_post")
+    @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
+    def test_429_with_retry_after_still_raises_quota_exhausted(
+        self, _mock_repo, mock_post, mock_get
+    ):
+        """sable-96ex — the poll loop now retries a 429 when the server says
+        when to come back. SUBMIT deliberately does not: a 429 here means the
+        account is out of credits, and no amount of waiting changes that. The
+        asymmetry is the point, so it is pinned rather than left to be "made
+        consistent"."""
+        resp = _mock_response(429, "quota exhausted")
+        resp.headers = {"Retry-After": "30"}
+        mock_post.return_value = resp
+
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
+            _do_remote_scan(
+                repo="owner/repo",
+                branch="main",
+                api_key="test-key",
+                fmt="json",
+                skip_interactive=True,
+                quiet=True,
+            )
+        assert exc_info.value.exit_code == EXIT_QUOTA_EXHAUSTED
+        mock_get.assert_not_called()  # no polling, no retry
 
     @patch("rafter_cli.commands.backend.api_post")
     @patch("rafter_cli.commands.backend.detect_repo", return_value=("owner/repo", "main", "github", "https://github.com/owner/repo"))
@@ -301,7 +328,7 @@ class TestDoRemoteScan:
             json_body={},
         )
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="owner/repo",
                 branch="main",
@@ -320,7 +347,7 @@ class TestDoRemoteScan:
             403, "", json_body={"scan_mode": "plus", "limit": 5, "used": 5}
         )
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="owner/repo",
                 branch="main",
@@ -337,7 +364,7 @@ class TestDoRemoteScan:
         """HTTP 401 → exit code 1 (general error)."""
         mock_post.return_value = _mock_response(401, "invalid api key")
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="owner/repo",
                 branch="main",
@@ -354,7 +381,7 @@ class TestDoRemoteScan:
         """HTTP 500 → exit code 1 (general error)."""
         mock_post.return_value = _mock_response(500, "internal server error")
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="owner/repo",
                 branch="main",
@@ -370,7 +397,7 @@ class TestDoRemoteScan:
         """RuntimeError from detect_repo → exit code 1."""
         mock_detect.side_effect = RuntimeError("Could not auto-detect")
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo=None,
                 branch=None,
@@ -493,7 +520,7 @@ class TestHandleScanStatusInteractive:
             200, json_body={"status": "failed"}
         )
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "md", True)
         assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
 
@@ -531,7 +558,7 @@ class TestHandleScanStatusInteractive:
             _mock_response(200, json_body={"status": "failed"}),
         ]
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "md", True)
         assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
 
@@ -549,7 +576,7 @@ class TestHandleScanStatusInteractive:
             _mock_response(200, json_body=failed),
         ]
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _handle_scan_status_interactive("s1", {"x-api-key": "k"}, "json", False)
         assert exc_info.value.exit_code == EXIT_GENERAL_ERROR
         out, err = capsys.readouterr()

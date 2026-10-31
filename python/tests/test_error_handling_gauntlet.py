@@ -11,6 +11,7 @@ import tempfile
 from unittest.mock import MagicMock
 
 import pytest
+import typer
 
 # ---------------------------------------------------------------------------
 # 1. API Utilities — exit codes, handle_403, resolve_key, write_payload
@@ -144,9 +145,9 @@ class TestResolveKey:
         monkeypatch.delenv("RAFTER_API_KEY", raising=False)
         # Prevent .env file from being loaded
         monkeypatch.chdir(tempfile.mkdtemp())
-        # typer.Exit raises click.exceptions.Exit which is not a SystemExit
-        from click.exceptions import Exit as ClickExit
-        with pytest.raises((SystemExit, ClickExit)) as exc_info:
+        # resolve_key signals failure with typer.Exit (typer.exceptions.Exit),
+        # which is not a SystemExit; SystemExit stays in the catch defensively.
+        with pytest.raises((SystemExit, typer.exceptions.Exit)) as exc_info:
             resolve_key(None)
         code = getattr(exc_info.value, "code", getattr(exc_info.value, "exit_code", None))
         assert code == EXIT_GENERAL_ERROR

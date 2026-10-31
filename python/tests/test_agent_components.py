@@ -223,6 +223,50 @@ class TestAgentEnableDisable:
         assert "model: gpt-5" in cleaned
         assert not (home / "RAFTER.md").exists()
 
+    def test_aider_read_disable_preserves_user_content(self, home: Path):
+        """sable-z6in — disable excises only the managed block; user content
+        wrapped around it in RAFTER.md survives (data-loss guard)."""
+        rafter_md = home / "RAFTER.md"
+        _run_cli("agent enable aider.read", home)
+        managed = rafter_md.read_text()
+        assert "<!-- rafter:start -->" in managed
+
+        rafter_md.write_text(
+            f"# My project notes\nKeep this line.\n\n{managed}\n## My own section\nDo not delete me.\n"
+        )
+
+        _run_cli("agent disable aider.read", home)
+
+        assert rafter_md.exists()
+        after = rafter_md.read_text()
+        assert "Keep this line." in after
+        assert "Do not delete me." in after
+        assert "<!-- rafter:start -->" not in after
+        assert "<!-- rafter:end -->" not in after
+        assert "RAFTER.md" not in (home / ".aider.conf.yml").read_text()
+
+    def test_cursor_instructions_disable_preserves_user_content(self, home: Path):
+        """sable-z6in — cursor.instructions injects a marker block, so disable
+        must excise only that block, not unlink a file holding user content."""
+        (home / ".cursor").mkdir()
+        rule = home / ".cursor" / "rules" / "rafter-security.mdc"
+        _run_cli("agent enable cursor.instructions", home)
+        managed = rule.read_text()
+        assert "<!-- rafter:start -->" in managed
+
+        rule.write_text(
+            f"# My cursor rule\nKeep this line.\n\n{managed}\n## Mine\nDo not delete me.\n"
+        )
+
+        _run_cli("agent disable cursor.instructions", home)
+
+        assert rule.exists()
+        after = rule.read_text()
+        assert "Keep this line." in after
+        assert "Do not delete me." in after
+        assert "<!-- rafter:start -->" not in after
+        assert "<!-- rafter:end -->" not in after
+
     def test_records_enabled_state_in_global_config(self, home: Path):
         (home / ".cursor").mkdir()
         _run_cli("agent enable cursor.mcp", home)
