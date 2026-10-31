@@ -935,7 +935,11 @@ function rafterExecRunsOperand(pieces: Piece[], execIdx: number): boolean {
   const rest = pieces.slice(k).filter((p) => !p.op);
   const args = rest.filter((p) => !p.text.startsWith("-")).map((p) => p.text.toLowerCase());
   if (args[0] !== "agent" || args[1] !== "exec") return false;
-  const dryRun = rest.some((p) => !p.quoted && p.text.toLowerCase() === "--dry-run");
+  // Only a --dry-run before an unquoted `--` is the flag: after it, exec
+  // takes every token as part of the command and runs it.
+  const end = rest.findIndex((p) => !p.quoted && p.text === "--");
+  const flags = end === -1 ? rest : rest.slice(0, end);
+  const dryRun = flags.some((p) => !p.quoted && p.text.toLowerCase() === "--dry-run");
   return !dryRun;
 }
 

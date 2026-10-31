@@ -47,6 +47,11 @@ describe("rafter agent exec operand is a command (sable-lbyp)", () => {
     expect(assessCommandRisk('rafter agent exec "--dry-run" "rm -rf /"')).toBe("critical");
   });
 
+  it("a --dry-run after `--` is part of the command, not the flag", () => {
+    // exec stops parsing flags at `--`, so this --dry-run is an operand and the command runs.
+    expect(assessCommandRisk('rafter agent exec -- "rm -rf /" --dry-run')).toBe("critical");
+  });
+
   it("only agent exec is code-carrying; other rafter operands stay prose", () => {
     expect(assessCommandRisk('rafter secrets "my project/src"')).toBe("low");
     expect(assessCommandRisk('rafter agent config get "agent risk level"')).toBe("low");

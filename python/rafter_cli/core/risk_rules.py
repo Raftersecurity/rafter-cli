@@ -972,7 +972,10 @@ def _rafter_exec_runs_operand(pieces: list[_Piece], exec_idx: int) -> bool:
     args = [p.text.lower() for p in rest if not p.text.startswith("-")]
     if len(args) < 2 or args[0] != "agent" or args[1] != "exec":
         return False
-    dry_run = any(not p.quoted and p.text.lower() == "--dry-run" for p in rest)
+    # Only a --dry-run before an unquoted `--` is the flag: after it, exec
+    # takes every token as part of the command and runs it.
+    end = next((i for i, p in enumerate(rest) if not p.quoted and p.text == "--"), len(rest))
+    dry_run = any(not p.quoted and p.text.lower() == "--dry-run" for p in rest[:end])
     return not dry_run
 
 

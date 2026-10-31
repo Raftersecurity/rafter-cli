@@ -46,6 +46,11 @@ def test_quoted_dry_run_is_not_the_flag():
     assert assess_command_risk('rafter agent exec "--dry-run" "rm -rf /"') == "critical"
 
 
+def test_dry_run_after_double_dash_is_part_of_the_command():
+    # exec stops parsing flags at `--`, so this --dry-run is an operand and the command runs.
+    assert assess_command_risk('rafter agent exec -- "rm -rf /" --dry-run') == "critical"
+
+
 def test_only_agent_exec_is_code_carrying():
     assert assess_command_risk('rafter secrets "my project/src"') == "low"
     assert assess_command_risk('rafter agent config get "agent risk level"') == "low"
