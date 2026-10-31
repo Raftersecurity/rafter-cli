@@ -67,10 +67,12 @@ describe("rafter gates", () => {
     expect(rafter(["gates", root, "--limit", "0"]).exitCode).toBe(2);
   });
 
-  it("reads Unicode as the Python scanner does: BOM, U+00A0, code-point lengths and order", () => {
+  it("reads Unicode and file names as the Python scanner does", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gates-u-"));
     try {
       writeFixture(dir, UNICODE_FIXTURE);
+      // A file name that is not valid UTF-8 is skipped, not printed.
+      fs.writeFileSync(Buffer.concat([Buffer.from(dir + "/auth"), Buffer.from([0xff]), Buffer.from(".py")]), "def authorize_bad():\n    pass\n");
       const out = JSON.parse(rafter(["gates", dir, "--json", "--no-gitignore"]).stdout);
       expect(out.gates.map((g: any) => `${g.file}:${g.name}`)).toEqual([
         "\uFF5A.go:authorizeAdmin",
@@ -86,7 +88,7 @@ describe("rafter gates", () => {
     }
   });
 
-  it("maps a hostile tree in seconds and skips the file of unclosed definitions", () => {
+  it("maps a hostile tree in seconds and skips the files of unclosed definitions", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gates-h-"));
     try {
       writeFixture(dir, hostileFixture());

@@ -71,12 +71,14 @@ export const UNICODE_FIXTURE: Record<string, string> = {
   "sig.go": `func verifyToken(t string) bool { s := "${GRIN.repeat(80)}"; return check(s) }\n`,
   [`${GRIN}.go`]: "func authorizeAdmin() {\n}\n",
   "\uFF5A.go": "func authorizeAdmin() {\n}\n",
+  "..py": "def authorize_dots():\n    pass\n",
 };
 
 /**
  * Lines that made the scanner's regexes backtrack for minutes: a 900 KB body
  * line, the same after an unclosed quote, a 900 KB first line full of "Code
- * generated ", and 45,000 definitions whose braces never close.
+ * generated ", 45,000 definitions whose braces never close, and 40 unclosed
+ * definitions above a 900 KB line of calls.
  */
 export function hostileFixture(): Record<string, string> {
   const big = "a".repeat(900_000);
@@ -85,6 +87,7 @@ export function hostileFixture(): Record<string, string> {
     "quote.js": `function checkAuth() {\n"${big}\n}\n`,
     "gen.go": `// ${"Code generated ".repeat(60_000)}\nfunc checkAuth() {\n}\n`,
     "dense.go": Array.from({ length: 45_000 }, (_, i) => `func checkA${i}() {\n`).join(""),
+    "calls.js": Array.from({ length: 40 }, (_, i) => `function checkA${i}() {\n`).join("") + `${"a(".repeat(450_000)}\n`,
   };
 }
 

@@ -62,6 +62,7 @@ UNICODE_FIXTURE = {
     "sig.go": f'func verifyToken(t string) bool {{ s := "{GRIN * 80}"; return check(s) }}\n',
     f"{GRIN}.go": "func authorizeAdmin() {\n}\n",
     "\uff5a.go": "func authorizeAdmin() {\n}\n",
+    "..py": "def authorize_dots():\n    pass\n",
 }
 
 
@@ -73,6 +74,7 @@ def hostile_fixture():
         "quote.js": f'function checkAuth() {{\n"{big}\n}}\n',
         "gen.go": f"// {'Code generated ' * 60_000}\nfunc checkAuth() {{\n}}\n",
         "dense.go": "".join(f"func checkA{i}() {{\n" for i in range(45_000)),
+        "calls.js": "".join(f"function checkA{i}() {{\n" for i in range(40)) + "a(" * 450_000 + "\n",
     }
 
 
@@ -136,8 +138,11 @@ def test_bad_input_exits_2(tree):
     assert rafter("gates", str(tree), "--limit", "0")[2] == 2
 
 
-def test_unicode_reads_like_node(tmp_path):
+def test_unicode_and_file_names_read_like_node(tmp_path):
     write_fixture(tmp_path, UNICODE_FIXTURE)
+    # A file name that is not valid UTF-8 is skipped, not printed.
+    with open(os.path.join(os.fsencode(str(tmp_path)), b"auth\xff.py"), "w") as f:
+        f.write("def authorize_bad():\n    pass\n")
     out, _, code = rafter("gates", str(tmp_path), "--json", "--no-gitignore")
     assert code == 0
     data = json.loads(out)

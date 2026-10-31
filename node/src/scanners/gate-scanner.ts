@@ -98,6 +98,19 @@ function cmp(a: string, b: string): number {
 
 // ── File selection ───────────────────────────────────────────────────
 
+/** Extension as Python's os.path.splitext sees it: leading dots belong to the name. */
+function extOf(p: string): string {
+  const name = path.basename(p).replace(/^\.+/, "");
+  const i = name.lastIndexOf(".");
+  return i < 0 ? "" : name.slice(i);
+}
+
+/** A name that is not valid UTF-8 can't be printed the same way by both runtimes; skip it. */
+function utf8Name(raw: Buffer): string | null {
+  const name = raw.toString("utf8");
+  return Buffer.from(name, "utf8").equals(raw) ? name : null;
+}
+
 const LANG_BY_EXT: Record<string, string> = {
   ".go": "go",
   ".py": "python",
@@ -132,21 +145,26 @@ function isSkippedFile(name: string): boolean {
 
 function walk(dir: string, depth: number, out: string[]): void {
   if (depth >= MAX_DEPTH) return;
-  let entries: fs.Dirent[];
+  let raw: fs.Dirent<Buffer>[];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    raw = fs.readdirSync(dir, { withFileTypes: true, encoding: "buffer" });
   } catch {
     return;
   }
-  entries.sort((a, b) => cmp(a.name, b.name));
-  for (const entry of entries) {
+  const entries: [string, fs.Dirent<Buffer>][] = [];
+  for (const e of raw) {
+    const name = utf8Name(e.name);
+    if (name !== null) entries.push([name, e]);
+  }
+  entries.sort((a, b) => cmp(a[0], b[0]));
+  for (const [name, entry] of entries) {
     if (entry.isSymbolicLink()) continue;
-    const full = path.join(dir, entry.name);
+    const full = path.join(dir, name);
     if (entry.isDirectory()) {
-      if (entry.name.startsWith(".") || GATE_EXCLUDE_DIRS.has(entry.name)) continue;
+      if (name.startsWith(".") || GATE_EXCLUDE_DIRS.has(name)) continue;
       walk(full, depth + 1, out);
     } else if (entry.isFile()) {
-      if (!LANG_BY_EXT[path.extname(entry.name)] || isSkippedFile(entry.name)) continue;
+      if (!LANG_BY_EXT[extOf(name)] || isSkippedFile(name)) continue;
       out.push(full);
     }
   }
@@ -279,12 +297,12 @@ const GO_FUNC = /^[ \t\n\r\f\v]*func[ \t\n\r\f\v]+(\([^)]*\)[ \t\n\r\f\v]*)?([A-
 const GO_TYPE = /^[ \t\n\r\f\v]*type[ \t\n\r\f\v]+([A-Za-z_]\w*)[ \t\n\r\f\v]+(struct|interface|func)\b/;
 const PY_DEF = /^([ \t\n\r\f\v]*)(async[ \t\n\r\f\v]+)?def[ \t\n\r\f\v]+([A-Za-z_]\w*)[ \t\n\r\f\v]*\(/;
 const PY_CLASS = /^[ \t\n\r\f\v]*class[ \t\n\r\f\v]+([A-Za-z_]\w*)/;
-const JS_FUNC = /^[ \t\n\r\f\v]*(export[ \t\n\r\f\v]+)?(default[ \t\n\r\f\v]+)?(async[ \t\n\r\f\v]+)?function[ \t\n\r\f\v]*\*?[ \t\n\r\f\v]*([A-Za-z_$][\w$]*)[ \t\n\r\f\v]*[<(]/;
+const JS_FUNC = /^[ \t\n\r\f\v]*(export[ \t\n\r\f\v]+)?(default[ \t\n\r\f\v]+)?(async[ \t\n\r\f\v]+)?function[ \t\n\r\f\v]*(?:\*[ \t\n\r\f\v]*)?([A-Za-z_$][\w$]*)[ \t\n\r\f\v]*[<(]/;
 const JS_VAR = /^[ \t\n\r\f\v]*(export[ \t\n\r\f\v]+)?(const|let|var)[ \t\n\r\f\v]+([A-Za-z_$][\w$]*)[ \t\n\r\f\v]*(:[^=]+)?=[ \t\n\r\f\v]*(async[ \t\n\r\f\v]+)?(function\b|[A-Za-z_$][\w$]*[ \t\n\r\f\v]*=>|\()/;
 const JS_PROP = /^[ \t\n\r\f\v]*([A-Za-z_$][\w$]*)[ \t\n\r\f\v]*:[ \t\n\r\f\v]*(async[ \t\n\r\f\v]+)?(function\b|[A-Za-z_$][\w$]*[ \t\n\r\f\v]*=>|\()/;
 const JS_EXPORTS = /^[ \t\n\r\f\v]*(module\.)?exports\.([A-Za-z_$][\w$]*)[ \t\n\r\f\v]*=[ \t\n\r\f\v]*(async[ \t\n\r\f\v]+)?(function\b|[A-Za-z_$][\w$]*[ \t\n\r\f\v]*=>|\()/;
 const JS_PROTO = /^[ \t\n\r\f\v]*[\w$.]+\.prototype\.([A-Za-z_$][\w$]*)[ \t\n\r\f\v]*=[ \t\n\r\f\v]*(async[ \t\n\r\f\v]+)?function\b/;
-const JS_METHOD = /^[ \t\n\r\f\v]+((public|private|protected|static|async|override|readonly)[ \t\n\r\f\v]+)*([A-Za-z_$][\w$]*)[ \t\n\r\f\v]*(<[^>]*>)?[ \t\n\r\f\v]*\([^\n]*\)[ \t\n\r\f\v]*(:[ \t\n\r\f\v]*[^{;=]+)?\{[ \t\n\r\f\v]*$/;
+const JS_METHOD = /^[ \t\n\r\f\v]+((public|private|protected|static|async|override|readonly)[ \t\n\r\f\v]+)*([A-Za-z_$][\w$]*)[ \t\n\r\f\v]*(<[^>]*>)?[ \t\n\r\f\v]*\([^\n]*\)[ \t\n\r\f\v]*(:[^{;=]+)?\{[ \t\n\r\f\v]*$/;
 const JS_CLASS = /^[ \t\n\r\f\v]*(export[ \t\n\r\f\v]+)?(default[ \t\n\r\f\v]+)?(abstract[ \t\n\r\f\v]+)?class[ \t\n\r\f\v]+([A-Za-z_$][\w$]*)/;
 const JAVA_METHOD = /^[ \t\n\r\f\v]*(@\w+[ \t\n\r\f\v]+)*((public|private|protected|static|final|synchronized|abstract|default|native)[ \t\n\r\f\v]+)*(<[^>]+>[ \t\n\r\f\v]+)?[\w$.<>\[\],? ]*?[\w$>\]][ \t\n\r\f\v]+([a-z_$][\w$]*)[ \t\n\r\f\v]*\(/;
 const JAVA_CLASS = /^[ \t\n\r\f\v]*((public|private|protected|static|final|abstract)[ \t\n\r\f\v]+)*(class|interface|enum|record)[ \t\n\r\f\v]+([A-Za-z_$][\w$]*)/;
@@ -575,10 +593,12 @@ const MAX_SIGNATURE = 90;
 // Longer lines are minified or data, not definitions; skipping them also
 // bounds regex backtracking.
 const MAX_DEF_LINE = 400;
-// Body lines read per file, summed over its gates. Real files stay far below;
-// a file of thousands of unclosed definitions is data, and is skipped like an
-// oversize file rather than read 400 lines per definition.
-const MAX_BODY_WORK = 100_000;
+// Body text read per file, in characters summed over its gates. Bodies
+// overlap, so a file of unclosed definitions above a long line costs
+// definitions x line length. The largest real file seen (kubernetes
+// validation.go) reads 312,000; a file past this is data, and is skipped like
+// an oversize file.
+const MAX_BODY_WORK = 2_000_000;
 
 function scanFile(abs: string, rel: string, lang: string, out: GateInternal[]): boolean {
   let content: string;
@@ -607,7 +627,7 @@ function scanFile(abs: string, rel: string, lang: string, out: GateInternal[]): 
     let guards: Record<string, string[]> = {};
     if (def.kind !== "type") {
       const body = bodyLines(lang, lines, code, i);
-      bodyWork += body.length;
+      for (const li of body) bodyWork += code[li].length + 1;
       if (bodyWork > MAX_BODY_WORK) return false;
       guards = guardCalls(code, body, def.name);
     }
@@ -640,14 +660,14 @@ export function mapGates(target: string, opts: { limit: number; respectGitignore
     if (opts.respectGitignore !== false) files = filterGitIgnored(files, root);
     base = root;
   } else {
-    files = LANG_BY_EXT[path.extname(root)] ? [root] : [];
+    files = LANG_BY_EXT[extOf(root)] ? [root] : [];
     base = path.dirname(root);
   }
   const gates: GateInternal[] = [];
   let scanned = 0;
   for (const abs of files) {
     const rel = path.relative(base, abs).split(path.sep).join("/");
-    if (scanFile(abs, rel, LANG_BY_EXT[path.extname(abs)], gates)) scanned++;
+    if (scanFile(abs, rel, LANG_BY_EXT[extOf(abs)], gates)) scanned++;
   }
   gates.sort((a, b) => b.score - a.score || cmp(a.file, b.file) || a.line - b.line);
   const twins = buildTwins(gates);
