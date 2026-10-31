@@ -23,7 +23,7 @@ Assume every string that reaches the prompt — user input, retrieved documents,
 - Model source: where does the model come from? Provider API (which account?) or self-hosted? If self-hosted, from which registry? Is the weights file checksummed?
 - Embedding model: same questions. Many RAG pipelines have *two* models; both are supply chain.
 - Prompt templates: if loaded from a shared registry (LangChain Hub, custom store), pinned and verified? Or pulled by name?
-- Plugins / tools / MCP servers registered with the agent — are they audited (see `rafter agent audit`) before install?
+- Plugins / tools / MCP servers registered with the agent — are they vetted (see `rafter skill review`) before install?
 
 ## LLM04 — Data & Model Poisoning
 
@@ -84,4 +84,4 @@ A design question, but reviewable:
 - For every tool the agent can call: documented purpose, scope, and human-gate story.
 - For every retrieval/RAG path: write-access audit, injection defenses, tenant isolation.
 - For every model output sink: treated as untrusted, specific sanitization / validation cited.
-- Run `rafter agent audit` on any bundled skills/plugins. Pair with `rafter run` for SAST.
+- Run `rafter skill review` on any bundled skills/plugins. Pair with `rafter run` for SAST.

@@ -40,6 +40,7 @@ from ..scanners.union import union_scan_results
 from ..utils.formatter import fmt, is_agent_mode, print_stderr
 from ..utils.skill_manager import SkillManager
 from ..utils.binary_manager import BinaryManager, BETTERLEAKS_VERSION
+from .skill import KNOWN_SKILL_NAMES, remove_retired_skills
 
 agent_app = typer.Typer(name="agent", help="Agent security features", no_args_is_help=True)
 
@@ -146,14 +147,20 @@ def _resolve_rafter_path() -> str:
     return "rafter"
 
 
-# Skills installed by `rafter agent init` for Claude Code / Codex.
-# Keep this list in sync with Node's AGENT_SKILLS and the SKILL.md files
-# actually shipped under rafter_cli/resources/skills/.
+# Log-friendly label per skill, keyed off the single canonical skill-name
+# list (`KNOWN_SKILL_NAMES` in `.skill`) so there's one place that names the
+# shipped skills, not several lists that can drift.
+_SKILL_LABELS: dict[str, str] = {
+    "rafter": "Rafter Remote",
+    "rafter-secure-design": "Rafter Secure Design",
+    "rafter-code-review": "Rafter Code Review",
+    "rafter-skill-review": "Rafter Skill Review",
+}
+
+# Skills installed by `rafter agent init` for Claude Code / Codex / Gemini.
 _AGENT_SKILLS: list[dict[str, str]] = [
-    {"name": "rafter", "description": "Rafter Remote"},
-    {"name": "rafter-secure-design", "description": "Rafter Secure Design"},
-    {"name": "rafter-code-review", "description": "Rafter Code Review"},
-    {"name": "rafter-skill-review", "description": "Rafter Skill Review"},
+    {"name": name, "description": _SKILL_LABELS.get(name, name)}
+    for name in KNOWN_SKILL_NAMES
 ]
 
 
@@ -445,6 +452,11 @@ def _install_skills_to(skills_dir: Path, quiet: bool = False) -> None:
     skills_dir.mkdir(parents=True, exist_ok=True)
     for skill in _AGENT_SKILLS:
         _copy_skill_tree(skill["name"], skills_dir / skill["name"], skill["description"], quiet=quiet)
+    # Clean up any rafter skill directory left over from a rename — never a
+    # user's own skill that happens to share a retired name (checked via the
+    # SKILL.md's `publisher` frontmatter in remove_retired_skills itself).
+    for name in remove_retired_skills(skills_dir):
+        _init_print(quiet, fmt.info(f"Removed retired skill {name} from {skills_dir}"))
 
 
 def _install_claude_code_skills(root: Path, quiet: bool = False) -> None:
@@ -1104,6 +1116,9 @@ def _install_aider_read(root: Path, quiet: bool = False) -> bool:
 
     # 1. Write RAFTER.md (idempotent — marker block replaced in place).
     _inject_instruction_file(rafter_md_path)
+    # 1a. Aider has no skill-loading mechanism — add the note explaining that
+    # the skill names in the block above aren't separate files here.
+    _inject_aider_note(rafter_md_path)
 
     # 2. Update .aider.conf.yml read: list.
     raw = config_path.read_text() if config_path.exists() else ""
@@ -4460,6 +4475,7 @@ def baseline_add(
 # ── components: list / enable / disable ──────────────────────────────
 
 from .agent_components import (  # noqa: E402
+    _inject_aider_note,
     _inject_instruction_file,
     get_registry as _components_get_registry,
     record_component_state as _components_record_state,

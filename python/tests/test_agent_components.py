@@ -245,6 +245,28 @@ class TestAgentEnableDisable:
         assert "<!-- rafter:end -->" not in after
         assert "RAFTER.md" not in (home / ".aider.conf.yml").read_text()
 
+    def test_aider_read_disable_removes_aider_note_too(self, home: Path):
+        """Fails if disable strips only the main block (RAFTER.md would
+        survive holding a note about "the skill names above"), or if enable
+        and init write different RAFTER.md content."""
+        rafter_md = home / "RAFTER.md"
+        (home / ".aider.conf.yml").write_text("model: gpt-5\n")
+
+        _run_cli("agent init --with-aider", home)
+        from_init = rafter_md.read_text()
+        assert "<!-- rafter:aider-note:start -->" in from_init
+        _run_cli("agent disable aider.read", home)
+        assert not rafter_md.exists()
+
+        _run_cli("agent enable aider.read", home)
+        assert rafter_md.read_text() == from_init
+        rafter_md.write_text(f"# My notes\nKeep this line.\n\n{from_init}")
+        _run_cli("agent disable aider.read", home)
+        after = rafter_md.read_text()
+        assert "Keep this line." in after
+        assert "rafter:aider-note" not in after
+        assert "skill names above" not in after
+
     def test_cursor_instructions_disable_preserves_user_content(self, home: Path):
         """sable-z6in — cursor.instructions injects a marker block, so disable
         must excise only that block, not unlink a file holding user content."""

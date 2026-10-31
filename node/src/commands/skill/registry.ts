@@ -70,6 +70,55 @@ export function readSkillFrontmatter(filePath: string): Record<string, string> {
   }
 }
 
+/**
+ * Frontmatter value that marks a SKILL.md as rafter-authored. Every bundled
+ * skill under `resources/skills/` carries `publisher: rafter-security` for
+ * exactly this check — so retired-skill cleanup (below) can tell "an old
+ * rafter skill we renamed away from" from "a user's own skill that happens to
+ * share a directory name" before deleting anything.
+ */
+export const RAFTER_SKILL_PUBLISHER = "rafter-security";
+
+/** True if the SKILL.md at `skillDir/SKILL.md` identifies itself as rafter's. */
+export function isRafterAuthoredSkillDir(skillDir: string): boolean {
+  const fm = readSkillFrontmatter(path.join(skillDir, "SKILL.md"));
+  return fm.publisher === RAFTER_SKILL_PUBLISHER;
+}
+
+/**
+ * Names of rafter skills that USED to ship but no longer do (renamed or
+ * removed). Empty today — add a name here when retiring a skill, and every
+ * install path that manages a skills directory (`removeRetiredSkills` below)
+ * cleans up the old copy on the next install/enable instead of needing new
+ * hand-written unlink code per rename.
+ */
+export const RETIRED_SKILL_NAMES: readonly string[] = [];
+
+/**
+ * Remove any retired-skill directories found under `skillsBaseDir` (a
+ * `<platform>/skills` style directory containing one subdir per skill, each
+ * holding a SKILL.md). Only removes a directory whose SKILL.md identifies
+ * itself as rafter-authored — a user skill that happens to reuse a retired
+ * name is left alone. Returns the names actually removed.
+ *
+ * `retiredNames` defaults to `RETIRED_SKILL_NAMES`; tests pass an explicit
+ * list to simulate a rename without needing a real retired skill yet.
+ */
+export function removeRetiredSkills(
+  skillsBaseDir: string,
+  retiredNames: readonly string[] = RETIRED_SKILL_NAMES,
+): string[] {
+  const removed: string[] = [];
+  for (const name of retiredNames) {
+    const dir = path.join(skillsBaseDir, name);
+    if (!fs.existsSync(path.join(dir, "SKILL.md"))) continue;
+    if (!isRafterAuthoredSkillDir(dir)) continue;
+    fs.rmSync(dir, { recursive: true, force: true });
+    removed.push(name);
+  }
+  return removed;
+}
+
 /** Enumerate bundled rafter-authored skills present in this installation. */
 export function listBundledSkills(): SkillMeta[] {
   const root = skillsResourcesRoot();
