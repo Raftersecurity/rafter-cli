@@ -173,7 +173,11 @@ describe("agent --quiet (issue #31)", () => {
 
       const legacyPath = path.join(home, ".openclaw", "skills", "rafter-security.md");
       fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
-      fs.writeFileSync(legacyPath, "# legacy rafter skill\n", "utf8");
+      // Bytes a published release shipped, so the migration removes it.
+      fs.copyFileSync(
+        path.join(__dirname, "..", "..", "fixtures", "install-0.11.2", "home", ".openclaw", "workspace", "skills", "rafter-security", "SKILL.md"),
+        legacyPath,
+      );
 
       const result = runIsolated(
         process.execPath,

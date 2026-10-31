@@ -3,7 +3,6 @@ import { ConfigManager } from "../../core/config-manager.js";
 import { getRafterDir } from "../../core/config-defaults.js";
 import { BinaryManager } from "../../utils/binary-manager.js";
 import { SkillScannerInstaller, SKILL_SCANNER_VERSION } from "../../scanners/skill-scanner.js";
-import { SkillManager } from "../../utils/skill-manager.js";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -12,14 +11,17 @@ import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import { askYesNo } from "../../utils/prompt.js";
 import { fmt } from "../../utils/formatter.js";
-import { injectInstructionFile, injectAiderNote } from "./instruction-block.js";
+import { injectInstructionFile, injectAiderNote, retireInstructionFile } from "./instruction-block.js";
 import { KNOWN_SKILL_NAMES } from "../skill/registry.js";
 import {
   InstallSession,
   claudeAgentArtifacts,
   cleanupRetiredRules,
+  cleanupLegacyOpenClaw,
   cleanupRetiredSkills,
   cursorAgentArtifacts,
+  openclawSkillArtifacts,
+  openclawSkillPath,
   reportKeptSummary,
   reportUnchangedSummary,
   unchangedLine,
@@ -220,6 +222,16 @@ function printDryRunPlan(plan: {
     D("skill-scanner", "heavy PyPI package, isolated install via uv tool / pip --user");
   }
 
+  // Same order as the real run, which installs OpenClaw before the others.
+  if (plan.wantOpenClaw) {
+    console.log();
+    console.log("OpenClaw (--with-openclaw):");
+    F(openclawSkillArtifacts(home));
+    const legacy = cleanupLegacyOpenClaw(plan.session);
+    for (const p of legacy.removed) R(p, "legacy file from rafter ≤ 0.7.7");
+    for (const p of legacy.kept) S(p, "legacy file from rafter ≤ 0.7.7, but modified; kept");
+  }
+
   if (plan.wantClaudeCode) {
     console.log();
     console.log("Claude Code (--with-claude-code):");
@@ -303,13 +315,6 @@ function printDryRunPlan(plan: {
     console.log();
     console.log("OpenCode (--with-opencode):");
     W(path.join(plan.root, ".config", "opencode", "opencode.json"), "mcp.rafter local/stdio entry merged into existing JSON");
-  }
-
-  if (plan.wantOpenClaw) {
-    console.log();
-    console.log("OpenClaw (--with-openclaw):");
-    W(path.join(home, ".openclaw", "workspace", "skills", "rafter-security", "SKILL.md"), "ClawHub-shape");
-    R(path.join(home, ".openclaw", "skills", "rafter-security.md"), "legacy file from rafter ≤ 0.7.7, if present");
   }
 
   const unchanged = plan.session.count("unchanged");
@@ -590,16 +595,15 @@ function installCursorRules(session: InstallSession, root: string, out: InitOutp
   session.applyAll(ruleArtifacts("cursor", root, out));
   cleanupRetiredRules(session, "cursor");
 
-  // Remove the legacy consolidated rule if present, so reinstall on top of
-  // an old layout migrates cleanly.
+  // Take rafter's block out of the legacy consolidated rule, so reinstall on
+  // top of an old layout migrates cleanly. Anything else in it is the user's.
   const legacy = path.join(rulesDir, "rafter-security.mdc");
-  if (fs.existsSync(legacy)) {
-    try {
-      fs.unlinkSync(legacy);
-      out.info(fmt.info(`Removed legacy ${legacy} (superseded by per-skill rules)`));
-    } catch {
-      /* best-effort */
-    }
+  try {
+    const done = retireInstructionFile(legacy);
+    if (done === "removed") out.info(fmt.info(`Removed legacy ${legacy} (superseded by per-skill rules)`));
+    else if (done === "stripped") out.info(fmt.info(`Removed rafter's block from legacy ${legacy}; kept the rest`));
+  } catch {
+    /* best-effort */
   }
 }
 
@@ -1457,24 +1461,20 @@ export async function runAgentInit(opts: AgentInitOptions): Promise<void> {
     }
   }
 
-  // Install OpenClaw skill if opted in
+  // Install OpenClaw skill if opted in (user scope only, so session.root is home)
   let openclawOk = false;
   if (hasOpenClaw && wantOpenClaw) {
-    const skillManager = new SkillManager({ log: (message) => out.info(message) });
-    const result = await skillManager.installRafterSkillVerbose();
-    openclawOk = result.ok;
-    if (result.ok) {
-      out.info(fmt.success(`Installed Rafter Security skill to ${result.destPath}`));
-      manager.set("agent.environments.openclaw.enabled", true);
-    } else {
-      out.warn(fmt.error("Failed to install Rafter Security skill"));
-      out.warn(fmt.warning(`  Source: ${result.sourcePath}`));
-      out.warn(fmt.warning(`  Destination: ${result.destPath}`));
-      if (result.error) {
-        out.warn(fmt.warning(`  Error: ${result.error}`));
-      }
+    try {
+      const artifacts = openclawSkillArtifacts(root, out);
+      session.applyAll(artifacts);
+      cleanupLegacyOpenClaw(session);
+      openclawOk = artifacts.length > 0;
+      if (openclawOk) manager.set("agent.environments.openclaw.enabled", true);
+    } catch (e) {
+      out.warn(fmt.error(`Failed to install Rafter Security skill to ${openclawSkillPath(root)}: ${e}`));
     }
   }
+
 
   // Helper: warn that a platform is not supported in --local mode.
   const localUnsupported = (label: string): void => {

@@ -304,6 +304,17 @@ describe("rafter agent enable / disable", () => {
     expect(after).not.toContain("skill names above");
   });
 
+  it("openclaw.skills installs where OpenClaw reads skills, and verify sees it", () => {
+    fs.mkdirSync(path.join(home, ".openclaw"), { recursive: true });
+    const skill = path.join(home, ".openclaw", "workspace", "skills", "rafter-security", "SKILL.md");
+    expect(runCli("agent enable openclaw.skills", home).code).toBe(0);
+    expect(fs.readFileSync(skill, "utf-8")).toMatch(/^name: rafter-security$/m);
+    expect(fs.existsSync(path.join(home, ".openclaw", "skills", "rafter-security.md"))).toBe(false);
+    expect(runCli("agent verify", home).stdout).toMatch(/OpenClaw.*skill installed/);
+    expect(runCli("agent disable openclaw.skills", home).code).toBe(0);
+    expect(fs.existsSync(skill)).toBe(false);
+  });
+
   it("records enabled=true/false in ~/.rafter/config.json for each toggle", () => {
     fs.mkdirSync(path.join(home, ".cursor"), { recursive: true });
     runCli("agent enable cursor.mcp", home);

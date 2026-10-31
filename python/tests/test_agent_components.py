@@ -267,27 +267,32 @@ class TestAgentEnableDisable:
         assert "rafter:aider-note" not in after
         assert "skill names above" not in after
 
-    def test_cursor_instructions_disable_preserves_user_content(self, home: Path):
-        """sable-z6in — cursor.instructions injects a marker block, so disable
-        must excise only that block, not unlink a file holding user content."""
-        (home / ".cursor").mkdir()
-        rule = home / ".cursor" / "rules" / "rafter-security.mdc"
-        _run_cli("agent enable cursor.instructions", home)
-        managed = rule.read_text()
-        assert "<!-- rafter:start -->" in managed
+    def test_cursor_instructions_installs_per_skill_rules_and_retires_legacy_block(self, home: Path):
+        """cursor.instructions manages what init writes (per-skill rules + the
+        sub-agent), not the retired consolidated rafter-security.mdc. Its old
+        rafter block is taken out; the user's text in that file stays (sable-z6in)."""
+        rules = home / ".cursor" / "rules"
+        rules.mkdir(parents=True)
+        legacy = rules / "rafter-security.mdc"
+        legacy.write_text("# My cursor rule\nKeep this line.\n\n<!-- rafter:start -->\nold\n<!-- rafter:end -->\n")
 
-        rule.write_text(
-            f"# My cursor rule\nKeep this line.\n\n{managed}\n## Mine\nDo not delete me.\n"
-        )
+        _run_cli("agent enable cursor.instructions", home)
+        assert (rules / "rafter.mdc").exists()
+        assert (home / ".cursor" / "agents" / "rafter.md").exists()
+        assert legacy.read_text() == "# My cursor rule\nKeep this line.\n"
 
         _run_cli("agent disable cursor.instructions", home)
+        assert not (rules / "rafter.mdc").exists()
+        assert legacy.read_text() == "# My cursor rule\nKeep this line.\n"
 
-        assert rule.exists()
-        after = rule.read_text()
-        assert "Keep this line." in after
-        assert "Do not delete me." in after
-        assert "<!-- rafter:start -->" not in after
-        assert "<!-- rafter:end -->" not in after
+    def test_openclaw_skills_installs_where_openclaw_reads_skills(self, home: Path):
+        (home / ".openclaw").mkdir()
+        skill = home / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md"
+        _run_cli("agent enable openclaw.skills", home)
+        assert skill.read_text().startswith("---\nname: rafter-security\n")
+        assert not (home / ".openclaw" / "skills" / "rafter-security.md").exists()
+        _run_cli("agent disable openclaw.skills", home)
+        assert not skill.exists()
 
     def test_records_enabled_state_in_global_config(self, home: Path):
         (home / ".cursor").mkdir()

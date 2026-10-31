@@ -8,10 +8,14 @@ import { fileURLToPath } from "url";
 import {
   InstallSession,
   claudeAgentArtifacts,
+  cleanupLegacyOpenClaw,
   cleanupRetiredRules,
   cleanupRetiredSkills,
   cursorAgentArtifacts,
   manifestPath,
+  openclawLegacySkillPath,
+  openclawSkillArtifacts,
+  openclawSkillPath,
   ruleArtifacts,
   sha256,
   skillArtifacts,
@@ -130,6 +134,44 @@ describe("upgrade over a real 0.11.2 install", () => {
     expect([...outcomes].filter(([p]) => !edited.has(p)).every(([, o]) => o === "added" || o === "updated" || o === "unchanged")).toBe(true);
   });
 
+  it("openclaw: an older recorded skill is updated, an edited one is kept", () => {
+    copyFixture(home);
+    const dest = openclawSkillPath(home);
+    const older = Buffer.from("---\nname: rafter-security\nversion: 0.0.1\n---\nolder text\n");
+    fs.writeFileSync(dest, older);
+    fs.mkdirSync(path.dirname(manifestPath(home)), { recursive: true });
+    fs.writeFileSync(manifestPath(home), JSON.stringify({
+      schema: 1, cliVersion: "0.12.0", files: { [path.relative(home, dest)]: { sha256: sha256(older), component: "openclaw.skills", platform: "openclaw", cliVersion: "0.12.0" } },
+    }));
+    expect(session().s.applyAll(openclawSkillArtifacts(home))).toEqual(["updated"]);
+    expect(fs.readFileSync(dest).equals(openclawSkillArtifacts(home)[0].content)).toBe(true);
+
+    fs.appendFileSync(dest, "\nmine\n");
+    const edited = fs.readFileSync(dest);
+    expect(session().s.applyAll(openclawSkillArtifacts(home))).toEqual(["kept"]);
+    expect(fs.readFileSync(dest).equals(edited)).toBe(true);
+    expect(fs.existsSync(dest + ".rafter-new")).toBe(true);
+  });
+
+  it("openclaw: the legacy ~/.openclaw/skills file goes only when it is rafter's own content", () => {
+    copyFixture(home);
+    const legacy = openclawLegacySkillPath(home);
+    fs.mkdirSync(path.dirname(legacy), { recursive: true });
+    // A published release's bytes (0.11.2's, from the fixture) count as rafter's.
+    fs.copyFileSync(path.join(FIXTURE, ".openclaw", "workspace", "skills", "rafter-security", "SKILL.md"), legacy);
+    const { s } = session();
+    expect(cleanupLegacyOpenClaw(s)).toEqual({ removed: [legacy], kept: [] });
+    expect(fs.existsSync(legacy)).toBe(false);
+    expect(fs.existsSync(path.dirname(legacy))).toBe(false);
+
+    fs.mkdirSync(path.dirname(legacy), { recursive: true });
+    fs.writeFileSync(legacy, "---\nname: rafter-security\n---\nmy own notes\n");
+    const second = session();
+    expect(cleanupLegacyOpenClaw(second.s)).toEqual({ removed: [], kept: [legacy] });
+    expect(fs.existsSync(legacy)).toBe(true);
+    expect(second.out.warnings.join("\n")).toContain("Kept legacy");
+  });
+
   it("a second run reports every file unchanged", () => {
     copyFixture(home);
     const all = () => Object.values(PLATFORMS).flatMap((f) => f());
@@ -233,7 +275,7 @@ describe("shipped-hashes table", () => {
 // plan agreeing with the real run, and the marker-block / merged-config files
 // (which do not go through the write policy) surviving an upgrade intact.
 describe("agent init over the 0.11.2 fixture (built CLI)", () => {
-  const FLAGS = ["--with-claude-code", "--with-codex", "--with-gemini", "--with-cursor", "--with-windsurf", "--with-continue", "--with-aider"];
+  const FLAGS = ["--with-claude-code", "--with-codex", "--with-gemini", "--with-cursor", "--with-windsurf", "--with-continue", "--with-aider", "--with-openclaw"];
 
   beforeAll(() => {
     if (!fs.existsSync(CLI_DIST)) execSync("pnpm run build", { cwd: PROJECT_ROOT, stdio: "inherit" });
