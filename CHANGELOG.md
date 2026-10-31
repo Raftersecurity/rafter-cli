@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A Write through a symlink to `~/.rafter` is refused, as a direct one already was** (sable-rxqr). The Node hook compared resolved path strings without following symlinks, so a Write to `<link>/config.json`, where `<link>` points at the rafter dir, was allowed. It now compares real paths, as the Python hook already did. The same gap made the guard miss relative paths on macOS, whose temp dirs sit behind the `/var` → `/private/var` link. Node only.
 - **The PreToolUse hook now sees through rafter's own `agent exec`** (sable-lbyp, the classifier half of rf-ss67). `rafter agent exec --force "rm -rf /tmp/x"` classified `low`: rafter was an unrecognised evaluator to the sanitizer, so its quoted operand was prose. The operand of `rafter agent exec` is now a command string — resolved by basename (`/usr/local/bin/rafter`), through package runners (`npx @rafter-security/cli`, `pnpm dlx rafter-cli`) and wrappers (`sudo -E`, `env`, `unbuffer`) — and is classified on its own merits; `--dry-run` is exempt because it runs nothing and is the documented way to check a command first; only a `--dry-run` before `--` counts, since exec takes everything after `--` as the command. A pseudo-terminal wrapper around `rafter agent exec` (`script -c`, `expect`, `unbuffer`, `socat`, Python's `pty.spawn`) is HIGH on its own, since the approval prompt only trusts a person at a TTY and those manufacture one. 17 rows added to the shared classifier battery; both runtimes.
 
 ### Changed
