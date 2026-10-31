@@ -6,10 +6,9 @@ alwaysApply: false
 
 # rafter-code-review — structured pre-merge review
 
-Pointer rule. Use the `rafter-code-review` skill at `.claude/skills/rafter-code-review/SKILL.md` BEFORE declaring done on any diff touching the surface listed above.
+Pointer rule for the `rafter-code-review` skill. Use it BEFORE declaring done on any diff touching the surface listed above. (The full skill — with a sub-doc per category — installs as its own skill directory only for Claude Code (`.claude/skills/rafter-code-review/`) and for Codex and Gemini (`.agents/skills/rafter-code-review/`); this rule is the condensed equivalent here.)
 
-- Read the matching sub-doc (web-app / api / llm / cli-library-iac).
-- Walk the OWASP / ASVS / MITRE questions the scanner can't ask.
+- Match the code to a category and walk its questions by hand: web app (OWASP Top 10), REST/GraphQL/gRPC API (OWASP API Top 10), LLM-integrated feature (OWASP LLM Top 10), CLI/library/IaC (MITRE CWE Top 25).
 - Pair with `rafter run` on the same diff — the scanner finds known-bad patterns, this skill asks the questions patterns miss.
 
-A security-relevant task marked complete without BOTH the skill walkthrough and a `rafter run` pass has been under-delivered. Do not claim done until both are recorded.
+A security-relevant task marked complete without BOTH the walkthrough and a `rafter run` pass has been under-delivered. Do not claim done until both are recorded.

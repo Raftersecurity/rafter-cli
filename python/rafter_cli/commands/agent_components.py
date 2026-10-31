@@ -23,6 +23,7 @@ from typing import Any, Callable
 import yaml
 
 from ..core.config_manager import ConfigManager
+from .skill import KNOWN_SKILL_NAMES, remove_retired_skills
 
 
 # ── instruction block (mirrors node/src/commands/agent/instruction-block.ts) ──
@@ -69,18 +70,50 @@ a dependency still gets the full gate.
 {RAFTER_MARKER_END}"""
 
 
-def _inject_instruction_file(file_path: Path) -> None:
+# Aider has no skill-loading mechanism — `rafter-secure-design`,
+# `rafter-code-review`, and `rafter-skill-review` above are names, not files
+# it can load, unlike Claude Code / Codex / Gemini where each one is a real
+# skill directory. This note tells an Aider session what's actually runnable
+# instead of leaving those names as dead pointers.
+AIDER_NOTE_MARKER_START = "<!-- rafter:aider-note:start -->"
+AIDER_NOTE_MARKER_END = "<!-- rafter:aider-note:end -->"
+
+AIDER_SKILL_NOTE = f"""{AIDER_NOTE_MARKER_START}
+**Note for Aider**: the skill names above (`rafter`, `rafter-secure-design`,
+`rafter-code-review`, `rafter-skill-review`) are not separate files here —
+Aider has no skill-loading mechanism, only this one file. For the fuller
+walkthroughs those skills provide on other platforms, run these in a terminal:
+`rafter brief shift-left` (design & review routing), `rafter brief scanning`
+(full CLI + guardrails), or `rafter skill review <path>` (the real pre-install
+check).
+{AIDER_NOTE_MARKER_END}"""
+
+
+def _inject_marked_block(file_path: Path, block: str, start_marker: str, end_marker: str) -> None:
+    """Shared idempotent marker-block injector: replace the block between the
+    given markers if present, otherwise append it."""
     file_path.parent.mkdir(parents=True, exist_ok=True)
     existing = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
-    start = existing.find(RAFTER_MARKER_START)
-    end = existing.find(RAFTER_MARKER_END)
+    start = existing.find(start_marker)
+    end = existing.find(end_marker)
     if start != -1 and end != -1:
-        next_content = existing[:start] + RAFTER_INSTRUCTION_BLOCK + existing[end + len(RAFTER_MARKER_END):]
+        next_content = existing[:start] + block + existing[end + len(end_marker):]
     else:
         if existing and not existing.endswith("\n\n"):
             existing = existing + ("\n" if existing.endswith("\n") else "\n\n")
-        next_content = existing + RAFTER_INSTRUCTION_BLOCK + "\n"
+        next_content = existing + block + "\n"
     file_path.write_text(next_content, encoding="utf-8")
+
+
+def _inject_instruction_file(file_path: Path) -> None:
+    _inject_marked_block(file_path, RAFTER_INSTRUCTION_BLOCK, RAFTER_MARKER_START, RAFTER_MARKER_END)
+
+
+def _inject_aider_note(file_path: Path) -> None:
+    """Append (or idempotently update) the Aider-specific skill note. Separate
+    marker pair from the main block, so this can live alongside it in the same
+    file (RAFTER.md) without disturbing the shared instruction block."""
+    _inject_marked_block(file_path, AIDER_SKILL_NOTE, AIDER_NOTE_MARKER_START, AIDER_NOTE_MARKER_END)
 
 
 def _has_marker_block(file_path: Path) -> bool:
@@ -90,16 +123,20 @@ def _has_marker_block(file_path: Path) -> bool:
     return RAFTER_MARKER_START in content and RAFTER_MARKER_END in content
 
 
-def _strip_marker_block(file_path: Path) -> bool:
+def _strip_marker_block(
+    file_path: Path,
+    start_marker: str = RAFTER_MARKER_START,
+    end_marker: str = RAFTER_MARKER_END,
+) -> bool:
     if not file_path.exists():
         return False
     content = file_path.read_text(encoding="utf-8")
-    start = content.find(RAFTER_MARKER_START)
-    end = content.find(RAFTER_MARKER_END)
+    start = content.find(start_marker)
+    end = content.find(end_marker)
     if start == -1 or end == -1:
         return False
     before = content[:start].rstrip()
-    after = content[end + len(RAFTER_MARKER_END):].lstrip("\n")
+    after = content[end + len(end_marker):].lstrip("\n")
     next_content = (before + "\n" if before else "") + after
     file_path.write_text(next_content, encoding="utf-8")
     return True
@@ -258,14 +295,9 @@ def _claude_code_instructions() -> ComponentSpec:
 
 
 # Canonical rafter-authored skills installed by a per-platform "skills"
-# component. Mirrors node/src/commands/agent/components.ts. Keep in sync with
-# the SKILL.md files shipped under rafter_cli/resources/skills/.
-_COMPONENT_SKILL_NAMES: tuple[str, ...] = (
-    "rafter",
-    "rafter-secure-design",
-    "rafter-code-review",
-    "rafter-skill-review",
-)
+# component — the single `KNOWN_SKILL_NAMES` list in `.skill`, so this and
+# `_AGENT_SKILLS` in `agent.py` can't drift apart.
+_COMPONENT_SKILL_NAMES: tuple[str, ...] = KNOWN_SKILL_NAMES
 
 
 def _skills_component(
@@ -294,6 +326,11 @@ def _skills_component(
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(content, encoding="utf-8")
+        # Clean up any rafter skill directory left over from a rename —
+        # never a user's own skill that happens to share a retired name
+        # (checked via the SKILL.md's `publisher` frontmatter in
+        # remove_retired_skills itself).
+        remove_retired_skills(skills_base_dir)
 
     def uninstall() -> None:
         for p in dest_paths:
@@ -1023,6 +1060,7 @@ def _aider_read() -> ComponentSpec:
 
     def install() -> None:
         _inject_instruction_file(rafter_md_path)
+        _inject_aider_note(rafter_md_path)
         raw = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
         # Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
         raw = _AIDER_LEGACY_MCP_BLOCK_RE.sub("\n", raw)
@@ -1057,7 +1095,13 @@ def _aider_read() -> ComponentSpec:
         # Excise only the managed block; any user content in RAFTER.md survives.
         # If the file was ours alone (nothing but the block), remove it.
         # A RAFTER.md with no markers is user-authored — leave it untouched.
-        if rafter_md_path.exists() and _strip_marker_block(rafter_md_path):
+        # Both managed blocks go: the main one and the Aider note that refers
+        # to "the skill names above" — left alone it would be an orphan.
+        stripped_main = _strip_marker_block(rafter_md_path)
+        stripped_note = _strip_marker_block(
+            rafter_md_path, AIDER_NOTE_MARKER_START, AIDER_NOTE_MARKER_END
+        )
+        if rafter_md_path.exists() and (stripped_main or stripped_note):
             try:
                 if not rafter_md_path.read_text(encoding="utf-8").strip():
                     rafter_md_path.unlink()

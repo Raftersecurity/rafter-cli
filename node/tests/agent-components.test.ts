@@ -281,6 +281,29 @@ describe("rafter agent enable / disable", () => {
     expect(fs.readFileSync(path.join(home, ".aider.conf.yml"), "utf-8")).not.toContain("RAFTER.md");
   });
 
+  it("aider.read disable removes the Aider note too: init/enable then disable leaves no orphan", () => {
+    // Fails if disable strips only the main block (RAFTER.md would survive
+    // holding a note about "the skill names above"), or if enable and init
+    // write different RAFTER.md content.
+    const rafterMd = path.join(home, "RAFTER.md");
+    fs.writeFileSync(path.join(home, ".aider.conf.yml"), "model: gpt-5\n");
+
+    runCli("agent init --with-aider", home);
+    const fromInit = fs.readFileSync(rafterMd, "utf-8");
+    expect(fromInit).toContain("<!-- rafter:aider-note:start -->");
+    runCli("agent disable aider.read", home);
+    expect(fs.existsSync(rafterMd)).toBe(false);
+
+    runCli("agent enable aider.read", home);
+    expect(fs.readFileSync(rafterMd, "utf-8")).toBe(fromInit);
+    fs.writeFileSync(rafterMd, `# My notes\nKeep this line.\n\n${fromInit}`, "utf-8");
+    runCli("agent disable aider.read", home);
+    const after = fs.readFileSync(rafterMd, "utf-8");
+    expect(after).toContain("Keep this line.");
+    expect(after).not.toContain("rafter:aider-note");
+    expect(after).not.toContain("skill names above");
+  });
+
   it("records enabled=true/false in ~/.rafter/config.json for each toggle", () => {
     fs.mkdirSync(path.join(home, ".cursor"), { recursive: true });
     runCli("agent enable cursor.mcp", home);

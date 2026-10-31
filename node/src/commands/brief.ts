@@ -81,21 +81,15 @@ function buildTopics(): Record<string, TopicEntry> {
       description: "Condensed command reference for all rafter commands",
       render: () => {
         const rafter = loadSkill("rafter");
-        const cmds = extractSections(rafter, [
-          "Core Commands",
-          "Commands",
-          "Trigger",
-          "Get Scan",
-          "Check API",
-          "/rafter-scan",
-          "/rafter-bash",
-          "/rafter-audit-skill",
-          "/rafter-audit",
-        ]);
+        const fastPath = extractSections(rafter, ["Fast Path"]);
+        const cliReference = loadSkillDoc("rafter", "cli-reference");
+        const decisionTable = extractSections(cliReference, ["Quick Decision Table"]);
         return [
           "# Rafter Command Reference",
           "",
-          cmds,
+          fastPath,
+          "",
+          decisionTable,
         ].join("\n");
       },
     },
