@@ -22,7 +22,9 @@ from __future__ import annotations
 import hashlib
 import importlib.resources
 import json
+import os
 import re
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -123,6 +125,21 @@ def manifest_key(root: Path, dest: Path) -> str:
         return Path(dest).resolve().as_posix()
 
 
+def _write_no_follow(p: Path, content: bytes) -> None:
+    """Write `p` without following a symlink at `p`: a temp file in the same
+    directory, renamed over it. rename replaces a link instead of writing
+    through it, so a link a repo planted at one of rafter's files cannot aim
+    the write at ~/.bashrc; the write is atomic too."""
+    tmp = p.parent / f".{p.name}.{secrets.token_hex(6)}.tmp"
+    with open(tmp, "xb") as f:
+        f.write(content)
+    try:
+        os.replace(tmp, p)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 @dataclass
 class InstallSession:
     """One init run's view of the install root.
@@ -183,11 +200,14 @@ class InstallSession:
     def classify(self, a: FileArtifact) -> FileOutcome:
         """The outcome writing `a` would have, without writing anything."""
         current = self._read(a.dest)
-        if current is None:
+        # A symlink is never written through: what sits at its target is not
+        # rafter's to update, and a dangling one is not a free path to create.
+        link = a.dest not in self._virtual and a.dest.is_symlink()
+        if current is None and not link:
             return "added"
         if current == a.content:
             return "unchanged"
-        if self.owns(a.dest, a.resource_key, current):
+        if current is not None and not link and self.owns(a.dest, a.resource_key, current):
             return "updated"
         if self.force or MODIFIED_FILE_POLICY == "replace-with-backup":
             return "replaced"
@@ -210,23 +230,44 @@ class InstallSession:
             if outcome != "kept":
                 self._virtual[a.dest] = a.content
             return outcome
-        a.dest.parent.mkdir(parents=True, exist_ok=True)
-        # write_bytes, not write_text: text mode would translate newlines on
-        # Windows, and the bytes on disk would no longer match the hash tables.
+        self._make_dir(a.dest.parent)
+        # Bytes, not text: text mode would translate newlines on Windows, and
+        # the bytes on disk would no longer match the hash tables.
         if outcome in ("added", "updated"):
-            a.dest.write_bytes(a.content)
+            _write_no_follow(a.dest, a.content)
             self._record(a)
         elif outcome == "unchanged":
             self._record(a)
         elif outcome == "replaced":
-            Path(str(a.dest) + BACKUP_SUFFIX).write_bytes(a.dest.read_bytes())
-            a.dest.write_bytes(a.content)
+            # Moving the old file (or link) aside, not copying it, never reads or writes through a link.
+            os.replace(a.dest, Path(str(a.dest) + BACKUP_SUFFIX))
+            _write_no_follow(a.dest, a.content)
             self._record(a)
         else:  # kept
-            Path(str(a.dest) + NEW_VERSION_SUFFIX).write_bytes(a.content)
+            _write_no_follow(Path(str(a.dest) + NEW_VERSION_SUFFIX), a.content)
         if outcome != "unchanged":
             report_outcome(self.out, a.dest, outcome)
         return outcome
+
+    def _make_dir(self, directory: Path) -> None:
+        """mkdir -p, refusing in project scope when the directory resolves
+        outside the root: a repo can make `.claude/skills` a link to anywhere."""
+        if Path(self.root).resolve() == Path.home().resolve():
+            directory.mkdir(parents=True, exist_ok=True)
+            return
+        root = Path(self.root).resolve()
+
+        def check(d: Path) -> None:
+            real = d.resolve()
+            if real != root and root not in real.parents:
+                raise OSError(f"refusing to write in {directory}: it resolves to {real}, outside {self.root}")
+
+        existing = directory
+        while not existing.exists():
+            existing = existing.parent
+        check(existing)
+        directory.mkdir(parents=True, exist_ok=True)
+        check(directory)
 
     def apply_all(self, artifacts: list[FileArtifact]) -> list[FileOutcome]:
         return [self.apply(a) for a in artifacts]
@@ -245,10 +286,10 @@ class InstallSession:
         if self.dry_run or not self._dirty:
             return
         p = manifest_path(self.root)
-        p.parent.mkdir(parents=True, exist_ok=True)
+        self._make_dir(p.parent)
         files = dict(sorted(self.manifest["files"].items()))
         doc = {"schema": MANIFEST_SCHEMA, "cliVersion": self.version, "files": files}
-        p.write_bytes((json.dumps(doc, indent=2) + "\n").encode("utf-8"))
+        _write_no_follow(p, (json.dumps(doc, indent=2) + "\n").encode("utf-8"))
         self._dirty = False
 
     def count(self, outcome: str) -> int:

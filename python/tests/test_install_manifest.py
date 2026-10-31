@@ -334,3 +334,100 @@ def test_enable_keeps_edited_skill_and_rule_writing_new_version_beside(home, mon
         assert p.read_bytes() == before, p
         assert Path(f"{p}.rafter-new").read_bytes() == new, p
         assert re.search(rf"kept +{re.escape(str(p))}", result.output), result.output
+
+
+# ── no write follows a symlink a repo planted ────────────────────────
+# A cloned repo controls every path under it. Each test plants a link where
+# `agent init --local` writes (the file, its .bak / .rafter-new, the
+# manifest) aimed at a file outside the project, then checks that file is
+# untouched (existing target) or never created (dangling target).
+
+
+@pytest.fixture
+def repo(tmp_path: Path):
+    victim = tmp_path / "outside" / "victim"
+    victim.parent.mkdir()
+    root = tmp_path / "repo"
+    root.mkdir()
+    skill = skill_artifacts(root / ".claude" / "skills", "claude-code", "claude-code.skills")[0]
+    skill.dest.parent.mkdir(parents=True)
+    return root, victim, skill
+
+
+def _both_targets(repo, act) -> None:
+    root, victim, skill = repo
+    victim.write_text("user data\n")
+    act()
+    assert victim.read_text() == "user data\n"
+    victim.unlink()
+    for p in (skill.dest, Path(f"{skill.dest}.bak"), Path(f"{skill.dest}.rafter-new"), manifest_path(root)):
+        if p.is_symlink() or p.exists():
+            p.unlink()
+    act()
+    assert not victim.exists()
+
+
+def _edited(skill) -> None:
+    skill.dest.write_text("edited by the repo\n")
+
+
+def test_force_does_not_follow_a_link_at_bak(repo):
+    root, victim, skill = repo
+
+    def act():
+        _edited(skill)
+        Path(f"{skill.dest}.bak").symlink_to(victim)
+        assert session(root, force=True)[0].apply(skill) == "replaced"
+        assert Path(f"{skill.dest}.bak").read_text() == "edited by the repo\n"
+
+    _both_targets(repo, act)
+
+
+def test_kept_does_not_follow_a_link_at_rafter_new(repo):
+    root, victim, skill = repo
+
+    def act():
+        _edited(skill)
+        Path(f"{skill.dest}.rafter-new").symlink_to(victim)
+        assert session(root)[0].apply(skill) == "kept"
+        assert Path(f"{skill.dest}.rafter-new").read_bytes() == skill.content
+
+    _both_targets(repo, act)
+
+
+def test_save_does_not_follow_a_link_at_the_manifest(repo):
+    root, victim, skill = repo
+
+    def act():
+        manifest_path(root).parent.mkdir(exist_ok=True)
+        manifest_path(root).symlink_to(victim)
+        s, _ = session(root)
+        s.apply(skill)
+        s.save()
+        assert json.loads(manifest_path(root).read_text())["files"]
+
+    _both_targets(repo, act)
+
+
+def test_a_link_at_the_file_itself_is_never_written_through(repo):
+    root, victim, skill = repo
+
+    def act():
+        skill.dest.symlink_to(victim)
+        assert session(root)[0].apply(skill) == "kept"
+        assert Path(f"{skill.dest}.rafter-new").read_bytes() == skill.content
+        assert session(root, force=True)[0].apply(skill) == "replaced"
+        assert skill.dest.read_bytes() == skill.content
+        assert Path(f"{skill.dest}.bak").is_symlink()
+
+    _both_targets(repo, act)
+
+
+def test_a_linked_directory_leading_out_of_the_project_is_refused(repo):
+    root, victim, skill = repo
+    skills_dir = root / ".claude" / "skills"
+    shutil.rmtree(skills_dir)
+    skills_dir.symlink_to(victim.parent)
+    with pytest.raises(OSError, match="outside"):
+        session(root)[0].apply(skill)
+    assert list(victim.parent.iterdir()) == []

@@ -20,6 +20,7 @@
  */
 import crypto from "crypto";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
@@ -106,6 +107,32 @@ export function shippedHashes(): Map<string, Set<string>> {
   return table;
 }
 
+/** True when `p` itself is a symbolic link, dangling or not. */
+export function isSymlink(p: string): boolean {
+  try {
+    return fs.lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write `p` without following a symlink at `p`: a temp file in the same
+ * directory, renamed over it. rename replaces a link instead of writing
+ * through it, so a link a repo planted at one of rafter's files cannot aim
+ * the write at ~/.bashrc; the write is atomic too.
+ */
+function writeNoFollow(p: string, content: string | Buffer): void {
+  const tmp = path.join(path.dirname(p), `.${path.basename(p)}.${crypto.randomBytes(6).toString("hex")}.tmp`);
+  fs.writeFileSync(tmp, content, { flag: "wx" });
+  try {
+    fs.renameSync(tmp, p);
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
 export function manifestPath(root: string): string {
   return path.join(root, ".rafter", "installed.json");
 }
@@ -126,6 +153,8 @@ export function manifestKey(root: string, dest: string): string {
  */
 export class InstallSession {
   readonly root: string;
+  /** Project scope: the root is a repo, and nothing may be written outside it. */
+  private readonly contained: boolean;
   readonly force: boolean;
   readonly dryRun: boolean;
   readonly out: InstallOutput;
@@ -137,6 +166,7 @@ export class InstallSession {
 
   constructor(opts: { root: string; out: InstallOutput; force?: boolean; dryRun?: boolean; version?: string }) {
     this.root = opts.root;
+    this.contained = path.resolve(opts.root) !== path.resolve(os.homedir());
     this.out = opts.out;
     this.force = !!opts.force;
     this.dryRun = !!opts.dryRun;
@@ -186,9 +216,12 @@ export class InstallSession {
   /** The outcome writing `a` would have, without writing anything. */
   classify(a: FileArtifact): FileOutcome {
     const current = this.read(a.dest);
-    if (current === null) return "added";
-    if (current.equals(a.content)) return "unchanged";
-    if (this.owns(a.dest, a.resourceKey, current)) return "updated";
+    // A symlink is never written through: what sits at its target is not
+    // rafter's to update, and a dangling one is not a free path to create.
+    const link = !this.virtual.has(a.dest) && isSymlink(a.dest);
+    if (current === null && !link) return "added";
+    if (current?.equals(a.content)) return "unchanged";
+    if (current !== null && !link && this.owns(a.dest, a.resourceKey, current)) return "updated";
     return this.force || MODIFIED_FILE_POLICY === "replace-with-backup" ? "replaced" : "kept";
   }
 
@@ -210,27 +243,51 @@ export class InstallSession {
       if (outcome !== "kept") this.virtual.set(a.dest, a.content);
       return outcome;
     }
-    fs.mkdirSync(path.dirname(a.dest), { recursive: true });
+    this.makeDir(path.dirname(a.dest));
     switch (outcome) {
       case "added":
       case "updated":
-        fs.writeFileSync(a.dest, a.content);
+        writeNoFollow(a.dest, a.content);
         this.record(a);
         break;
       case "unchanged":
         this.record(a);
         break;
       case "replaced":
-        fs.copyFileSync(a.dest, a.dest + BACKUP_SUFFIX);
-        fs.writeFileSync(a.dest, a.content);
+        // Moving the old file (or link) aside, not copying it, never reads or writes through a link.
+        fs.renameSync(a.dest, a.dest + BACKUP_SUFFIX);
+        writeNoFollow(a.dest, a.content);
         this.record(a);
         break;
       case "kept":
-        fs.writeFileSync(a.dest + NEW_VERSION_SUFFIX, a.content);
+        writeNoFollow(a.dest + NEW_VERSION_SUFFIX, a.content);
         break;
     }
     if (outcome !== "unchanged") reportOutcome(this.out, a.dest, outcome);
     return outcome;
+  }
+
+  /**
+   * mkdir -p, refusing in project scope when the directory resolves outside
+   * the root: a repo can make `.claude/skills` a link to anywhere.
+   */
+  private makeDir(dir: string): void {
+    if (!this.contained) {
+      fs.mkdirSync(dir, { recursive: true });
+      return;
+    }
+    const root = fs.realpathSync(this.root);
+    const check = (d: string) => {
+      const real = fs.realpathSync(d);
+      if (real !== root && !real.startsWith(root + path.sep)) {
+        throw new Error(`refusing to write in ${dir}: it resolves to ${real}, outside ${this.root}`);
+      }
+    };
+    let existing = dir;
+    while (!fs.existsSync(existing)) existing = path.dirname(existing);
+    check(existing);
+    fs.mkdirSync(dir, { recursive: true });
+    check(dir);
   }
 
   applyAll(artifacts: FileArtifact[]): FileOutcome[] {
@@ -258,10 +315,10 @@ export class InstallSession {
   save(): void {
     if (this.dryRun || !this.dirty) return;
     const p = manifestPath(this.root);
-    fs.mkdirSync(path.dirname(p), { recursive: true });
+    this.makeDir(path.dirname(p));
     const files = Object.fromEntries(Object.entries(this.manifest.files).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
     const doc: InstallManifest = { schema: MANIFEST_SCHEMA, cliVersion: this.version, files };
-    fs.writeFileSync(p, JSON.stringify(doc, null, 2) + "\n", "utf-8");
+    writeNoFollow(p, JSON.stringify(doc, null, 2) + "\n");
     this.dirty = false;
   }
 

@@ -325,3 +325,89 @@ describe("agent enable over the 0.11.2 fixture (built CLI)", () => {
     });
   });
 });
+
+describe("no write follows a symlink a repo planted", () => {
+  // A cloned repo controls every path under it. Each test plants a link where
+  // `agent init --local` writes (the file, its .bak / .rafter-new, the
+  // manifest) aimed at a file outside the project, then checks that file is
+  // untouched (existing target) or never created (dangling target).
+  let victim: string;
+  let skill: FileArtifact;
+  let base: string;
+
+  beforeEach(() => {
+    base = home;
+    victim = path.join(home, "outside", "victim");
+    fs.mkdirSync(path.dirname(victim), { recursive: true });
+    home = path.join(home, "repo");
+    fs.mkdirSync(home);
+    skill = skillArtifacts(path.join(home, ".claude", "skills"), "claude-code", "claude-code.skills")[0];
+    fs.mkdirSync(path.dirname(skill.dest), { recursive: true });
+  });
+  afterEach(() => {
+    home = base;
+  });
+
+  /** Runs `act` once with the victim present and once dangling. */
+  function bothTargets(act: () => void): void {
+    fs.writeFileSync(victim, "user data\n");
+    act();
+    expect(fs.readFileSync(victim, "utf-8")).toBe("user data\n");
+    fs.rmSync(victim);
+    for (const p of [skill.dest, skill.dest + ".bak", skill.dest + ".rafter-new", manifestPath(home)]) {
+      if (fs.existsSync(p) || isLink(p)) fs.rmSync(p);
+    }
+    act();
+    expect(fs.existsSync(victim)).toBe(false);
+  }
+  const isLink = (p: string) => { try { return fs.lstatSync(p).isSymbolicLink(); } catch { return false; } };
+  const edited = () => fs.writeFileSync(skill.dest, "edited by the repo\n");
+
+  it("--force: a link at <file>.bak", () => {
+    bothTargets(() => {
+      edited();
+      fs.symlinkSync(victim, skill.dest + ".bak");
+      expect(session({ force: true }).s.apply(skill)).toBe("replaced");
+      expect(fs.readFileSync(skill.dest + ".bak", "utf-8")).toBe("edited by the repo\n");
+    });
+  });
+
+  it("a link at <file>.rafter-new", () => {
+    bothTargets(() => {
+      edited();
+      fs.symlinkSync(victim, skill.dest + ".rafter-new");
+      expect(session().s.apply(skill)).toBe("kept");
+      expect(fs.readFileSync(skill.dest + ".rafter-new").equals(skill.content)).toBe(true);
+    });
+  });
+
+  it("a link at .rafter/installed.json", () => {
+    bothTargets(() => {
+      fs.mkdirSync(path.dirname(manifestPath(home)), { recursive: true });
+      fs.symlinkSync(victim, manifestPath(home));
+      const { s } = session();
+      s.apply(skill);
+      s.save();
+      expect(JSON.parse(fs.readFileSync(manifestPath(home), "utf-8")).files).toBeTruthy();
+    });
+  });
+
+  it("a link at the file itself, with and without --force", () => {
+    bothTargets(() => {
+      fs.symlinkSync(victim, skill.dest);
+      expect(session().s.apply(skill)).toBe("kept");
+      expect(fs.readFileSync(skill.dest + ".rafter-new").equals(skill.content)).toBe(true);
+      expect(session({ force: true }).s.apply(skill)).toBe("replaced");
+      expect(fs.readFileSync(skill.dest).equals(skill.content)).toBe(true);
+      expect(isLink(skill.dest + ".bak")).toBe(true);
+    });
+  });
+
+  it("a linked directory that leads out of the project is refused", () => {
+    const skillsDir = path.join(home, ".claude", "skills");
+    fs.rmSync(skillsDir, { recursive: true });
+    fs.symlinkSync(path.dirname(victim), skillsDir);
+    expect(() => session().s.apply(skill)).toThrow(/outside/);
+    expect(fs.readdirSync(path.dirname(victim))).toEqual([]);
+  });
+});

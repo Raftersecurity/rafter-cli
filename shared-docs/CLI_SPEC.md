@@ -332,6 +332,11 @@ Each run reports one line per file with its outcome, except that unchanged files
 | `kept` | The file was modified locally or is not rafter's; left as is, new version written to `<file>.rafter-new` (stderr under `--quiet`) |
 | `replaced` | As `kept`, but `--force` was given; old file saved as `<file>.bak` (stderr under `--quiet`) |
 
+No write follows a symlink.
+A file that is a symlink is never written through: it is `unchanged` when its target already holds the current content, and otherwise `kept` (or `replaced` with `--force`, which moves the link itself to `<file>.bak`).
+`<file>.rafter-new`, `<file>.bak` and the install manifest are written to a temp file and renamed into place, so a link at any of them is replaced, not followed.
+With `--local`, a directory that resolves outside the project (a linked `.claude/skills`, say) is refused, and that platform's install fails.
+
 Rafter records what it wrote in an install manifest, `<root>/.rafter/installed.json` (`~/.rafter/` at user scope, `./.rafter/` with `--local`):
 
 ```json
