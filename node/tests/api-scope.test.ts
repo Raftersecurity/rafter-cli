@@ -76,6 +76,13 @@ describe("handle403", () => {
     expect(output).toContain("10/10");
   });
 
+  it("derives used from the remaining field the API sends", () => {
+    const err = make403({ scan_mode: "fast", limit: 10, remaining: 3 });
+    handle403(err);
+    const output = stderrSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("7/10");
+  });
+
   it("returns EXIT_INSUFFICIENT_SCOPE for scope error", () => {
     const err = make403({
       error: "API key does not have scan permission. Required scope: read-and-scan.",

@@ -24,7 +24,7 @@ The CLI follows UNIX principles:
 | 0 | Success |
 | 1 | General error |
 | 2 | Scan not found (HTTP 404) |
-| 3 | Quota exhausted (HTTP 429 or 403 scan-mode limit) |
+| 3 | Quota exhausted (HTTP 429 **on scan submit**, or 403 scan-mode limit) |
 | 4 | Insufficient scope / forbidden (HTTP 403) |
 | 5 | Paid Plus scan refused — approval required (`scan.plus_requires_approval` on) and no `--yes`/`RAFTER_CONFIRM=1`/interactive confirmation |
 
@@ -144,7 +144,9 @@ A report is not necessarily durable the instant a scan flips to `completed`, so 
 | Transport error (DNS, reset, timeout) | Same as above. |
 | HTTP 404, **after** the scan is known to exist | Transient — read-after-write lag, not a wrong id. |
 | HTTP 404 on the **first** poll | Not retried. The scan genuinely does not exist. Exit code `2`. |
-| Other 4xx (401/403/429 …) | Not retried — reported immediately. |
+| HTTP 429 **with** a usable `Retry-After` | Transient. Retried after sleeping `min(Retry-After, 60s)` instead of the exponential schedule. |
+| HTTP 429 **without** one | Not retried — on this API a bare 429 means quota exhausted, and waiting does not earn credits. |
+| Other 4xx (401/403 …) | Not retried — reported immediately. |
 
 Two budgets bound the retries. The **consecutive** counter (5) resets on any successful poll, so a long scan with occasional blips is not killed by unrelated failures minutes apart. A **total** counter (20 per command invocation) does *not* reset, so a backend alternating success and failure cannot keep the loop alive indefinitely — the CLI has no wall-clock deadline of its own.
 
@@ -152,12 +154,21 @@ After either budget is exhausted the command exits `1`. If the failures reached 
 
 `rafter get <scan_id>` carries the same retry budget, so the remedy the give-up message recommends is not defeated by the transient failure that produced it.
 
+**The 429 rule, in full.** A 429 is ambiguous in this API: on scan *submit* it means the account is out of credits (exit `3`), and on the poll endpoint it would mean the client is going too fast. `Retry-After` is the only thing that tells the two apart — a rate limiter sends one, a quota rejection does not — so it decides whether the poll retries. Submit is unchanged either way: a 429 there is exit `3` even when it carries a `Retry-After`.
+
+- Only the **delay-seconds** form is honored (`Retry-After: 30`), and only when the header appears exactly once. A repeated `Retry-After` — an origin's and a proxy's, say — is not a delay anyone can act on, so it counts as absent in all three surfaces. The HTTP-date form is not parsed, in any of the three surfaces, because the composite action has to reach the same verdict in shell on whatever `date` the runner ships — a rule the surfaces cannot state identically is worse than a narrow one they can. A header that cannot be parsed counts as absent, which means fail fast. So does a value that is not ASCII digits — Python's `str.isdigit()` accepts `²` where `int()` raises, so the accept-set is an explicit `[0-9]+` in all three surfaces.
+- The honored wait is capped at **60 seconds**, so a limiter cannot park a CI job for an hour. A 429 retry still spends a failure from the same budget as any other transient failure, so an endlessly-throttling API cannot keep the loop alive.
+- Worst-case waiting, stated rather than implied: the action's poll loop is additionally bounded by its wall-clock deadline (an honored delay is clamped to what is left of it, so the server cannot extend a budget the workflow author set). The action's results fetch has no deadline of its own — three fetches of at most four honored sleeps each is up to ~12 minutes if every one of them eventually succeeds, and ~4 minutes before the first fetch gives up. That is deliberate: a build whose report was retrievable after a real throttle should get the report.
+- Giving up on repeated 429s produces a **rate-limited** message, not the unreadable-report one: it says the API throttled us, names the scan, and points at `rafter get` and the dashboard. Telling a throttled customer their report could not be read sends them to look at the wrong thing.
+
 **The composite GitHub Action** (`github-action/action.yml`) implements the same classification in both its poll loop and its results fetch, with these differences forced by the shell:
 
 - It has no "first poll" distinction: by the time it polls, the trigger step has already returned a `scan_id`, so **every** 404 there is treated as read-after-write lag. A scan id the backend accepted but never persisted therefore fails after the 5-failure budget rather than immediately.
 - Its poll loop is additionally bounded by a wall-clock deadline derived from `timeout-minutes`. Before v0.11 that input was a poll *count*, so a slow API could overrun it; it is now a real deadline.
-- Its `status` output is `completed`, `failed`, `timeout`, `unreadable` (the scan may have finished but its report could not be read), or `unreachable` (the API could not be contacted).
+- Its `status` output is `completed`, `failed`, `timeout`, `unreadable` (the scan may have finished but its report could not be read), `rate-limited` (the API throttled us until the retry budget ran out), or `unreachable` (the API could not be contacted).
 - Its results step validates the payload **before** counting. A body with no `vulnerabilities` array — not JSON, a `200` carrying an error object, or a parseable payload missing the key — is `status=unreadable`, the job fails, and **no count outputs are written**: a consumer reading `findings-count` sees an empty string, never a fabricated `0`. A report the action cannot read is not a clean scan. An empty array is a clean scan and counts as `0`.
+- It reads `Retry-After` from the final response's header block only. `curl -D` dumps every block it received, so an informational `103 Early Hints` block carrying the header would otherwise be read as the 429's own — and a bare 429 would be retried. The two runtimes get this from their HTTP client.
+- It validates `Retry-After` as digits and caps its **length** as well as its value: `[ 1e23 -gt 60 ]` is a shell error that evaluates false, so an uncapped 23-digit header would reach `sleep` intact and hang the job until the runner times out.
 
 ### rafter usage [OPTIONS]
 
@@ -246,12 +257,16 @@ With no topic, lists available topics and usage examples.
 
 | Topic | Description |
 |-------|-------------|
-| `security` | Local security toolkit — scanning, auditing, policy enforcement |
-| `scanning` | Remote SAST/SCA code analysis via Rafter API |
+| `scanning` | Rafter scanning (local + remote SAST/SCA) + guardrails |
 | `commands` | Condensed command reference for all rafter commands |
 | `setup` | Setup instructions for all supported platforms |
 | `setup/<platform>` | Platform-specific setup (claude-code, codex, gemini, cursor, windsurf, aider, openclaw, continue, generic) |
-| `all` | Everything — full security + scanning + setup briefing |
+| `cli-reference` | Full rafter CLI tree by category |
+| `guardrails` | PreToolUse hooks, risk tiers, overrides |
+| `backend` | Remote fast vs plus, setup, cost/latency |
+| `shift-left` | Pointers to secure-design & code-review skills |
+| `finding-triage` | How to read a finding and decide next steps |
+| `all` | Everything — full scanning + setup briefing |
 
 **Examples:**
 
@@ -259,14 +274,14 @@ With no topic, lists available topics and usage examples.
 # List available topics
 rafter brief
 
-# Get the local security briefing
-rafter brief security
+# Scanning + guardrails briefing
+rafter brief scanning
 
 # Platform-specific setup guide
 rafter brief setup/claude-code
 
 # For agents without native skill support — load context manually
-rafter brief security    # save to memory/instructions
+rafter brief scanning    # save to memory/instructions
 rafter brief commands    # save command reference
 
 # Pipe to a file for manual skill creation
@@ -446,7 +461,7 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
 - `--history` — scan every line ever added on any ref (`git log -p -U0 --full-history --all`) instead of the working tree, so secrets in deleted files and rewritten lines are found. Uncommitted changes are not scanned. Each engine reads the history: betterleaks via `betterleaks git`, the patterns engine by streaming the log. `auto` unions the two as in a directory scan, and without betterleaks the patterns engine alone covers history. Findings are reported at `<repo root>/<path>` with the line number in the commit that added them, even when the file no longer exists. Outside a git repository, or if `git log` fails, the scan exits `2`.
-- `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree. Applies to both engines: the patterns engine filters its walk that way, and betterleaks is handed the list from `git ls-files --cached --others --exclude-standard` instead of the directory (plus `-c` for the target's own `.betterleaks.toml` / `.gitleaks.toml` when no `BETTERLEAKS_CONFIG*` / `GITLEAKS_CONFIG*` env var is set). betterleaks' run time scales with the length of that file list, so it is scanned in bounded batches (at most 64 files per invocation) whose findings are unioned by file — a few-hundred-file repo completes under the per-invocation timeout instead of timing out and dropping to patterns. A betterleaks failure or timeout still falls back to patterns, with the cause in the warning and recorded in the engine fields below.
+- `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree. Applies to both engines: the patterns engine filters its walk that way, and betterleaks walks the scan root once under a generated `-c` config. That config extends the one betterleaks would otherwise choose (`BETTERLEAKS_CONFIG` / `GITLEAKS_CONFIG`, then `BETTERLEAKS_CONFIG_TOML` / `GITLEAKS_CONFIG_TOML`, then the target's own `.betterleaks.toml` / `.gitleaks.toml`, else the default rules) and adds a global path allowlist for what `git ls-files --others --ignored --exclude-standard --directory` reports, plus submodules, nested repositories and `.git`. betterleaks is never handed a list of file paths: 1.1.x rebuilds its detector for every path argument, and with an extending config it applied rules to only the first two. A betterleaks failure or timeout still falls back to patterns, with the cause in the warning and recorded in the engine fields below.
 - `--auto-update` / `--no-auto-update` — auto-update a **stale rafter-managed betterleaks binary** before scanning (default: on). A leftover binary from an older rafter (a gitleaks-8.x install from before the rename, or an older betterleaks) runs `version` fine but emits a JSON shape the current parser rejects, which would otherwise silently yield **zero findings** on the default engine. When the managed binary's version doesn't match the pinned one, rafter downloads the pinned version (prompting first in an interactive TTY). `--no-auto-update` (or `scan.auto_update_betterleaks: false`) skips the update and falls back to the **patterns** engine for that scan, printing a one-line CTA (`rafter agent update-betterleaks`) — never a silent zero. Only the rafter-managed binary at `~/.rafter/bin/betterleaks` is auto-updated; a binary on `PATH` is left untouched (a non-array parse there warns with the same CTA).
 
 Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error — a bad path or ref, not a git repository, or a file that could not be read (a clean result over a file the scan could not open is reported as exit 2, not 0).
@@ -563,6 +578,11 @@ Execute shell command with risk assessment and approval workflow.
 Risk tiers: critical (blocked), high (approval required), medium (approval on moderate+), low (allowed).
 
 **Approval model.** A command that requires approval is approved only by a person at an interactive terminal: the prompt is offered only when stdin is a TTY, and otherwise the command is denied with exit `1` and a message saying so. A piped `yes` is not an approval and no flag stands in for one, because anything an agent can pass, the agent can pass on its own. The machine owner widens policy in `~/.rafter/config.json` (`commandPolicy`), not per call. Both runtimes.
+
+**Rafter's own configuration is protected (rf-vnxs).** These are classified critical, so no policy, mode or allowlist can approve them, and the hook's deny message names rf-vnxs:
+- `rafter … config set` on a key under `agent.hooks`, `agent.commandPolicy` or `agent.riskLevel`, and `rafter agent disable`, at any argv position (so `bash -c "rafter …"` counts).
+- A Write/Edit/apply_patch whose target is inside the rafter dir (`~/.rafter`).
+- A shell statement that names the rafter dir and is not read-only (sable-36oe). A statement *names* the dir when any word, quoted or not, has `.rafter` as a whole path component, compared case-insensitively: `~/.rafter`, `$HOME/.rafter`, `/home/u/.rafter`, `./.rafter`, `'.rafter'` inside `python -c` code or a heredoc body, an unquoted glob that can expand to it (`~/.raf*`), or a brace list that does (`~/.{rafter,x}`). `.rafter.yml` and `.rafterignore` do not name it. The argv0 of a statement is exempt, so running `~/.rafter/bin/betterleaks version` is allowed; its arguments still count. The command is split on `;`, `&&`, `||`, `|`, `&` and newlines, including inside command substitutions, and each statement that names the dir must itself be read-only; statements that do not name it are not constrained, so `cat ~/.rafter/config.json && npm test` is allowed. A statement is read-only when it has no output redirect (other than to `/dev/null` or an fd dup such as `2>&1`) and its argv0 is a bare name or a system bin path (`/bin`, `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, and their `sbin`) in this list: `cat`, `more`, `head`, `tail`, `ls`, `stat`, `file` (not `-C`), `wc`, `grep`, `egrep`, `fgrep`, `rg` (not `--pre`), `jq`, `diff`, `cmp`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `shasum`, `b2sum`, `cksum`, `find` (not `-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, `-fprint`, `-fprint0`, `-fprintf`, `-fls`), `test`, `[`, `realpath`, `readlink`, `du`, and `cd`/`pushd`/`popd` to a target outside the dir. `sed` and `less` are deliberately absent (sed's `w`/`e` commands write and execute without `-i`; `less -o` writes a file). A `cd` into the dir is itself protected, because the agent's shell keeps its cwd between calls; that is what keeps `cd ~/.rafter && echo x > config.json` blocked. A write that never names the dir (`echo x > config.json`) is not caught. Both runtimes.
 
 ### rafter skill review [PATH_OR_URL] [OPTIONS]
 
@@ -1113,13 +1133,15 @@ Cursor is the one exception: its permission hooks block the action on an empty o
 | Platform (format) | Shell tool → command policy | File-write tools → write checks |
 |-------------------|-----------------------------|---------------------------------|
 | Claude Code (`claude`) | `Bash` (`tool_input.command`) | `Write` (`content`), `Edit` (`new_string`), `MultiEdit` (`edits[].new_string`) |
-| Codex (`claude`) | `Bash` (`tool_input.command`) | `apply_patch` (the patch text in `tool_input.command`) |
+| Codex (`claude`) | `Bash` (`tool_input.command`) | `apply_patch` (the patch text in `tool_input.command`; target paths from its `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` headers) |
 | Continue (`claude`) | `Bash` (`tool_input.command`) | `Write` (`filepath`, `content`), `Edit`, `MultiEdit` |
-| Gemini CLI (`gemini`) | `run_shell_command` (`tool_input.command`) | `write_file` (`content`), `replace` (`new_string`) |
+| Gemini CLI (`gemini`) | `run_shell_command` (`tool_input.command`) | `write_file` (`content`), `replace` (`new_string`); Gemini has no tool named `edit` |
 | Cursor (`cursor`) | `beforeShellExecution` (`command`); `preToolUse` with `Shell` (`tool_input.command`) | `preToolUse` with `Write`; `afterFileEdit` |
 | Windsurf (`windsurf`) | `pre_run_command` (`tool_info.command_line`) | `pre_write_code` (`tool_info.edits[].new_string`) |
 
-The write checks read the target from `file_path` (or `filepath`) and scan `content`, else `new_string`, else the joined `edits[].new_string`, else (for `apply_patch`) the patch text.
+The write checks read the target from `file_path` (or `filepath`) and scan `content`, else `new_string`, else the joined `edits[].new_string`, else (for `apply_patch`) the patch text. For `apply_patch`, the rafter-config guard checks every path named in the patch headers, after `~` expansion and resolution against the working directory, and denies with the same reason as a `Write` to that path.
+
+**Installed matchers.** A platform calls the hook only for tools its matcher names, so each installer's matcher covers the tools above. `agent init --with-claude-code` (and `agent enable claude-code.hooks`) registers PreToolUse matchers `Bash` and `Write|Edit|MultiEdit`; `rafter policy export --format claude` emits the same. The Codex installer registers `Bash|apply_patch`. The Gemini installer (`agent init --with-gemini` and `agent enable gemini.hooks`) registers BeforeTool matcher `run_shell_command|write_file|replace`. `agent verify` and `agent status` check that a rafter hook command is installed, not the matcher, so an install made before a matcher change keeps its old matcher until `agent init` is rerun.
 
 **Approval-required commands are denied, not asked.** A Bash command the policy marks as requiring approval (for example `curl … | sh`, which is high risk) gets `deny`, the same decision as a blocked command; the hook never returns `ask`. The reason says a person must run `rafter agent exec '<command>'` at an interactive terminal to approve it (see the approval model under `rafter agent exec`). Both runtimes.
 
@@ -1435,7 +1457,7 @@ rafter scan --repo myorg/myrepo --branch main
 rafter get SCAN_ID --format json
 
 # Pipe to jq
-rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="error")'
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.severity=="error")'
 
 # Count vulnerabilities
 rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
@@ -1444,7 +1466,7 @@ rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
 rafter get SCAN_ID > scan_results.json
 
 # CSV export
-rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
+rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.severity, .rule_id, .file_path, .line_start] | @csv'
 
 # CI gate
 if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then

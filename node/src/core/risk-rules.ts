@@ -109,6 +109,19 @@ const CRITICAL_PATTERN_SOURCES: string[] = [
 export const CRITICAL_PATTERNS: RegExp[] = CRITICAL_PATTERN_SOURCES.map((s) => new RegExp(s));
 
 export const HIGH_PATTERNS: RegExp[] = [
+  // sable-lbyp: a pseudo-terminal wrapper around rafter's own approval prompt.
+  // `rafter agent exec` grants approval only to a person at a TTY; `script`,
+  // `expect`, `unbuffer`, `socat` and Python's pty module manufacture one and
+  // can type "yes". Wrapping rafter in any of them is itself the signal.
+  /\b(?:script|expect|unbuffer|socat)\b.*\brafter(?:-cli)?\s+agent\s+exec\b/,
+  // Scoped to `agent exec` exactly as the sibling above is. Without the
+  // subcommand this matched ANY rafter invocation wrapped in Python's pty
+  // module -- `rafter --version`, `rafter audit`, `rafter secrets scan` all
+  // went low -> high. That contradicts this patch's own principle that only
+  // `agent exec` carries a command, and in headless CI a HIGH with stdin not
+  // a TTY is DENIED outright (exit 1), turning a previously-succeeding call
+  // into a hard failure.
+  /\bpty\.(?:spawn|fork|openpty)\b.*\brafter(?:-cli)?['",\s]+agent['",\s]+exec\b/,
   /rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*/,  // rm -rf, -fr, -r -f, -f -r (any path)
   /rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*/,  // rm -fr, reversed
   /sudo\s+rm/,
@@ -209,6 +222,7 @@ const EVAL_FLAGS = new Set(["-c", "-e", "--command", "--execute", "--eval", "-ex
 const TAIL_WRAPPERS = new Set([
   "sudo", "doas", "env", "nohup", "timeout", "nice", "ionice",
   "time", "watch", "setsid", "stdbuf", "chrt", "command",
+  "unbuffer",  // expect's pty wrapper: delegates to the command that follows (sable-lbyp)
 ]);
 
 /** Commands whose operands are pure text data — searching or printing, never executing. */
@@ -529,7 +543,10 @@ function processSegment(
     if (!p.quoted && SHELL_EXECS.has(execName(p.text))) hasShellExec = true;
     if (!p.quoted && EVAL_FLAGS.has(p.text.toLowerCase())) hasEvalFlag = true;
   }
-  const codeCarrying = hasShellExec || hasEvalFlag || EVAL_EXECS.has(exec);
+  // sable-lbyp: rafter's own `agent exec` runs its operand, so the hook must
+  // see through its own binary the way it sees through `bash -c`.
+  const codeCarrying =
+    hasShellExec || hasEvalFlag || EVAL_EXECS.has(exec) || rafterExecRunsOperand(pieces, execIdx);
 
   // sable-c6an. Two questions the code conflated, and conflating them gets one
   // of them wrong:
@@ -877,6 +894,56 @@ const RAFTER_PACKAGE = /^(?:@rafter-security\/cli|rafter-cli|rafter)(?:@[\w.^~*-
 const PROTECTED_CONFIG_KEY = /^(?:agent\.)?(?:hooks|commandpolicy)\b|^agent\.risklevel$/;
 
 /**
+ * sable-lbyp (from rf-ss67) — `rafter agent exec <operand>` RUNS its operand,
+ * so a segment whose exec is rafter's own binary is code-carrying: the quoted
+ * operand is a command string, not prose, and must reach the patterns.
+ *
+ * Before this, `rafter agent exec --force "rm -rf /tmp/x"` was the one shape
+ * the hook could not see: an unrecognised evaluator with a quoted multi-word
+ * argument is data by the sanitizer's rule, so the hook said `low` while exec
+ * ran a HIGH-tier command. rf-ss67 closed the bypass at the other end (exec no
+ * longer skips approval and only a person at a TTY can grant it); this makes
+ * the hook itself classify the operand, so the audit trail and the block land
+ * where the agent's tool call is, not two processes later.
+ *
+ * Resolution is the same as the rf-vnxs disarm check: the segment's resolved
+ * exec (wrappers such as `sudo -E`, `env`, `unbuffer` already skipped by the
+ * caller), an absolute path (`execName` keeps the basename, so
+ * `/usr/local/bin/rafter` is `rafter`), or a package runner
+ * (`npx @rafter-security/cli`, `pnpm dlx rafter-cli`, `bunx rafter`).
+ *
+ * `--dry-run` is the one exemption: exec then prints the classification and
+ * runs nothing, and that flow is what the shipped docs tell agents to use to
+ * check a command BEFORE running it. Treating its operand as executed would
+ * block the very check. A flag an old CLI does not know makes it error out,
+ * never execute, so the exemption cannot be abused by version skew.
+ */
+function rafterExecRunsOperand(pieces: Piece[], execIdx: number): boolean {
+  if (execIdx === -1) return false;
+  let k = execIdx;
+  let exec = execName(pieces[k].text);
+  if (pieces[k].quoted) return false;
+  k++;
+  if (PACKAGE_RUNNERS.has(exec)) {
+    while (k < pieces.length && !pieces[k].op && (pieces[k].text.startsWith("-") || ["dlx", "exec"].includes(pieces[k].text.toLowerCase()))) k++;
+    if (k >= pieces.length || pieces[k].op || !RAFTER_PACKAGE.test(pieces[k].text.toLowerCase())) return false;
+    k++;
+    exec = "rafter";
+  }
+  if (!RAFTER_EXECS.has(exec)) return false;
+
+  const rest = pieces.slice(k).filter((p) => !p.op);
+  const args = rest.filter((p) => !p.text.startsWith("-")).map((p) => p.text.toLowerCase());
+  if (args[0] !== "agent" || args[1] !== "exec") return false;
+  // Only a --dry-run before an unquoted `--` is the flag: after it, exec
+  // takes every token as part of the command and runs it.
+  const end = rest.findIndex((p) => !p.quoted && p.text === "--");
+  const flags = end === -1 ? rest : rest.slice(0, end);
+  const dryRun = flags.some((p) => !p.quoted && p.text.toLowerCase() === "--dry-run");
+  return !dryRun;
+}
+
+/**
  * True if this statement's argv reconfigures or removes a rafter security
  * control.
  *
@@ -929,8 +996,200 @@ function statementDisarmsRafter(words: Piece[]): boolean {
  */
 export function modifiesRafterSecurityConfig(command: string): boolean {
   if (disarmsRafter(command, 0)) return true;
+  if (writesRafterDir(command)) return true;
   const sanitized = sanitizeCommandForMatching(command);
   return sanitized !== command && disarmsRafter(sanitized, 0);
+}
+
+/**
+ * sable-36oe: the SHELL route to rafter's own directory (`~/.rafter`), which
+ * the Write/Edit route already refuses (rf-vnxs, `writesRafterSecurityConfig`
+ * in hook/pretool). `rm ~/.rafter/config.json` disarms the gate exactly as
+ * `rafter agent config set agent.hooks.enabled false` does.
+ *
+ * Deny-by-default scoped to the path, NOT a blocklist of write verbs: the
+ * verbs are unbounded (`>`, sed -i, cp, tee, dd, install, rsync, perl -i,
+ * python -c …). A command is protected when a statement that NAMES the
+ * rafter dir is not a known read-only command without an output redirect.
+ * Statements that do not name it are not constrained, so
+ * `cat ~/.rafter/x && npm test` stays allowed; a cd INTO the dir is itself
+ * not read-only, which keeps `cd ~/.rafter && echo x > config.json` blocked.
+ *
+ * Checked on the raw text (a reference inside quotes counts — python -c
+ * code, heredoc bodies) and on the normalized view, which expands brace
+ * lists and ANSI-C quotes (`~/.{rafter,x}`, `$'\x2erafter'`).
+ */
+function writesRafterDir(command: string): boolean {
+  if (rafterDirScan(command)) return true;
+  const normalized = normalizeForMatching(command);
+  return normalized !== command && rafterDirScan(normalized);
+}
+
+const RAFTER_DIR_NAME = ".rafter";
+
+/** Characters that continue a file name: `.rafter.yml` and `.rafterignore` are not `.rafter`. */
+function isNameChar(c: string): boolean {
+  return /[a-z0-9_.-]/i.test(c);
+}
+
+/**
+ * True if `text` names the rafter dir: `.rafter` as a whole path component
+ * (so `~/.rafter`, `$HOME/.rafter`, `${HOME}/.rafter`, `/home/u/.rafter`,
+ * `./.rafter/x`, `'.rafter'` inside code), case-insensitively because macOS
+ * file systems are. An unquoted glob component that could expand to it
+ * (`~/.raf*`, `.r?fter`, `.*`) counts too. Linear: one indexOf walk plus one
+ * pass over components.
+ */
+function namesRafterDir(text: string, globs: boolean): boolean {
+  const t = text.toLowerCase();
+  for (let i = t.indexOf(RAFTER_DIR_NAME); i !== -1; i = t.indexOf(RAFTER_DIR_NAME, i + 1)) {
+    const before = i === 0 ? "" : t[i - 1];
+    const after = t[i + RAFTER_DIR_NAME.length] ?? "";
+    if ((before === "" || !isNameChar(before)) && (after === "" || !isNameChar(after))) return true;
+  }
+  if (!globs) return false;
+  // Bash never lets a wildcard match a leading dot, so only a component that
+  // starts with a literal "." can glob to ".rafter". Over-approximate the
+  // match: the literal characters outside brackets must appear in order in
+  // "rafter"; `*`, `?` and a whole `[...]` are free.
+  for (const comp of t.split("/")) {
+    if (comp[0] !== "." || !/[*?[]/.test(comp)) continue;
+    const want = "rafter";
+    let k = 0;
+    let inBracket = false;
+    let ok = true;
+    for (let j = 1; j < comp.length; j++) {
+      const c = comp[j];
+      if (inBracket) { if (c === "]") inBracket = false; continue; }
+      if (c === "[") { inBracket = true; continue; }
+      if (c === "*" || c === "?") continue;
+      while (k < want.length && want[k] !== c) k++;
+      if (k === want.length) { ok = false; break; }
+      k++;
+    }
+    if (ok) return true;
+  }
+  return false;
+}
+
+/**
+ * Read-only commands: they can neither write a file nor run another program
+ * when given no output redirect. Deliberately narrow. NOT here: sed (its `w`
+ * and `e` commands write and execute without -i), less (`-o` writes a log),
+ * tee/cp/mv/rm/ln/chmod/touch/truncate/dd, and anything that runs a program.
+ */
+const READ_ONLY_EXECS = new Set([
+  "cat", "more", "head", "tail", "ls", "stat", "file", "wc",
+  "grep", "egrep", "fgrep", "rg", "jq", "diff", "cmp",
+  "md5sum", "sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum",
+  "shasum", "b2sum", "cksum",
+  "find", "test", "[", "realpath", "readlink", "du",
+  "cd", "pushd", "popd",
+]);
+/** find actions that delete, run a program, or write a file. */
+const FIND_WRITE_ACTIONS = new Set([
+  "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls",
+]);
+/** Only a bare name or a system bin dir: `./cat` is whatever the agent wrote there. */
+const SYSTEM_BIN = /^(?:\/usr(?:\/local)?|\/opt\/homebrew)?\/s?bin\/[^/]+$/;
+const WRITE_REDIRECTS = new Set([">", ">>"]);
+
+interface RafterDirScan { protected: boolean; }
+
+/** True if some statement names the rafter dir and is not read-only. */
+function rafterDirScan(command: string): boolean {
+  const acc: RafterDirScan = { protected: false };
+  scanRafterDirStatements(command, 0, acc);
+  return acc.protected;
+}
+
+function scanRafterDirStatements(command: string, depth: number, acc: RafterDirScan): void {
+  // Past the recursion cap, or on a desynchronized parse, the structure is
+  // unknown: FAIL CLOSED — a reference anywhere in the text protects it.
+  if (depth > MAX_SANITIZE_DEPTH) {
+    if (namesRafterDir(command, false)) acc.protected = true;
+    return;
+  }
+  const { pieces, unterminated } = tokenize(command);
+  if (unterminated && namesRafterDir(command, false)) acc.protected = true;
+
+  let stmt: Piece[] = [];
+  const flush = () => { scanRafterDirStatement(stmt, acc); stmt = []; };
+  for (let i = 0; i < pieces.length; i++) {
+    const p = pieces[i];
+    for (const sub of p.substs) scanRafterDirStatements(sub, depth + 1, acc);
+    if (p.op !== null && CHAIN_OPS.has(p.op)) {
+      // `>|`, `>&`, `&>`, `&>>` are redirects spelled with a chain character;
+      // splitting on them would orphan the target from its `>`.
+      const prev = pieces[i - 1];
+      const next = pieces[i + 1];
+      const afterRedirect = p.op !== "&&" && p.op !== "||" && !!prev && prev.end === p.start && WRITE_REDIRECTS.has(prev.op ?? "");
+      const beforeRedirect = p.op === "&" && !!next && next.start === p.end && WRITE_REDIRECTS.has(next.op ?? "");
+      if (!afterRedirect && !beforeRedirect) { flush(); continue; }
+    }
+    stmt.push(p);
+  }
+  flush();
+}
+
+function scanRafterDirStatement(stmt: Piece[], acc: RafterDirScan): void {
+  let argv0 = -1;
+  let redirect = false;
+  let names = false;
+  for (let i = 0; i < stmt.length; i++) {
+    const p = stmt[i];
+    if (p.op !== null) {
+      if (WRITE_REDIRECTS.has(p.op) && !discardsOutput(stmt, i)) redirect = true;
+      continue;
+    }
+    const prevOp = i > 0 ? stmt[i - 1].op : null;
+    const isRedirectTarget = prevOp !== null && REDIRECT_OPS.has(prevOp);
+    // Executing a binary that lives in the dir (`~/.rafter/bin/betterleaks
+    // version`) is not a reference; its arguments still are. Only an UNQUOTED
+    // argv0 is a path the shell runs: a quoted one is a heredoc body line or
+    // other code (`open('/home/u/.rafter/config.json','w')`), never a binary.
+    if (argv0 === -1 && !isRedirectTarget) {
+      argv0 = i;
+      if (!p.quoted && !ENV_ASSIGNMENT.test(p.text)) continue;
+    }
+    if (namesRafterDir(p.text, !p.quoted)) names = true;
+  }
+  if (names && (redirect || !statementReadOnly(stmt, argv0))) acc.protected = true;
+}
+
+/** `2>/dev/null`, `2>&1`, `>&-`: an output redirect that writes no file. */
+function discardsOutput(stmt: Piece[], i: number): boolean {
+  let j = i + 1;
+  let dup = false;
+  if (stmt[j]?.op === "&" && stmt[j].start === stmt[i].end) { dup = true; j++; }
+  const target = stmt[j];
+  if (!target || target.op !== null || target.substs.length > 0) return false;
+  return dup ? /^(?:\d+|-)$/.test(target.text) : target.text === "/dev/null";
+}
+
+function statementReadOnly(stmt: Piece[], argv0: number): boolean {
+  if (argv0 === -1) return true; // empty, or only an input redirect
+  const head = stmt[argv0];
+  if (!head.quoted && ENV_ASSIGNMENT.test(head.text)) return false;
+  if (head.text.includes("/") && !SYSTEM_BIN.test(head.text)) return false;
+  const exec = head.text.slice(head.text.lastIndexOf("/") + 1);
+  if (!READ_ONLY_EXECS.has(exec)) return false;
+  const args = stmt.slice(argv0 + 1).filter((p) => p.op === null);
+  switch (exec) {
+    case "find":
+      return !args.some((a) => FIND_WRITE_ACTIONS.has(a.text));
+    case "rg": // --pre runs a program on every file searched
+      return !args.some((a) => a.text.startsWith("--pre"));
+    case "file": // -C compiles a magic file, writing it
+      return !args.some((a) => a.text === "--compile" || /^-[A-Za-z]*C/.test(a.text));
+    case "cd": case "pushd": case "popd":
+      // Claude Code's Bash tool keeps its cwd between calls, so a cd INTO the
+      // dir would make the next call's bare `config.json` a write there with
+      // no reference left to catch. cd elsewhere stays read-only.
+      return !args.some((a) => a.substs.length > 0 || namesRafterDir(a.text, !a.quoted));
+    default:
+      return true;
+  }
 }
 
 /** True if any statement (or any command substitution) disarms rafter. */

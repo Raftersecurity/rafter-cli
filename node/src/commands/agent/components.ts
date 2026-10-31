@@ -173,7 +173,7 @@ function claudeCodeHooks(): ComponentSpec {
 
       settings.hooks.PreToolUse.push(
         { matcher: "Bash", hooks: [pre] },
-        { matcher: "Write|Edit", hooks: [pre] },
+        { matcher: "Write|Edit|MultiEdit", hooks: [pre] },
       );
       // Narrow to tools that produce scannable output (shell output + file
       // writes); avoids firing posttool on every Read/MCP call (latency).
@@ -638,8 +638,9 @@ function geminiHooks(): ComponentSpec {
       );
       // Explicit Gemini built-in tool names per geminicli.com/docs/hooks/reference
       // (rf-044o verification).
+      // No tool is named `edit`: Gemini's edit tool is `replace`.
       s.hooks.BeforeTool.push({
-        matcher: "run_shell_command|write_file|replace|edit",
+        matcher: "run_shell_command|write_file|replace",
         hooks: [{ type: "command", command: "rafter hook pretool --format gemini", timeout: 5000 }],
       });
       s.hooks.AfterTool.push({
