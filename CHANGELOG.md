@@ -9,7 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`rafter secrets` and `scan local` take several paths** (`rafter secrets a.py b.py infra/c.tf`) and merge them into one report with the same JSON shape. Before, Node scanned only the first path and Python failed with `No such command 'b.py'`. Both Node and Python.
+- **`-a` / `--agent` works after a subcommand** (`rafter secrets . -a`); both runtimes rejected it as an unknown option. `agent audit` and `skill review`, which have their own `--agent <value>` filter, keep it; `rafter -a <cmd>` still works there. Both Node and Python.
+- **`--out <file>` on `secrets` and `scan local`** writes the JSON or SARIF payload to a file, for agents whose sandbox blocks shell redirection. Both Node and Python.
 - **`rafter telemetry show` and `rafter telemetry clear`: local usage counters.** rafter now counts unknown commands and flags, exit codes per command, hook decisions per risk tier, scan engines, fall-backs and durations, and crash error classes in `~/.rafter/usage/` (kept 7 days). Keys come from a fixed allowlist (`shared-docs/usage-counters.json`) and never carry paths, repo names, command lines, secrets or error messages. An unknown command or flag is kept only when it is close to one of rafter's own names or built from their words; anything else, such as a project name, is recorded as `other`. Nothing is uploaded; there is no network code. `telemetry show` adds the CLI version, runtime, OS and skill staleness, and `--json` gives a stable object to paste into an issue. Off with `agent.usage.enabled: false` in `~/.rafter/config.json` (a project `.rafter.yml` cannot set it), `RAFTER_TELEMETRY=0` or `DO_NOT_TRACK=1`. Both Node and Python.
+
+### Changed
+
+- **A clean text result from `rafter secrets` says it covers secrets only**, not a code security review. JSON output is unchanged. Both Node and Python.
+- **Node: `--staged`, `--diff` and `--range` outside a git repo** print `Error: Not in a git repository`, as Python does, instead of git's raw error.
 
 ### Fixed
 

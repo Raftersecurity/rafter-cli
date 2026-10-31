@@ -11,7 +11,7 @@ import os
 import subprocess
 import sys
 import time
-from typing import Optional
+from typing import List, Optional
 
 import typer
 
@@ -95,10 +95,11 @@ def _run_remote_scan(repo, branch, api_key, fmt_, skip_interactive, quiet, mode=
 
 @local_app.callback(invoke_without_command=True)
 def scan_local(
-    path: str = typer.Argument(".", help="File or directory to scan"),
+    paths: List[str] = typer.Argument(["."], help="File(s) or directory(ies) to scan"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Only output if secrets found"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
     format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
+    out: Optional[str] = typer.Option(None, "--out", help="Write the --json/--format output to this file instead of stdout (status lines still go to stderr)"),
     staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
     diff: Optional[str] = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
     range_: Optional[str] = typer.Option(None, "--range", help="Scan only files changed in a git commit range, e.g. main..HEAD"),
@@ -127,6 +128,13 @@ def scan_local(
     )
     from ..core.config_manager import ConfigManager
     from ..core.custom_patterns import load_suppressions, policy_ignore_to_suppressions
+
+    # Multiple paths (`rafter secrets app/a.py app/b.py infra/c.tf`): scan each
+    # and merge into one report below. --diff/--range/--staged/--watch scope to
+    # the repo (or a single watch root), not a file list, so they use the first
+    # path only — the same thing they did before this command could take more
+    # than one path at all.
+    path = paths[0]
 
     # Discover and anchor the policy from the scan TARGET, not the process cwd
     # (sable-lu0j), so an ambient `.rafter.yml` in cwd cannot suppress real
@@ -176,6 +184,7 @@ def scan_local(
             quiet=quiet,
             format=format,
             engine_pref=engine,
+            out=out,
         )
         return
 
@@ -196,6 +205,7 @@ def scan_local(
             quiet=quiet,
             format=format,
             engine_pref=engine,
+            out=out,
         )
         return
 
@@ -215,36 +225,40 @@ def scan_local(
             format=format,
             not_repo_message="Error: Not in a git repository",
             engine_pref=engine,
+            out=out,
         )
         return
 
-    # Default: scan path
-    resolved_path = os.path.abspath(path)
-    if not os.path.exists(resolved_path):
-        print(f"Error: Path not found: {resolved_path}", file=sys.stderr)
-        raise typer.Exit(code=2)
+    # Default: scan every requested path and merge into one report.
+    resolved_paths = [os.path.abspath(p) for p in paths]
+    for p in resolved_paths:
+        if not os.path.exists(p):
+            print(f"Error: Path not found: {p}", file=sys.stderr)
+            raise typer.Exit(code=2)
 
-    # --watch
+    # --watch (first path only — see the note above)
     if watch:
-        _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
+        _watch_and_scan(resolved_paths[0], engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
     scan_start = time.monotonic()
     eng, select_reason = _select_engine(engine, quiet, auto_update_enabled)
     report = _build_engine_report(engine, eng, select_reason)
 
-    if os.path.isdir(resolved_path):
-        if not quiet:
-            print(f"Scanning directory: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore, report=report)
-    else:
-        if not quiet:
-            print(f"Scanning file: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
-        results = _scan_file(resolved_path, eng, custom_patterns, report=report)
+    all_results = []
+    for p in resolved_paths:
+        if os.path.isdir(p):
+            if not quiet:
+                print(f"Scanning directory: {p} ({_engine_label(eng)})", file=sys.stderr)
+            all_results.extend(_scan_directory(p, eng, scan_cfg, history=history, respect_gitignore=gitignore, report=report))
+        else:
+            if not quiet:
+                print(f"Scanning file: {p} ({_engine_label(eng)})", file=sys.stderr)
+            all_results.extend(_scan_file(p, eng, custom_patterns, report=report))
 
     count_scan(report, time.monotonic() - scan_start)
-    filtered = _apply_baseline(results, baseline_entries)
-    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions, report=report)
+    filtered = _apply_baseline(all_results, baseline_entries)
+    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions, report=report, out=out)
 
 
 # ── rafter secrets — top-level alias for local secret scanning ────────
@@ -263,10 +277,11 @@ secrets_app = typer.Typer(
 
 @secrets_app.callback(invoke_without_command=True)
 def secrets(
-    path: str = typer.Argument(".", help="File or directory to scan"),
+    paths: List[str] = typer.Argument(["."], help="File(s) or directory(ies) to scan"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Only output if secrets found"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
     format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
+    out: Optional[str] = typer.Option(None, "--out", help="Write the --json/--format output to this file instead of stdout (status lines still go to stderr)"),
     staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
     diff: Optional[str] = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
     range_: Optional[str] = typer.Option(None, "--range", help="Scan only files changed in a git commit range, e.g. main..HEAD"),
@@ -279,10 +294,11 @@ def secrets(
 ):
     """Scan files/directories for hardcoded secrets."""
     return scan_local(
-        path=path,
+        paths=paths,
         quiet=quiet,
         json_output=json_output,
         format=format,
+        out=out,
         staged=staged,
         diff=diff,
         range_=range_,

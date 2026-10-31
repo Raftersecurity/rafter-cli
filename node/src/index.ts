@@ -114,6 +114,37 @@ program.addCommand(
     })
 );
 
+/**
+ * `-a`/`--agent` is declared only on the root `program`, so Commander rejects
+ * it as an unknown option once it appears after a subcommand name
+ * (`rafter secrets . -a`, `rafter scan local . -a`). The actual mode switch
+ * already happens above via the `process.argv` scan, which is
+ * position-independent — this just teaches every command in the tree to
+ * accept the flag syntactically instead of erroring on it.
+ *
+ * Skipped on a command that declares its own `--agent <value>` option
+ * (`agent audit`, `skill review` filter by agent type) and on every parent
+ * of one: Commander lets a parent consume its options anywhere in argv, so a
+ * boolean `--agent` on `skill` would swallow `skill review --agent codex` and
+ * leave `codex` as a stray positional. `rafter -a agent audit ...` (the flag
+ * before the subcommand) still works for those two.
+ */
+function declaresAgentOption(cmd: Command): boolean {
+  return (
+    cmd.options.some((o) => o.long === "--agent") ||
+    cmd.commands.some(declaresAgentOption)
+  );
+}
+function allowAgentFlagAtAnyDepth(cmd: Command): void {
+  if (!declaresAgentOption(cmd)) {
+    cmd.option("-a, --agent", "Plain output for AI agents (no colors/emoji)");
+  }
+  for (const sub of cmd.commands) {
+    allowAgentFlagAtAnyDepth(sub);
+  }
+}
+allowAgentFlagAtAnyDepth(program);
+
 // Non-blocking update check — runs after command, prints to stderr
 checkForUpdate(VERSION).then((notice) => {
   if (notice) process.stderr.write(notice);

@@ -1931,6 +1931,7 @@ def _output_empty_diff_scan(
     format: str,
     suppressions,
     report: EngineReport | None = None,
+    out: str | None = None,
 ) -> None:
     """Emit the result of a diff scan that had no files to scan.
 
@@ -1945,7 +1946,7 @@ def _output_empty_diff_scan(
         # would emit literally as "[green]...[/green]".
         rprint(fmt.success(empty_message), file=sys.stderr)
     _output_scan_results(
-        [], json_output, quiet, context_label, format=format, suppressions=suppressions, report=report
+        [], json_output, quiet, context_label, format=format, suppressions=suppressions, report=report, out=out
     )
 
 
@@ -1971,6 +1972,7 @@ def _run_git_added_line_scan(
     format: str,
     not_repo_message: str = "Error: Not in a git repository or invalid ref",
     engine_pref: str = "auto",
+    out: str | None = None,
 ) -> None:
     """Parse a unified diff for + lines and scan with the patterns engine."""
     from ..utils.git_diff import parse_unified_diff_added_lines
@@ -1992,14 +1994,14 @@ def _run_git_added_line_scan(
 
     if not patch.strip():
         _output_empty_diff_scan(
-            empty_message, json_output, quiet, context_label, format, suppressions, report
+            empty_message, json_output, quiet, context_label, format, suppressions, report, out=out
         )
         raise typer.Exit(code=0)
 
     added = parse_unified_diff_added_lines(patch)
     if not added:
         _output_empty_diff_scan(
-            empty_message, json_output, quiet, context_label, format, suppressions, report
+            empty_message, json_output, quiet, context_label, format, suppressions, report, out=out
         )
         raise typer.Exit(code=0)
 
@@ -2027,7 +2029,7 @@ def _run_git_added_line_scan(
     all_results = _apply_exclude_paths(all_results, exclude, repo_root)
     filtered = _apply_baseline(all_results, baseline_entries)
     _output_scan_results(
-        filtered, json_output, quiet, context_label, format=format, suppressions=suppressions, report=report
+        filtered, json_output, quiet, context_label, format=format, suppressions=suppressions, report=report, out=out
     )
 
 
@@ -2161,6 +2163,21 @@ def _scan_directory(
     return _apply_exclude_paths(results, exclude, dir_path)
 
 
+def _write_json_output(text: str, out_path: str | None, quiet: bool) -> bool:
+    """Write a JSON/SARIF payload to ``--out <file>`` instead of stdout, so an
+    agent in a sandbox without shell redirects can still get the result onto
+    disk. Status lines keep going to stderr regardless. Returns True when it
+    wrote the file (the caller then skips its normal stdout print).
+    """
+    if not out_path:
+        return False
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(text if text.endswith("\n") else text + "\n")
+    if not quiet:
+        print_stderr(fmt.info(f"Results written to {out_path}"))
+    return True
+
+
 def _output_scan_results(
     results: list[ScanResult],
     json_output: bool,
@@ -2170,6 +2187,7 @@ def _output_scan_results(
     exit_on_findings: bool = True,
     suppressions: list | None = None,
     report: EngineReport | None = None,
+    out: str | None = None,
 ) -> None:
     from ..core.custom_patterns import apply_suppressions
     suppressions = suppressions or []
@@ -2204,7 +2222,7 @@ def _output_scan_results(
         ))
 
     if format == "sarif":
-        _output_sarif(kept_results, scan_exit_code)
+        _output_sarif(kept_results, scan_exit_code, out=out, quiet=quiet)
         return
 
     if json_output or format == "json":
@@ -2218,7 +2236,7 @@ def _output_scan_results(
             ]}
             for r in kept_results
         ]
-        out: dict = {
+        payload: dict = {
             "_note": (
                 "Local-only scan: pattern-based detection without agentic-intelligence triage. "
                 "Findings have not been evaluated for context (public exposure, key validity, "
@@ -2232,19 +2250,21 @@ def _output_scan_results(
         # sable-jiqb — report the engine actually used and any fall-back, so a
         # json/MCP/CI consumer is never left thinking betterleaks ran when it did not.
         if report is not None:
-            out["engine_requested"] = report.requested
-            out["engine_used"] = report.used
-            out["degraded"] = report.degraded
+            payload["engine_requested"] = report.requested
+            payload["engine_used"] = report.used
+            payload["degraded"] = report.degraded
             if report.degraded and report.reason:
-                out["degraded_reason"] = report.reason
+                payload["degraded_reason"] = report.reason
         if suppressed:
             from dataclasses import asdict
-            out["_suppressed"] = [asdict(s) for s in suppressed]
+            payload["_suppressed"] = [asdict(s) for s in suppressed]
         # Files that could not be read (sable-ilbx) — a reader can tell an empty
         # `results` from an incomplete scan.
         if read_errors:
-            out["unreadable"] = read_errors
-        print(json.dumps(out, indent=2))
+            payload["unreadable"] = read_errors
+        json_text = json.dumps(payload, indent=2)
+        if not _write_json_output(json_text, out, quiet):
+            print(json_text)
         if exit_on_findings:
             raise typer.Exit(code=scan_exit_code)
         return
@@ -2262,7 +2282,8 @@ def _output_scan_results(
                 rprint()
         elif not quiet:
             msg = f"No secrets detected in {context}" if context else "No secrets detected"
-            rprint(f"\n{fmt.success(msg)}\n")
+            rprint(f"\n{fmt.success(msg)}")
+            rprint("This covers secrets only — it is not a code security review.\n")
         if exit_on_findings:
             raise typer.Exit(code=scan_exit_code)
         return
@@ -2435,7 +2456,12 @@ def _log_watch_findings(logger: AuditLogger, results: list[ScanResult]) -> None:
             )
 
 
-def _output_sarif(results: list[ScanResult], empty_exit_code: int = 0) -> None:
+def _output_sarif(
+    results: list[ScanResult],
+    empty_exit_code: int = 0,
+    out: str | None = None,
+    quiet: bool = False,
+) -> None:
     """Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration."""
     rules: dict[str, dict] = {}
     sarif_results = []
@@ -2474,7 +2500,9 @@ def _output_sarif(results: list[ScanResult], empty_exit_code: int = 0) -> None:
             "results": sarif_results,
         }],
     }
-    print(json.dumps(sarif, indent=2))
+    sarif_text = json.dumps(sarif, indent=2)
+    if not _write_json_output(sarif_text, out, quiet):
+        print(sarif_text)
     # A read error (sable-ilbx) makes an otherwise-empty scan non-clean; the
     # caller passes that exit code in.
     raise typer.Exit(code=1 if results else empty_exit_code)

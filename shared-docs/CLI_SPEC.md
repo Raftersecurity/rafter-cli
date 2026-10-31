@@ -59,7 +59,7 @@ The CLI follows UNIX principles:
 
 ## Global Options
 
-- `-a, --agent` — Plain output (no colors, no emoji)
+- `-a, --agent` — Plain output (no colors, no emoji). Accepted anywhere on the command line — before the subcommand (`rafter -a secrets .`) or after it (`rafter secrets . -a`) — both runtimes. Exception: `rafter agent audit` and `rafter skill review` already use `--agent <value>` for an unrelated filter, so on those two commands specifically, `-a`/`--agent` for plain output must come before the subcommand.
 - `-V, --version` — Print version and exit (preferred form; `rafter version` subcommand also works)
 - `-h, --help` — Show help
 
@@ -442,7 +442,7 @@ Exit codes:
 
 Persists `skillInstallations.<platform>.<name>.enabled = false` in `~/.rafter/config.json`.
 
-### rafter secrets [PATH] [OPTIONS]
+### rafter secrets [PATH...] [OPTIONS]
 
 Aliases: `rafter scan local`, `rafter agent scan` (both still supported for backward compatibility)
 
@@ -450,10 +450,11 @@ Scan files or directories for **hardcoded secrets** (21+ patterns + betterleaks)
 
 The `secrets` spelling is preferred because it makes the scope explicit; `scan local` reads as "the full scan, locally" which it is not.
 
-- `[PATH]` — file or directory (default: `.`)
+- `[PATH...]` — one or more files or directories (default: `.`). Each is scanned and the findings are merged into a single report — one JSON `results` array, one exit code, one `--out` file — identical in shape to a single-path scan. `--staged`/`--diff`/`--range`/`--watch` scope to a repository (or a single watch root), not a file list, so with those flags only the first path is used.
 - `-q, --quiet` — only output if secrets found
 - `--json` — output as JSON
 - `--format <format>` — output format: `text`, `json`, or `sarif` (default: `text`)
+- `--out <file>` — write the `--json`/`--format json`/`--format sarif` payload to this file instead of stdout; the status line (`Scanning file/directory: ...`, `Results written to <file>`) still goes to stderr. For an agent in a sandbox without shell redirects. No effect with the default `text` format.
 - `--staged` — scan **added/modified lines only** in the git staged diff (`git diff -U0 --cached`); patterns engine only; reports `file:line` from the post-change side
 - `--diff <ref>` — scan **added/modified lines only** in the unified diff since `<ref>` (`git diff -U0 <ref>`); patterns engine only; pre-existing secrets in touched files are not re-flagged unless their line appears as `+` in the diff
 - `--range <a>..<b>` — scan **added/modified lines only** in a git commit range (`git diff -U0 <a>..<b>`); patterns engine only, same scope semantics as `--diff`. Lets a user scope the scan to a range's changed files instead of the whole tree on a large repo. A range that git would read as an option (leading `-`) exits `2`.
@@ -464,9 +465,13 @@ The `secrets` spelling is preferred because it makes the scope explicit; `scan l
 - `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree. Applies to both engines: the patterns engine filters its walk that way, and betterleaks walks the scan root once under a generated `-c` config. That config extends the one betterleaks would otherwise choose (`BETTERLEAKS_CONFIG` / `GITLEAKS_CONFIG`, then `BETTERLEAKS_CONFIG_TOML` / `GITLEAKS_CONFIG_TOML`, then the target's own `.betterleaks.toml` / `.gitleaks.toml`, else the default rules) and adds a global path allowlist for what `git ls-files --others --ignored --exclude-standard --directory` reports, plus submodules, nested repositories and `.git`. betterleaks is never handed a list of file paths: 1.1.x rebuilds its detector for every path argument, and with an extending config it applied rules to only the first two. A betterleaks failure or timeout still falls back to patterns, with the cause in the warning and recorded in the engine fields below.
 - `--auto-update` / `--no-auto-update` — auto-update a **stale rafter-managed betterleaks binary** before scanning (default: on). A leftover binary from an older rafter (a gitleaks-8.x install from before the rename, or an older betterleaks) runs `version` fine but emits a JSON shape the current parser rejects, which would otherwise silently yield **zero findings** on the default engine. When the managed binary's version doesn't match the pinned one, rafter downloads the pinned version (prompting first in an interactive TTY). `--no-auto-update` (or `scan.auto_update_betterleaks: false`) skips the update and falls back to the **patterns** engine for that scan, printing a one-line CTA (`rafter agent update-betterleaks`) — never a silent zero. Only the rafter-managed binary at `~/.rafter/bin/betterleaks` is auto-updated; a binary on `PATH` is left untouched (a non-array parse there warns with the same CTA).
 
-Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error — a bad path or ref, not a git repository, or a file that could not be read (a clean result over a file the scan could not open is reported as exit 2, not 0).
+Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error — a bad path or ref, not a git repository, or a file that could not be read (a clean result over a file the scan could not open is reported as exit 2, not 0). `--staged`/`--diff`/`--range` report exit 2 with a one-line "Not in a git repository" explanation when run outside a git work tree, rather than git's own raw usage error.
 
 > **Note:** `--watch` mode does not exit on findings — it prints results inline and keeps watching. Findings are logged to `audit.jsonl` in real time. Requires `chokidar` (Node, bundled) or `watchdog` (Python: `pip install watchdog`).
+
+#### Text output
+
+A clean text-mode result (`✓ No secrets detected`) is followed by one line noting the scan covered secrets only, not a full code-security review — the same scope note the JSON `_note` field already carries. The JSON/SARIF shape is unaffected.
 
 #### JSON Output (`--json`)
 
