@@ -110,6 +110,64 @@ def _list_bundled() -> list[SkillMeta]:
     return [s for n in KNOWN_SKILL_NAMES if (s := _load_bundled_skill(n)) is not None]
 
 
+# Frontmatter value that marks a SKILL.md as rafter-authored. Every bundled
+# skill under `resources/skills/` carries `publisher: rafter-security` for
+# exactly this check — so retired-skill cleanup (below) can tell "an old
+# rafter skill we renamed away from" from "a user's own skill that happens to
+# share a directory name" before deleting anything.
+RAFTER_SKILL_PUBLISHER = "rafter-security"
+
+
+def _is_rafter_authored_skill_dir(skill_dir: Path) -> bool:
+    """True if `skill_dir/SKILL.md` identifies itself as rafter's."""
+    skill_md = skill_dir / "SKILL.md"
+    try:
+        content = skill_md.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return _parse_frontmatter(content).get("publisher") == RAFTER_SKILL_PUBLISHER
+
+
+# Names of rafter skills that USED to ship but no longer do (renamed or
+# removed). Empty today — add a name here when retiring a skill, and every
+# install path that manages a skills directory (`remove_retired_skills`
+# below) cleans up the old copy on the next install/enable instead of
+# needing new hand-written unlink code per rename.
+RETIRED_SKILL_NAMES: tuple[str, ...] = ()
+
+
+def remove_retired_skills(
+    skills_base_dir: Path, retired_names: tuple[str, ...] | None = None
+) -> list[str]:
+    """Remove any retired-skill directories found under `skills_base_dir`
+    (a `<platform>/skills` style directory containing one subdir per skill,
+    each holding a SKILL.md). Only removes a directory whose SKILL.md
+    identifies itself as rafter-authored — a user skill that happens to
+    reuse a retired name is left alone. Returns the names actually removed.
+
+    `retired_names` defaults to `RETIRED_SKILL_NAMES`; tests pass an explicit
+    tuple to simulate a rename without needing a real retired skill yet.
+    """
+    if retired_names is None:
+        retired_names = RETIRED_SKILL_NAMES
+    removed: list[str] = []
+    for name in retired_names:
+        skill_dir = skills_base_dir / name
+        if not (skill_dir / "SKILL.md").exists():
+            continue
+        if not _is_rafter_authored_skill_dir(skill_dir):
+            continue
+        # A symlinked skill dir: drop the link, never follow it into its
+        # target. Errors propagate (as Node's rmSync does) rather than
+        # reporting a removal that did not happen.
+        if skill_dir.is_symlink():
+            skill_dir.unlink()
+        else:
+            shutil.rmtree(skill_dir)
+        removed.append(name)
+    return removed
+
+
 def _resolve_skill(name: str) -> SkillMeta | None:
     return _load_bundled_skill(name.strip())
 

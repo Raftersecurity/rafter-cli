@@ -181,3 +181,140 @@ class TestSkillInstallUninstall:
         entry2 = cfg2.get("skillInstallations", {}).get("claude-code", {}).get("rafter-secure-design")
         assert entry2 is not None
         assert entry2["enabled"] is False
+
+
+class TestRemoveRetiredSkills:
+    """Tests for the generic retired-skill cleanup used by every skill
+    install path (`_install_skills_to` in agent.py, `_skills_component` in
+    agent_components.py). Before this, renaming or removing a bundled skill
+    needed new hand-written unlink code at every install path, and the old
+    directory would otherwise survive forever on a machine that installed it
+    under the old name. This fails if a "retired" directory is left behind
+    after a simulated rename, or if cleanup deletes a user's own skill that
+    happens to reuse the retired name.
+    """
+
+    @staticmethod
+    def _write_skill(base: Path, name: str, publisher: str | None) -> Path:
+        skill_dir = base / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        frontmatter = (
+            f"---\nname: {name}\npublisher: {publisher}\n---\n"
+            if publisher is not None
+            else f"---\nname: {name}\n---\n"
+        )
+        (skill_dir / "SKILL.md").write_text(f"{frontmatter}\n# {name}\n", encoding="utf-8")
+        return skill_dir
+
+    def test_removes_rafter_authored_skill_once_retired(self, tmp_path: Path):
+        from rafter_cli.commands.skill import remove_retired_skills
+
+        # "install" under the old name, as a real install path would have.
+        skill_dir = self._write_skill(tmp_path, "rafter-old-name", "rafter-security")
+        assert skill_dir.exists()
+
+        # Simulate the rename landing: the name is now retired.
+        removed = remove_retired_skills(tmp_path, ("rafter-old-name",))
+
+        assert removed == ["rafter-old-name"]
+        assert not skill_dir.exists()
+
+    def test_leaves_user_authored_skill_alone(self, tmp_path: Path):
+        from rafter_cli.commands.skill import remove_retired_skills
+
+        skill_dir = self._write_skill(tmp_path, "rafter-old-name", None)  # no publisher — not ours
+        removed = remove_retired_skills(tmp_path, ("rafter-old-name",))
+
+        assert removed == []
+        assert skill_dir.exists()
+
+    def test_leaves_different_publishers_same_named_skill_alone(self, tmp_path: Path):
+        from rafter_cli.commands.skill import remove_retired_skills
+
+        skill_dir = self._write_skill(tmp_path, "rafter-old-name", "someone-else")
+        removed = remove_retired_skills(tmp_path, ("rafter-old-name",))
+
+        assert removed == []
+        assert skill_dir.exists()
+
+    def test_noop_when_retired_name_never_installed(self, tmp_path: Path):
+        from rafter_cli.commands.skill import remove_retired_skills
+
+        removed = remove_retired_skills(tmp_path, ("never-installed",))
+        assert removed == []
+
+    def test_is_rafter_authored_skill_dir_distinguishes_lookalikes(self, tmp_path: Path):
+        from rafter_cli.commands.skill import _is_rafter_authored_skill_dir
+
+        rafter_dir = self._write_skill(tmp_path, "rafter-x", "rafter-security")
+        user_dir = self._write_skill(tmp_path, "rafter-y", None)
+        assert _is_rafter_authored_skill_dir(rafter_dir) is True
+        assert _is_rafter_authored_skill_dir(user_dir) is False
+
+    def test_symlinked_retired_skill_dir_unlinks_link_not_target(self, tmp_path: Path):
+        """Fails if cleanup follows the symlink (deleting the target) or
+        reports a removal while the link is still there."""
+        from rafter_cli.commands.skill import remove_retired_skills
+
+        target = self._write_skill(tmp_path / "elsewhere", "rafter-old-name", "rafter-security")
+        base = tmp_path / "skills"
+        base.mkdir()
+        link = base / "rafter-old-name"
+        link.symlink_to(target, target_is_directory=True)
+
+        removed = remove_retired_skills(base, ("rafter-old-name",))
+
+        assert removed == ["rafter-old-name"]
+        assert not link.exists() and not link.is_symlink()
+        assert (target / "SKILL.md").exists()
+
+
+class TestRetiredSkillCleanupThroughInstall:
+    """Fails if an install path stops calling remove_retired_skills:
+    RETIRED_SKILL_NAMES is empty today, so one name is injected and the real
+    `agent init` / `agent enable` commands run against a temp HOME."""
+
+    @pytest.fixture
+    def fake_home(self, tmp_path: Path, monkeypatch):
+        import rafter_cli.commands.skill as skill_mod
+        from rafter_cli.commands import agent_components
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(skill_mod, "RETIRED_SKILL_NAMES", ("rafter-old-name",))
+        agent_components.reset_registry_cache()
+        (tmp_path / ".claude").mkdir()
+        yield tmp_path
+        agent_components.reset_registry_cache()
+
+    @staticmethod
+    def _plant_retired(skills_dir: Path) -> Path:
+        retired = skills_dir / "rafter-old-name"
+        retired.mkdir(parents=True)
+        (retired / "SKILL.md").write_text(
+            "---\nname: rafter-old-name\npublisher: rafter-security\n---\n", encoding="utf-8"
+        )
+        return retired
+
+    def test_agent_init_removes_retired_skill(self, fake_home: Path):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        retired = self._plant_retired(fake_home / ".claude" / "skills")
+        result = CliRunner().invoke(app, ["agent", "init", "--with-claude-code"])
+
+        assert result.exit_code == 0, result.output
+        assert (fake_home / ".claude" / "skills" / "rafter" / "SKILL.md").exists()
+        assert not retired.exists()
+
+    def test_agent_enable_skills_removes_retired_skill(self, fake_home: Path):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        retired = self._plant_retired(fake_home / ".claude" / "skills")
+        result = CliRunner().invoke(app, ["agent", "enable", "claude-code.skills"])
+
+        assert result.exit_code == 0, result.output
+        assert (fake_home / ".claude" / "skills" / "rafter" / "SKILL.md").exists()
+        assert not retired.exists()
