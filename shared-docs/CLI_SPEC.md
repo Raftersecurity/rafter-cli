@@ -1343,6 +1343,91 @@ Generate shell completion scripts.
 
 - `<shell>` — shell type: `bash`, `zsh`, or `fish`
 
+### rafter telemetry show [OPTIONS]
+
+Print the local usage counters. Nothing leaves this machine: rafter has no code that uploads them.
+
+- `--json` — output the report object below to stdout
+- `--days <n>` — days to include, today (UTC) and the `n - 1` days before it; integer 1 to 7, default 7
+
+Exit codes: `0` success; `2` invalid `--days` (message on stderr: `Error: --days must be an integer from 1 to 7`).
+
+JSON shape (key order is stable; `runtime` is `node` or `python`, `runtime_major` its major version, `os` is `process.platform` / `sys.platform`):
+
+```json
+{
+  "schema": 1,
+  "notice": "Nothing leaves this machine: these counts are stored locally and rafter has no code to upload them.",
+  "cli_version": "0.11.3",
+  "runtime": "node",
+  "runtime_major": 22,
+  "os": "linux",
+  "enabled": true,
+  "enabled_source": "default",
+  "store": "~/.rafter/usage",
+  "days": 7,
+  "since": "2026-10-23",
+  "counters": {
+    "unknown_command": { "unknown_command:scna": 1 },
+    "unknown_option": {},
+    "command": { "command:hook.pretool:exit:0": 41, "command:root:exit:1": 1 },
+    "hook": { "hook:shell:allow:low": 39, "hook:shell:deny:critical": 2 },
+    "scan_engine": {},
+    "scan_fallback": {},
+    "scan_duration": {},
+    "error_class": {}
+  },
+  "skills": [
+    { "name": "rafter", "platform": "claude-code", "installed_version": "0.6.0", "current_version": "0.7.0", "stale": true }
+  ]
+}
+```
+
+- `enabled_source`: `default`, `config` (`agent.usage.enabled` in `~/.rafter/config.json`), `env:RAFTER_TELEMETRY` or `env:DO_NOT_TRACK`.
+- `counters` always has all eight families; each maps full counter keys to counts summed over the window, sorted by key.
+- `skills` lists each installed rafter skill (bundled skill × platform), plus `rafter-security` on `openclaw` when `agent.skills.installedVersion` is set. `stale` is true when the installed `version` differs from the version this CLI ships, or the skill's `rafter_cli_version` frontmatter differs from the running CLI. Paths are not reported.
+- The store is always shown as the literal `~/.rafter/usage`, never an expanded home path.
+
+Text output (without `--json`) prints the same fields, then each non-empty family under a heading, then the skills.
+
+### rafter telemetry clear
+
+Delete `~/.rafter/usage`. Prints one line to stdout; exit code `0`. The `clear` invocation itself is not counted.
+
+### Local usage counters
+
+**Store.** `~/.rafter/usage/<YYYY-MM-DD>.json` (UTC date), one flat object: `"schema": 1` plus `"<counter key>": <count>`. Directory mode `0700`, files `0600`, written by temp file + rename. Files older than 7 days are deleted on the first write of each day.
+
+**When counts are written.** Recorders add to an in-memory buffer; the process writes it once at exit, after the command result is known. Two rafter processes that exit at the same moment can lose one another's increments (the last rename wins); a file is never left half-written, and an unreadable or malformed file is replaced. A failure to count never changes a command's output or exit code, and the counters never write to stdout.
+
+**Keys.** Allowlist: `shared-docs/usage-counters.json`, embedded identically in both runtimes. A key is a family name and `:`-separated parts; a key with any part outside the allowlist is dropped, both when written and when read.
+
+| Family | Key | Recorded |
+|---|---|---|
+| `unknown_command` | `unknown_command:<token>` | The CLI rejects an unknown subcommand. `<token>` is the first unknown token if it passes the token rule below, else `other`. Arguments after it are never read. |
+| `unknown_option` | `unknown_option:<--name>` | The CLI rejects an unknown option. `<--name>` is the name before any `=` if it passes the token rule below, else `other`. The value is never read. |
+| `command` | `command:<path>:exit:<0\|1\|2\|other>` | Every invocation, at exit. `<path>` is the resolved command from the CLI's registered command tree joined with `.` (`secrets`, `agent.scan`, `hook.pretool`; `root` when no subcommand ran), never argv; a path with any name not in the tree is `other`. |
+| `hook` | `hook:<shell\|write\|other>:<allow\|deny\|defer\|ask\|error>:<low\|medium\|high\|critical\|none>` | Each `rafter hook pretool` decision. `error` is a fail-closed deny after an internal error. The risk tier is the command-policy tier for shell tools (`none` when command policy is off), `critical` for a blocked write to rafter's own config, else `none`. |
+| `scan_engine` | `scan_engine:<requested>:<used>` | Each local `rafter secrets` / `rafter scan local` / `rafter agent scan` of a path (not `--staged`, `--diff`, `--range` or `--watch`). Values: `auto`, `betterleaks`, `patterns`, `both`. |
+| `scan_fallback` | `scan_fallback:<missing\|timeout\|error\|stale\|other>` | That scan wanted betterleaks and fell back to patterns. The reason text is mapped to the enum and not stored. |
+| `scan_duration` | `scan_duration:<used>:<lt1s\|1-5s\|5-30s\|30-120s\|gt120s>` | That scan's wall time, bucketed. |
+| `error_class` | `error_class:<path>:<Class>` | An uncaught error. `<Class>` is the error's class name if it matches `^([A-Z][A-Za-z0-9]{0,29})?(Error\|Exception\|Exit\|Interrupt)$`, else `other`. Messages and stack traces are never read. |
+
+**Token rule** (unknown commands and options). A token is kept only if it matches its pattern (`^[a-z][a-z-]{0,31}$` for commands, `^--[a-z][a-z-]{0,31}$` for options) and either:
+
+1. it is within optimal-string-alignment (restricted Damerau-Levenshtein) distance 2 of a registered command name, or of a registered long option name for options; or
+2. every `-`-separated part (after the leading `--` for options) is a word that appears in the CLI's own registered command and option names.
+
+The names and words are derived at runtime from the CLI's own command tree; there is no hand-maintained list. So `scna` (near `scan`), `scan-secrets` (both words are registered) and `--jsn` (near `--json`) are kept, while a project or client name such as `acme-payroll` is recorded as `other`. A short token (three letters or fewer) is often within distance 2 of a short command such as `ci` or `get`, so it is kept.
+
+Both runtimes apply the same rule to their own trees. Two framework differences are normalized: Python leaves out typer's `--install-completion` / `--show-completion` (Node offers completion as a command), and counts a click on/off pair (`--x/--no-x`) as `--no-x` alone, which is how Node registers it. The trees otherwise match except for `rafter agent init-project` (with `--list`, `--only`), which only Node has; tokens matched only through those names can be kept by Node and recorded as `other` by Python.
+
+Never recorded: working directory, file paths, repo names or roots, branch names, command lines (including commands the hook evaluated), secrets, finding contents, error messages, usernames, hostnames. There is no install id and no network code.
+
+**Setting.** `agent.usage.enabled` in `~/.rafter/config.json`; default `true`. Only the global config is read; a project `.rafter.yml` cannot set it. `rafter agent config set agent.usage.enabled false` turns it off.
+
+**Kill switches** (override the config): `RAFTER_TELEMETRY` set to `0`, `false` or `off`; `DO_NOT_TRACK` set to any non-empty value other than `0` or `false`. `RAFTER_TELEMETRY=1` does not override a config `false`. When counting is off, nothing is written; `rafter telemetry show` still reads existing files.
+
 ### Pre-Commit Framework (`.pre-commit-hooks.yaml`)
 
 Integration with [pre-commit](https://pre-commit.com/):

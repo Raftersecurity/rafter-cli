@@ -14,6 +14,7 @@ import typer
 from ..core.audit_logger import AuditLogger
 from ..core.risk_rules import modifies_rafter_security_config
 from ..core.command_interceptor import CommandInterceptor
+from ..core.usage_counters import count_hook
 from ..scanners.regex_scanner import RegexScanner
 
 # allow_extra_args / ignore_unknown_options: tolerate extra flags/args the host
@@ -381,22 +382,24 @@ def _evaluate_bash(command: str, control=None) -> dict:
             source_command_policy="default",
         )
     audit = AuditLogger()
+    risk = "none"
 
     # Command-risk interception — gated by command_policy. When disabled, skip the
     # block/approval logic but still fall through to the staged-secret scan below.
     if control.command_policy_enabled:
         interceptor = CommandInterceptor()
         evaluation = interceptor.evaluate(command)
+        risk = evaluation.risk_level
 
         # Blocked — hard deny
         if not evaluation.allowed and not evaluation.requires_approval:
             audit.log_command_intercepted(command, False, "blocked", evaluation.reason)
-            return {"decision": "deny", "reason": _format_blocked_message(command, evaluation)}
+            return {"decision": "deny", "reason": _format_blocked_message(command, evaluation), "risk": risk}
 
         # Requires approval — deny (hook can't prompt interactively)
         if evaluation.requires_approval:
             audit.log_command_intercepted(command, False, "blocked", evaluation.reason)
-            return {"decision": "deny", "reason": _format_approval_message(command, evaluation)}
+            return {"decision": "deny", "reason": _format_approval_message(command, evaluation), "risk": risk}
 
     # Git commit/push — scan staged files. Gated by secret_scan so the git-commit
     # secret check survives command_policy being disabled on its own.
@@ -411,6 +414,7 @@ def _evaluate_bash(command: str, control=None) -> dict:
                 "decision": "deny",
                 "reason": f"Rafter: secret scan of the staged diff could not run ({result['scan_error']}); "
                 "commit blocked rather than allowed unscanned. Run 'rafter secrets --staged' to investigate.",
+                "risk": risk,
             }
         if result["secrets_found"]:
             # Audit per file so the log records WHICH file + pattern, not a bare count.
@@ -425,10 +429,11 @@ def _evaluate_bash(command: str, control=None) -> dict:
             return {
                 "decision": "deny",
                 "reason": _format_staged_secret_reason(result),
+                "risk": risk,
             }
 
     audit.log_command_intercepted(command, True, "allowed")
-    return {"decision": "allow"}
+    return {"decision": "allow", "risk": risk}
 
 
 def _writes_rafter_security_config(file_path: str) -> bool:
@@ -467,6 +472,7 @@ def _evaluate_write(tool_input: dict) -> dict:
                 "        guardrail. The gate cannot approve its own disarming. A\n"
                 "        person must make this change outside an agent session."
             ),
+            "risk": "critical",
         }
 
     content = tool_input.get("content", "") or tool_input.get("new_string", "")
@@ -513,6 +519,7 @@ def pretool(
         decision = decide_pretool(_read_stdin(), format)
     except Exception as exc:
         decision = _deny_on_error(exc)
+    count_hook(decision.get("tool"), "error" if decision.get("error") else decision.get("decision"), decision.get("risk"))
     _write_pretool_decision(decision, format)
 
 
@@ -545,17 +552,19 @@ def _evaluate_tool_call(payload: dict, fmt: str) -> dict:
     # Honor the (trusted-source-only) hook off-switch before doing any work.
     from ..core.hook_control import resolve_hook_control
 
+    # "tool" and "risk" feed the local usage counters only; never written to the platform.
+    tool = "shell" if tool_name in _SHELL_TOOLS else "write" if tool_name in _WRITE_TOOLS else "other"
     control = resolve_hook_control()
     if not control.hook_enabled:
-        return {"decision": "allow"}
+        return {"decision": "allow", "tool": tool}
 
-    if tool_name in _SHELL_TOOLS:
-        return _evaluate_bash(tool_input.get("command", ""), control)
-    if tool_name in _WRITE_TOOLS:
+    if tool == "shell":
+        return {**_evaluate_bash(tool_input.get("command", ""), control), "tool": tool}
+    if tool == "write":
         if not control.secret_scan_enabled:
-            return {"decision": "allow"}
-        return _evaluate_write(_normalize_write_input(tool_name, tool_input))
-    return {"decision": "allow"}
+            return {"decision": "allow", "tool": tool}
+        return {**_evaluate_write(_normalize_write_input(tool_name, tool_input)), "tool": tool}
+    return {"decision": "allow", "tool": tool}
 
 
 # Shell and file-write tools under each platform's own name, so the same
@@ -612,7 +621,7 @@ def _apply_patch_paths(patch: str) -> list[str]:
 def _deny_on_error(exc: Exception) -> dict:
     reason = f"rafter hook error: {type(exc).__name__}: {exc}; denying to be safe"
     print(reason, file=sys.stderr)
-    return {"decision": "deny", "reason": reason}
+    return {"decision": "deny", "reason": reason, "error": True}
 
 
 @hook_app.command(

@@ -18,6 +18,8 @@ from .commands.report import report_main
 from .commands.scan import scan_app, secrets_app
 from .commands.sites import sites_app
 from .commands.skill import skill_app
+from .commands.telemetry import telemetry_app
+from .core import usage_counters
 from .utils.formatter import set_agent_mode
 
 app = typer.Typer(
@@ -38,6 +40,7 @@ def _version_callback(value: bool):
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         False, "--version", "-V", help="Show version and exit.",
         callback=_version_callback, is_eager=True,
@@ -47,6 +50,7 @@ def main(
     ),
 ):
     """Rafter CLI — the default security agent for AI workflows."""
+    usage_counters.track_click_tree(ctx)
     if agent:
         set_agent_mode(True)
 
@@ -115,7 +119,14 @@ app.add_typer(notify_app)
 app.add_typer(policy_app)
 app.add_typer(sites_app)
 app.add_typer(skill_app)
+app.add_typer(telemetry_app)
 app.command("report")(report_main)
 
+
+def run() -> None:
+    """Console-script entry point: the app, wrapped by the local usage counters."""
+    usage_counters.run_app(app)
+
+
 if __name__ == "__main__":
-    app()
+    run()
