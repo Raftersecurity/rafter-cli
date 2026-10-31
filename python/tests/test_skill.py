@@ -277,12 +277,14 @@ class TestRetiredSkillCleanupThroughInstall:
     @pytest.fixture
     def fake_home(self, tmp_path: Path, monkeypatch):
         import rafter_cli.commands.skill as skill_mod
-        from rafter_cli.commands import agent_components
+        from rafter_cli.commands import agent_components, install_files
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(skill_mod, "RETIRED_SKILL_NAMES", ("rafter-old-name",))
+        # Patched where each install path looks it up.
+        for mod in (skill_mod, install_files):
+            monkeypatch.setattr(mod, "RETIRED_SKILL_NAMES", ("rafter-old-name",))
         agent_components.reset_registry_cache()
         (tmp_path / ".claude").mkdir()
         yield tmp_path

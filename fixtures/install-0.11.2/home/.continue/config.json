@@ -1,0 +1,12 @@
+{
+  "mcpServers": [
+    {
+      "name": "rafter",
+      "command": "rafter",
+      "args": [
+        "mcp",
+        "serve"
+      ]
+    }
+  ]
+}

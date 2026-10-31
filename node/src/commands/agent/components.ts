@@ -11,7 +11,16 @@ import {
   injectAiderNote,
 } from "./instruction-block.js";
 import { ConfigManager } from "../../core/config-manager.js";
-import { KNOWN_SKILL_NAMES, removeRetiredSkills } from "../skill/registry.js";
+import { KNOWN_SKILL_NAMES } from "../skill/registry.js";
+import {
+  InstallSession,
+  RULE_SKILLS,
+  cleanupRetiredRules,
+  cleanupRetiredSkills,
+  cursorAgentArtifacts,
+  ruleArtifacts,
+  skillArtifacts,
+} from "./install-files.js";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -39,7 +48,12 @@ export interface ComponentSpec {
   detectDir: string;
   /** Primary file this component reads/writes (for reporting). */
   path: string;
-  install: () => void;
+  /**
+   * Skill, rule and sub-agent files go through `session`'s write policy
+   * (install-files.ts), so a locally edited file is kept, not overwritten.
+   * Without one, the component uses its own session rooted at the home dir.
+   */
+  install: (session?: InstallSession) => void;
   uninstall: () => void;
   /** True when this component's rafter entries are currently present. */
   isInstalled: () => boolean;
@@ -235,6 +249,16 @@ function claudeCodeInstructions(): ComponentSpec {
   };
 }
 
+/** Run `fn` with the caller's session, or a fresh one that is saved afterwards. */
+function withSession(session: InstallSession | undefined, fn: (s: InstallSession) => void): void {
+  const s = session ?? new InstallSession({
+    root: os.homedir(),
+    out: { info: (m?: string) => console.log(m ?? ""), warn: (m: string) => console.log(m) },
+  });
+  fn(s);
+  if (!session) s.save();
+}
+
 function skillTemplatePath(name: string): string {
   return path.join(__dirname, "..", "..", "..", "resources", "skills", name, "SKILL.md");
 }
@@ -242,7 +266,7 @@ function skillTemplatePath(name: string): string {
 /**
  * Canonical rafter-authored skills that a per-platform "skills" component
  * installs — the single `KNOWN_SKILL_NAMES` list in `../skill/registry.js`,
- * so this and `AGENT_SKILLS` in `init.ts` can't drift apart.
+ * so this and `agent init` (install-files.ts) can't drift apart.
  */
 const COMPONENT_SKILL_NAMES = KNOWN_SKILL_NAMES;
 
@@ -264,20 +288,13 @@ function skillsDirComponent(opts: {
     detectDir: opts.detectDir,
     path: opts.skillsBaseDir,
     isInstalled: () => destPaths.some((p) => fs.existsSync(p)),
-    install: () => {
-      for (const name of COMPONENT_SKILL_NAMES) {
-        const src = skillTemplatePath(name);
-        const dst = path.join(opts.skillsBaseDir, name, "SKILL.md");
-        if (!fs.existsSync(src)) continue;
-        const dir = path.dirname(dst);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.copyFileSync(src, dst);
-      }
-      // Clean up any rafter skill directory left over from a rename — never
-      // a user's own skill that happens to share a retired name (checked via
-      // the SKILL.md's `publisher` frontmatter in removeRetiredSkills itself).
-      removeRetiredSkills(opts.skillsBaseDir);
-    },
+    install: (session) => withSession(session, (s) => {
+      // SKILL.md only, matching what uninstall removes (init also installs docs/).
+      s.applyAll(skillArtifacts(opts.skillsBaseDir, opts.platform, opts.id).filter((a) => path.basename(a.dest) === "SKILL.md"));
+      // Clean up any rafter skill directory left over from a rename — never a
+      // user's own or a modified one (publisher tag or hash proof required).
+      cleanupRetiredSkills(s, opts.skillsBaseDir);
+    }),
     uninstall: () => {
       for (const p of destPaths) {
         if (fs.existsSync(p)) {
@@ -482,38 +499,8 @@ function cursorHooks(): ComponentSpec {
   };
 }
 
-const CURSOR_RULE_SKILLS = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
+const CURSOR_RULE_SKILLS = RULE_SKILLS;
 
-function cursorRuleSourceDir(): string | null {
-  // After build: dist/commands/agent/components.js -> ../../../resources/cursor-rules
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "cursor-rules"),
-    path.resolve(__dirname, "..", "..", "resources", "cursor-rules"),
-  ];
-  return candidates.find((p) => fs.existsSync(p)) ?? null;
-}
-
-function cursorAgentSourceFile(): string | null {
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "agents", "rafter.md"),
-    path.resolve(__dirname, "..", "..", "resources", "agents", "rafter.md"),
-  ];
-  return candidates.find((p) => fs.existsSync(p)) ?? null;
-}
-
-/**
- * Cursor instructions = per-skill rules under .cursor/rules/ + the rafter
- * sub-agent at .cursor/agents/rafter.md (rf-svn3). The legacy consolidated
- * rafter-security.mdc was retired.
- *
- * `path` reports the rules dir for diagnostics; install/uninstall manage
- * both rules and the sub-agent file together.
- */
 function cursorInstructions(): ComponentSpec {
   const home = os.homedir();
   const rulesDir = path.join(home, ".cursor", "rules");
@@ -532,30 +519,15 @@ function cursorInstructions(): ComponentSpec {
       );
       return rulesPresent && fs.existsSync(agentPath);
     },
-    install: () => {
-      fs.mkdirSync(rulesDir, { recursive: true });
-      const ruleSrc = cursorRuleSourceDir();
-      if (ruleSrc) {
-        for (const name of CURSOR_RULE_SKILLS) {
-          const src = path.join(ruleSrc, `${name}.mdc`);
-          if (fs.existsSync(src)) {
-            fs.copyFileSync(src, path.join(rulesDir, `${name}.mdc`));
-          }
-        }
-      }
+    install: (session) => withSession(session, (s) => {
+      s.applyAll(ruleArtifacts("cursor", home));
+      cleanupRetiredRules(s, "cursor");
       // Migrate away from the legacy consolidated rule.
       if (fs.existsSync(legacyPath)) {
         try { fs.unlinkSync(legacyPath); } catch { /* best-effort */ }
       }
-
-      const agentSrc = cursorAgentSourceFile();
-      if (agentSrc) {
-        fs.mkdirSync(path.dirname(agentPath), { recursive: true });
-        const raw = fs.readFileSync(agentSrc, "utf-8");
-        const cursored = stripFrontmatterField(raw, "tools");
-        fs.writeFileSync(agentPath, cursored, "utf-8");
-      }
-    },
+      s.applyAll(cursorAgentArtifacts(home));
+    }),
     uninstall: () => {
       for (const name of CURSOR_RULE_SKILLS) {
         const p = path.join(rulesDir, `${name}.mdc`);
@@ -565,18 +537,6 @@ function cursorInstructions(): ComponentSpec {
       if (fs.existsSync(agentPath)) fs.rmSync(agentPath, { force: true });
     },
   };
-}
-
-/** Strip a single-line frontmatter field from a markdown file's frontmatter. */
-function stripFrontmatterField(content: string, field: string): string {
-  if (!content.startsWith("---\n")) return content;
-  const fmEnd = content.indexOf("\n---", 4);
-  if (fmEnd === -1) return content;
-  const frontmatter = content.slice(4, fmEnd);
-  const body = content.slice(fmEnd);
-  const re = new RegExp(`^${field}:\\s.*$`, "m");
-  const cleaned = frontmatter.replace(re, "").replace(/\n\n+/g, "\n").replace(/^\n/, "");
-  return `---\n${cleaned}${body}`;
 }
 
 function cursorMcp(): ComponentSpec {
@@ -707,21 +667,7 @@ function geminiMcp(): ComponentSpec {
   };
 }
 
-/** Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3). */
-const WINDSURF_RULE_SKILLS = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
-
-function windsurfRuleSourceDir(): string | null {
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "windsurf-rules"),
-    path.resolve(__dirname, "..", "..", "resources", "windsurf-rules"),
-  ];
-  return candidates.find((p) => fs.existsSync(p)) ?? null;
-}
+const WINDSURF_RULE_SKILLS = RULE_SKILLS;
 
 /**
  * Windsurf rules component: per-skill files at .windsurf/rules/<skill>.md.
@@ -746,17 +692,9 @@ function windsurfRules(): ComponentSpec {
     path: rulesDir,
     isInstalled: () =>
       WINDSURF_RULE_SKILLS.every((n) => fs.existsSync(path.join(rulesDir, `${n}.md`))),
-    install: () => {
-      fs.mkdirSync(rulesDir, { recursive: true });
-      const src = windsurfRuleSourceDir();
-      if (!src) return;
-      for (const name of WINDSURF_RULE_SKILLS) {
-        const from = path.join(src, `${name}.md`);
-        if (fs.existsSync(from)) {
-          fs.copyFileSync(from, path.join(rulesDir, `${name}.md`));
-        }
-      }
-    },
+    install: (session) => withSession(session, (s) => {
+      s.applyAll(ruleArtifacts("windsurf", process.cwd()));
+    }),
     uninstall: () => {
       for (const name of WINDSURF_RULE_SKILLS) {
         const p = path.join(rulesDir, `${name}.md`);
@@ -797,21 +735,7 @@ function windsurfMcp(): ComponentSpec {
   };
 }
 
-/** Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0). */
-const CONTINUE_RULE_SKILLS = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
-
-function continueRuleSourceDir(): string | null {
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "continue-rules"),
-    path.resolve(__dirname, "..", "..", "resources", "continue-rules"),
-  ];
-  return candidates.find((p) => fs.existsSync(p)) ?? null;
-}
+const CONTINUE_RULE_SKILLS = RULE_SKILLS;
 
 /** Continue.dev rules component: .continue/rules/<skill>.md, workspace-scope (rf-acz0). */
 function continueRules(): ComponentSpec {
@@ -826,17 +750,9 @@ function continueRules(): ComponentSpec {
     path: rulesDir,
     isInstalled: () =>
       CONTINUE_RULE_SKILLS.every((n) => fs.existsSync(path.join(rulesDir, `${n}.md`))),
-    install: () => {
-      fs.mkdirSync(rulesDir, { recursive: true });
-      const src = continueRuleSourceDir();
-      if (!src) return;
-      for (const name of CONTINUE_RULE_SKILLS) {
-        const from = path.join(src, `${name}.md`);
-        if (fs.existsSync(from)) {
-          fs.copyFileSync(from, path.join(rulesDir, `${name}.md`));
-        }
-      }
-    },
+    install: (session) => withSession(session, (s) => {
+      s.applyAll(ruleArtifacts("continue", process.cwd()));
+    }),
     uninstall: () => {
       for (const name of CONTINUE_RULE_SKILLS) {
         const p = path.join(rulesDir, `${name}.md`);

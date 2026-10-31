@@ -1,0 +1,233 @@
+{
+ "schema": 1,
+ "generatedBy": "scripts/gen-shipped-hashes.py",
+ "releases": [
+  "npm:0.8.0",
+  "npm:0.8.1",
+  "npm:0.8.2",
+  "npm:0.8.3",
+  "npm:0.8.4",
+  "npm:0.8.5",
+  "npm:0.8.6",
+  "npm:0.8.7",
+  "npm:0.8.9",
+  "npm:0.8.10",
+  "npm:0.9.0",
+  "npm:0.9.1",
+  "npm:0.10.0",
+  "npm:0.10.1",
+  "npm:0.10.2",
+  "npm:0.10.3",
+  "npm:0.10.4",
+  "npm:0.10.5",
+  "npm:0.10.6",
+  "npm:0.11.1",
+  "npm:0.11.2",
+  "npm:0.11.3",
+  "npm:0.11.4",
+  "pypi:0.8.0",
+  "pypi:0.8.1",
+  "pypi:0.8.2",
+  "pypi:0.8.3",
+  "pypi:0.8.4",
+  "pypi:0.8.5",
+  "pypi:0.8.6",
+  "pypi:0.8.7",
+  "pypi:0.8.9",
+  "pypi:0.8.10",
+  "pypi:0.9.0",
+  "pypi:0.9.1",
+  "pypi:0.10.0",
+  "pypi:0.10.1",
+  "pypi:0.10.2",
+  "pypi:0.10.3",
+  "pypi:0.10.4",
+  "pypi:0.10.5",
+  "pypi:0.10.6",
+  "pypi:0.11.1",
+  "pypi:0.11.2",
+  "pypi:0.11.3",
+  "pypi:0.11.4"
+ ],
+ "files": {
+  "agents/rafter.md": [
+   "7f26f0fcfe15be9c4dbddc469274f0847c84e1f02e56fd9a740eaf577b087138"
+  ],
+  "agents/rafter.md#cursor": [
+   "925c3223805bbc8671692c06a1557e14a818688a0e8e20e9c0234685abe0b6ef",
+   "d45af23f64c961c904c841f34ecc5fc265cadd23e2131689617db28e793b937e"
+  ],
+  "continue-rules/rafter-code-review.md": [
+   "5656add4780c521ec9c146fd017488241113b98483f8109e120107fa977fe900"
+  ],
+  "continue-rules/rafter-secure-design.md": [
+   "4a1b353a92f39249c8f3ec1580fea1b6647bef20fce404d19a1374c6ea467446"
+  ],
+  "continue-rules/rafter-skill-review.md": [
+   "185bf3f3972d2d4ccf9d9073e35d986ece32c74a4a1626a9f0df63a597639e1e"
+  ],
+  "continue-rules/rafter.md": [
+   "3edf3d0d719f715c4e7591ca92691bc8bf7cd3650201feb2acf1eeef21432520",
+   "e276f0c2305d0559ffa207583e3415f03de57bfd46062cef204e76628ae5d7bd"
+  ],
+  "cursor-rules/rafter-code-review.mdc": [
+   "c9bb381c63cfbaef60229a7960545256483da44736df1764a0404f5979ca1a8a"
+  ],
+  "cursor-rules/rafter-secure-design.mdc": [
+   "1b705d54ace97336780c5266c5215106e940305e1e7ea180611b1f2cd89f5334"
+  ],
+  "cursor-rules/rafter-skill-review.mdc": [
+   "2afd40eebdff79ce03a5e27ba2ff3cedab48d48577ddb7e91539cdc9da823d8f"
+  ],
+  "cursor-rules/rafter.mdc": [
+   "3ef43ff4eb68e6badc1afff14affea622e765e8a5c54dc472b3977e946099e52",
+   "6e930e0a314f87838f1d27dc028a43d2ca63bdcbf68c1c536ee2a3d57d744921"
+  ],
+  "pre-commit-hook.sh": [
+   "cf113b56560a39d36b0cf32632c293049168e43da12c22bf20b7f89f54c03958"
+  ],
+  "pre-push-hook.sh": [
+   "9357e8f1791540fdc35263dfe89a72ab6628e8d3ab16622db052dfc6d6e6262d"
+  ],
+  "rafter-security-skill.md": [
+   "0d0944b55c7e2c039cf50d11ebfa0d541d579ea657af10a0f1e6e1cdcff627d6",
+   "0f9dd01d940fa70baedf32295897f9c3ae595727ed0d222dc67095ecd51f79ff",
+   "10759e608d7cce905a7d6af68648f9ce1613ba418ab8129f1d85619a5a30fe6d",
+   "1be4272a39bf04331fea4c684270c72b4feb298a110cef719883618021f7c763",
+   "227e7a6bb96a73ed5d04ec253ab74b344ed34e5196b5933946a73918919b0ac0",
+   "3f2c9634a0ae5a10bec6e203a2482ebf32d4c59d088fd0465736b31fa259ebdb",
+   "4af96c10f12ebff90ce09026fa44d2120cc3d289e9a457b8228c8cbfaf2ec485",
+   "4e422525e338b846d1fd15fbcbdc07bd29a21eb47afe7f36ac71da77bb617a42",
+   "539e05701b0fdff27df3f581da437d09d6d43f32fc4c9324391bcb6b4d4cc54a",
+   "608e87ee58250eeba96929b63f1eb93d2fa9a06973b077c5f5cf52c57bb3f1b9",
+   "63da401d5f2a3b8d7046eb3145a1ebe360715a36ad7bd19d04553bd906f90822",
+   "658d9e454e6b718aa47144f56f8a8cbf1cab5b6446854b9ec39920f6d29538e8",
+   "6f871dbb2862700242f5d1faaedce31766d1abffca0f08dc3a5ace56f1ed55d9",
+   "865bcdde475439b50457b5b8388dfe132a7c7807e6786995c9500c92c7cf9db6",
+   "989713d60ab02ab04d03c80d448510b245d986a292f437fa355ab6845b75f942",
+   "9b7b27ae5248e55dbfa9d6c7d5cb6a4e3dec31b16268ea89a4264e9feae7ae1b",
+   "a3616bb898b7fa9fdf7af71e503975ab846c11dd2ff4176824f6e4de278cbf6b",
+   "a5cba1a60c237f7dbb6b4c4d1c876150c12230901d5c3eb12c1b43e6764bac94",
+   "d6e30d8cbbe5006856000823e6a6fb201d6b19181c468cdfbe9ae9d9b27a497d",
+   "eaa0054d8ce4b9f14318f0af45fba7c77f5a66e276c0e40083e9bb5d402855d8",
+   "f90a98590192e203287d4d1f7ea1b7f565fc38ec4e6bf6303bbed6889cafbb38",
+   "fc78cbcd79dd8b14f39bd1e43009d42a763268d13863198209b156479a3bf26c",
+   "fe3c9a1ae64574590ce3cb75c6c974629ea54169e71b9bc496916a223544d5de"
+  ],
+  "skills/rafter-code-review/SKILL.md": [
+   "2b50118c0c26da8c59b27f85f6d620225e95a179d0b10ee3dd896e3937f15431",
+   "bb8693ae13f6ea685ef42bd643a792cd684b120a2dae04849bdb0aed285cef94",
+   "fe630c5a2ffcd417991e3042b41f50d041cee66bde8afdc66aa43c483fb95846"
+  ],
+  "skills/rafter-code-review/docs/api.md": [
+   "fde9c5588ea1bca2fc0134270d1d3d5622f8f1426b46ca6b37ff5942aa2011a7"
+  ],
+  "skills/rafter-code-review/docs/asvs.md": [
+   "eb782dbdff04ef64551bb73b45c5af7ff151809cd1aff05cd63d2e04aa2fa977"
+  ],
+  "skills/rafter-code-review/docs/cwe-top25.md": [
+   "9efcc026603bc0f01863746edbc785edd7c821eb9c8d9f5cf235eb3c86e17054"
+  ],
+  "skills/rafter-code-review/docs/investigation-playbook.md": [
+   "4021cd8a51bd96934d1008c17ccae7e2b808256a0d92aee1f08158d350efd687"
+  ],
+  "skills/rafter-code-review/docs/llm.md": [
+   "2d84ab89643c44e39a75b829ee54aef5b750cd138c24999fa1aef9af458f6b27"
+  ],
+  "skills/rafter-code-review/docs/web-app.md": [
+   "453a2ea88dc29a247f4364321fd2b833cbdd9c8a702df6f03c1318e7face9a3d"
+  ],
+  "skills/rafter-secure-design/SKILL.md": [
+   "883b997145a10caf1a03c70a5e1d06ab9c018b5924ff574c5020cbc8b74ab970",
+   "bf2441c99029254d8162bb67ad041920bbcb5c9c8fb4cfcf62e7ad333a7cd4ae",
+   "f039d753451aa019c1f3ba9aa7f9cc6abeedbcb528421d9fd47aa62a0a878c6d"
+  ],
+  "skills/rafter-secure-design/docs/api-design.md": [
+   "33dada1dfc437dab06d46374f6d47c305c63f38579607ea418d2b06320ba4326"
+  ],
+  "skills/rafter-secure-design/docs/auth.md": [
+   "58e2aafa984d84c05118973b2f8a5bc3d06b1f3bb8c50c1b8eb42a9821c55ec2"
+  ],
+  "skills/rafter-secure-design/docs/data-storage.md": [
+   "fcb9b0f3d3d804e9568d46ed554d75e552dc0948607146481d116efbaf8c0cdd"
+  ],
+  "skills/rafter-secure-design/docs/dependencies.md": [
+   "29ac183ca8866d5094d206db7151e38b6e61e8f1248116189a398840a977f283"
+  ],
+  "skills/rafter-secure-design/docs/deployment.md": [
+   "bcb9fcd356be0f4f105b7b6b89557e9ec43de83938985b6a55539655688a702b"
+  ],
+  "skills/rafter-secure-design/docs/ingestion.md": [
+   "d83fa2aba2d24c6c247bd83a0e2351c73420d513ef53be64aefa5f6dbbe7af7c"
+  ],
+  "skills/rafter-secure-design/docs/standards-pointers.md": [
+   "b261ecfc357b46162aa3037085b3debf4880d9a5aae0cd17149bc9145a6e6779"
+  ],
+  "skills/rafter-secure-design/docs/threat-modeling.md": [
+   "6453ef6128e1ead68ae1cc9bc1182216bcf92bf4a1e3b543db7ef20997eed389"
+  ],
+  "skills/rafter-skill-review/SKILL.md": [
+   "0c8a0ed7649662177b88f9576e06a85fb595f48f5187a1c12f4d38aa4ad05fc8",
+   "5f68a8e224fe9e9693a2a5ebeda30a543cd5625e92fc3a507a10c90077d2131a"
+  ],
+  "skills/rafter-skill-review/docs/authorship-provenance.md": [
+   "2b94a715dc69d8e0c7c439d8d1563fb7c93192b7540f161a0b73c2aa5ff0fd0d"
+  ],
+  "skills/rafter-skill-review/docs/changelog-review.md": [
+   "63bced06258ab69f008eec5eb37c15a89335e280e68b97c7ae75ddbb0673a4fe"
+  ],
+  "skills/rafter-skill-review/docs/data-practices.md": [
+   "ff9ae66147415af1de0193be5f33c17e40ab511041e3e8b49fa22789e27bec3f"
+  ],
+  "skills/rafter-skill-review/docs/malware-indicators.md": [
+   "17b6155874ddab2e551166dace6650261b759a27944e82088a1d006d1e2b74d9"
+  ],
+  "skills/rafter-skill-review/docs/prompt-injection.md": [
+   "cca797f7683d6ce19b9e58ee895bf33c468c057395593e949e1cf44e965d7219"
+  ],
+  "skills/rafter-skill-review/docs/telemetry.md": [
+   "ada78de2d445ce2aa233364eaf3d45e780068dc1103c12b28d79c20edd8c19e8"
+  ],
+  "skills/rafter/SKILL.md": [
+   "0d4996783e58e761e371042a322fe2a567678ce41d0c1f680b80c385b73633b6",
+   "195cf4caeaca3caa7485027740c5a4637413b402d7524b64d3389b813feb3b80",
+   "8d9121fd00e1df944f91552e1bb050f02c802617c5196886c5fad1e407d0b62f",
+   "9ce84eeb42faeec5cc617970538d6c767d53d87395d1e440b7d41da64f0de9df",
+   "be560dd666a8412fe2b418b13ce229555ce96ffc168cf2ed1e9e1a673982b96c"
+  ],
+  "skills/rafter/docs/backend.md": [
+   "f4d09e4edaee2485007a34f91350c5f578f42a552856661daf59aac129840799"
+  ],
+  "skills/rafter/docs/cli-reference.md": [
+   "cad7e9c376a81ba9dc9c3dec922d803c4fda7e8dc6c16c30d256fe0ebc16926a",
+   "e136680572d51fdd8991480f1107e593b8e10e56f4a50a65dad90494883a3405"
+  ],
+  "skills/rafter/docs/finding-triage.md": [
+   "3a695a3307a5b24caa3596418747dca6978dac09e19fbb58e08f6fd739d3c978",
+   "4b322015dac08700d10b91612038e5d507f9eee909f93ffb05be16159c9ad897",
+   "acec199c83a1512a977d125ed3129985d9877dd253efda8a201701335f5ddc0b"
+  ],
+  "skills/rafter/docs/guardrails.md": [
+   "3234fe5df25c1fe5028d7151deeddfad8a14c22bfca2a93a903fe66a9d6c1bd3",
+   "cb63482cdb518d8d66a383e156234fb4129a6177801f5901476d6b48636d33a5",
+   "d6c272f415cfd9f0ab59ca60af59148ca03c9ea71da5f182531af24297a02cdb",
+   "ee6f8dbcb27d7167b14c028839491846fe254235c689f6eff42311c7d02ba193"
+  ],
+  "skills/rafter/docs/shift-left.md": [
+   "fe735d0fb3ee7f4534ec4d9e7c75a7794dc01624171b74b44695bff943377961"
+  ],
+  "windsurf-rules/rafter-code-review.md": [
+   "1c7dcf4984c216a32b56efbdb4539f61f8e14774f71726e1ce1b4d0143cbef22"
+  ],
+  "windsurf-rules/rafter-secure-design.md": [
+   "44a3cffecb973f9d898009e472d88ad5c6c6c637deb5cdf8d9512f9a011c1b9e"
+  ],
+  "windsurf-rules/rafter-skill-review.md": [
+   "0e22f2217b1cb4369a1463242a1e8a2840c1c2bf42aa3206967eaef13fbf7b30"
+  ],
+  "windsurf-rules/rafter.md": [
+   "2f07fae62e3dcaa3a8d33677fa6f13ef0b46ab3bbe69e722416b8c995614e1bd",
+   "77ab89028fe69824818719b76cee4e090f207fa88ca61a62878ad09f25513126"
+  ]
+ }
+}

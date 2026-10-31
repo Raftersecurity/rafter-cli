@@ -9,12 +9,15 @@ import { removeRetiredSkills, isRafterAuthoredSkillDir } from "../src/commands/s
 import { resolveComponent, resetComponentRegistryCache } from "../src/commands/agent/components.js";
 
 // RETIRED_SKILL_NAMES is empty today, so a call site that relies on the
-// default list is given one injected retired name here. Calls that pass an
-// explicit list (the unit tests below) are unaffected.
+// default list is given one injected retired name here: the constant for
+// callers that import it (agent init/enable), the default for callers of
+// removeRetiredSkills. Calls that pass an explicit list (the unit tests
+// below) are unaffected.
 vi.mock("../src/commands/skill/registry.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/commands/skill/registry.js")>();
   return {
     ...actual,
+    RETIRED_SKILL_NAMES: ["rafter-old-name"],
     removeRetiredSkills: (dir: string, names?: readonly string[]) =>
       actual.removeRetiredSkills(dir, names ?? ["rafter-old-name"]),
   };

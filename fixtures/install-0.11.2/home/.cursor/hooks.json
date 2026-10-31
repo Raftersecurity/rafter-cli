@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "__RAFTER_BIN__ hook pretool --format cursor",
+        "type": "command",
+        "timeout": 5000
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "__RAFTER_BIN__ hook posttool --format cursor",
+        "type": "command",
+        "timeout": 5000
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "__RAFTER_BIN__ hook pretool --format cursor",
+        "type": "command",
+        "timeout": 5000
+      }
+    ]
+  }
+}

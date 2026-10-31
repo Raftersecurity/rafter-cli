@@ -17,7 +17,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import typer
 
@@ -137,13 +137,20 @@ RETIRED_SKILL_NAMES: tuple[str, ...] = ()
 
 
 def remove_retired_skills(
-    skills_base_dir: Path, retired_names: tuple[str, ...] | None = None
+    skills_base_dir: Path,
+    retired_names: tuple[str, ...] | None = None,
+    is_owned: Callable[[Path, str], bool] | None = None,
 ) -> list[str]:
     """Remove any retired-skill directories found under `skills_base_dir`
     (a `<platform>/skills` style directory containing one subdir per skill,
     each holding a SKILL.md). Only removes a directory whose SKILL.md
     identifies itself as rafter-authored — a user skill that happens to
     reuse a retired name is left alone. Returns the names actually removed.
+
+    `is_owned` is a second proof of ownership for directories without the
+    tag (releases through 0.11.x shipped none): agent init passes a check that
+    every file hashes to content rafter shipped or recorded in its install
+    manifest.
 
     `retired_names` defaults to `RETIRED_SKILL_NAMES`; tests pass an explicit
     tuple to simulate a rename without needing a real retired skill yet.
@@ -155,7 +162,7 @@ def remove_retired_skills(
         skill_dir = skills_base_dir / name
         if not (skill_dir / "SKILL.md").exists():
             continue
-        if not _is_rafter_authored_skill_dir(skill_dir):
+        if not _is_rafter_authored_skill_dir(skill_dir) and not (is_owned and is_owned(skill_dir, name)):
             continue
         # A symlinked skill dir: drop the link, never follow it into its
         # target. Errors propagate (as Node's rmSync does) rather than

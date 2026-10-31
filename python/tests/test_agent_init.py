@@ -803,16 +803,16 @@ class TestInstallCodexSkills:
         assert ok, f"Expected success, got error: {error}"
         assert error == ""
 
-        # Must mirror _AGENT_SKILLS in python/rafter_cli/commands/agent.py.
+        # Must mirror KNOWN_SKILL_NAMES in python/rafter_cli/commands/skill.py.
         for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
             skill_path = tmp_path / ".agents" / "skills" / name / "SKILL.md"
             assert skill_path.exists(), f"{name} SKILL.md should be installed"
             assert skill_path.read_text().strip(), f"{name} SKILL.md should not be empty"
 
-    def test_overwrites_existing_skills(self, tmp_path, monkeypatch):
+    def test_keeps_skill_content_rafter_did_not_write(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        # Pre-create with stale content
+        # Content no rafter release shipped: a user's edit, not a stale copy.
         backend_dir = tmp_path / ".agents" / "skills" / "rafter"
         backend_dir.mkdir(parents=True)
         (backend_dir / "SKILL.md").write_text("old content")
@@ -820,8 +820,8 @@ class TestInstallCodexSkills:
         ok, error = _install_codex_skills(tmp_path)
         assert ok
 
-        content = (backend_dir / "SKILL.md").read_text()
-        assert content != "old content", "Skill should be updated on reinstall"
+        assert (backend_dir / "SKILL.md").read_text() == "old content"
+        assert "name: rafter" in (backend_dir / "SKILL.md.rafter-new").read_text()
 
 
 # ── Gemini skill installation tests ──────────────────────────────────
@@ -836,7 +836,7 @@ class TestInstallGeminiSkills:
         assert ok, f"Expected success, got error: {error}"
         assert error == ""
 
-        # Mirrors _AGENT_SKILLS — same list as codex.
+        # Mirrors KNOWN_SKILL_NAMES — same list as codex.
         for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
             skill_path = tmp_path / ".agents" / "skills" / name / "SKILL.md"
             assert skill_path.exists(), f"{name} SKILL.md should be installed"
@@ -1134,8 +1134,8 @@ class TestGeminiWithSkillsEndToEnd:
 
         # One probe + one link per skill (3 skills)
         link_only = [c for c in link_calls if c[1:3] == ["skills", "link"]]
-        from rafter_cli.commands.agent import _AGENT_SKILLS
-        assert len(link_only) == len(_AGENT_SKILLS)
+        from rafter_cli.commands.skill import KNOWN_SKILL_NAMES
+        assert len(link_only) == len(KNOWN_SKILL_NAMES)
 
 
 class TestInstallClaudeCodeMcp:
@@ -1439,16 +1439,15 @@ class TestInstallClaudeCodeSubAgents:
 
         assert first == second
 
-    def test_overwrites_stale_subagent_content(self, tmp_path):
+    def test_keeps_subagent_content_rafter_did_not_write(self, tmp_path):
         agents_dir = tmp_path / ".claude" / "agents"
         agents_dir.mkdir(parents=True)
         (agents_dir / "rafter.md").write_text("stale content from previous version")
 
         _install_claude_code_subagents(tmp_path)
 
-        content = (agents_dir / "rafter.md").read_text()
-        assert content != "stale content from previous version"
-        assert "name: rafter" in content
+        assert (agents_dir / "rafter.md").read_text() == "stale content from previous version"
+        assert "name: rafter" in (agents_dir / "rafter.md.rafter-new").read_text()
 
 
 # ── Help text points at the current skill-review command ─────────────────
