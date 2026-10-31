@@ -98,6 +98,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 ```sh
 rafter agent verify
 ```
+
 Confirms the rules, AGENTS.md, and (where applicable) the MCP server entry
 are in place. Restart Windsurf after install so the agent picks up the new
 rules and MCP server.
