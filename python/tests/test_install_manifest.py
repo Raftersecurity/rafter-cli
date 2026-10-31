@@ -80,14 +80,16 @@ def home(tmp_path: Path) -> Path:
 def test_every_shipped_file_is_brought_to_the_current_version(home, platform):
     copy_fixture(home)
     artifacts = platforms(home)[platform]
-    before = {a.dest: a.dest.read_bytes() for a in artifacts}
+    # A file added to a skill since 0.11.2 is not in the fixture: it is "added".
+    before = {a.dest: a.dest.read_bytes() if a.dest.exists() else None for a in artifacts}
     s, _ = session(home)
     outcomes = s.apply_all(artifacts)
     s.save()
 
     for a, outcome in zip(artifacts, outcomes):
         assert sha256(a.dest.read_bytes()) == sha256(a.content), a.dest
-        assert outcome == ("unchanged" if before[a.dest] == a.content else "updated"), a.dest
+        was = before[a.dest]
+        assert outcome == ("added" if was is None else "unchanged" if was == a.content else "updated"), a.dest
         assert not Path(f"{a.dest}.rafter-new").exists(), a.dest
     assert "updated" in outcomes
     manifest = json.loads(manifest_path(home).read_text())
@@ -138,7 +140,7 @@ def test_hand_edited_skill_and_rule_are_kept_with_new_version_beside(home):
         fresh = next(a.content for a in all_arts if a.dest == p)
         assert Path(f"{p}.rafter-new").read_bytes() == fresh
     assert len([w for w in out.warnings if "kept" in w]) == 2
-    assert all(o in ("updated", "unchanged") for p, o in outcomes.items() if p not in edited)
+    assert all(o in ("added", "updated", "unchanged") for p, o in outcomes.items() if p not in edited)
 
 
 def test_second_run_reports_every_file_unchanged(home):

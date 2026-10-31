@@ -78,14 +78,16 @@ describe("upgrade over a real 0.11.2 install", () => {
   for (const [platform, artifacts] of Object.entries(PLATFORMS)) {
     it(`${platform}: every file rafter shipped is brought to the current version`, () => {
       copyFixture(home);
-      const before = new Map(artifacts().map((a) => [a.dest, fs.readFileSync(a.dest)]));
+      // A file added to a skill since 0.11.2 is not in the fixture: it is "added".
+      const before = new Map(artifacts().map((a) => [a.dest, fs.existsSync(a.dest) ? fs.readFileSync(a.dest) : null]));
       const { s } = session();
       const outcomes = s.applyAll(artifacts());
       s.save();
 
       artifacts().forEach((a, i) => {
         expect(sha256(fs.readFileSync(a.dest)), a.dest).toBe(sha256(a.content));
-        expect(outcomes[i], a.dest).toBe(before.get(a.dest)!.equals(a.content) ? "unchanged" : "updated");
+        const was = before.get(a.dest)!;
+        expect(outcomes[i], a.dest).toBe(was === null ? "added" : was.equals(a.content) ? "unchanged" : "updated");
         expect(fs.existsSync(a.dest + ".rafter-new"), a.dest).toBe(false);
       });
       expect(outcomes).toContain("updated");
@@ -125,7 +127,7 @@ describe("upgrade over a real 0.11.2 install", () => {
       expect(fs.readFileSync(p + ".rafter-new").equals(fresh), p).toBe(true);
     }
     expect(out.warnings.filter((w) => w.includes("kept"))).toHaveLength(2);
-    expect([...outcomes].filter(([p]) => !edited.has(p)).every(([, o]) => o === "updated" || o === "unchanged")).toBe(true);
+    expect([...outcomes].filter(([p]) => !edited.has(p)).every(([, o]) => o === "added" || o === "updated" || o === "unchanged")).toBe(true);
   });
 
   it("a second run reports every file unchanged", () => {
