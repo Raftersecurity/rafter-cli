@@ -1,0 +1,267 @@
+[
+  {
+    "label": "redirect into config",
+    "cmd": "echo hi > ~/.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "redirect into a project file",
+    "cmd": "echo hi > ./config.json",
+    "protected": false
+  },
+  {
+    "label": "sed -i on config",
+    "cmd": "sed -i s/a/b/ ~/.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "sed -i on a project file",
+    "cmd": "sed -i s/a/b/ ./config.json",
+    "protected": false
+  },
+  {
+    "label": "cp onto config",
+    "cmd": "cp x ~/.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "cat config",
+    "cmd": "cat ~/.rafter/config.json",
+    "protected": false
+  },
+  {
+    "label": "rm config",
+    "cmd": "rm ~/.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "ls the dir",
+    "cmd": "ls -la ~/.rafter",
+    "protected": false
+  },
+  {
+    "label": "tee onto config",
+    "cmd": "tee ~/.rafter/config.json < x",
+    "protected": true
+  },
+  {
+    "label": "tail the audit log",
+    "cmd": "tail ~/.rafter/audit.jsonl",
+    "protected": false
+  },
+  {
+    "label": "cd into the dir, then a bare-name write",
+    "cmd": "cd ~/.rafter && echo x > config.json",
+    "protected": true
+  },
+  {
+    "label": "cd elsewhere, then a bare-name write",
+    "cmd": "cd /tmp && echo x > config.json",
+    "protected": false
+  },
+  {
+    "label": "quoted absolute path inside python -c",
+    "cmd": "python3 -c \"open('/home/u/.rafter/config.json','w')\"",
+    "protected": true
+  },
+  {
+    "label": "quoted project path inside python -c",
+    "cmd": "python3 -c \"open('/home/u/project/config.json','w')\"",
+    "protected": false
+  },
+  {
+    "label": "find -delete",
+    "cmd": "find ~/.rafter -delete",
+    "protected": true
+  },
+  {
+    "label": "find without an action",
+    "cmd": "find ~/.rafter -name '*.json'",
+    "protected": false
+  },
+  {
+    "label": "sed -i via $HOME",
+    "cmd": "sed -i s/a/b/ $HOME/.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "cat via ${HOME}",
+    "cmd": "cat ${HOME}/.rafter/config.json",
+    "protected": false
+  },
+  {
+    "label": "cd ~ then a bare .rafter component",
+    "cmd": "cd ~ && cd .rafter && rm config.json",
+    "protected": true
+  },
+  {
+    "label": "bare .rafter component read",
+    "cmd": "cat ./.rafter/config.json",
+    "protected": false
+  },
+  {
+    "label": "pipe into tee onto config",
+    "cmd": "cat x | tee ~/.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "pipe config into jq",
+    "cmd": "cat ~/.rafter/config.json | jq .",
+    "protected": false
+  },
+  {
+    "label": "redirect spelled >|",
+    "cmd": "echo x >| ~/.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "stderr to /dev/null",
+    "cmd": "cat ~/.rafter/config.json 2>/dev/null",
+    "protected": false
+  },
+  {
+    "label": "redirect spelled &>",
+    "cmd": "cat x &> ~/.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "stderr dup 2>&1",
+    "cmd": "/usr/bin/cat ~/.rafter/config.json 2>&1",
+    "protected": false
+  },
+  {
+    "label": "glob that expands to the dir",
+    "cmd": "rm ~/.raf*/config.json",
+    "protected": true
+  },
+  {
+    "label": "glob that cannot expand to the dir",
+    "cmd": "rm ~/.cache*/x",
+    "protected": false
+  },
+  {
+    "label": "brace list that expands to the dir",
+    "cmd": "rm ~/.{rafter,x}/config.json",
+    "protected": true
+  },
+  {
+    "label": "brace list elsewhere",
+    "cmd": "rm ~/.{cache,x}/y",
+    "protected": false
+  },
+  {
+    "label": "upper-case spelling (case-insensitive FS)",
+    "cmd": "rm ~/.RAFTER/config.json",
+    "protected": true
+  },
+  {
+    "label": "upper-case read",
+    "cmd": "cat ~/.RAFTER/config.json",
+    "protected": false
+  },
+  {
+    "label": "argv0 is a local script named like a reader",
+    "cmd": "./cat ~/.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "argv0 is rafter's own binary",
+    "cmd": "~/.rafter/bin/betterleaks version",
+    "protected": false
+  },
+  {
+    "label": "rafter's binary writing into the dir",
+    "cmd": "~/.rafter/bin/betterleaks detect --report-path ~/.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "rafter's binary writing elsewhere",
+    "cmd": "~/.rafter/bin/betterleaks detect --report-path /tmp/r.json",
+    "protected": false
+  },
+  {
+    "label": "cd into the dir alone (cwd persists across calls)",
+    "cmd": "cd ~/.rafter",
+    "protected": true
+  },
+  {
+    "label": "cd into a project subdir",
+    "cmd": "cd ./src",
+    "protected": false
+  },
+  {
+    "label": "redirect a read to a file outside the dir (strict)",
+    "cmd": "grep foo ~/.rafter/audit.jsonl > /tmp/out",
+    "protected": true
+  },
+  {
+    "label": "the same read, no redirect",
+    "cmd": "grep foo ~/.rafter/audit.jsonl",
+    "protected": false
+  },
+  {
+    "label": "command substitution writes into the dir",
+    "cmd": "echo $(cp x ~/.rafter/config.json)",
+    "protected": true
+  },
+  {
+    "label": "command substitution reads the dir",
+    "cmd": "wc -l $(ls ~/.rafter/audit.jsonl)",
+    "protected": false
+  },
+  {
+    "label": "rg --pre runs a program",
+    "cmd": "rg --pre rm x ~/.rafter",
+    "protected": true
+  },
+  {
+    "label": "rg plain read",
+    "cmd": "rg hooks ~/.rafter/config.json",
+    "protected": false
+  },
+  {
+    "label": "heredoc body writes the dir",
+    "cmd": "python3 <<'PY'\nopen('/home/u/.rafter/config.json','w')\nPY",
+    "protected": true
+  },
+  {
+    "label": "heredoc body writes a project file",
+    "cmd": "python3 <<'PY'\nopen('/home/u/project/x.json','w')\nPY",
+    "protected": false
+  },
+  {
+    "label": "path through .. back into the dir",
+    "cmd": "echo x > ~/.rafter/../.rafter/config.json",
+    "protected": true
+  },
+  {
+    "label": "project policy file .rafter.yml",
+    "cmd": "echo x > .rafter.yml",
+    "protected": false
+  },
+  {
+    "label": "unterminated quote with a reference fails closed",
+    "cmd": "rm ~/.rafter/config.json 'x",
+    "protected": true
+  },
+  {
+    "label": "project ignore file .rafterignore",
+    "cmd": "echo x > .rafterignore",
+    "protected": false
+  },
+  {
+    "label": "read the config, then an unrelated build",
+    "cmd": "cat ~/.rafter/x && npm test",
+    "protected": false
+  },
+  {
+    "label": "tail the audit log, then make",
+    "cmd": "tail ~/.rafter/audit.jsonl; make",
+    "protected": false
+  },
+  {
+    "label": "bare-name write with no dir mention (documented limit)",
+    "cmd": "echo x > config.json",
+    "protected": false
+  }
+]

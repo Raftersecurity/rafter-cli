@@ -857,7 +857,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       // Verify PreToolUse hook matchers
       const preMatchers = settings.hooks.PreToolUse.map((e: any) => e.matcher);
       expect(preMatchers).toContain("Bash");
-      expect(preMatchers).toContain("Write|Edit");
+      expect(preMatchers).toContain("Write|Edit|MultiEdit");
 
       // Verify hook commands
       // rf-er8a: a RESOLVABLE ABSOLUTE command (`<node> <entrypoint> hook …`),
@@ -1063,7 +1063,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       // BeforeTool matcher targets the mutating Gemini built-in tools by
       // exact name (rf-044o verified against geminicli.com/docs/hooks/reference).
       const beforeMatchers = settings.hooks.BeforeTool.map((e: any) => e.matcher);
-      expect(beforeMatchers).toContain("run_shell_command|write_file|replace|edit");
+      expect(beforeMatchers).toContain("run_shell_command|write_file|replace");
 
       // Commands use --format gemini
       const beforeCommands = settings.hooks.BeforeTool.flatMap(
