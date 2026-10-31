@@ -222,6 +222,16 @@ function printDryRunPlan(plan: {
     D("skill-scanner", "heavy PyPI package, isolated install via uv tool / pip --user");
   }
 
+  // Same order as the real run, which installs OpenClaw before the others.
+  if (plan.wantOpenClaw) {
+    console.log();
+    console.log("OpenClaw (--with-openclaw):");
+    F(openclawSkillArtifacts(home));
+    const legacy = cleanupLegacyOpenClaw(plan.session);
+    for (const p of legacy.removed) R(p, "legacy file from rafter ≤ 0.7.7");
+    for (const p of legacy.kept) S(p, "legacy file from rafter ≤ 0.7.7, but modified; kept");
+  }
+
   if (plan.wantClaudeCode) {
     console.log();
     console.log("Claude Code (--with-claude-code):");
@@ -305,15 +315,6 @@ function printDryRunPlan(plan: {
     console.log();
     console.log("OpenCode (--with-opencode):");
     W(path.join(plan.root, ".config", "opencode", "opencode.json"), "mcp.rafter local/stdio entry merged into existing JSON");
-  }
-
-  if (plan.wantOpenClaw) {
-    console.log();
-    console.log("OpenClaw (--with-openclaw):");
-    F(openclawSkillArtifacts(home));
-    const legacy = cleanupLegacyOpenClaw(plan.session);
-    for (const p of legacy.removed) R(p, "legacy file from rafter ≤ 0.7.7");
-    for (const p of legacy.kept) S(p, "legacy file from rafter ≤ 0.7.7, but modified; kept");
   }
 
   const unchanged = plan.session.count("unchanged");

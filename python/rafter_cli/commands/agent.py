@@ -365,6 +365,17 @@ def _print_dry_run_plan(
         print("skill-scanner deep engine (--with-skill-scanner):")
         D(Path("skill-scanner"), "heavy PyPI package, isolated install via uv tool / pip --user")
 
+    # Same order as the real run, which installs OpenClaw before the others.
+    if want_openclaw:
+        print()
+        print("OpenClaw (--with-openclaw):")
+        F(openclaw_skill_artifacts(home))
+        legacy = cleanup_legacy_openclaw(session)
+        for p in legacy.removed:
+            R(p, "legacy file from rafter ≤ 0.7.7")
+        for p in legacy.kept:
+            S(p, "legacy file from rafter ≤ 0.7.7, but modified; kept")
+
     if want_claude_code:
         print()
         print("Claude Code (--with-claude-code):")
@@ -435,16 +446,6 @@ def _print_dry_run_plan(
         print()
         print("OpenCode (--with-opencode):")
         W(root / ".config" / "opencode" / "opencode.json", "mcp.rafter local/stdio entry merged into existing JSON")
-
-    if want_openclaw:
-        print()
-        print("OpenClaw (--with-openclaw):")
-        F(openclaw_skill_artifacts(home))
-        legacy = cleanup_legacy_openclaw(session)
-        for p in legacy.removed:
-            R(p, "legacy file from rafter ≤ 0.7.7")
-        for p in legacy.kept:
-            S(p, "legacy file from rafter ≤ 0.7.7, but modified; kept")
 
     unchanged = session.count("unchanged")
     if unchanged:
