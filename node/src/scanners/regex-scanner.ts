@@ -23,6 +23,31 @@ function readErrorReason(e: any): string {
   return e instanceof Error ? e.message : "could not read file";
 }
 
+// Keep in step with DEFAULT_EXCLUDE in python/rafter_cli/scanners/regex_scanner.py.
+export const DEFAULT_EXCLUDE: readonly string[] = [
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".next",
+  "coverage",
+  ".vscode",
+  ".idea",
+  // Vendored / virtual-env / generated dirs that cause false positives
+  "vendor",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".tox",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  "results",
+  ".terraform",
+  "bower_components",
+  ".trigger", // Trigger.dev build output (bundled JS + source maps)
+];
+
 export class RegexScanner {
   private engine: PatternEngine;
 
@@ -91,30 +116,7 @@ export class RegexScanner {
      */
     respectGitignore?: boolean;
   }): ScanResult[] {
-    // Keep in step with DEFAULT_EXCLUDE in python/rafter_cli/scanners/regex_scanner.py.
-    const exclude = options?.exclude || [
-      "node_modules",
-      ".git",
-      "dist",
-      "build",
-      ".next",
-      "coverage",
-      ".vscode",
-      ".idea",
-      // Vendored / virtual-env / generated dirs that cause false positives
-      "vendor",
-      ".venv",
-      "venv",
-      "__pycache__",
-      ".tox",
-      ".mypy_cache",
-      ".pytest_cache",
-      ".ruff_cache",
-      "results",
-      ".terraform",
-      "bower_components",
-      ".trigger", // Trigger.dev build output (bundled JS + source maps)
-    ];
+    const exclude = options?.exclude || [...DEFAULT_EXCLUDE];
 
     // Merge policy excludePaths into the exclude list
     if (options?.excludePaths) {
@@ -238,7 +240,7 @@ export class RegexScanner {
  *
  * Batched: all candidate paths are piped through one subprocess.
  */
-function filterGitIgnored(files: string[], scanRoot: string): string[] {
+export function filterGitIgnored(files: string[], scanRoot: string): string[] {
   if (files.length === 0) return files;
 
   // Locate the git work tree that owns scanRoot. Bail out (no filter) if

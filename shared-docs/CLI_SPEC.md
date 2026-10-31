@@ -1312,6 +1312,80 @@ Generate a standalone HTML security report from scan results.
 
 Remote scan results (`rafter run`/`rafter get --format json`) are rejected with exit `2`; render those with `rafter get <scan_id> --format md`. Both runtimes.
 
+### rafter gates [PATH] [OPTIONS]
+
+Map a codebase's security gates for an audit: the functions whose names say they decide whether something is allowed, ranked by likely security weight, and "twin" groups of gates that implement the same contract, with the guard calls each twin makes. Static and local: regex over source lines, no network, no LLM. It is a reading list, not a set of findings. Both runtimes produce byte-identical output for the same tree.
+
+- `[PATH]` — directory or single file to map (default: `.`)
+- `--json` — machine-readable output (schema below)
+- `--limit <n>` — number of ranked gates to output, text and JSON (default: `60`); twins are computed from all gates
+- `--no-gitignore` — do not honor `.gitignore`
+
+**Files.** Go, Python, JavaScript, TypeScript, Java and Ruby (`.go .py .js .jsx .mjs .cjs .ts .tsx .mts .cts .java .rb`). Skipped: the `rafter secrets` default excludes (`node_modules`, `vendor`, `dist`, `build`, virtualenvs, ...), hidden directories, test, docs and example directories (`test`, `tests`, `__tests__`, `spec`, `testdata`, `fixtures`, `mocks`, `e2e`, `docs`, `examples`, `samples`, `third_party`, `generated`, ...), test files (`*_test.go`, `test_*.py`, `*.test.ts`, `*.spec.js`, `*Test.java`, `*_spec.rb`, ...), generated files (`*.pb.go`, `*_pb2.py`, `*.min.js`, `*.d.ts`, or a `DO NOT EDIT` / `@generated` marker in the first five lines), files over 1 MiB, definition lines over 400 characters, files whose gate bodies add up to more than 2,000,000 characters (many unclosed definitions: data, not code; the largest real file seen reads 312,000), file names that are not valid UTF-8, and names made only of leading dots and an extension (`..py`, as Python's `splitext` reads them), and anything `.gitignore` excludes. Work is linear in file size, so a hostile tree cannot stall the map. Text is read as UTF-8 with a leading BOM dropped; whitespace means ASCII whitespace, and lengths and sort order count code points.
+
+**Gates.** A definition (function, method, or a class/struct/type) is a gate when its name's first word is a deciding verb (`authorize`, `authenticate`, `allow`, `permit`, `deny`, `can`, `verify`, `enforce`, `guard`, `check`, `validate`, `ensure`, `require`, `match`, `sanitize`, `escape`, `clean`, `safe`, ...), it is `is*` followed by a state such as `Allowed`, `Valid`, `Trusted`, `Safe`, `Admin` or `Owner`, `has*` followed by `Permission`, `Role`, `Scope` or `Access`, it ends in `match`/`matches`/`matcher`, or it contains a role word (`middleware`, `guard`, `interceptor`, `authorizer`, `authenticator`, `verifier`, `sanitizer`, ...). Names starting with an accessor or plumbing word (`get`, `set`, `load`, `create`, `parse`, `render`, ...) are never gates. A type is a gate only through a role word. `score` adds the name's verb or role weight, security tokens in the name (`authoriz`, `authent`, `permission`, `acl`, `policy`, `token`, `session`, `password`, ..., capped at 6), and 2 when a directory or the file name is security-ish (`auth`, `acl`, `policy`, `session`, `token`, `oauth`, `jwt`, `crypto`, `tls`, `middleware`, `security`, `access`, ...). The weights are heuristics and may change between versions. Gates sort by score, then file, then line.
+
+**Twins.** Function and method gates group by a key derived from the name: words are lowercased and joined with case and separators ignored; version suffixes (`V2`, `_2`), `async`/`sync`/`impl` markers, a leading `do`, and backend words (`ldap`, `sql`, `redis`, `local`, `memory`, `http`, ...) are dropped, as is a word at either end of the name that also names the file or its directory. A name prefixed with `a` for its async variant (`acheck_password`) joins the unprefixed group. A key reduced to one weak verb (`check`, `validate`, `ensure`) is not grouped. Groups of 2 to 8 members are reported. For each member, calls in its body are sorted into guard categories by the called name, lowercased with underscores removed: `escape`, `normalize`, `containment`, `constant_time`, `expiry`, `authz`, `authn`, `limit`, `verify`, `validate`, `check`. A group is **flagged** when a category appears in one member and not in another. Flagged groups sort first, by the weight of their missing categories (escape, normalize, containment, constant-time compare and expiry above authz, authn and limit, above verify, validate and check), then by the highest member score.
+
+**Text output** (stdout): a stats line, the ranked gates as `score  file:line  signature` (signature truncated to 90 characters), up to 10 flagged twin groups with each member's guard calls and the categories it lacks, then up to 8 other twin groups. It is sized for an agent to read (a few KB).
+
+**JSON output** (`--json`, stdout; this example is `--limit 1`):
+
+```json
+{
+  "stats": {
+    "files_scanned": 4,
+    "gates_found": 5,
+    "gates_shown": 1,
+    "twin_groups": 1,
+    "flagged_groups": 1
+  },
+  "gates": [
+    {
+      "file": "auth/authz.go",
+      "line": 3,
+      "name": "Authorize",
+      "kind": "method",
+      "language": "go",
+      "score": 9,
+      "signature": "func (a *Authorizer) Authorize(user string, action string) bool {"
+    }
+  ],
+  "twins": [
+    {
+      "key": "authenticate",
+      "flagged": true,
+      "missing": ["escape"],
+      "members": [
+        {
+          "file": "backends/ldap.py",
+          "line": 1,
+          "name": "authenticate",
+          "guards": { "escape": ["escape_filter_chars"] },
+          "lacks": []
+        },
+        {
+          "file": "backends/local.py",
+          "line": 1,
+          "name": "authenticate",
+          "guards": {},
+          "lacks": ["escape"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `file` — path relative to `[PATH]` (or to the file's directory when `[PATH]` is a file), `/`-separated
+- `kind` — `function`, `method` or `type`; `language` — `go`, `python`, `javascript`, `typescript`, `java` or `ruby`
+- `gates` — at most `--limit` entries; `stats.gates_found` counts all of them
+- `twins` — all groups, flagged first; `missing` lists the guard categories some member lacks, in category order; `guards` maps each category a member calls to the sorted called names
+
+When no file is scanned, a warning goes to stderr; the map still prints.
+
+**Exit codes:** `0` on success, whatever is found; `2` when `[PATH]` does not exist or `--limit` is not a positive integer.
+
 ### rafter issues create SUBCOMMAND
 
 GitHub Issues integration — create issues from scan findings or natural text.

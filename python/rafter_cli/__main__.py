@@ -12,6 +12,7 @@ from .commands.backend import register_backend_commands
 from .commands.brief import brief_app
 from .commands.ci import ci_app
 from .commands.docs import docs_app
+from .commands.gates import gates_main
 from .commands.hook import hook_app
 from .commands.issues.issues_app import issues_app
 from .commands.mcp_server import mcp_app
@@ -124,6 +125,7 @@ app.add_typer(sites_app)
 app.add_typer(skill_app)
 app.add_typer(telemetry_app)
 app.command("report")(report_main)
+app.command("gates")(gates_main)
 
 
 def _allow_agent_flag_at_any_depth(cmd: Any) -> None:
