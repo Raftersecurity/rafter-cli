@@ -100,7 +100,10 @@ describe("rafter agent update", () => {
     const r = cli(["agent", "update"]);
     expect(r.status, r.stdout).toBe(0);
     expect(r.stdout).toContain("No rafter integrations found");
-    expect(fs.readdirSync(home)).toEqual([".claude"]);
+    // The usage counters (~/.rafter/usage/) are written by every command; nothing else may be.
+    expect(fs.readdirSync(home).filter((n) => n !== ".rafter")).toEqual([".claude"]);
+    const rafterDir = path.join(home, ".rafter");
+    if (fs.existsSync(rafterDir)) expect(fs.readdirSync(rafterDir)).toEqual(["usage"]);
     expect(fs.readdirSync(path.join(home, ".claude"))).toEqual([]);
   });
 });
