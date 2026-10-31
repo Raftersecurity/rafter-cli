@@ -168,6 +168,35 @@ class TestDocsLoader:
         assert result.source_kind == "path"
         assert "Internal Rules" in result.content
 
+    # sable-fwup — a project .rafter.yml docs entry must not read a file
+    # outside the project root. Absolute paths, ../ escapes, and in-repo
+    # symlinks pointing out all resolved and read before this fix.
+    def test_fetch_path_refuses_absolute(self, tmp_project):
+        import rafter_cli.core.docs_loader as dl
+        importlib.reload(dl)
+        with pytest.raises(Exception):
+            dl.fetch_doc({"id": "abs", "path": "/etc/passwd"})
+
+    def test_fetch_path_refuses_parent_escape(self, tmp_project):
+        import rafter_cli.core.docs_loader as dl
+        importlib.reload(dl)
+        escape = os.path.relpath("/etc/passwd", tmp_project)  # ../../../etc/passwd
+        with pytest.raises(Exception):
+            dl.fetch_doc({"id": "esc", "path": escape})
+
+    def test_fetch_path_refuses_symlink_escape(self, tmp_project):
+        (tmp_project / "link.md").symlink_to("/etc/passwd")
+        import rafter_cli.core.docs_loader as dl
+        importlib.reload(dl)
+        with pytest.raises(Exception):
+            dl.fetch_doc({"id": "lnk", "path": "link.md"})
+
+    def test_fetch_path_allows_legit_in_repo(self, tmp_project):
+        (tmp_project / "ok.md").write_text("# fine\n")
+        import rafter_cli.core.docs_loader as dl
+        importlib.reload(dl)
+        assert "fine" in dl.fetch_doc({"id": "ok", "path": "ok.md"}).content
+
     def test_fetch_url_returns_stale_on_network_failure(self, tmp_project, monkeypatch):
         (tmp_project / ".rafter.yml").write_text(
             "docs:\n"

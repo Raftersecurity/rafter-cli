@@ -4,12 +4,45 @@ from __future__ import annotations
 import json
 import os
 import sys
+from urllib.parse import urlparse
 
 import requests
 import typer
-from dotenv import load_dotenv
 
 API_BASE = "https://rafter.so/api/"
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_warned_api_override = False
+
+
+def _resolve_api_base() -> str:
+    """The API base in effect right now.
+
+    ``RAFTER_API_URL``, read fresh on every call rather than cached at import
+    time, overrides the production default. This is how the test suite points
+    the CLI at a local, non-routable port instead of the live backend — see
+    ``python/tests/conftest.py``. Production never sets the var, so this is a
+    no-op outside tests.
+
+    Every request carries the API key, so the override must be https, or plain
+    http to a loopback host. Anything else is ignored with a warning. A remote
+    https override is honored with a one-time notice, since the key goes there.
+    """
+    global _warned_api_override
+    override = os.environ.get("RAFTER_API_URL")
+    if not override:
+        return API_BASE
+    parsed = urlparse(override)
+    loopback = parsed.hostname in _LOOPBACK_HOSTS
+    allowed = (parsed.scheme == "https" and bool(parsed.hostname)) or (parsed.scheme == "http" and loopback)
+    if not loopback and not _warned_api_override:
+        _warned_api_override = True
+        if allowed:
+            print(f"rafter: RAFTER_API_URL is set; sending requests and your API key to "
+                  f"{parsed.scheme}://{parsed.netloc}", file=sys.stderr)
+        else:
+            print(f"rafter: ignoring RAFTER_API_URL (must be https, or http to localhost); "
+                  f"using {API_BASE}", file=sys.stderr)
+    return override if allowed else API_BASE
 
 # Exit codes
 EXIT_SUCCESS = 0
@@ -36,7 +69,12 @@ def handle_403(resp: "requests.Response") -> int:
     if isinstance(body, dict) and "scan_mode" in body:
         mode = body["scan_mode"]
         limit = body.get("limit", "?")
-        used = body.get("used", limit)
+        # The API sends ``remaining``, not ``used``; ``used`` is kept for older servers.
+        used = body.get("used")
+        if used is None:
+            remaining = body.get("remaining")
+            numeric = all(isinstance(v, int) and not isinstance(v, bool) for v in (limit, remaining))
+            used = limit - remaining if numeric else limit
         print(
             f"Error: {mode.capitalize()} scan limit reached ({used}/{limit} used this billing period).\n"
             f"Upgrade your plan or wait for your quota to reset.",
@@ -85,7 +123,7 @@ def api_url(path: str) -> str:
     to the single-slash form. That worked only because the client followed the
     redirect — so sable-2s6p's fix would have broken every core command.
     """
-    return f"{API_BASE.rstrip('/')}/{path.lstrip('/')}"
+    return f"{_resolve_api_base().rstrip('/')}/{path.lstrip('/')}"
 
 
 def api_request(method: str, url: str, **kwargs) -> "requests.Response":
@@ -133,7 +171,9 @@ def resolve_key(cli_opt: str | None) -> str:
     """Resolve API key: --api-key flag > RAFTER_API_KEY env > global config."""
     if cli_opt:
         return cli_opt
-    load_dotenv()
+    # No .env loading here: python-dotenv searches upward from this package's
+    # install path, which for a virtualenv inside a cloned repo reaches the
+    # repo's own .env. A repo must never supply the operator's credential.
     env_key = os.getenv("RAFTER_API_KEY")
     if env_key:
         return env_key

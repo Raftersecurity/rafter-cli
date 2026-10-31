@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 
@@ -24,7 +25,7 @@ from ..utils.api import (
     resolve_key,
     write_payload,
 )
-from ..utils.git import detect_repo
+from ..utils.git import _run, branch_from_env, detect_repo, remote_branch_sha
 
 
 def _plus_approval_gate_enabled() -> bool:
@@ -109,6 +110,17 @@ MAX_TOTAL_TRANSIENT_POLL_FAILURES = 20
 
 BASE_BACKOFF_SECONDS = 2
 
+# sable-96ex — a 429 during polling is ambiguous in this API: on scan SUBMIT it
+# means "you are out of credits" (exit 3), and on the poll endpoint it would
+# mean "you are going too fast". ``Retry-After`` is the disambiguator — a quota
+# rejection does not carry one, a rate limiter does — so a 429 is retried here
+# only when the server tells us how long to wait, and fails fast otherwise.
+#
+#: Longest Retry-After we honor. A limiter is free to answer "come back in an
+#: hour"; a CI job cannot sit there for it, and the failure budget still bounds
+#: the total wait either way.
+MAX_RETRY_AFTER_SECONDS = 60
+
 #: Longest single error detail we will echo back. Servers can be verbose.
 MAX_ERROR_DETAIL_CHARS = 200
 
@@ -139,15 +151,51 @@ def backoff_seconds(consecutive_failures: int) -> int:
     return BASE_BACKOFF_SECONDS * 2 ** (consecutive_failures - 1)
 
 
-def _is_transient_poll_status(status_code: int, scan_exists: bool) -> bool:
+def retry_after_seconds(resp) -> "int | None":
+    """``Retry-After`` in seconds, or ``None`` when absent or unusable.
+
+    Only the delay-seconds form is honored. The HTTP-date form is deliberately
+    not parsed: the composite action has to make the same decision in bash on
+    whatever ``date`` the runner ships, and a rule the three surfaces cannot
+    state identically is worse than a narrow one they can. An unparseable
+    header is treated as absent — which means fail fast, the conservative
+    direction.
+    """
+    headers = getattr(resp, "headers", None)
+    value = headers.get("Retry-After") if hasattr(headers, "get") else None
+    # requests always yields a str; anything else (notably a test double's
+    # auto-attribute) is not a header the server sent.
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    # NOT str.isdigit(): it is Unicode-aware and int() is not, so '\xb2' — a
+    # single raw byte, which http.client decodes as ISO-8859-1 into '²' — passes
+    # isdigit() and then raises ValueError out of a call site whose only handler
+    # is requests.RequestException. That is a server-triggered client crash, and
+    # it is also a divergence: Node's /^\d+$/ and the action's `case *[!0-9]*`
+    # both reject the same byte. The accept-set must match what int() parses.
+    if not re.fullmatch(r"[0-9]+", text):
+        return None
+    return min(int(text), MAX_RETRY_AFTER_SECONDS)
+
+
+def _is_transient_poll_status(
+    status_code: int, scan_exists: bool, retry_after: "int | None" = None
+) -> bool:
     """Transient = the server itself describes the condition as temporary.
 
     ``scan_exists`` gates 404: before the first successful poll a 404 means the
     scan id is wrong, and retrying it just delays a clear answer. After it, a
     missing scan is read-after-write lag.
+
+    ``retry_after`` gates 429: without that header a 429 here is a quota
+    rejection, and retrying one for half a minute before failing anyway is
+    worse than failing now. See ``MAX_RETRY_AFTER_SECONDS``.
     """
     if status_code == 404:
         return scan_exists
+    if status_code == 429:
+        return retry_after is not None
     return status_code >= 500 or status_code == 408
 
 
@@ -208,6 +256,26 @@ def unreadable_report_message(
     )
 
 
+def rate_limited_message(
+    scan_id: str,
+    last_error: str,
+    attempts: int = MAX_TRANSIENT_POLL_FAILURES,
+) -> str:
+    """The give-up message when polling was throttled, not blocked on a bad read.
+
+    Telling a customer their report could not be read, when what actually
+    happened is that we were rate limited, points them at the wrong thing — and
+    at a ``rafter get`` that will be throttled too.
+    """
+    return (
+        f"Rafter was rate limited by the API while polling scan {scan_id} "
+        f"({attempts} attempts).\n"
+        f"The scan itself may still be running \u2014 retry with: rafter get {scan_id}\n"
+        "or open the scan in your dashboard at https://rafter.so/dashboard\n"
+        f"Last response from the server: {last_error}"
+    )
+
+
 class _FailureBudget:
     """A failure budget shared across every poll in one interactive call.
 
@@ -222,12 +290,17 @@ class _FailureBudget:
         self.last = ""
         #: False once any failure carried no HTTP response at all.
         self.last_reached_server = True
+        #: True when the failure we gave up on was a throttled 429, not a bad read.
+        self.last_rate_limited = False
 
-    def record(self, detail: str, reached_server: bool = True) -> int:
+    def record(
+        self, detail: str, reached_server: bool = True, rate_limited: bool = False
+    ) -> int:
         self.consecutive += 1
         self.total += 1
         self.last = detail
         self.last_reached_server = reached_server
+        self.last_rate_limited = rate_limited
         return self.consecutive
 
     def reset(self) -> None:
@@ -267,7 +340,14 @@ def _poll_until_readable(
             if 200 <= resp.status_code < 300:
                 budget.reset()
                 return resp
-            if not _is_transient_poll_status(resp.status_code, scan_exists):
+            # Non-None only for a 429 that carried a usable Retry-After — the
+            # sole reason such a 429 gets past the classifier below.
+            retry_after = (
+                retry_after_seconds(resp) if resp.status_code == 429 else None
+            )
+            if not _is_transient_poll_status(
+                resp.status_code, scan_exists, retry_after
+            ):
                 raise PollFatalError(
                     _describe_http_error(resp.status_code, resp.text),
                     status_code=resp.status_code,
@@ -278,11 +358,14 @@ def _poll_until_readable(
             # Transport error (DNS, reset, timeout) — as retryable as a 5xx.
             detail = _truncate(str(e))
             reached_server = False
+            retry_after = None
 
-        attempt = budget.record(detail, reached_server)
+        attempt = budget.record(detail, reached_server, retry_after is not None)
         if budget.exhausted:
             raise PollGaveUpError(
-                unreadable_report_message(
+                rate_limited_message(scan_id, budget.last, attempts=budget.total)
+                if budget.last_rate_limited
+                else unreadable_report_message(
                     scan_id,
                     budget.last,
                     attempts=budget.total,
@@ -290,10 +373,18 @@ def _poll_until_readable(
                 )
             )
 
-        wait = backoff_seconds(attempt)
+        # The server named the delay; obey it instead of our own schedule. It
+        # still spends a failure from the budget, so an endlessly-throttling
+        # API cannot keep the loop alive.
+        wait = backoff_seconds(attempt) if retry_after is None else retry_after
         if not quiet:
+            what = (
+                f"Rate limited by the API ({budget.last})"
+                if retry_after is not None
+                else f"Report not readable yet ({budget.last})"
+            )
             print(
-                f"Report not readable yet ({budget.last}); retrying in {wait}s "
+                f"{what}; retrying in {wait}s "
                 f"({attempt}/{MAX_TRANSIENT_POLL_FAILURES})",
                 file=sys.stderr,
             )
@@ -357,24 +448,53 @@ def _handle_scan_status_interactive(
             if status == "completed":
                 if not quiet:
                     print("Scan completed!", file=sys.stderr)
+                _warn_if_partial(data)
                 return write_payload(data, fmt, quiet)
             elif status == "failed":
-                print("Scan failed.", file=sys.stderr)
-                raise typer.Exit(code=EXIT_GENERAL_ERROR)
+                _report_failed_scan(data, fmt)
         if not quiet:
             print(f"Scan status: {status}", file=sys.stderr)
     elif status == "completed":
         if not quiet:
             print("Scan completed!", file=sys.stderr)
+        _warn_if_partial(data)
         return write_payload(data, fmt, quiet)
     elif status == "failed":
-        print("Scan failed.", file=sys.stderr)
-        raise typer.Exit(code=EXIT_GENERAL_ERROR)
+        _report_failed_scan(data, fmt)
     else:
         if not quiet:
             print(f"Scan status: {status}", file=sys.stderr)
 
+    _warn_if_partial(data)
     return write_payload(data, fmt, quiet)
+
+
+def _warn_if_partial(data: dict) -> None:
+    """A completed scan the API marks partial (some scanners did not finish) is
+    not a clean result. Say so on stderr, even with --quiet."""
+    if data.get("partial") is not True and data.get("warning_code") != "SCAN_PARTIAL":
+        return
+    code = data["warning_code"] if isinstance(data.get("warning_code"), str) else "SCAN_PARTIAL"
+    missing = data.get("missing_scanners")
+    tail = f" Scanners that did not finish: {', '.join(map(str, missing))}." if isinstance(missing, list) and missing else ""
+    print(
+        f"Warning: Scan completed with gaps ({code}): some scanners did not finish, "
+        f"so findings may be missing.{tail} Do not treat this result as clean.",
+        file=sys.stderr,
+    )
+
+
+def _report_failed_scan(data: dict, fmt: str) -> None:
+    """A failed scan: say why on stderr, as the API explains it, and in JSON
+    mode hand the payload to stdout so an agent can read error_code/retryable."""
+    code = f" ({data['error_code']})" if isinstance(data.get("error_code"), str) else ""
+    reason = f": {data['error']}" if isinstance(data.get("error"), str) and data["error"] else ""
+    print(f"Scan failed{code}{reason}", file=sys.stderr)
+    if data.get("retryable") is True:
+        print("This failure is retryable: start a new scan with `rafter run`.", file=sys.stderr)
+    if fmt == "json":
+        write_payload(data, fmt)
+    raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
 
 def _do_remote_scan(
@@ -407,6 +527,30 @@ def _do_remote_scan(
 
     if not (repo and branch) and not quiet:
         print(f"Repo auto-detected: {repo_slug} @ {branch_name} (note: scanning remote)", file=sys.stderr)
+
+    # The backend clones the remote, so an auto-detected branch that was never
+    # pushed can only fail there. Say so now instead of queueing that scan.
+    # A repo_url is inferred only when the slug came from the origin remote.
+    if detected_repo_url and not branch and not branch_from_env():
+        remote_sha = remote_branch_sha(branch_name)
+        if remote_sha is None:
+            print(
+                f'Branch "{branch_name}" does not exist on the remote (origin). Rafter scans '
+                "the remote repository: push the branch first, or pass --branch to scan one that exists.",
+                file=sys.stderr,
+            )
+            raise typer.Exit(code=EXIT_GENERAL_ERROR)
+        if remote_sha and not quiet:
+            try:
+                head = _run(["git", "rev-parse", "HEAD"])
+            except Exception:
+                head = None
+            if head and head != remote_sha:
+                print(
+                    f"Note: local HEAD differs from origin/{branch_name}; "
+                    f"the scan covers the pushed commit {remote_sha[:7]}.",
+                    file=sys.stderr,
+                )
 
     # Explicit flags override inferred values.
     resolved_provider = provider or detected_provider
@@ -500,6 +644,9 @@ def register_backend_commands(app: typer.Typer) -> None:
                 print(f"Error: {e}", file=sys.stderr)
                 raise typer.Exit(code=EXIT_GENERAL_ERROR)
             data = resp.json()
+            if data.get("status") == "failed":
+                _report_failed_scan(data, fmt)
+            _warn_if_partial(data)
             return write_payload(data, fmt, quiet)
 
         _handle_scan_status_interactive(scan_id, headers, fmt, quiet)

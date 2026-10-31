@@ -5,13 +5,27 @@ import yaml from "js-yaml";
 import {
   RAFTER_MARKER_START,
   RAFTER_MARKER_END,
+  AIDER_NOTE_MARKER_START,
+  AIDER_NOTE_MARKER_END,
   injectInstructionFile,
+  injectAiderNote,
+  retireInstructionFile,
+  stripMarkerBlock,
 } from "./instruction-block.js";
 import { ConfigManager } from "../../core/config-manager.js";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { KNOWN_SKILL_NAMES } from "../skill/registry.js";
+import {
+  InstallSession,
+  RULE_SKILLS,
+  cleanupLegacyOpenClaw,
+  cleanupRetiredRules,
+  cleanupRetiredSkills,
+  cursorAgentArtifacts,
+  openclawSkillArtifacts,
+  openclawSkillPath,
+  ruleArtifacts,
+  skillArtifacts,
+} from "./install-files.js";
 
 /**
  * Component granularity for `rafter agent enable/disable/list`.
@@ -35,7 +49,12 @@ export interface ComponentSpec {
   detectDir: string;
   /** Primary file this component reads/writes (for reporting). */
   path: string;
-  install: () => void;
+  /**
+   * Skill, rule and sub-agent files go through `session`'s write policy
+   * (install-files.ts), so a locally edited file is kept, not overwritten.
+   * Without one, the component uses its own session rooted at the home dir.
+   */
+  install: (session?: InstallSession) => void;
   uninstall: () => void;
   /** True when this component's rafter entries are currently present. */
   isInstalled: () => boolean;
@@ -94,21 +113,6 @@ function hookEntryMatchesRafter(entry: any, prefix: string): boolean {
   const hooks = entry?.hooks;
   if (!Array.isArray(hooks)) return false;
   return hooks.some((h) => String(h?.command ?? "").startsWith(prefix));
-}
-
-/** Strip the rafter marker block from a text file, writing only if the file actually changed. */
-function stripMarkerBlock(filePath: string): boolean {
-  if (!fs.existsSync(filePath)) return false;
-  const content = fs.readFileSync(filePath, "utf-8");
-  const startIdx = content.indexOf(RAFTER_MARKER_START);
-  const endIdx = content.indexOf(RAFTER_MARKER_END);
-  if (startIdx === -1 || endIdx === -1) return false;
-  const before = content.slice(0, startIdx).trimEnd();
-  const after = content.slice(endIdx + RAFTER_MARKER_END.length);
-  const trailing = after.replace(/^\s*\n+/, "");
-  const next = (before ? before + "\n" : "") + trailing;
-  fs.writeFileSync(filePath, next, "utf-8");
-  return true;
 }
 
 /** True when a file exists and contains the rafter marker block. */
@@ -172,7 +176,7 @@ function claudeCodeHooks(): ComponentSpec {
 
       settings.hooks.PreToolUse.push(
         { matcher: "Bash", hooks: [pre] },
-        { matcher: "Write|Edit", hooks: [pre] },
+        { matcher: "Write|Edit|MultiEdit", hooks: [pre] },
       );
       // Narrow to tools that produce scannable output (shell output + file
       // writes); avoids firing posttool on every Read/MCP call (latency).
@@ -227,21 +231,22 @@ function claudeCodeInstructions(): ComponentSpec {
   };
 }
 
-function skillTemplatePath(name: string): string {
-  return path.join(__dirname, "..", "..", "..", "resources", "skills", name, "SKILL.md");
+/** Run `fn` with the caller's session, or a fresh one that is saved afterwards. */
+function withSession(session: InstallSession | undefined, fn: (s: InstallSession) => void): void {
+  const s = session ?? new InstallSession({
+    root: os.homedir(),
+    out: { info: (m?: string) => console.log(m ?? ""), warn: (m: string) => console.log(m) },
+  });
+  fn(s);
+  if (!session) s.save();
 }
 
 /**
  * Canonical rafter-authored skills that a per-platform "skills" component
- * installs. Mirrors `python/rafter_cli/commands/agent_components.py`. Keep in
- * sync with the SKILL.md files shipped under `node/resources/skills/`.
+ * installs — the single `KNOWN_SKILL_NAMES` list in `../skill/registry.js`,
+ * so this and `agent init` (install-files.ts) can't drift apart.
  */
-const COMPONENT_SKILL_NAMES = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
+const COMPONENT_SKILL_NAMES = KNOWN_SKILL_NAMES;
 
 function skillsDirComponent(opts: {
   id: string;
@@ -261,16 +266,13 @@ function skillsDirComponent(opts: {
     detectDir: opts.detectDir,
     path: opts.skillsBaseDir,
     isInstalled: () => destPaths.some((p) => fs.existsSync(p)),
-    install: () => {
-      for (const name of COMPONENT_SKILL_NAMES) {
-        const src = skillTemplatePath(name);
-        const dst = path.join(opts.skillsBaseDir, name, "SKILL.md");
-        if (!fs.existsSync(src)) continue;
-        const dir = path.dirname(dst);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.copyFileSync(src, dst);
-      }
-    },
+    install: (session) => withSession(session, (s) => {
+      // SKILL.md only, matching what uninstall removes (init also installs docs/).
+      s.applyAll(skillArtifacts(opts.skillsBaseDir, opts.platform, opts.id).filter((a) => path.basename(a.dest) === "SKILL.md"));
+      // Clean up any rafter skill directory left over from a rename — never a
+      // user's own or a modified one (publisher tag or hash proof required).
+      cleanupRetiredSkills(s, opts.skillsBaseDir);
+    }),
     uninstall: () => {
       for (const p of destPaths) {
         if (fs.existsSync(p)) {
@@ -475,38 +477,8 @@ function cursorHooks(): ComponentSpec {
   };
 }
 
-const CURSOR_RULE_SKILLS = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
+const CURSOR_RULE_SKILLS = RULE_SKILLS;
 
-function cursorRuleSourceDir(): string | null {
-  // After build: dist/commands/agent/components.js -> ../../../resources/cursor-rules
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "cursor-rules"),
-    path.resolve(__dirname, "..", "..", "resources", "cursor-rules"),
-  ];
-  return candidates.find((p) => fs.existsSync(p)) ?? null;
-}
-
-function cursorAgentSourceFile(): string | null {
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "agents", "rafter.md"),
-    path.resolve(__dirname, "..", "..", "resources", "agents", "rafter.md"),
-  ];
-  return candidates.find((p) => fs.existsSync(p)) ?? null;
-}
-
-/**
- * Cursor instructions = per-skill rules under .cursor/rules/ + the rafter
- * sub-agent at .cursor/agents/rafter.md (rf-svn3). The legacy consolidated
- * rafter-security.mdc was retired.
- *
- * `path` reports the rules dir for diagnostics; install/uninstall manage
- * both rules and the sub-agent file together.
- */
 function cursorInstructions(): ComponentSpec {
   const home = os.homedir();
   const rulesDir = path.join(home, ".cursor", "rules");
@@ -525,51 +497,21 @@ function cursorInstructions(): ComponentSpec {
       );
       return rulesPresent && fs.existsSync(agentPath);
     },
-    install: () => {
-      fs.mkdirSync(rulesDir, { recursive: true });
-      const ruleSrc = cursorRuleSourceDir();
-      if (ruleSrc) {
-        for (const name of CURSOR_RULE_SKILLS) {
-          const src = path.join(ruleSrc, `${name}.mdc`);
-          if (fs.existsSync(src)) {
-            fs.copyFileSync(src, path.join(rulesDir, `${name}.mdc`));
-          }
-        }
-      }
-      // Migrate away from the legacy consolidated rule.
-      if (fs.existsSync(legacyPath)) {
-        try { fs.unlinkSync(legacyPath); } catch { /* best-effort */ }
-      }
-
-      const agentSrc = cursorAgentSourceFile();
-      if (agentSrc) {
-        fs.mkdirSync(path.dirname(agentPath), { recursive: true });
-        const raw = fs.readFileSync(agentSrc, "utf-8");
-        const cursored = stripFrontmatterField(raw, "tools");
-        fs.writeFileSync(agentPath, cursored, "utf-8");
-      }
-    },
+    install: (session) => withSession(session, (s) => {
+      s.applyAll(ruleArtifacts("cursor", home));
+      cleanupRetiredRules(s, "cursor");
+      retireInstructionFile(legacyPath);
+      s.applyAll(cursorAgentArtifacts(home));
+    }),
     uninstall: () => {
       for (const name of CURSOR_RULE_SKILLS) {
         const p = path.join(rulesDir, `${name}.mdc`);
         if (fs.existsSync(p)) fs.rmSync(p, { force: true });
       }
-      if (fs.existsSync(legacyPath)) fs.rmSync(legacyPath, { force: true });
+      retireInstructionFile(legacyPath);
       if (fs.existsSync(agentPath)) fs.rmSync(agentPath, { force: true });
     },
   };
-}
-
-/** Strip a single-line frontmatter field from a markdown file's frontmatter. */
-function stripFrontmatterField(content: string, field: string): string {
-  if (!content.startsWith("---\n")) return content;
-  const fmEnd = content.indexOf("\n---", 4);
-  if (fmEnd === -1) return content;
-  const frontmatter = content.slice(4, fmEnd);
-  const body = content.slice(fmEnd);
-  const re = new RegExp(`^${field}:\\s.*$`, "m");
-  const cleaned = frontmatter.replace(re, "").replace(/\n\n+/g, "\n").replace(/^\n/, "");
-  return `---\n${cleaned}${body}`;
 }
 
 function cursorMcp(): ComponentSpec {
@@ -638,8 +580,9 @@ function geminiHooks(): ComponentSpec {
       );
       // Explicit Gemini built-in tool names per geminicli.com/docs/hooks/reference
       // (rf-044o verification).
+      // No tool is named `edit`: Gemini's edit tool is `replace`.
       s.hooks.BeforeTool.push({
-        matcher: "run_shell_command|write_file|replace|edit",
+        matcher: "run_shell_command|write_file|replace",
         hooks: [{ type: "command", command: "rafter hook pretool --format gemini", timeout: 5000 }],
       });
       s.hooks.AfterTool.push({
@@ -699,21 +642,7 @@ function geminiMcp(): ComponentSpec {
   };
 }
 
-/** Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3). */
-const WINDSURF_RULE_SKILLS = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
-
-function windsurfRuleSourceDir(): string | null {
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "windsurf-rules"),
-    path.resolve(__dirname, "..", "..", "resources", "windsurf-rules"),
-  ];
-  return candidates.find((p) => fs.existsSync(p)) ?? null;
-}
+const WINDSURF_RULE_SKILLS = RULE_SKILLS;
 
 /**
  * Windsurf rules component: per-skill files at .windsurf/rules/<skill>.md.
@@ -738,17 +667,9 @@ function windsurfRules(): ComponentSpec {
     path: rulesDir,
     isInstalled: () =>
       WINDSURF_RULE_SKILLS.every((n) => fs.existsSync(path.join(rulesDir, `${n}.md`))),
-    install: () => {
-      fs.mkdirSync(rulesDir, { recursive: true });
-      const src = windsurfRuleSourceDir();
-      if (!src) return;
-      for (const name of WINDSURF_RULE_SKILLS) {
-        const from = path.join(src, `${name}.md`);
-        if (fs.existsSync(from)) {
-          fs.copyFileSync(from, path.join(rulesDir, `${name}.md`));
-        }
-      }
-    },
+    install: (session) => withSession(session, (s) => {
+      s.applyAll(ruleArtifacts("windsurf", process.cwd()));
+    }),
     uninstall: () => {
       for (const name of WINDSURF_RULE_SKILLS) {
         const p = path.join(rulesDir, `${name}.md`);
@@ -789,21 +710,7 @@ function windsurfMcp(): ComponentSpec {
   };
 }
 
-/** Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0). */
-const CONTINUE_RULE_SKILLS = [
-  "rafter",
-  "rafter-secure-design",
-  "rafter-code-review",
-  "rafter-skill-review",
-] as const;
-
-function continueRuleSourceDir(): string | null {
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "resources", "continue-rules"),
-    path.resolve(__dirname, "..", "..", "resources", "continue-rules"),
-  ];
-  return candidates.find((p) => fs.existsSync(p)) ?? null;
-}
+const CONTINUE_RULE_SKILLS = RULE_SKILLS;
 
 /** Continue.dev rules component: .continue/rules/<skill>.md, workspace-scope (rf-acz0). */
 function continueRules(): ComponentSpec {
@@ -818,17 +725,9 @@ function continueRules(): ComponentSpec {
     path: rulesDir,
     isInstalled: () =>
       CONTINUE_RULE_SKILLS.every((n) => fs.existsSync(path.join(rulesDir, `${n}.md`))),
-    install: () => {
-      fs.mkdirSync(rulesDir, { recursive: true });
-      const src = continueRuleSourceDir();
-      if (!src) return;
-      for (const name of CONTINUE_RULE_SKILLS) {
-        const from = path.join(src, `${name}.md`);
-        if (fs.existsSync(from)) {
-          fs.copyFileSync(from, path.join(rulesDir, `${name}.md`));
-        }
-      }
-    },
+    install: (session) => withSession(session, (s) => {
+      s.applyAll(ruleArtifacts("continue", process.cwd()));
+    }),
     uninstall: () => {
       for (const name of CONTINUE_RULE_SKILLS) {
         const p = path.join(rulesDir, `${name}.md`);
@@ -1026,6 +925,7 @@ function aiderRead(): ComponentSpec {
     },
     install: () => {
       injectInstructionFile(rafterMdPath);
+      injectAiderNote(rafterMdPath);
       let raw = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : "";
       // Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
       raw = raw.replace(
@@ -1058,8 +958,19 @@ function aiderRead(): ComponentSpec {
       fs.writeFileSync(configPath, yaml.dump(parsed), "utf-8");
     },
     uninstall: () => {
-      if (fs.existsSync(rafterMdPath)) {
-        try { fs.rmSync(rafterMdPath, { force: true }); } catch { /* best-effort */ }
+      // Excise only the managed block; any user content in RAFTER.md survives.
+      // If the file was ours alone (nothing but the block), remove it.
+      // A RAFTER.md with no markers is user-authored — leave it untouched.
+      // Both managed blocks go: the main one and the Aider note that refers
+      // to "the skill names above" — left alone it would be an orphan.
+      const strippedMain = stripMarkerBlock(rafterMdPath);
+      const strippedNote = stripMarkerBlock(rafterMdPath, AIDER_NOTE_MARKER_START, AIDER_NOTE_MARKER_END);
+      if (fs.existsSync(rafterMdPath) && (strippedMain || strippedNote)) {
+        try {
+          if (fs.readFileSync(rafterMdPath, "utf-8").trim() === "") {
+            fs.rmSync(rafterMdPath, { force: true });
+          }
+        } catch { /* best-effort */ }
       }
       if (!fs.existsSync(configPath)) return;
       const raw = fs.readFileSync(configPath, "utf-8");
@@ -1081,23 +992,19 @@ function aiderRead(): ComponentSpec {
 
 function openclawSkill(): ComponentSpec {
   const home = os.homedir();
-  const skillPath = path.join(home, ".openclaw", "skills", "rafter-security.md");
+  const skillPath = openclawSkillPath(home);
   return {
     id: "openclaw.skills",
     platform: "openclaw",
     kind: "skills",
-    description: "OpenClaw rafter-security skill",
+    description: "OpenClaw rafter-security skill (~/.openclaw/workspace/skills/rafter-security/SKILL.md)",
     detectDir: path.join(home, ".openclaw"),
     path: skillPath,
     isInstalled: () => fs.existsSync(skillPath),
-    install: () => {
-      const dir = path.dirname(skillPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const template = skillTemplatePath("rafter");
-      if (fs.existsSync(template)) {
-        fs.copyFileSync(template, skillPath);
-      }
-    },
+    install: (session) => withSession(session, (s) => {
+      s.applyAll(openclawSkillArtifacts(home));
+      cleanupLegacyOpenClaw(s);
+    }),
     uninstall: () => {
       if (fs.existsSync(skillPath)) fs.rmSync(skillPath, { force: true });
     },

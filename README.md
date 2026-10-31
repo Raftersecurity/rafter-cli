@@ -40,28 +40,32 @@ See what Rafter does before reading another word.
 
 ```sh
 # Drop a .env file with credentials in a test repo
-echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' > .env
+echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG' > .env
 
 rafter secrets .
-# → CRITICAL  .env:1  aws-access-key-id  AKIA***AMPLE
+# → CRITICAL  .env:1  aws-access-key-id  AKIA***DEFG
 # → exit 1
 ```
 
 **2. Install the pre-commit hook**
 
 ```sh
-rafter agent init --all
-# → Installs all detected integrations
-# → Downloads Betterleaks (or falls back to built-in scanner)
+rafter agent install-hook
+# → Writes .git/hooks/pre-commit in the current repo
+# → Add --global to apply it to every repo via core.hooksPath
 ```
+
+`rafter agent init --all` is a separate step: it wires up every detected agent (hooks, skills, MCP) and downloads Betterleaks.
+It does not install a git hook.
 
 **3. Try to commit—hook blocks it**
 
 ```sh
 git add . && git commit -m 'add config'
-# → [rafter] Scanning staged files for secrets...
-# → CRITICAL  .env:1  aws-access-key-id
-# → Commit blocked. Remove secrets or use git commit --no-verify to bypass.
+# → Rafter: Scanning staged files for secrets...
+# → CRITICAL  AWS Access Key ID  (.env, line 1)
+# → Commit blocked. Remove secrets before committing.
+# → To bypass (NOT recommended): git commit --no-verify
 ```
 
 **4. Review the audit log**
@@ -107,7 +111,11 @@ pnpm add -g @rafter-security/cli
 pip install rafter-cli
 ```
 
-Requires Python 3.10+. Full feature parity with Node.js including local security toolkit and MCP server.
+Requires Python 3.11+. Full feature parity with Node.js including local security toolkit and MCP server.
+
+### Upgrading
+
+After upgrading the CLI, run `rafter agent update` to refresh the skills, rules, instructions, hooks and MCP entries of every integration you installed. It keeps files you edited (the new version is written beside them as `.rafter-new`) and never adds a platform you did not install. `rafter agent status` tells you when an update is due.
 
 ---
 
@@ -116,7 +124,7 @@ Requires Python 3.10+. Full feature parity with Node.js including local security
 Agentic security audits backed by a full SAST/SCA toolchain, via the Rafter API. The analysis engine examines your codebase the way a professional cybersecurity auditor would — following data flows across files, reasoning about authentication and authorization logic, and identifying vulnerabilities that pattern-matching alone cannot catch — then validates and enriches findings with industry-standard static analysis, dependency scanning, and secret detection. Runs against the **remote repository** on GitHub, not local files. Your code is deleted immediately after analysis completes. Auto-detection uses your local Git config to determine which repo and branch to analyze.
 
 ```sh
-export RAFTER_API_KEY="your-key"   # or use .env file
+export RAFTER_API_KEY="your-key"
 
 rafter run                                    # scan current repo (auto-detected)
 rafter scan --repo myorg/myrepo --branch main # scan specific repo
@@ -129,16 +137,16 @@ rafter usage                                  # check quota
 
 ```sh
 # Filter high-severity vulnerabilities (SARIF levels: error, warning, note)
-rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="error")'
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.severity=="error")'
 
 # Count vulnerabilities
 rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
 
 # Extract all affected file paths
-rafter get SCAN_ID --format json | jq -r '.vulnerabilities[].file' | sort | uniq
+rafter get SCAN_ID --format json | jq -r '.vulnerabilities[].file_path' | sort | uniq
 
 # CSV export
-rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
+rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.severity, .rule_id, .file_path, .line_start] | @csv'
 
 # CI gate: fail if vulnerabilities found
 if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then
@@ -153,7 +161,7 @@ rafter get SCAN_ID > scan_results.json
 
 1. Sign up at [rafter.so](https://rafter.so)
 2. Dashboard → Settings → API Keys
-3. `export RAFTER_API_KEY="your-key"` or add to `.env`
+3. `export RAFTER_API_KEY="your-key"`
 
 ---
 
@@ -188,7 +196,7 @@ This command:
 - With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
 - With `--with-betterleaks` or `--all`: downloads [Betterleaks](https://github.com/betterleaks/betterleaks) (the gitleaks successor maintained by the original gitleaks authors) for enhanced secret scanning. Falls back to built-in 21-pattern regex scanner.
 
-Use `rafter agent list/enable/disable` for granular per-component control after the initial install — toggle any platform on or off without re-running `init`.
+Use `rafter agent list/enable/disable` for granular per-component control after the initial install — toggle any platform on or off without re-running `init`. After upgrading the CLI, `rafter agent update` refreshes everything you installed.
 
 ### Secret Scanning
 
@@ -199,7 +207,7 @@ rafter secrets .              # scan directory
 rafter secrets ./config.js    # scan specific file
 rafter secrets --staged       # scan git staged files only
 rafter secrets --diff HEAD~1  # scan files changed since a git ref
-rafter secrets --history      # scan full git history (requires betterleaks engine)
+rafter secrets --history      # scan every commit on every ref (both engines)
 rafter secrets --json         # structured output
 rafter secrets --quiet        # silent unless secrets found (CI-friendly)
 ```
@@ -270,6 +278,9 @@ rafter agent exec "rm -rf /"                       # critical → blocked
 | Medium | Approval on moderate+ | `sudo`, `chmod`, `kill -9`, `systemctl` |
 | Low | Allowed | `npm install`, `git commit`, `ls`, `cat` |
 
+Approval needs a person at an interactive terminal.
+The agent hook (PreToolUse) cannot prompt, so it denies an approval-required command such as `curl … | sh` outright, and its reason tells a person to run `rafter agent exec '<command>'` to approve it.
+
 For git commands (`git commit`, `git push`), Rafter scans staged files for secrets before execution and blocks if any are found.
 
 ### Skills — Install, Audit, Manage
@@ -288,7 +299,6 @@ Rafter ships four first-party skills you can install into any supported agent:
 ```sh
 rafter skill list                              # show installed + available skills
 rafter skill install rafter-code-review        # install one
-rafter skill install --all                     # install all four
 rafter skill uninstall rafter-secure-design    # remove one
 ```
 
@@ -324,6 +334,20 @@ rafter agent audit --verify                  # verify hash chain (exit 1 if tamp
 Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`. `scan_executed` and `config_changed` are reserved for future use (defined in the type union but not yet emitted).
 
 Point the log at a repo-local path by setting `agent.audit.logPath` in `.rafter.yml` (e.g. `.rafter/audit.jsonl`) so every contributor can verify their own chain independently. Retention pruning rewrites the log atomically and re-seals the chain, preserving a sidecar manifest (`audit.jsonl.retention.log`) that records the hashes of pruned entries — verify still passes after legitimate cleanup, and fails on forgery.
+
+### Usage Counters
+
+rafter keeps a few local counts so a bug report can say what happened: unknown commands and flags, exit codes per command, hook decisions per risk tier, scan engine fall-backs and durations, and crash error classes.
+They live in `~/.rafter/usage/` for seven days.
+They hold no paths, repo names, command lines, secrets or error messages, and rafter has no code that uploads them: nothing leaves this machine.
+
+```sh
+rafter telemetry show          # counts for the last 7 days, plus skill staleness
+rafter telemetry show --json   # paste into an issue
+rafter telemetry clear         # delete ~/.rafter/usage
+```
+
+Turn counting off with `rafter agent config set agent.usage.enabled false`, `RAFTER_TELEMETRY=0`, or `DO_NOT_TRACK=1`. A project `.rafter.yml` cannot change this setting.
 
 ### Configuration
 
@@ -532,6 +556,7 @@ Exit codes are part of Rafter's output contract — CI pipelines and orchestrato
 ├── audit.jsonl        # Security event log (JSON lines)
 ├── bin/betterleaks    # Betterleaks binary
 ├── patterns/          # Custom patterns (reserved)
+├── usage/             # Local usage counters, 7 days (rafter telemetry show)
 └── git-hooks/         # Global pre-commit hook (if --global)
 ```
 

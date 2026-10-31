@@ -10,7 +10,7 @@ Rafter exposes two hook handlers over stdio:
 - `rafter hook posttool` — read a JSON event after a tool ran; log to audit trail, optionally rescan written files for secrets.
 
 For platforms without hooks, the same classifier is reachable as:
-- `rafter agent exec --dry-run -- <command>` (returns risk, exits 0/1)
+- `rafter agent exec --dry-run -- <command>` (prints the risk tier and runs nothing; exits 0 allowed, 1 blocked, 2 needs a person's approval)
 - `rafter mcp serve` → MCP tool `evaluate_command`
 
 ## Risk Tiers
@@ -21,26 +21,49 @@ Every command (Bash-like tool call) gets classified into one of four tiers by `s
 |---|---|---|
 | `low` | Read-only, safe prefix (`ls`, `cat`, `grep`, `git status` …), no chaining | **approve** silently |
 | `medium` | State-changing but recoverable (package installs, git commits on current branch) | **approve with note** in audit log |
-| `high` | Destructive or privileged (force push, `sudo`, broad file deletion, curl | sh) | **prompt** the agent / user for approval |
+| `high` | Destructive or privileged (force push, `sudo`, broad file deletion, curl \| sh) | **deny**; the reason says a person must approve it with `rafter agent exec` at a terminal |
 | `critical` | Likely irreversible damage (`rm -rf /`, DB drop, wiping .git, repo-wide chmod) | **block** hard |
 
-Tiers are derived from regex patterns in `risk-rules.ts` (`CRITICAL_PATTERNS`, `HIGH_PATTERNS`, `MEDIUM_PATTERNS`) plus a `SAFE_PREFIX` allowlist. Presence of chain operators (`&&`, `||`, `;`, `|`) disqualifies the safe-prefix shortcut.
+Tiers are derived from regex patterns in `risk-rules.ts` (`CRITICAL_PATTERNS`, `HIGH_PATTERNS`, `MEDIUM_PATTERNS`) plus a `SAFE_PREFIX` allowlist. A command holding more than one statement disqualifies the safe-prefix shortcut. Statement separators are whatever the tokenizer treats as one — `&&`, `||`, `;`, `|`, `&`, and a NEWLINE — rather than a hand-kept list; the newline was missing from an earlier hand-kept copy and that was a live bypass.
 
 ## Policy Overrides
 
 `.rafter.yml` (project) and `~/.rafter/config.yml` (global) can override defaults:
 
 ```yaml
-risk:
+command_policy:
   blocked_patterns:
     - "terraform destroy"
   require_approval:
     - "^npm publish"
-  allow:
-    - "^pnpm run test"     # force low regardless of content
+  allowed_patterns:
+    - "^pnpm run test"          # force low, skipping the approval prompt
+    - "git push --force-with-lease"
 ```
 
-Merge order (most specific wins): project `.rafter.yml` > global config > built-in defaults. Dump the effective merged policy with `rafter policy export`.
+**On `allowed_patterns`.** Until 2026-09-07 this section documented a
+`risk.allow` key that was never implemented — a customer went looking for it
+and found nothing. The real key is `command_policy.allowed_patterns`, and it
+now exists.
+
+It is a positive allowlist for the known-safe command that trips a broad tier:
+the motivating case is `git push --force-with-lease` to a feature branch on a
+repo whose `main` is protected server-side, which classifies `high` and prompts
+on every push even though the dangerous version cannot land. Dropping
+`risk_level` to silence that is too blunt — it would also stop prompting for
+`sudo` and `curl | sh`.
+
+Three properties keep an allowlist from becoming a hole in the guard rail:
+
+1. **`blocked_patterns` always wins.** An allow rule never re-opens what a deny
+   rule closed.
+2. **`critical` is never allowlistable.** `rm -rf /`, a DB drop and wiping
+   `.git` stay blocked whatever the config says.
+3. **Chain operators disqualify a match.** Patterns are unanchored, so without
+   this `"git push"` would wave through `rm -rf / && git push`. A chained
+   command is classified exactly as it would be with no allowlist configured.
+
+Merge order: project `.rafter.yml` > global config > built-in defaults for most keys — but NOT for `command_policy`, which is a floor. A project policy may tighten command policy and never loosen it: `mode` is accepted only if at least as strict, `blocked_patterns` and `require_approval` are unioned, and `allowed_patterns` — being a grant rather than a restriction — is refused outright unless the machine owner sets `agent.commandPolicy.allowProjectOverride: true` in their global config. Dump the effective merged policy with `rafter policy export`.
 
 ## How to Interpret a Block
 
@@ -66,7 +89,7 @@ If the block is a false positive **for this specific context**, the right path i
      allow:
        - "^terraform destroy -target=module\\.sandbox"
    ```
-2. Or run once with an explicit ack flag: `rafter agent exec --force -- <command>` (logged to audit trail; still shows up in `rafter agent audit` history).
+2. Or have a person run it: `rafter agent exec -- <command>` prompts for approval only at an interactive terminal and logs the override to the audit trail. There is no acknowledgement flag — `--force` no longer skips the prompt and a piped `yes` is not an approval — because any flag or input an agent can supply is not a person's decision.
 3. Never disable the hook globally to get past one command — that silently drops protection for every future call.
 
 ## Audit Trail
@@ -74,13 +97,13 @@ If the block is a false positive **for this specific context**, the right path i
 Every hook decision (approve / ask / block) is appended to the JSONL audit log:
 
 - Location: `rafter agent status` prints the path.
-- Read: `rafter agent audit --log` (or MCP `read_audit_log`).
+- Read: `rafter agent audit` (or MCP `read_audit_log`).
 - Use it for postmortems: *why did this command run?*, *what did the agent try before the block?*
 
 ## Platform Notes
 
 - **Claude Code**: `rafter agent init --with-claude-code` wires `pretool` + `posttool` into `~/.claude/settings.json`. Hook timeout is 5s; long scans defer to the async posttool path.
-- **MCP clients (Gemini, Cursor, …)**: no native hook; use the `evaluate_command` MCP tool from your agent's system prompt ("before Bash, call rafter.evaluate_command").
+- **Agents without a native hook (Gemini, Cursor, …)**: run `rafter agent exec --dry-run -- <command>` before a risky command. If the client already has rafter's MCP server configured, the `evaluate_command` tool gives the same answer.
 - **CI**: hooks don't fire in CI. Use `rafter scan` + `rafter policy validate` in the pipeline instead.
 
 ## Common Pitfalls

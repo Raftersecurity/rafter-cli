@@ -24,7 +24,7 @@ The CLI follows UNIX principles:
 | 0 | Success |
 | 1 | General error |
 | 2 | Scan not found (HTTP 404) |
-| 3 | Quota exhausted (HTTP 429 or 403 scan-mode limit) |
+| 3 | Quota exhausted (HTTP 429 **on scan submit**, or 403 scan-mode limit) |
 | 4 | Insufficient scope / forbidden (HTTP 403) |
 | 5 | Paid Plus scan refused — approval required (`scan.plus_requires_approval` on) and no `--yes`/`RAFTER_CONFIRM=1`/interactive confirmation |
 
@@ -59,7 +59,7 @@ The CLI follows UNIX principles:
 
 ## Global Options
 
-- `-a, --agent` — Plain output (no colors, no emoji)
+- `-a, --agent` — Plain output (no colors, no emoji). Accepted anywhere on the command line — before the subcommand (`rafter -a secrets .`) or after it (`rafter secrets . -a`) — both runtimes. Exception: `rafter agent audit` and `rafter skill review` already use `--agent <value>` for an unrelated filter, so on those two commands specifically, `-a`/`--agent` for plain output must come before the subcommand.
 - `-V, --version` — Print version and exit (preferred form; `rafter version` subcommand also works)
 - `-h, --help` — Show help
 
@@ -76,8 +76,8 @@ Aliases: `rafter scan`, `rafter scan remote`
 Trigger a new security scan for a repository.
 
 - `-k, --api-key TEXT` — API key. Resolution order: this flag → `RAFTER_API_KEY` env → `backend.apiKey` in global config (see `rafter agent config`)
-- `-r, --repo TEXT` — org/repo (default: auto-detected from git remote)
-- `-b, --branch TEXT` — branch (default: current branch or 'main')
+- `-r, --repo TEXT` — org/repo (default: auto-detected from git remote; errors if the remote's host isn't a recognized GitHub/GitLab/Bitbucket/Gitea host — pass this flag explicitly for anything else)
+- `-b, --branch TEXT` — branch (default: current branch; errors on a detached HEAD instead of submitting a commit SHA or guessing 'main' — pass this flag explicitly). When both repo and branch are auto-detected, rafter asks `origin` whether the branch exists and exits `1` if it does not, since the scan runs against the remote; if `origin` cannot be reached it proceeds. When the pushed commit differs from local `HEAD` it notes that the scan covers the pushed commit
 - `-f, --format [json|md]` — output format (default: md)
 - `-m, --mode [fast|plus]` — scan mode (default: fast). Fast runs SAST, secret detection, and dependency checks. Plus adds agentic deep-dive analysis that examines your codebase the way a professional cybersecurity auditor would — tracing data flows and reasoning about business logic on top of the full SAST/SCA toolchain. **Plus is a paid tier that consumes credits.**
 - `--github-token TEXT` — GitHub PAT for private repos (or `RAFTER_GITHUB_TOKEN` env var)
@@ -126,6 +126,14 @@ Retrieve results from a scan.
 
 **Vulnerability levels (JSON output):** The `level` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
 
+#### Failed scans
+
+A scan whose status is `failed` exits `1` from `rafter run`, `rafter get` and `rafter get --interactive`. stderr names the API's `error_code` and `error` message, and adds a re-run hint when the payload says `retryable: true`. With `--format json` the failure payload is also written to stdout, so a consumer can read `error_code` and `retryable` itself. Both runtimes.
+
+#### Partial scans
+
+A completed scan that the API marks `partial: true` or `warning_code: "SCAN_PARTIAL"` (some scanners did not finish) still exits `0` with its payload on stdout, but stderr warns that findings may be missing, names `missing_scanners` when the API lists them, and says not to treat the result as clean. The warning prints even with `--quiet`. Both runtimes.
+
 #### Poll-loop retry contract
 
 A report is not necessarily durable the instant a scan flips to `completed`, so a poll can hit a 5xx on a scan that is readable seconds later. Both runtimes retry transient read failures instead of aborting. This applies to `rafter run`, `rafter get --interactive`, and plain `rafter get <scan_id>`:
@@ -136,7 +144,9 @@ A report is not necessarily durable the instant a scan flips to `completed`, so 
 | Transport error (DNS, reset, timeout) | Same as above. |
 | HTTP 404, **after** the scan is known to exist | Transient — read-after-write lag, not a wrong id. |
 | HTTP 404 on the **first** poll | Not retried. The scan genuinely does not exist. Exit code `2`. |
-| Other 4xx (401/403/429 …) | Not retried — reported immediately. |
+| HTTP 429 **with** a usable `Retry-After` | Transient. Retried after sleeping `min(Retry-After, 60s)` instead of the exponential schedule. |
+| HTTP 429 **without** one | Not retried — on this API a bare 429 means quota exhausted, and waiting does not earn credits. |
+| Other 4xx (401/403 …) | Not retried — reported immediately. |
 
 Two budgets bound the retries. The **consecutive** counter (5) resets on any successful poll, so a long scan with occasional blips is not killed by unrelated failures minutes apart. A **total** counter (20 per command invocation) does *not* reset, so a backend alternating success and failure cannot keep the loop alive indefinitely — the CLI has no wall-clock deadline of its own.
 
@@ -144,12 +154,21 @@ After either budget is exhausted the command exits `1`. If the failures reached 
 
 `rafter get <scan_id>` carries the same retry budget, so the remedy the give-up message recommends is not defeated by the transient failure that produced it.
 
+**The 429 rule, in full.** A 429 is ambiguous in this API: on scan *submit* it means the account is out of credits (exit `3`), and on the poll endpoint it would mean the client is going too fast. `Retry-After` is the only thing that tells the two apart — a rate limiter sends one, a quota rejection does not — so it decides whether the poll retries. Submit is unchanged either way: a 429 there is exit `3` even when it carries a `Retry-After`.
+
+- Only the **delay-seconds** form is honored (`Retry-After: 30`), and only when the header appears exactly once. A repeated `Retry-After` — an origin's and a proxy's, say — is not a delay anyone can act on, so it counts as absent in all three surfaces. The HTTP-date form is not parsed, in any of the three surfaces, because the composite action has to reach the same verdict in shell on whatever `date` the runner ships — a rule the surfaces cannot state identically is worse than a narrow one they can. A header that cannot be parsed counts as absent, which means fail fast. So does a value that is not ASCII digits — Python's `str.isdigit()` accepts `²` where `int()` raises, so the accept-set is an explicit `[0-9]+` in all three surfaces.
+- The honored wait is capped at **60 seconds**, so a limiter cannot park a CI job for an hour. A 429 retry still spends a failure from the same budget as any other transient failure, so an endlessly-throttling API cannot keep the loop alive.
+- Worst-case waiting, stated rather than implied: the action's poll loop is additionally bounded by its wall-clock deadline (an honored delay is clamped to what is left of it, so the server cannot extend a budget the workflow author set). The action's results fetch has no deadline of its own — three fetches of at most four honored sleeps each is up to ~12 minutes if every one of them eventually succeeds, and ~4 minutes before the first fetch gives up. That is deliberate: a build whose report was retrievable after a real throttle should get the report.
+- Giving up on repeated 429s produces a **rate-limited** message, not the unreadable-report one: it says the API throttled us, names the scan, and points at `rafter get` and the dashboard. Telling a throttled customer their report could not be read sends them to look at the wrong thing.
+
 **The composite GitHub Action** (`github-action/action.yml`) implements the same classification in both its poll loop and its results fetch, with these differences forced by the shell:
 
 - It has no "first poll" distinction: by the time it polls, the trigger step has already returned a `scan_id`, so **every** 404 there is treated as read-after-write lag. A scan id the backend accepted but never persisted therefore fails after the 5-failure budget rather than immediately.
 - Its poll loop is additionally bounded by a wall-clock deadline derived from `timeout-minutes`. Before v0.11 that input was a poll *count*, so a slow API could overrun it; it is now a real deadline.
-- Its `status` output is `completed`, `failed`, `timeout`, `unreadable` (the scan may have finished but its report could not be read), or `unreachable` (the API could not be contacted).
+- Its `status` output is `completed`, `failed`, `timeout`, `unreadable` (the scan may have finished but its report could not be read), `rate-limited` (the API throttled us until the retry budget ran out), or `unreachable` (the API could not be contacted).
 - Its results step validates the payload **before** counting. A body with no `vulnerabilities` array — not JSON, a `200` carrying an error object, or a parseable payload missing the key — is `status=unreadable`, the job fails, and **no count outputs are written**: a consumer reading `findings-count` sees an empty string, never a fabricated `0`. A report the action cannot read is not a clean scan. An empty array is a clean scan and counts as `0`.
+- It reads `Retry-After` from the final response's header block only. `curl -D` dumps every block it received, so an informational `103 Early Hints` block carrying the header would otherwise be read as the 429's own — and a bare 429 would be retried. The two runtimes get this from their HTTP client.
+- It validates `Retry-After` as digits and caps its **length** as well as its value: `[ 1e23 -gt 60 ]` is a shell error that evaluates false, so an uncapped 23-digit header would reach `sleep` intact and hang the job until the runner times out.
 
 ### rafter usage [OPTIONS]
 
@@ -238,12 +257,16 @@ With no topic, lists available topics and usage examples.
 
 | Topic | Description |
 |-------|-------------|
-| `security` | Local security toolkit — scanning, auditing, policy enforcement |
-| `scanning` | Remote SAST/SCA code analysis via Rafter API |
+| `scanning` | Rafter scanning (local + remote SAST/SCA) + guardrails |
 | `commands` | Condensed command reference for all rafter commands |
 | `setup` | Setup instructions for all supported platforms |
 | `setup/<platform>` | Platform-specific setup (claude-code, codex, gemini, cursor, windsurf, aider, openclaw, continue, generic) |
-| `all` | Everything — full security + scanning + setup briefing |
+| `cli-reference` | Full rafter CLI tree by category |
+| `guardrails` | PreToolUse hooks, risk tiers, overrides |
+| `backend` | Remote fast vs plus, setup, cost/latency |
+| `shift-left` | Pointers to secure-design & code-review skills |
+| `finding-triage` | How to read a finding and decide next steps |
+| `all` | Everything — full scanning + setup briefing |
 
 **Examples:**
 
@@ -251,14 +274,14 @@ With no topic, lists available topics and usage examples.
 # List available topics
 rafter brief
 
-# Get the local security briefing
-rafter brief security
+# Scanning + guardrails briefing
+rafter brief scanning
 
 # Platform-specific setup guide
 rafter brief setup/claude-code
 
 # For agents without native skill support — load context manually
-rafter brief security    # save to memory/instructions
+rafter brief scanning    # save to memory/instructions
 rafter brief commands    # save command reference
 
 # Pipe to a file for manual skill creation
@@ -289,8 +312,54 @@ Initialize local security system. Creates config and detects available developme
 - `--with-betterleaks` — download and install Betterleaks binary (the gitleaks successor)
 - `--all` — install all detected integrations and download Betterleaks
 - `-i, --interactive` — guided setup — prompts for each detected integration (Node only)
+- `--quiet` — suppress informational, progress, and success output; warnings and errors remain visible on stderr. Initialization and integration installation still run normally. When combined with `--dry-run`, the dry-run plan remains visible.
 - `--update` — re-download betterleaks and reinstall integrations without resetting config
 - `--local` — install integration configs into the current working directory instead of the user home. Writes to `./.claude/`, `./.agents/`, `./.gemini/`, `./.cursor/` etc. Supports `--with-claude-code`, `--with-codex`, `--with-gemini`, `--with-cursor`. User-level side effects (global config, `agent.environments.*.enabled`, auto-detection, betterleaks download) are suppressed in this mode. Intended for benchmark harnesses, one-off project setup, and ephemeral containers.
+- `--force` — replace installed skill, rule and sub-agent files even when they were modified locally; the old file is saved as `<file>.bak`
+- `--dry-run` — print every path the run would write, with the predicted outcome for each skill, rule and sub-agent file (see below), without writing anything
+
+#### Installed files and local edits
+
+Skill files (`SKILL.md` and `docs/`), per-skill rule files (Cursor, Windsurf, Continue.dev) and sub-agent files are whole files rafter owns.
+Each run reports one line per file with its outcome, except that unchanged files are summed into one `N files unchanged` line (in `--dry-run`, `SKIP      N files unchanged`).
+`rafter agent enable` applies the same rules to the skill and rule files of the component it installs.
+
+| Outcome | Meaning |
+|---------|---------|
+| `added` | The file did not exist; written |
+| `unchanged` | The file already holds the current content (counted, not listed) |
+| `updated` | The file held content rafter wrote (per the install manifest) or shipped in a published release; replaced |
+| `kept` | The file was modified locally or is not rafter's; left as is, new version written to `<file>.rafter-new` (stderr under `--quiet`) |
+| `replaced` | As `kept`, but `--force` was given; old file saved as `<file>.bak` (stderr under `--quiet`) |
+| `reconciled` | A kept file whose `<file>.rafter-new` the user removed (keeping their version) or moved over it after merging; recorded, and reported once |
+
+When any file is kept, the run ends with one line naming how many and how to reconcile them: merge the local changes into `<file>.rafter-new`, move it over `<file>`, then run `rafter agent update` (`--local` for a project install), or delete `<file>.rafter-new` to keep the local version as is.
+After that, the file is `unchanged` until a release ships a different version of it, when it is `kept` again.
+An existing `<file>.rafter-new` that rafter did not write (a merge in progress) is never overwritten; one left behind after the file was brought to the current version is removed.
+
+No write follows a symlink.
+A file that is a symlink is never written through: it is `unchanged` when its target already holds the current content, and otherwise `kept` (or `replaced` with `--force`, which moves the link itself to `<file>.bak`).
+`<file>.rafter-new`, `<file>.bak` and the install manifest are written to a temp file and renamed into place, so a link at any of them is replaced, not followed.
+With `--local`, a directory that resolves outside the project (a linked `.claude/skills`, say) is refused, and that platform's install fails.
+
+Rafter records what it wrote in an install manifest, `<root>/.rafter/installed.json` (`~/.rafter/` at user scope, `./.rafter/` with `--local`):
+
+```json
+{
+  "schema": 1,
+  "cliVersion": "x.y.z",
+  "files": {
+    ".claude/skills/rafter/SKILL.md": { "sha256": "…", "component": "claude-code.skills", "platform": "claude-code", "cliVersion": "x.y.z" }
+  }
+}
+```
+
+For a kept file the entry also carries `pendingSha`, the sha256 of the version waiting in `<file>.rafter-new`; once the user reconciles, `reconciledWith` holds the sha256 of the version they reconciled against.
+The top-level `cliVersion` is the CLI that last installed or updated the whole integration; it is `null` when only the pretool hook's auto-update has written the manifest (see `rafter hook pretool`).
+
+Keys are paths relative to the root, with forward slashes; Node and Python read and write the same file.
+A missing or unreadable manifest is treated as empty (with one warning), so ownership falls back to `resources/shipped-hashes.json`, the sha256 of every bundled resource in every published release.
+Marker-block files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `RAFTER.md`) and merged JSON/YAML configs are edited in place and keep user content as before; they are not listed in the manifest.
 
 ### rafter agent list [OPTIONS]
 
@@ -418,7 +487,7 @@ Exit codes:
 
 Persists `skillInstallations.<platform>.<name>.enabled = false` in `~/.rafter/config.json`.
 
-### rafter secrets [PATH] [OPTIONS]
+### rafter secrets [PATH...] [OPTIONS]
 
 Aliases: `rafter scan local`, `rafter agent scan` (both still supported for backward compatibility)
 
@@ -426,22 +495,28 @@ Scan files or directories for **hardcoded secrets** (21+ patterns + betterleaks)
 
 The `secrets` spelling is preferred because it makes the scope explicit; `scan local` reads as "the full scan, locally" which it is not.
 
-- `[PATH]` — file or directory (default: `.`)
+- `[PATH...]` — one or more files or directories (default: `.`). Each is scanned and the findings are merged into a single report — one JSON `results` array, one exit code, one `--out` file — identical in shape to a single-path scan. `--staged`/`--diff`/`--range`/`--watch` scope to a repository (or a single watch root), not a file list, so with those flags only the first path is used.
 - `-q, --quiet` — only output if secrets found
 - `--json` — output as JSON
 - `--format <format>` — output format: `text`, `json`, or `sarif` (default: `text`)
+- `--out <file>` — write the `--json`/`--format json`/`--format sarif` payload to this file instead of stdout; the status line (`Scanning file/directory: ...`, `Results written to <file>`) still goes to stderr. For an agent in a sandbox without shell redirects. No effect with the default `text` format.
 - `--staged` — scan **added/modified lines only** in the git staged diff (`git diff -U0 --cached`); patterns engine only; reports `file:line` from the post-change side
 - `--diff <ref>` — scan **added/modified lines only** in the unified diff since `<ref>` (`git diff -U0 <ref>`); patterns engine only; pre-existing secrets in touched files are not re-flagged unless their line appears as `+` in the diff
-- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default). In `auto` mode rafter runs **both** engines when betterleaks is available and unions the findings (deduplicated conservatively by file + line + column + matched text — when the two engines extract a secret slightly differently it is reported once per engine rather than risk collapsing two distinct findings), so a secret one engine misses (e.g. betterleaks 1.1.x does not flag AWS access keys) is still caught by the other. Each finding then carries an `engines` array attributing which engine(s) surfaced it. `auto` degrades to patterns-only when betterleaks is absent or a stale binary can't be refreshed. `--engine betterleaks` / `--engine patterns` stay single-engine and omit the `engines` field.
+- `--range <a>..<b>` — scan **added/modified lines only** in a git commit range (`git diff -U0 <a>..<b>`); patterns engine only, same scope semantics as `--diff`. Lets a user scope the scan to a range's changed files instead of the whole tree on a large repo. A range that git would read as an option (leading `-`) exits `2`.
+- `--engine <engine>` — `betterleaks`, `patterns`, or `auto` (default). In `auto` mode rafter runs **both** engines when betterleaks is available and unions the findings (deduplicated conservatively by file + line + column + matched text — when the two engines extract a secret slightly differently it is reported once per engine rather than risk collapsing two distinct findings), so a secret one engine misses (e.g. betterleaks 1.1.x does not flag AWS access keys) is still caught by the other. Each finding then carries an `engines` array attributing which engine(s) surfaced it. `auto` degrades to patterns-only when betterleaks is absent or a stale binary can't be refreshed. `--engine betterleaks` / `--engine patterns` stay single-engine and omit the `engines` field. The `--diff` / `--range` / `--staged` modes always scan with the patterns engine (a line scope is incompatible with betterleaks' whole-file `dir` scan); an explicit `--engine betterleaks` in those modes is reported as a degradation (see the engine fields below).
 - `--baseline` — filter findings present in the saved baseline (see `rafter agent baseline`)
 - `--watch` — watch path for file changes and re-scan on each change; Ctrl+C exits
-- `--history` — scan the full git history for previously-committed secrets (requires `--engine betterleaks`; invokes `betterleaks git` against the repo history)
-- `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree.
+- `--history` — scan every line ever added on any ref (`git log -p -U0 --full-history --all`) instead of the working tree, so secrets in deleted files and rewritten lines are found. Uncommitted changes are not scanned. Each engine reads the history: betterleaks via `betterleaks git`, the patterns engine by streaming the log. `auto` unions the two as in a directory scan, and without betterleaks the patterns engine alone covers history. Findings are reported at `<repo root>/<path>` with the line number in the commit that added them, even when the file no longer exists. Outside a git repository, or if `git log` fails, the scan exits `2`.
+- `--gitignore` / `--no-gitignore` — when scanning a directory, honor `.gitignore` rules (default: on). Implemented via `git check-ignore --stdin --no-index -z` against the scan root's git work tree; honors nested `.gitignore`, negations, `.git/info/exclude`, and the configured global excludes file. Silently falls back to no-op when the scan target is outside any git work tree. Applies to both engines: the patterns engine filters its walk that way, and betterleaks walks the scan root once under a generated `-c` config. That config extends the one betterleaks would otherwise choose (`BETTERLEAKS_CONFIG` / `GITLEAKS_CONFIG`, then `BETTERLEAKS_CONFIG_TOML` / `GITLEAKS_CONFIG_TOML`, then the target's own `.betterleaks.toml` / `.gitleaks.toml`, else the default rules) and adds a global path allowlist for what `git ls-files --others --ignored --exclude-standard --directory` reports, plus submodules, nested repositories and `.git`. betterleaks is never handed a list of file paths: 1.1.x rebuilds its detector for every path argument, and with an extending config it applied rules to only the first two. A betterleaks failure or timeout still falls back to patterns, with the cause in the warning and recorded in the engine fields below.
 - `--auto-update` / `--no-auto-update` — auto-update a **stale rafter-managed betterleaks binary** before scanning (default: on). A leftover binary from an older rafter (a gitleaks-8.x install from before the rename, or an older betterleaks) runs `version` fine but emits a JSON shape the current parser rejects, which would otherwise silently yield **zero findings** on the default engine. When the managed binary's version doesn't match the pinned one, rafter downloads the pinned version (prompting first in an interactive TTY). `--no-auto-update` (or `scan.auto_update_betterleaks: false`) skips the update and falls back to the **patterns** engine for that scan, printing a one-line CTA (`rafter agent update-betterleaks`) — never a silent zero. Only the rafter-managed binary at `~/.rafter/bin/betterleaks` is auto-updated; a binary on `PATH` is left untouched (a non-array parse there warns with the same CTA).
 
-Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error.
+Exit codes: 0 = clean, 1 = secrets found, 2 = runtime error — a bad path or ref, not a git repository, or a file that could not be read (a clean result over a file the scan could not open is reported as exit 2, not 0). `--staged`/`--diff`/`--range` report exit 2 with a one-line "Not in a git repository" explanation when run outside a git work tree, rather than git's own raw usage error.
 
 > **Note:** `--watch` mode does not exit on findings — it prints results inline and keeps watching. Findings are logged to `audit.jsonl` in real time. Requires `chokidar` (Node, bundled) or `watchdog` (Python: `pip install watchdog`).
+
+#### Text output
+
+A clean text-mode result (`✓ No secrets detected`) is followed by one line noting the scan covered secrets only, not a full code-security review — the same scope note the JSON `_note` field already carries. The JSON/SARIF shape is unaffected.
 
 #### JSON Output (`--json`)
 
@@ -452,6 +527,9 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
   "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
   "scan_mode": "local",
   "triage_applied": false,
+  "engine_requested": "auto",
+  "engine_used": "both",
+  "degraded": false,
   "results": [
     {
       "file": "/absolute/path/to/file.ts",
@@ -464,7 +542,7 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
           },
           "line": 42,
           "column": 7,
-          "redacted": "AKIA************MPLE",
+          "redacted": "AKIA************DEFG",
           "engines": ["patterns"]
         }
       ]
@@ -480,6 +558,10 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
 | `_note` | string | Human-readable scan-mode note. JSON has no comments — this `_*` key is the convention. Surface it to users when reporting findings. |
 | `scan_mode` | string | Always `"local"` for local secret scans. Programmatic flag for agents to detect that no agentic-intelligence triage was applied. |
 | `triage_applied` | boolean | Always `false` for local scans. `true` would indicate backend agentic context evaluation (i.e., `rafter run`). |
+| `engine_requested` | string | The `--engine` value as requested: `"auto"`, `"betterleaks"`, or `"patterns"`. |
+| `engine_used` | string | The engine whose findings are in `results`: `"both"`, `"betterleaks"`, or `"patterns"`. Differs from `engine_requested` when betterleaks was wanted but could not run. |
+| `degraded` | boolean | `true` when betterleaks was requested or implied by `auto` but the patterns engine was used instead (betterleaks unavailable, a stale binary that could not be refreshed, or a scan-time timeout/crash). Lets a consumer detect that the stronger engine never ran rather than inferring a clean scan. |
+| `degraded_reason` | string | Present only when `degraded` is `true`: why the downgrade happened. |
 | `results` | array | Per-file findings. |
 
 **Per-file field reference:**
@@ -545,11 +627,19 @@ So a finding hidden by an `ignore` rule is recoverable whether the scan ran loca
 
 Execute shell command with risk assessment and approval workflow.
 
-- `COMMAND` — shell command string
+- `COMMAND` — the shell command, as one quoted string or as the words after `--` (several words are re-quoted before evaluation, so what the classifier sees is what the shell runs)
+- `--dry-run` — classify and print the verdict without running anything; exit `0` allowed, `1` blocked, `2` requires approval
 - `--skip-scan` — skip pre-execution file scanning
-- `--force` — skip approval prompts (logged as override)
+- `--force` — deprecated, no effect: it no longer skips approval (rf-ss67). Still parsed so old invocations do not fail.
 
 Risk tiers: critical (blocked), high (approval required), medium (approval on moderate+), low (allowed).
+
+**Approval model.** A command that requires approval is approved only by a person at an interactive terminal: the prompt is offered only when stdin is a TTY, and otherwise the command is denied with exit `1` and a message saying so. A piped `yes` is not an approval and no flag stands in for one, because anything an agent can pass, the agent can pass on its own. The machine owner widens policy in `~/.rafter/config.json` (`commandPolicy`), not per call. Both runtimes.
+
+**Rafter's own configuration is protected (rf-vnxs).** These are classified critical, so no policy, mode or allowlist can approve them, and the hook's deny message names rf-vnxs:
+- `rafter … config set` on a key under `agent.hooks`, `agent.commandPolicy` or `agent.riskLevel`, and `rafter agent disable`, at any argv position (so `bash -c "rafter …"` counts).
+- A Write/Edit/apply_patch whose target is inside the rafter dir (`~/.rafter`).
+- A shell statement that names the rafter dir and is not read-only (sable-36oe). A statement *names* the dir when any word, quoted or not, has `.rafter` as a whole path component, compared case-insensitively: `~/.rafter`, `$HOME/.rafter`, `/home/u/.rafter`, `./.rafter`, `'.rafter'` inside `python -c` code or a heredoc body, an unquoted glob that can expand to it (`~/.raf*`), or a brace list that does (`~/.{rafter,x}`). `.rafter.yml` and `.rafterignore` do not name it. The argv0 of a statement is exempt, so running `~/.rafter/bin/betterleaks version` is allowed; its arguments still count. The command is split on `;`, `&&`, `||`, `|`, `&` and newlines, including inside command substitutions, and each statement that names the dir must itself be read-only; statements that do not name it are not constrained, so `cat ~/.rafter/config.json && npm test` is allowed. A statement is read-only when it has no output redirect (other than to `/dev/null` or an fd dup such as `2>&1`) and its argv0 is a bare name or a system bin path (`/bin`, `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, and their `sbin`) in this list: `cat`, `more`, `head`, `tail`, `ls`, `stat`, `file` (not `-C`), `wc`, `grep`, `egrep`, `fgrep`, `rg` (not `--pre`), `jq`, `diff`, `cmp`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `shasum`, `b2sum`, `cksum`, `find` (not `-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, `-fprint`, `-fprint0`, `-fprintf`, `-fls`), `test`, `[`, `realpath`, `readlink`, `du`, and `cd`/`pushd`/`popd` to a target outside the dir. `sed` and `less` are deliberately absent (sed's `w`/`e` commands write and execute without `-i`; `less -o` writes a file). A `cd` into the dir is itself protected, because the agent's shell keeps its cwd between calls; that is what keeps `cd ~/.rafter && echo x > config.json` blocked. A write that never names the dir (`echo x > config.json`) is not caught. Both runtimes.
 
 ### rafter skill review [PATH_OR_URL] [OPTIONS]
 
@@ -810,7 +900,9 @@ The audit log is written to `~/.rafter/audit.jsonl` as newline-delimited JSON (J
 | `gitRepo` | string | no | Absolute path to the enclosing git repository root, if any |
 | `prevHash` | string\|null | yes | SHA-256 of the prior line (or `null` for the first entry) — forms the tamper-evident hash chain verified by `rafter agent audit --verify` |
 
-**Log location:** Defaults to `~/.rafter/audit.jsonl`. Overridable per project via `.rafter.yml` → `agent.audit.logPath` (e.g. set to `.rafter/audit.jsonl` for a repo-local log that each contributor can verify independently).
+**Log location:** Defaults to `~/.rafter/audit.jsonl`. Overridable only in the global config, `~/.rafter/config.json` → `agent.audit.logPath`. A project `.rafter.yml` `audit.log_path` is ignored with a stderr warning.
+
+**Write failures:** A failed audit write is reported once on stderr and never changes a hook decision.
 
 **`action` object (optional):**
 
@@ -917,6 +1009,7 @@ Install git pre-commit hook for automatic secret scanning.
 
 - `--global` — install globally for all repos (sets `core.hooksPath`)
 - `--push` — install pre-push hook instead of pre-commit
+- `--quiet` — suppress informational and success output while installing the Git hook; errors remain visible on stderr and retain a nonzero exit code. Works with local, `--global`, and `--push` installation.
 
 ### rafter agent config SUBCOMMAND
 
@@ -987,9 +1080,15 @@ With `--probe`, an additional `Claude Code (probe)` check appears as the last en
     "failed": 1,
     "total": 3,
     "probe": false
-  }
+  },
+  "stale": false,
+  "installed_version": "0.11.2",
+  "needs_reconcile": []
 }
 ```
+
+`stale` and `installed_version` report whether installed integrations are older than this CLI (see `rafter agent update`); staleness alone never changes the exit code. Without `--json`, a stale install adds one line naming `rafter agent update` after the summary.
+`needs_reconcile` lists the absolute paths of installed files the user modified that have a newer version waiting in `<file>.rafter-new`; without `--json`, each is listed with the reconcile instruction. It never changes the exit code.
 
 `status` is one of `pass | warn | fail`. `warn` is reserved for optional integrations that aren't installed; `fail` is reserved for hard failures (Config, Betterleaks, or any failing `--probe` check).
 
@@ -1005,6 +1104,9 @@ Show agent security status dashboard. Displays config summary, installed integra
 {
   "installed": true,
   "version": "0.8.3",
+  "stale": false,
+  "installed_version": "0.8.3",
+  "needs_reconcile": [],
   "agents_detected": ["claude-code", "cursor"],
   "hooks_installed": ["pre-commit"],
   "betterleaks_available": true,
@@ -1019,8 +1121,26 @@ Show agent security status dashboard. Displays config summary, installed integra
 }
 ```
 
+`stale` is true when installed integrations are older than this CLI ships (see `rafter agent update`); `installed_version` is the CLI version in the install manifest, or `null` for an install made before rafter kept one. Without `--json`, a stale install adds one line near the top naming `rafter agent update`.
+`needs_reconcile` is as in `rafter agent verify`.
+
 `hook_control` reports the runtime hook off-switch (see the *hook off-switch* note
 under `rafter hook pretool`). Each `source` is `default`, `global-config`, or `env`.
+
+### rafter agent update [OPTIONS]
+
+Re-apply every rafter integration that is already installed, with this CLI's skills, rules, sub-agents, instruction blocks, hooks and MCP entries. Run it after upgrading the CLI.
+
+Installed platforms are read from the install manifest (`<root>/.rafter/installed.json`) and from rafter's own files on disk, for installs made before the manifest existed: a platform's rafter skills, rules or sub-agent, its `<!-- rafter:start -->` block, or a rafter hook or MCP entry in its config. A platform whose directory exists but holds none of these is not installed and is left alone. The work is the same as `rafter agent init --with-<platform>` for each installed platform, except that the configured risk level is kept and nothing is downloaded (Betterleaks and skill-scanner are not touched).
+
+- `--local` — update the project-local install in the current directory (`./.rafter/installed.json`) instead of the user-global one
+- `--dry-run` — print each file's predicted outcome without writing, as `agent init --dry-run` does
+- `--force` — replace modified skill, rule and sub-agent files, saving the old file as `<file>.bak` (as `agent init --force`)
+- `--quiet` — as `agent init --quiet`
+
+**Output:** the `agent init` report, headed `Rafter Agent Update`: one line per added, updated, kept, replaced or reconciled file, one `N files unchanged` line, and the kept-file hint (see *Installed files and local edits* under `rafter agent init`). With nothing installed it prints `No rafter integrations found under <root>; nothing to update.` and how to install, and writes nothing.
+
+**Exit codes:** `0` on success, including when files were kept or nothing was installed; non-zero only when setup itself fails (as `agent init`).
 
 ### rafter agent update-betterleaks [OPTIONS]
 
@@ -1081,11 +1201,43 @@ PreToolUse hook handler. Reads tool call JSON from stdin, evaluates risk, and wr
 
 - `--format <format>` — output format: `claude` (default, also works for Codex/Continue), `cursor`, `gemini`, `windsurf`
 
+**The hook only ever denies; otherwise it defers.** When rafter has no objection to a call, the hook returns the platform's no-decision answer, so the platform's own permission settings (allow/ask/deny rules, permission mode, prompts) decide the call as they would without rafter. It never approves a call: in Claude Code and Codex a PreToolUse `allow` skips the permission prompt, so an approving hook would make an agent more permissive with rafter installed than without it.
+
+| Format | Deny | No objection |
+|--------|------|--------------|
+| `claude` (Claude Code, Codex, Continue) | `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"<reason>"}}` | `{}` (no `permissionDecision`), exit 0 |
+| `gemini` | `{"decision":"deny","reason":"<reason>"}` | `{}`, exit 0 |
+| `windsurf` | reason on stderr, exit 2 | no output, exit 0 |
+| `cursor` | `{"permission":"deny","agentMessage":"<reason>","userMessage":"<reason>"}` | `{"permission":"allow"}` |
+
+Cursor is the one exception: its permission hooks block the action on an empty or schema-invalid response, so `permission` is required and there is no neutral value. `"ask"` would force a prompt on every call, so the hook sends `"allow"` there.
+
+**Tools evaluated.** Each platform names its shell and file-write tools differently; the hook applies the same command policy and the same write checks (rafter-config guard, secret scan) whatever the tool is called. Every format recognizes every name below; any other tool gets the no-objection answer.
+
+| Platform (format) | Shell tool → command policy | File-write tools → write checks |
+|-------------------|-----------------------------|---------------------------------|
+| Claude Code (`claude`) | `Bash` (`tool_input.command`) | `Write` (`content`), `Edit` (`new_string`), `MultiEdit` (`edits[].new_string`) |
+| Codex (`claude`) | `Bash` (`tool_input.command`) | `apply_patch` (the patch text in `tool_input.command`; target paths from its `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` headers) |
+| Continue (`claude`) | `Bash` (`tool_input.command`) | `Write` (`filepath`, `content`), `Edit`, `MultiEdit` |
+| Gemini CLI (`gemini`) | `run_shell_command` (`tool_input.command`) | `write_file` (`content`), `replace` (`new_string`); Gemini has no tool named `edit` |
+| Cursor (`cursor`) | `beforeShellExecution` (`command`); `preToolUse` with `Shell` (`tool_input.command`) | `preToolUse` with `Write`; `afterFileEdit` |
+| Windsurf (`windsurf`) | `pre_run_command` (`tool_info.command_line`) | `pre_write_code` (`tool_info.edits[].new_string`) |
+
+The write checks read the target from `file_path` (or `filepath`) and scan `content`, else `new_string`, else the joined `edits[].new_string`, else (for `apply_patch`) the patch text. For `apply_patch`, the rafter-config guard checks every path named in the patch headers, after `~` expansion and resolution against the working directory, and denies with the same reason as a `Write` to that path.
+
+**Installed matchers.** A platform calls the hook only for tools its matcher names, so each installer's matcher covers the tools above. `agent init --with-claude-code` (and `agent enable claude-code.hooks`) registers PreToolUse matchers `Bash` and `Write|Edit|MultiEdit`; `rafter policy export --format claude` emits the same. The Codex installer registers `Bash|apply_patch`. The Gemini installer (`agent init --with-gemini` and `agent enable gemini.hooks`) registers BeforeTool matcher `run_shell_command|write_file|replace`. `agent verify` and `agent status` check that a rafter hook command is installed, not the matcher, so an install made before a matcher change keeps its old matcher until `agent init` is rerun.
+
+**Approval-required commands are denied, not asked.** A Bash command the policy marks as requiring approval (for example `curl … | sh`, which is high risk) gets `deny`, the same decision as a blocked command; the hook never returns `ask`. The reason says a person must run `rafter agent exec '<command>'` at an interactive terminal to approve it (see the approval model under `rafter agent exec`). Both runtimes.
+
 On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secrets through the **same `.rafter.yml` policy as `rafter secrets`** — custom patterns, `scan.exclude_paths`, and `ignore` rules all apply — so the hook and the CLI agree on what is a finding (sable-55u). The hook is patterns-only (it never invokes betterleaks), so a betterleaks version mismatch cannot affect its decision. When it blocks, the deny `reason` names each offending `file:line — Pattern` rather than a bare count.
+
+**Errors fail closed.** Input that is not a JSON object gets the no-decision answer (there is nothing to evaluate). Any unexpected exception while evaluating a call, for any tool, returns `deny` with the reason `rafter hook error: <type>: <message>; denying to be safe`, also printed to stderr. Conditions the loaders handle (a malformed `.rafter.yml` warns and falls back to defaults) are not errors. A failed audit-log write never changes a decision.
 
 **Hook off-switch.** The hook can be disabled at runtime from **trusted sources only** — the `RAFTER_DISABLE_HOOKS` / `RAFTER_DISABLE_SECRET_SCAN` / `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on) and the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default is enabled; a corrupt config or unrecognized value fails safe to enabled. By design this is **never** read from project-local `.rafter.yml`, so a hostile repo cannot ship a config that silently disables a victim's hook. `rafter agent status` reports the effective state and its source. See `shared-docs/CONFIG.md` for the full configuration reference.
 
-**Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (`allow` / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
+**Auto-update after an upgrade.** After writing its decision, `hook pretool` checks at most once a day per CLI version (stamp file `~/.rafter/.update-check`) whether the user-scope install is older than this CLI: the manifest's `cliVersion` is older, or rafter's files are present with no manifest version. If so, it applies this CLI's skill, rule and sub-agent files under the install policy (see *Installed files and local edits* under `rafter agent init`): only files whose hash proves they hold rafter's content are replaced, a modified file is kept with `<file>.rafter-new` beside it, a skill or rule the user removed is not brought back, a file or `<file>.rafter-new` that is a symlink is skipped (`agent update` still writes through it), and retired rule files go only when their hash is rafter's. Hooks, MCP entries and instruction blocks are not touched, and the manifest keeps its old `cliVersion`, so `rafter agent status` still names `rafter agent update`. It writes nothing to stdout and never changes the decision or exit code; when it changed or kept anything it prints one line to stderr, for example `rafter: updated 12 skill/rule files to 0.12.0; 1 file you modified needs reconciling with <path>.rafter-new (run 'rafter agent status')`. `RAFTER_DISABLE_AUTO_UPDATE=1` turns it off. Project (`--local`) installs are not auto-updated.
+
+**Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (no decision / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
 
 **Tolerates harness-appended flags.** Hook input arrives on **stdin**, so both subcommands ignore unknown options and extra positional args that an agent platform appends to the hook command — e.g. Claude Code adds `--hook-json <data>`. Such extras are discarded (the hook never errors on them); declared options like `--format` are still parsed normally.
 
@@ -1120,6 +1272,10 @@ Start MCP server over stdio transport. Exposes 11 tools and 3 resources.
 **`scan_secrets` inputs:**
 - `path` (required) — file or directory path to scan
 - `engine` (optional) — `auto` (default), `betterleaks`, or `patterns`. As with the CLI, `auto` runs **both** engines and unions the findings (each match carries an `engines` attribution array); single-engine modes omit `engines`.
+
+**`scan_secrets` output:** the first content block is the JSON results array.
+Findings hidden by `.rafter.yml` `ignore:` rules or `.rafterignore` are dropped from it; when any were, a second content block carries `{"suppressed_count": N, "_suppressed": [...]}`, with the same per-finding fields as `rafter secrets --json` (`file`, `line`, `column`, `rule`, `severity`, `reason`, `source`) and no secret text.
+The block is absent when nothing was suppressed.
 
 **`evaluate_command` output schema:**
 ```json
@@ -1231,11 +1387,85 @@ Post scan results to Slack or Discord channels via webhooks.
 
 Generate a standalone HTML security report from scan results.
 
-- `[INPUT]` — path to JSON scan results (default: read from stdin)
+- `[INPUT]` — path to the JSON output of `rafter secrets --json` (default: read from stdin); a bare array of its `results` is also accepted
 - `-o, --output <path>` — output file path (default: stdout)
 - `--title <title>` — report title (default: "Rafter Security Report")
 
-Node only. Not yet implemented in Python.
+Remote scan results (`rafter run`/`rafter get --format json`) are rejected with exit `2`; render those with `rafter get <scan_id> --format md`. Both runtimes.
+
+### rafter gates [PATH] [OPTIONS]
+
+Map a codebase's security gates for an audit: the functions whose names say they decide whether something is allowed, ranked by likely security weight, and "twin" groups of gates that implement the same contract, with the guard calls each twin makes. Static and local: regex over source lines, no network, no LLM. It is a reading list, not a set of findings. Both runtimes produce byte-identical output for the same tree.
+
+- `[PATH]` — directory or single file to map (default: `.`)
+- `--json` — machine-readable output (schema below)
+- `--limit <n>` — number of ranked gates to output, text and JSON (default: `60`); twins are computed from all gates
+- `--no-gitignore` — do not honor `.gitignore`
+
+**Files.** Go, Python, JavaScript, TypeScript, Java and Ruby (`.go .py .js .jsx .mjs .cjs .ts .tsx .mts .cts .java .rb`). Skipped: the `rafter secrets` default excludes (`node_modules`, `vendor`, `dist`, `build`, virtualenvs, ...), hidden directories, test, docs and example directories (`test`, `tests`, `__tests__`, `spec`, `testdata`, `fixtures`, `mocks`, `e2e`, `docs`, `examples`, `samples`, `third_party`, `generated`, ...), test files (`*_test.go`, `test_*.py`, `*.test.ts`, `*.spec.js`, `*Test.java`, `*_spec.rb`, ...), generated files (`*.pb.go`, `*_pb2.py`, `*.min.js`, `*.d.ts`, or a `DO NOT EDIT` / `@generated` marker in the first five lines), files over 1 MiB, definition lines over 400 characters, files whose gate bodies add up to more than 2,000,000 characters (many unclosed definitions: data, not code; the largest real file seen reads 312,000), file names that are not valid UTF-8, and names made only of leading dots and an extension (`..py`, as Python's `splitext` reads them), and anything `.gitignore` excludes. Work is linear in file size, so a hostile tree cannot stall the map. Text is read as UTF-8 with a leading BOM dropped; whitespace means ASCII whitespace, and lengths and sort order count code points.
+
+**Gates.** A definition (function, method, or a class/struct/type) is a gate when its name's first word is a deciding verb (`authorize`, `authenticate`, `allow`, `permit`, `deny`, `can`, `verify`, `enforce`, `guard`, `check`, `validate`, `ensure`, `require`, `match`, `sanitize`, `escape`, `clean`, `safe`, ...), it is `is*` followed by a state such as `Allowed`, `Valid`, `Trusted`, `Safe`, `Admin` or `Owner`, `has*` followed by `Permission`, `Role`, `Scope` or `Access`, it ends in `match`/`matches`/`matcher`, or it contains a role word (`middleware`, `guard`, `interceptor`, `authorizer`, `authenticator`, `verifier`, `sanitizer`, ...). Names starting with an accessor or plumbing word (`get`, `set`, `load`, `create`, `parse`, `render`, ...) are never gates. A type is a gate only through a role word. `score` adds the name's verb or role weight, security tokens in the name (`authoriz`, `authent`, `permission`, `acl`, `policy`, `token`, `session`, `password`, ..., capped at 6), and 2 when a directory or the file name is security-ish (`auth`, `acl`, `policy`, `session`, `token`, `oauth`, `jwt`, `crypto`, `tls`, `middleware`, `security`, `access`, ...). The weights are heuristics and may change between versions. Gates sort by score, then file, then line.
+
+**Twins.** Function and method gates group by a key derived from the name: words are lowercased and joined with case and separators ignored; version suffixes (`V2`, `_2`), `async`/`sync`/`impl` markers, a leading `do`, and backend words (`ldap`, `sql`, `redis`, `local`, `memory`, `http`, ...) are dropped, as is a word at either end of the name that also names the file or its directory. A name prefixed with `a` for its async variant (`acheck_password`) joins the unprefixed group. A key reduced to one weak verb (`check`, `validate`, `ensure`) is not grouped. Groups of 2 to 8 members are reported. For each member, calls in its body are sorted into guard categories by the called name, lowercased with underscores removed: `escape`, `normalize`, `containment`, `constant_time`, `expiry`, `authz`, `authn`, `limit`, `verify`, `validate`, `check`. A group is **flagged** when a category appears in one member and not in another. Flagged groups sort first, by the weight of their missing categories (escape, normalize, containment, constant-time compare and expiry above authz, authn and limit, above verify, validate and check), then by the highest member score.
+
+**Text output** (stdout): a stats line, the ranked gates as `score  file:line  signature` (signature truncated to 90 characters), up to 10 flagged twin groups with each member's guard calls and the categories it lacks, then up to 8 other twin groups. It is sized for an agent to read (a few KB).
+
+**JSON output** (`--json`, stdout; this example is `--limit 1`):
+
+```json
+{
+  "stats": {
+    "files_scanned": 4,
+    "gates_found": 5,
+    "gates_shown": 1,
+    "twin_groups": 1,
+    "flagged_groups": 1
+  },
+  "gates": [
+    {
+      "file": "auth/authz.go",
+      "line": 3,
+      "name": "Authorize",
+      "kind": "method",
+      "language": "go",
+      "score": 9,
+      "signature": "func (a *Authorizer) Authorize(user string, action string) bool {"
+    }
+  ],
+  "twins": [
+    {
+      "key": "authenticate",
+      "flagged": true,
+      "missing": ["escape"],
+      "members": [
+        {
+          "file": "backends/ldap.py",
+          "line": 1,
+          "name": "authenticate",
+          "guards": { "escape": ["escape_filter_chars"] },
+          "lacks": []
+        },
+        {
+          "file": "backends/local.py",
+          "line": 1,
+          "name": "authenticate",
+          "guards": {},
+          "lacks": ["escape"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `file` — path relative to `[PATH]` (or to the file's directory when `[PATH]` is a file), `/`-separated
+- `kind` — `function`, `method` or `type`; `language` — `go`, `python`, `javascript`, `typescript`, `java` or `ruby`
+- `gates` — at most `--limit` entries; `stats.gates_found` counts all of them
+- `twins` — all groups, flagged first; `missing` lists the guard categories some member lacks, in category order; `guards` maps each category a member calls to the sorted called names
+
+When no file is scanned, a warning goes to stderr; the map still prints.
+
+**Exit codes:** `0` on success, whatever is found; `2` when `[PATH]` does not exist or `--limit` is not a positive integer.
 
 ### rafter issues create SUBCOMMAND
 
@@ -1273,6 +1503,91 @@ Generate shell completion scripts.
 
 - `<shell>` — shell type: `bash`, `zsh`, or `fish`
 
+### rafter telemetry show [OPTIONS]
+
+Print the local usage counters. Nothing leaves this machine: rafter has no code that uploads them.
+
+- `--json` — output the report object below to stdout
+- `--days <n>` — days to include, today (UTC) and the `n - 1` days before it; integer 1 to 7, default 7
+
+Exit codes: `0` success; `2` invalid `--days` (message on stderr: `Error: --days must be an integer from 1 to 7`).
+
+JSON shape (key order is stable; `runtime` is `node` or `python`, `runtime_major` its major version, `os` is `process.platform` / `sys.platform`):
+
+```json
+{
+  "schema": 1,
+  "notice": "Nothing leaves this machine: these counts are stored locally and rafter has no code to upload them.",
+  "cli_version": "0.11.3",
+  "runtime": "node",
+  "runtime_major": 22,
+  "os": "linux",
+  "enabled": true,
+  "enabled_source": "default",
+  "store": "~/.rafter/usage",
+  "days": 7,
+  "since": "2026-10-23",
+  "counters": {
+    "unknown_command": { "unknown_command:scna": 1 },
+    "unknown_option": {},
+    "command": { "command:hook.pretool:exit:0": 41, "command:root:exit:1": 1 },
+    "hook": { "hook:shell:allow:low": 39, "hook:shell:deny:critical": 2 },
+    "scan_engine": {},
+    "scan_fallback": {},
+    "scan_duration": {},
+    "error_class": {}
+  },
+  "skills": [
+    { "name": "rafter", "platform": "claude-code", "installed_version": "0.6.0", "current_version": "0.7.0", "stale": true }
+  ]
+}
+```
+
+- `enabled_source`: `default`, `config` (`agent.usage.enabled` in `~/.rafter/config.json`), `env:RAFTER_TELEMETRY` or `env:DO_NOT_TRACK`.
+- `counters` always has all eight families; each maps full counter keys to counts summed over the window, sorted by key.
+- `skills` lists each installed rafter skill (bundled skill × platform), plus `rafter-security` on `openclaw` when `agent.skills.installedVersion` is set. `stale` is true when the installed `version` differs from the version this CLI ships, or the skill's `rafter_cli_version` frontmatter differs from the running CLI. Paths are not reported.
+- The store is always shown as the literal `~/.rafter/usage`, never an expanded home path.
+
+Text output (without `--json`) prints the same fields, then each non-empty family under a heading, then the skills.
+
+### rafter telemetry clear
+
+Delete `~/.rafter/usage`. Prints one line to stdout; exit code `0`. The `clear` invocation itself is not counted.
+
+### Local usage counters
+
+**Store.** `~/.rafter/usage/<YYYY-MM-DD>.json` (UTC date), one flat object: `"schema": 1` plus `"<counter key>": <count>`. Directory mode `0700`, files `0600`, written by temp file + rename. Files older than 7 days are deleted on the first write of each day.
+
+**When counts are written.** Recorders add to an in-memory buffer; the process writes it once at exit, after the command result is known. Two rafter processes that exit at the same moment can lose one another's increments (the last rename wins); a file is never left half-written, and an unreadable or malformed file is replaced. A failure to count never changes a command's output or exit code, and the counters never write to stdout.
+
+**Keys.** Allowlist: `shared-docs/usage-counters.json`, embedded identically in both runtimes. A key is a family name and `:`-separated parts; a key with any part outside the allowlist is dropped, both when written and when read.
+
+| Family | Key | Recorded |
+|---|---|---|
+| `unknown_command` | `unknown_command:<token>` | The CLI rejects an unknown subcommand. `<token>` is the first unknown token if it passes the token rule below, else `other`. Arguments after it are never read. |
+| `unknown_option` | `unknown_option:<--name>` | The CLI rejects an unknown option. `<--name>` is the name before any `=` if it passes the token rule below, else `other`. The value is never read. |
+| `command` | `command:<path>:exit:<0\|1\|2\|other>` | Every invocation, at exit. `<path>` is the resolved command from the CLI's registered command tree joined with `.` (`secrets`, `agent.scan`, `hook.pretool`; `root` when no subcommand ran), never argv; a path with any name not in the tree is `other`. |
+| `hook` | `hook:<shell\|write\|other>:<allow\|deny\|defer\|ask\|error>:<low\|medium\|high\|critical\|none>` | Each `rafter hook pretool` decision. `error` is a fail-closed deny after an internal error. The risk tier is the command-policy tier for shell tools (`none` when command policy is off), `critical` for a blocked write to rafter's own config, else `none`. |
+| `scan_engine` | `scan_engine:<requested>:<used>` | Each local `rafter secrets` / `rafter scan local` / `rafter agent scan` of a path (not `--staged`, `--diff`, `--range` or `--watch`). Values: `auto`, `betterleaks`, `patterns`, `both`. |
+| `scan_fallback` | `scan_fallback:<missing\|timeout\|error\|stale\|other>` | That scan wanted betterleaks and fell back to patterns. The reason text is mapped to the enum and not stored. |
+| `scan_duration` | `scan_duration:<used>:<lt1s\|1-5s\|5-30s\|30-120s\|gt120s>` | That scan's wall time, bucketed. |
+| `error_class` | `error_class:<path>:<Class>` | An uncaught error. `<Class>` is the error's class name if it matches `^([A-Z][A-Za-z0-9]{0,29})?(Error\|Exception\|Exit\|Interrupt)$`, else `other`. Messages and stack traces are never read. |
+
+**Token rule** (unknown commands and options). A token is kept only if it matches its pattern (`^[a-z][a-z-]{0,31}$` for commands, `^--[a-z][a-z-]{0,31}$` for options) and either:
+
+1. it is within optimal-string-alignment (restricted Damerau-Levenshtein) distance 2 of a registered command name, or of a registered long option name for options; or
+2. every `-`-separated part (after the leading `--` for options) is a word that appears in the CLI's own registered command and option names.
+
+The names and words are derived at runtime from the CLI's own command tree; there is no hand-maintained list. So `scna` (near `scan`), `scan-secrets` (both words are registered) and `--jsn` (near `--json`) are kept, while a project or client name such as `acme-payroll` is recorded as `other`. A short token (three letters or fewer) is often within distance 2 of a short command such as `ci` or `get`, so it is kept.
+
+Both runtimes apply the same rule to their own trees. Two framework differences are normalized: Python leaves out typer's `--install-completion` / `--show-completion` (Node offers completion as a command), and counts a click on/off pair (`--x/--no-x`) as `--no-x` alone, which is how Node registers it. The trees otherwise match except for `rafter agent init-project` (with `--list`, `--only`), which only Node has; tokens matched only through those names can be kept by Node and recorded as `other` by Python.
+
+Never recorded: working directory, file paths, repo names or roots, branch names, command lines (including commands the hook evaluated), secrets, finding contents, error messages, usernames, hostnames. There is no install id and no network code.
+
+**Setting.** `agent.usage.enabled` in `~/.rafter/config.json`; default `true`. Only the global config is read; a project `.rafter.yml` cannot set it. `rafter agent config set agent.usage.enabled false` turns it off.
+
+**Kill switches** (override the config): `RAFTER_TELEMETRY` set to `0`, `false` or `off`; `DO_NOT_TRACK` set to any non-empty value other than `0` or `false`. `RAFTER_TELEMETRY=1` does not override a config `false`. When counting is off, nothing is written; `rafter telemetry show` still reads existing files.
+
 ### Pre-Commit Framework (`.pre-commit-hooks.yaml`)
 
 Integration with [pre-commit](https://pre-commit.com/):
@@ -1299,6 +1614,13 @@ command_policy:
   mode: approve-dangerous
   blocked_patterns: ["rm -rf /"]
   require_approval: ["npm publish"]
+  # Positive allowlist: force a known-safe command to `low` and skip the
+  # approval prompt, without lowering the global risk level. Unanchored
+  # regex. blocked_patterns always wins; a `critical` command is never
+  # allowlistable; and a match does not apply when the command contains a
+  # statement separator (`&&`, `||`, `;`, `|`, `&`, or a NEWLINE), so "git push" cannot wave through
+  # `rm -rf / && git push`.
+  allowed_patterns: ["git push --force-with-lease"]
 scan:
   exclude_paths: ["vendor/", "third_party/"]
   custom_patterns:
@@ -1351,7 +1673,7 @@ Precedence: policy file overrides `~/.rafter/config.json`. Arrays replace, not a
 
 **Ignore rules (`ignore:`):** suppress findings without removing them from the audit trail. Each entry needs `paths:` (a non-empty list of globs); `reason:` is optional but is what lets the hosted scanner hide a must-fix or secret-scanner finding (write one anyway — the same file is read by both engines); `rules:` is optional (omitting it suppresses every rule on the matched paths) and `reason:` is surfaced verbatim in the JSON `_suppressed` output. First entry that matches wins, so put more specific entries earlier.
 
-These rules are honored identically by the **local** CLI engines (Node and Python) and by the **remote `rafter run`** backend — they read the same `.rafter.yml` (and `.rafter/config.yml`) `ignore:` block. The matching contract is fixed and the same on every engine:
+These rules are honored identically by the **local** CLI engines (Node and Python) and by the **remote `rafter run`** backend — they read the same `.rafter.yml` (and `.rafter/config.yml`) `ignore:` block. The legacy `.rafterignore` file is read by the local engines only; the remote backend does not read it, so suppress remote findings with `.rafter.yml` `ignore:`. The matching contract is fixed and the same on every engine:
 
 *Path globs (`paths:`)* — gitignore/minimatch semantics:
 - A bare pattern with no `/` (e.g. `*.env`) matches against the file **basename** anywhere in the tree (so it matches `config/.env`).
@@ -1384,7 +1706,7 @@ rafter scan --repo myorg/myrepo --branch main
 rafter get SCAN_ID --format json
 
 # Pipe to jq
-rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="error")'
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.severity=="error")'
 
 # Count vulnerabilities
 rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
@@ -1393,7 +1715,7 @@ rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
 rafter get SCAN_ID > scan_results.json
 
 # CSV export
-rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
+rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.severity, .rule_id, .file_path, .line_start] | @csv'
 
 # CI gate
 if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then
@@ -1460,7 +1782,7 @@ rafter agent config set agent.riskLevel aggressive
 
 ## Notes
 
-- API key: provided via `--api-key` flag, `RAFTER_API_KEY` env var, or `.env` file
+- API key: provided via `--api-key` flag, `RAFTER_API_KEY` env var, or a key stored in the global `~/.rafter/config.json`. A `.env` file in the working directory is never read for `RAFTER_*` settings
 - Git auto-detection works in CI (supports `GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, `CI_REPOSITORY`, `CI_COMMIT_BRANCH`, `CI_BRANCH`)
 - Remote code analysis targets the remote repository, not local files
 - All scan data to stdout, all status messages to stderr

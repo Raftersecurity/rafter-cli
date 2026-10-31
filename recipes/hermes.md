@@ -58,6 +58,6 @@ Plus three resources (`rafter://config`, `rafter://policy`, `rafter://docs`) tha
 
 **`agent init --with-hermes` says "Hermes requested but not detected."** Rafter looks for `~/.hermes/`. If Hermes is installed elsewhere, point it at the right home: `HOME=/custom/path rafter agent init --with-hermes`, or `rafter agent init --local --with-hermes` from inside a project that has its own `.hermes/` directory (project-local is treated as opt-in v0 — the config is written but Hermes itself may or may not consume it).
 
-**`mcp_servers.rafter` already exists in my config.** The installer replaces the `rafter` entry idempotently — every other server and key in the file is preserved untouched. Run `rafter agent init --with-hermes` whenever you upgrade the CLI to refresh the entry.
+**`mcp_servers.rafter` already exists in my config.** The installer replaces the `rafter` entry idempotently — every other server and key in the file is preserved untouched. Run `rafter agent update` whenever you upgrade the CLI to refresh the entry.
 
 **My YAML config got rewritten in a different style after `agent init`.** YAML round-trips through PyYAML (Python) / js-yaml (Node) lose comments and reorder keys. If you have a hand-curated config, prefer the manual setup above and pin the rafter block in place by hand.

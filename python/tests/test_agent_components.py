@@ -223,6 +223,77 @@ class TestAgentEnableDisable:
         assert "model: gpt-5" in cleaned
         assert not (home / "RAFTER.md").exists()
 
+    def test_aider_read_disable_preserves_user_content(self, home: Path):
+        """sable-z6in — disable excises only the managed block; user content
+        wrapped around it in RAFTER.md survives (data-loss guard)."""
+        rafter_md = home / "RAFTER.md"
+        _run_cli("agent enable aider.read", home)
+        managed = rafter_md.read_text()
+        assert "<!-- rafter:start -->" in managed
+
+        rafter_md.write_text(
+            f"# My project notes\nKeep this line.\n\n{managed}\n## My own section\nDo not delete me.\n"
+        )
+
+        _run_cli("agent disable aider.read", home)
+
+        assert rafter_md.exists()
+        after = rafter_md.read_text()
+        assert "Keep this line." in after
+        assert "Do not delete me." in after
+        assert "<!-- rafter:start -->" not in after
+        assert "<!-- rafter:end -->" not in after
+        assert "RAFTER.md" not in (home / ".aider.conf.yml").read_text()
+
+    def test_aider_read_disable_removes_aider_note_too(self, home: Path):
+        """Fails if disable strips only the main block (RAFTER.md would
+        survive holding a note about "the skill names above"), or if enable
+        and init write different RAFTER.md content."""
+        rafter_md = home / "RAFTER.md"
+        (home / ".aider.conf.yml").write_text("model: gpt-5\n")
+
+        _run_cli("agent init --with-aider", home)
+        from_init = rafter_md.read_text()
+        assert "<!-- rafter:aider-note:start -->" in from_init
+        _run_cli("agent disable aider.read", home)
+        assert not rafter_md.exists()
+
+        _run_cli("agent enable aider.read", home)
+        assert rafter_md.read_text() == from_init
+        rafter_md.write_text(f"# My notes\nKeep this line.\n\n{from_init}")
+        _run_cli("agent disable aider.read", home)
+        after = rafter_md.read_text()
+        assert "Keep this line." in after
+        assert "rafter:aider-note" not in after
+        assert "skill names above" not in after
+
+    def test_cursor_instructions_installs_per_skill_rules_and_retires_legacy_block(self, home: Path):
+        """cursor.instructions manages what init writes (per-skill rules + the
+        sub-agent), not the retired consolidated rafter-security.mdc. Its old
+        rafter block is taken out; the user's text in that file stays (sable-z6in)."""
+        rules = home / ".cursor" / "rules"
+        rules.mkdir(parents=True)
+        legacy = rules / "rafter-security.mdc"
+        legacy.write_text("# My cursor rule\nKeep this line.\n\n<!-- rafter:start -->\nold\n<!-- rafter:end -->\n")
+
+        _run_cli("agent enable cursor.instructions", home)
+        assert (rules / "rafter.mdc").exists()
+        assert (home / ".cursor" / "agents" / "rafter.md").exists()
+        assert legacy.read_text() == "# My cursor rule\nKeep this line.\n"
+
+        _run_cli("agent disable cursor.instructions", home)
+        assert not (rules / "rafter.mdc").exists()
+        assert legacy.read_text() == "# My cursor rule\nKeep this line.\n"
+
+    def test_openclaw_skills_installs_where_openclaw_reads_skills(self, home: Path):
+        (home / ".openclaw").mkdir()
+        skill = home / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md"
+        _run_cli("agent enable openclaw.skills", home)
+        assert skill.read_text().startswith("---\nname: rafter-security\n")
+        assert not (home / ".openclaw" / "skills" / "rafter-security.md").exists()
+        _run_cli("agent disable openclaw.skills", home)
+        assert not skill.exists()
+
     def test_records_enabled_state_in_global_config(self, home: Path):
         (home / ".cursor").mkdir()
         _run_cli("agent enable cursor.mcp", home)

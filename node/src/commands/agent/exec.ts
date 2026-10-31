@@ -1,22 +1,61 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { CommandInterceptor } from "../../core/command-interceptor.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
-import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
+import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import { execSync } from "child_process";
 import readline from "readline";
 import { fmt } from "../../utils/formatter.js";
 
+// Approval model (rf-ss67): the only party who can approve a command that the
+// policy says needs approval is a person at an interactive terminal. There is
+// no flag, env var or stdin trick that stands in for that, because every one
+// of those can be produced by the agent whose command is being gated:
+//   * `--force` used to skip the prompt. Combined with the PreToolUse hook
+//     treating a quoted argument as prose, `rafter agent exec --force "<cmd>"`
+//     ran any HIGH-tier command unprompted with the hook blind. The flag is
+//     kept only so old invocations parse; it changes nothing.
+//   * A piped "yes" is not a person. Approval is offered only when stdin is a
+//     TTY; otherwise the command is denied and says why.
+// The machine owner widens policy in ~/.rafter/config.json, not per call.
+
+const DRY_RUN_EXIT = { allowed: 0, blocked: 1, approval: 2 } as const;
+
 export function createExecCommand(): Command {
   return new Command("exec")
     .description("Execute command with security validation")
-    .argument("<command>", "Command to execute")
+    .argument("<command...>", "Command to execute (quote it, or pass it after --)")
     .option("--skip-scan", "Skip pre-execution file scanning")
-    .option("--force", "Skip approval prompts (use with caution)")
-    .action(async (command, opts) => {
+    .option(
+      "--dry-run",
+      "Classify the command and exit without running it (exit 0 allowed, 1 blocked, 2 needs approval)",
+    )
+    .addOption(
+      new Option("--force", "Deprecated: no longer skips approval (rf-ss67)").hideHelp(),
+    )
+    .action(async (parts: string[], opts) => {
+      const command = joinCommandParts(parts);
       const interceptor = new CommandInterceptor();
 
       // Step 1: Evaluate command
       const evaluation = interceptor.evaluate(command);
+
+      // Step 1b: --dry-run reports the classification and stops. Nothing runs,
+      // nothing is scanned, nothing is logged as executed.
+      if (opts.dryRun) {
+        const blocked = !evaluation.allowed && !evaluation.requiresApproval;
+        const verdict = blocked ? "BLOCKED" : evaluation.requiresApproval ? "REQUIRES APPROVAL" : "ALLOWED";
+        console.log(`Dry run: ${verdict}`);
+        console.log(`Risk Level: ${evaluation.riskLevel.toUpperCase()}`);
+        console.log(`Requires approval: ${evaluation.requiresApproval ? "yes" : "no"}`);
+        if (evaluation.reason) {
+          console.log(`Reason: ${evaluation.reason}`);
+        }
+        console.log(`Command: ${command}`);
+        console.log("Not executed (--dry-run).");
+        process.exit(
+          blocked ? DRY_RUN_EXIT.blocked : evaluation.requiresApproval ? DRY_RUN_EXIT.approval : DRY_RUN_EXIT.allowed,
+        );
+      }
 
       // Step 2: Handle blocked commands
       if (!evaluation.allowed && !evaluation.requiresApproval) {
@@ -32,6 +71,11 @@ export function createExecCommand(): Command {
       // Step 3: Pre-execution scanning for git commands
       if (!opts.skipScan && isGitCommand(command)) {
         const scanResult = await scanStagedFiles();
+        if (scanResult.scanError) {
+          console.error(`Error: secret scan could not run (${scanResult.scanError}); command blocked`);
+          interceptor.logEvaluation(evaluation, "blocked");
+          process.exit(2);
+        }
         if (scanResult.secretsFound) {
           console.error(`\n${fmt.warning("Secrets detected in staged files!")}\n`);
           console.error(`Found ${scanResult.count} secret(s) in ${scanResult.files} file(s)`);
@@ -42,8 +86,13 @@ export function createExecCommand(): Command {
         }
       }
 
-      // Step 4: Handle approval required
-      if (evaluation.requiresApproval && !opts.force) {
+      // Step 4: Handle approval required — only a person at a terminal can.
+      if (evaluation.requiresApproval) {
+        if (opts.force) {
+          console.log(
+            `\n${fmt.warning("--force no longer skips approval (rf-ss67); approval needs a person at an interactive terminal")}\n`,
+          );
+        }
         console.log(`\n${fmt.warning("Command requires approval")}\n`);
         console.log(`Risk Level: ${evaluation.riskLevel.toUpperCase()}`);
         console.log(`Command: ${command}`);
@@ -51,6 +100,16 @@ export function createExecCommand(): Command {
           console.log(`Reason: ${evaluation.reason}`);
         }
         console.log();
+
+        if (!process.stdin.isTTY) {
+          console.log(`${fmt.error("Command denied: approval needs an interactive terminal, and stdin is not one")}`);
+          console.log(
+            "Run the command yourself at a terminal, or have the machine owner adjust " +
+              "commandPolicy in ~/.rafter/config.json.\n",
+          );
+          interceptor.logEvaluation(evaluation, "blocked");
+          process.exit(1);
+        }
 
         const approved = await promptApproval();
 
@@ -62,16 +121,13 @@ export function createExecCommand(): Command {
 
         console.log(`\n${fmt.success("Command approved by user")}\n`);
         interceptor.logEvaluation(evaluation, "overridden");
-      } else if (opts.force && evaluation.requiresApproval) {
-        console.log(`\n${fmt.warning("Forcing execution (--force flag)")}\n`);
-        interceptor.logEvaluation(evaluation, "overridden");
       } else {
         interceptor.logEvaluation(evaluation, "allowed");
       }
 
       // Step 5: Execute command
       try {
-        const output = execSync(command, {
+        execSync(command, {
           stdio: "inherit",
           encoding: "utf-8"
         });
@@ -85,26 +141,49 @@ export function createExecCommand(): Command {
     });
 }
 
+/**
+ * One quoted argument is the command verbatim. Several (the `-- rm -rf x` form
+ * the docs show) are re-joined with shell quoting, so what the classifier sees
+ * is what the shell will run — `-- echo "a b"` becomes `echo 'a b'`, not `echo a b`.
+ */
+export function joinCommandParts(parts: string[]): string {
+  if (parts.length === 1) return parts[0];
+  return parts.map(shellQuote).join(" ");
+}
+
+export function shellQuote(token: string): string {
+  if (token === "") return "''";
+  if (/^[A-Za-z0-9_\/:=@.,+%-]+$/.test(token)) return token;
+  return `'${token.replace(/'/g, `'\\''`)}'`;
+}
+
 function isGitCommand(command: string): boolean {
   return command.trim().startsWith("git commit") ||
          command.trim().startsWith("git push");
 }
 
-async function scanStagedFiles(): Promise<{ secretsFound: boolean; count: number; files: number }> {
+async function scanStagedFiles(): Promise<{ secretsFound: boolean; count: number; files: number; scanError?: string }> {
+  let repoRoot: string;
+  try {
+    repoRoot = execSync("git rev-parse --show-toplevel", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // Not a git repo: no staged files to scan.
+    return { secretsFound: false, count: 0, files: 0 };
+  }
   try {
     const patch = execSync("git diff -U0 --no-color --cached --diff-filter=ACM", {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"],
+      // At the default 1 MiB buffer a large commit skipped the scan silently (#274).
+      maxBuffer: gitDiffMaxBuffer(),
     }).trim();
 
     if (!patch) {
       return { secretsFound: false, count: 0, files: 0 };
     }
-
-    const repoRoot = execSync("git rev-parse --show-toplevel", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "ignore"],
-    }).trim();
 
     const addedLines = parseUnifiedDiffAddedLines(patch);
     if (addedLines.length === 0) {
@@ -119,9 +198,12 @@ async function scanStagedFiles(): Promise<{ secretsFound: boolean; count: number
       count: totalMatches,
       files: results.length,
     };
-  } catch {
-    // If git command fails (not in repo, etc.), skip scanning
-    return { secretsFound: false, count: 0, files: 0 };
+  } catch (error: any) {
+    // Inside a repo, a scan that could not run must not read as "no secrets".
+    const scanError = error?.code === "ENOBUFS"
+      ? "staged diff too large for the scanner to read"
+      : (error?.message ?? String(error));
+    return { secretsFound: false, count: 0, files: 0, scanError };
   }
 }
 

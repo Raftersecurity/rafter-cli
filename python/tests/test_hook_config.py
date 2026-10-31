@@ -28,7 +28,7 @@ from rafter_cli.commands.hook import (
 from rafter_cli.core.config_schema import get_default_config
 from rafter_cli.core.hook_control import resolve_hook_control
 
-FAKE_AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+FAKE_AWS_KEY = "AKIAIOSFODNN7ABCDEFG"
 
 
 @pytest.fixture(autouse=True)

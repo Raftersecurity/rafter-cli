@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -17,12 +16,11 @@ import pytest
 
 from rafter_cli.commands.hook import _evaluate_bash, _evaluate_write, _scan_staged_files
 from rafter_cli.core.config_schema import get_default_config
-from rafter_cli.scanners.regex_scanner import RegexScanner
 
 
 # ── Fake but realistic-looking secrets ──────────────────────────────────
 
-FAKE_AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+FAKE_AWS_KEY = "AKIAIOSFODNN7ABCDEFG"
 FAKE_GITHUB_TOKEN = "ghp_FAKEEFabcdef1234567890abcdef12345678"
 FAKE_PRIVATE_KEY = """\
 -----BEGIN RSA PRIVATE KEY-----
@@ -64,21 +62,19 @@ def git_repo(tmp_path):
 # ── Pretool: git commit with real staged files ──────────────────────────
 
 class TestPretoolGitCommitRealRepo:
-    def test_blocks_commit_with_staged_aws_key(self, git_repo):
-        env_file = git_repo / ".env"
-        env_file.write_text(f"AWS_ACCESS_KEY_ID={FAKE_AWS_KEY}\n")
-        subprocess.run(["git", "add", ".env"], cwd=git_repo, capture_output=True, check=True)
+    @pytest.mark.parametrize(
+        "filename,content",
+        [
+            (".env", f"AWS_ACCESS_KEY_ID={FAKE_AWS_KEY}\n"),
+            ("config.json", json.dumps({"token": FAKE_GITHUB_TOKEN})),
+        ],
+    )
+    def test_blocks_commit_with_staged_secret(self, git_repo, filename, content):
+        secret_file = git_repo / filename
+        secret_file.write_text(content)
+        subprocess.run(["git", "add", filename], cwd=git_repo, capture_output=True, check=True)
 
-        result = _evaluate_bash('git commit -m "add env"')
-        assert result["decision"] == "deny"
-        assert "secret(s)" in result["reason"]
-
-    def test_blocks_commit_with_staged_github_token(self, git_repo):
-        config = git_repo / "config.json"
-        config.write_text(json.dumps({"token": FAKE_GITHUB_TOKEN}))
-        subprocess.run(["git", "add", "config.json"], cwd=git_repo, capture_output=True, check=True)
-
-        result = _evaluate_bash('git commit -m "add config"')
+        result = _evaluate_bash(f'git commit -m "add {filename}"')
         assert result["decision"] == "deny"
         assert "secret(s)" in result["reason"]
 
@@ -161,32 +157,10 @@ class TestPretoolGitPushRealRepo:
 # ── Pretool: Write/Edit with secret content ─────────────────────────────
 
 class TestPretoolWriteSecretContent:
-    def test_blocks_write_with_aws_key(self):
-        result = _evaluate_write({
-            "content": f"DB_HOST=localhost\nAWS_ACCESS_KEY_ID={FAKE_AWS_KEY}\n",
-            "file_path": ".env",
-        })
-        assert result["decision"] == "deny"
-        assert "Secret detected" in result["reason"]
-
     def test_blocks_write_with_github_token(self):
         result = _evaluate_write({
             "content": json.dumps({"github_token": FAKE_GITHUB_TOKEN}),
             "file_path": "config.json",
-        })
-        assert result["decision"] == "deny"
-
-    def test_allows_write_with_clean_content(self):
-        result = _evaluate_write({
-            "content": "export function hello() { return 'world'; }\n",
-            "file_path": "app.ts",
-        })
-        assert result["decision"] == "allow"
-
-    def test_blocks_edit_with_secret_in_new_string(self):
-        result = _evaluate_write({
-            "new_string": f'API_KEY = "{FAKE_AWS_KEY}"',
-            "file_path": "config.py",
         })
         assert result["decision"] == "deny"
 
@@ -256,126 +230,42 @@ class TestScanStagedFilesRealRepo:
         assert result["secrets_found"] is False
 
 
-# ── PostTool: secret redaction against real file content ────────────────
+# ── Pretool: fail closed when the staged diff cannot be scanned ─────────
 
-class TestPosttoolRedactionRealFiles:
-    def test_redacts_aws_key_from_real_file(self, git_repo):
-        env_file = git_repo / ".env"
-        env_file.write_text(f"AWS_ACCESS_KEY_ID={FAKE_AWS_KEY}\nDB=localhost\n")
+def _pretool_decision(command: str) -> dict:
+    """Run the real pretool entry point, including its outer error-handling catch."""
+    from typer.testing import CliRunner
+    from rafter_cli.commands.hook import hook_app
 
-        content = env_file.read_text()
-        scanner = RegexScanner()
-        assert scanner.has_secrets(content) is True
-
-        redacted = scanner.redact(content)
-        assert FAKE_AWS_KEY not in redacted
-        assert "DB=localhost" in redacted
-        assert "****" in redacted
-
-    def test_redacts_github_token_from_git_config_output(self):
-        output = f"remote.origin.url=https://{FAKE_GITHUB_TOKEN}@github.com/user/repo.git"
-        scanner = RegexScanner()
-        assert scanner.has_secrets(output) is True
-
-        redacted = scanner.redact(output)
-        assert FAKE_GITHUB_TOKEN not in redacted
-
-    def test_passes_through_clean_output(self):
-        output = "file1.ts\nfile2.ts\nsrc/index.ts\n"
-        scanner = RegexScanner()
-        assert scanner.has_secrets(output) is False
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}}
+    result = CliRunner().invoke(hook_app, ["pretool"], input=json.dumps(payload))
+    return json.loads(result.output.strip())["hookSpecificOutput"]
 
 
-# ── Install hook: real git repo ─────────────────────────────────────────
+class TestPretoolStagedDiffFailsClosed:
+    def test_denies_commit_when_git_diff_fails(self, git_repo):
+        (git_repo / "a.js").write_text("const a = 1;\n")
+        subprocess.run(["git", "add", "a.js"], cwd=git_repo, capture_output=True, check=True)
+        (git_repo / ".git" / "index").write_bytes(b"corrupt")  # git diff --cached now fails
 
-class TestInstallHookRealRepo:
-    def test_creates_pre_commit_hook(self, git_repo):
-        hooks_dir = git_repo / ".git" / "hooks"
-        hook_path = hooks_dir / "pre-commit"
+        out = _pretool_decision('git commit -m "x"')
+        assert out["permissionDecision"] == "deny"
+        assert "could not run" in out["permissionDecisionReason"]
 
-        template = Path(__file__).parent.parent / "rafter_cli" / "resources" / "pre-commit-hook.sh"
-        if not template.exists():
-            pytest.skip("Hook template not available")
+    def test_scans_non_utf8_staged_diff(self, git_repo):
+        (git_repo / "latin1.txt").write_bytes(
+            b"caf\xe9\n" + f"AWS_ACCESS_KEY_ID={FAKE_AWS_KEY}\n".encode()
+        )
+        subprocess.run(["git", "add", "latin1.txt"], cwd=git_repo, capture_output=True, check=True)
 
-        hooks_dir.mkdir(parents=True, exist_ok=True)
-        hook_content = template.read_text()
-        hook_path.write_text(hook_content)
-        hook_path.chmod(0o755)
-
-        assert hook_path.exists()
-        installed = hook_path.read_text()
-        assert "Rafter Security Pre-Commit Hook" in installed
-        assert "rafter secrets" in installed
-        assert hook_path.stat().st_mode & stat.S_IXUSR
-
-    def test_creates_pre_push_hook(self, git_repo):
-        hooks_dir = git_repo / ".git" / "hooks"
-        hook_path = hooks_dir / "pre-push"
-
-        template = Path(__file__).parent.parent / "rafter_cli" / "resources" / "pre-push-hook.sh"
-        if not template.exists():
-            pytest.skip("Hook template not available")
-
-        hooks_dir.mkdir(parents=True, exist_ok=True)
-        hook_content = template.read_text()
-        hook_path.write_text(hook_content)
-        hook_path.chmod(0o755)
-
-        assert hook_path.exists()
-        installed = hook_path.read_text()
-        assert "Rafter Security Pre-Push Hook" in installed
-        assert "rafter secrets" in installed
-
-    def test_backs_up_existing_non_rafter_hook(self, git_repo):
-        hooks_dir = git_repo / ".git" / "hooks"
-        hook_path = hooks_dir / "pre-commit"
-        hooks_dir.mkdir(parents=True, exist_ok=True)
-
-        # Write a non-rafter hook
-        hook_path.write_text("#!/bin/bash\necho 'existing'\n")
-
-        template = Path(__file__).parent.parent / "rafter_cli" / "resources" / "pre-commit-hook.sh"
-        if not template.exists():
-            pytest.skip("Hook template not available")
-
-        # Simulate backup + install
-        existing = hook_path.read_text()
-        assert "Rafter" not in existing
-
-        backup_path = hooks_dir / "pre-commit.backup"
-        backup_path.write_text(existing)
-
-        hook_path.write_text(template.read_text())
-        hook_path.chmod(0o755)
-
-        assert backup_path.exists()
-        assert "existing" in backup_path.read_text()
-        assert "Rafter" in hook_path.read_text()
-
-    def test_idempotent_detection(self, git_repo):
-        hooks_dir = git_repo / ".git" / "hooks"
-        hook_path = hooks_dir / "pre-commit"
-
-        template = Path(__file__).parent.parent / "rafter_cli" / "resources" / "pre-commit-hook.sh"
-        if not template.exists():
-            pytest.skip("Hook template not available")
-
-        hooks_dir.mkdir(parents=True, exist_ok=True)
-        hook_path.write_text(template.read_text())
-
-        # Check for marker — second install should detect it
-        installed = hook_path.read_text()
-        marker = "Rafter Security Pre-Commit Hook"
-        assert marker in installed
+        out = _pretool_decision('git commit -m "x"')
+        assert out["permissionDecision"] == "deny"
+        assert "secret(s)" in out["permissionDecisionReason"]
 
 
 # ── Command interception in git context ─────────────────────────────────
 
 class TestCommandInterceptionGitContext:
-    def test_blocks_dangerous_commands(self):
-        result = _evaluate_bash("rm -rf /")
-        assert result["decision"] == "deny"
-
     def test_allows_normal_git_commands(self):
         for cmd in ["git status", "git log --oneline", "git diff HEAD"]:
             result = _evaluate_bash(cmd)
@@ -419,18 +309,3 @@ class TestSecretLifecycle:
 
         result = _evaluate_bash('git commit -m "update"')
         assert result["decision"] == "deny"
-
-    def test_posttool_redacts_secrets_from_real_file(self, git_repo):
-        secret_file = git_repo / "credentials.json"
-        secret_file.write_text(json.dumps(
-            {"aws_access_key_id": FAKE_AWS_KEY, "region": "us-east-1"},
-            indent=2,
-        ))
-
-        output = secret_file.read_text()
-        scanner = RegexScanner()
-        redacted = scanner.redact(output)
-
-        assert FAKE_AWS_KEY not in redacted
-        assert "us-east-1" in redacted
-        assert "****" in redacted

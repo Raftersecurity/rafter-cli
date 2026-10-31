@@ -23,7 +23,7 @@ from ..scanners.betterleaks import BetterleaksScanner
 from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.union import union_scan_results
 from ..utils.api import API_TIMEOUT, api_get, api_post
-from .sites import SITES_API_BASE, describe_sites_error, resolve_mcp_api_key
+from .sites import describe_sites_error, sites_api_url, resolve_mcp_api_key
 
 mcp_app = typer.Typer(
     name="mcp",
@@ -57,6 +57,13 @@ def _format_scan_results(results: list[ScanResult]) -> list[dict]:
 
 def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
     """Scan files or directories for hardcoded secrets."""
+    return scan_secrets_with_suppressed(path, engine)[0]
+
+
+def scan_secrets_with_suppressed(
+    path: str, engine: str = "auto"
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Scan for secrets; return (results, suppressed metadata, unreadable files)."""
     def run_patterns() -> list[ScanResult]:
         scanner = RegexScanner()
         try:
@@ -64,11 +71,36 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
         except NotADirectoryError:
             return [scanner.scan_file(path)]
 
+    def report(results: list[ScanResult]) -> tuple[list[dict], list[dict], list[dict]]:
+        # Partition off files that could not be read (sable-ilbx), so an
+        # unreadable file is not reported as a clean, empty entry.
+        read_errors = [{"file": r.file, "error": r.read_error} for r in results if r.read_error]
+        scan_results = [r for r in results if not r.read_error]
+        # Honor the project's suppressions, as `rafter secrets` does, so a
+        # finding triaged with suppress_finding is not reported again. Discover
+        # and anchor the policy from the scan TARGET, not the MCP server's cwd
+        # (sable-lu0j).
+        import os
+
+        from ..core.custom_patterns import apply_suppressions, load_suppressions, policy_ignore_to_suppressions
+        scan_base = os.path.abspath(path)
+        rafterignore_dir = scan_base if os.path.isdir(scan_base) else os.path.dirname(scan_base)
+        scan_cfg = ConfigManager().load_with_policy(scan_base).agent.scan
+        suppressions = (
+            policy_ignore_to_suppressions(scan_cfg.ignore, scan_cfg.ignore_base_dir)
+            + load_suppressions(rafterignore_dir)
+        )
+        # Drop only what was suppressed; a clean file keeps its empty entry.
+        kept_results, suppressed = apply_suppressions(scan_results, suppressions)
+        kept = {r.file: r for r in kept_results}
+        formatted = _format_scan_results([kept.get(r.file, r) for r in scan_results if not r.matches or r.file in kept])
+        return formatted, [asdict(f) for f in suppressed], read_errors
+
     if engine == "betterleaks":
         bl = BetterleaksScanner()
         if not bl.is_available():
             raise RuntimeError("Betterleaks not installed")
-        return _format_scan_results(bl.scan_directory(path))
+        return report(bl.scan_directory(path))
 
     if engine == "auto":
         # sable-j85 — run BOTH engines and union, so a betterleaks miss
@@ -78,14 +110,15 @@ def handle_scan_secrets(path: str, engine: str = "auto") -> list[dict]:
         if bl.is_available():
             try:
                 bl_results = bl.scan_directory(path)
-                return _format_scan_results(union_scan_results(bl_results, run_patterns()))
-            except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
+                return report(union_scan_results(bl_results, run_patterns()))
+            # The scanner raises RuntimeError for a timeout or a failed run (#262).
+            except (RuntimeError, subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
                 print(f"rafter: betterleaks scan failed, falling back to patterns: {exc}", file=sys.stderr)
                 # Fall through to patterns-only.
-        return _format_scan_results(run_patterns())
+        return report(run_patterns())
 
     # patterns (and any unrecognized value — the tool schema enums this).
-    return _format_scan_results(run_patterns())
+    return report(run_patterns())
 
 
 def handle_evaluate_command(command: str) -> dict:
@@ -218,7 +251,7 @@ def _require_mcp_api_key() -> str:
 def handle_sites_create(url: str) -> dict:
     """Register a URL as a Rafter Site and kick off its first scan."""
     key = _require_mcp_api_key()
-    resp = api_post(SITES_API_BASE, headers={"x-api-key": key}, json={"url": url}, timeout=API_TIMEOUT)
+    resp = api_post(sites_api_url(), headers={"x-api-key": key}, json={"url": url}, timeout=API_TIMEOUT)
     if resp.status_code != 200:
         message, _ = describe_sites_error(resp)
         raise RuntimeError(message)
@@ -241,7 +274,7 @@ def handle_sites_scan(
     if sections:
         body["sections"] = list(sections)
 
-    resp = api_post(f"{SITES_API_BASE}/scan", headers={"x-api-key": key}, json=body, timeout=API_TIMEOUT)
+    resp = api_post(sites_api_url("/scan"), headers={"x-api-key": key}, json=body, timeout=API_TIMEOUT)
     if resp.status_code != 200:
         message, _ = describe_sites_error(resp)
         raise RuntimeError(message)
@@ -263,7 +296,7 @@ def handle_sites_list(
     if include_archived:
         params["include_archived"] = "true"
 
-    resp = api_get(SITES_API_BASE, headers={"x-api-key": key}, params=params, timeout=API_TIMEOUT)
+    resp = api_get(sites_api_url(), headers={"x-api-key": key}, params=params, timeout=API_TIMEOUT)
     if resp.status_code != 200:
         message, _ = describe_sites_error(resp)
         raise RuntimeError(message)
@@ -275,7 +308,7 @@ def handle_sites_get(id: str) -> dict:
     from urllib.parse import quote
 
     key = _require_mcp_api_key()
-    resp = api_get(f"{SITES_API_BASE}/{quote(id, safe='')}", headers={"x-api-key": key}, timeout=API_TIMEOUT)
+    resp = api_get(sites_api_url(f"/{quote(id, safe='')}"), headers={"x-api-key": key}, timeout=API_TIMEOUT)
     if resp.status_code != 200:
         message, _ = describe_sites_error(resp)
         raise RuntimeError(message)
@@ -292,14 +325,30 @@ def create_mcp_server():
     mcp = FastMCP("rafter")
 
     @mcp.tool()
-    def scan_secrets(path: str, engine: str = "auto") -> str:
+    def scan_secrets(path: str, engine: str = "auto") -> list[str]:
         """Scan files or directories for hardcoded secrets and credentials.
+
+        Findings hidden by the project's .rafter.yml ignore rules or
+        .rafterignore are dropped from the results; when any were, a second
+        content block lists them as {suppressed_count, _suppressed: [{file,
+        line, column, rule, severity, reason, source}]} (no secret text), so a
+        blanket ignore rule cannot silently empty a scan.
 
         Args:
             path: File or directory path to scan.
             engine: Scan engine — auto (default), betterleaks, or patterns.
         """
-        return json.dumps(handle_scan_secrets(path, engine))
+        results, suppressed, unreadable = scan_secrets_with_suppressed(path, engine)
+        out = [json.dumps(results)]
+        # Say what was dropped (metadata only, no secret text), as
+        # `rafter secrets --json` does under `_suppressed`.
+        if suppressed:
+            out.append(json.dumps({"suppressed_count": len(suppressed), "_suppressed": suppressed}))
+        # Say what could not be read (metadata only, no secret text), so a
+        # caller can tell an empty result from an incomplete scan (sable-ilbx).
+        if unreadable:
+            out.append(json.dumps({"unreadable_count": len(unreadable), "unreadable": unreadable}))
+        return out
 
     @mcp.tool()
     def evaluate_command(command: str) -> str:
@@ -365,9 +414,10 @@ def create_mcp_server():
         """Triage a false positive by persisting a suppression rule into .rafter.yml.
 
         Use when a scan_secrets finding (or a remote scan finding) is a confirmed
-        false positive — e.g. a test fixture or sample credential. Suppressed
-        findings still surface under '_suppressed' in scan output, so the decision
-        is reviewable and version-controlled. Always include a reason.
+        false positive — e.g. a test fixture or sample credential. scan_secrets
+        stops reporting suppressed findings; `rafter secrets --json` lists them
+        under '_suppressed', so the decision is reviewable and version-controlled.
+        Always include a reason.
 
         Args:
             path: File path or glob to suppress findings in (e.g. 'test/fixtures/**').

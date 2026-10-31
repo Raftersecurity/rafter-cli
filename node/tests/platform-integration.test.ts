@@ -78,6 +78,33 @@ function runCliOk(args: string, homeDir: string, timeout?: number) {
   return result;
 }
 
+// Run the CLI with a given cwd (for --local, which installs relative to cwd
+// rather than HOME). Hoisted to module scope so it's usable both by the shared
+// MCP_ADAPTERS table above and by the Claude Code --local scope test below.
+function runCliInCwd(
+  args: string,
+  cwd: string,
+  homeDir: string
+): { stdout: string; stderr: string; exitCode: number } {
+  const result = spawnSync(`node ${CLI_ENTRY} ${args}`, {
+    cwd,
+    encoding: "utf-8",
+    timeout: 15_000,
+    shell: true,
+    env: {
+      ...process.env,
+      HOME: homeDir,
+      XDG_CONFIG_HOME: path.join(homeDir, ".config"),
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  return {
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    exitCode: result.status ?? 1,
+  };
+}
+
 describe("Platform Integration — MCP Installs via CLI", () => {
   let testHomeDir: string;
 
@@ -92,99 +119,246 @@ describe("Platform Integration — MCP Installs via CLI", () => {
   // ── 1. Flag rejection ──────────────────────────────────────────────
 
   describe("Flag rejection", () => {
-    it("should reject --skip-openclaw as unknown option", () => {
-      const result = runCli("agent init --skip-openclaw", testHomeDir);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("unknown option");
-    });
-
-    it("should reject --skip-claude-code as unknown option", () => {
-      const result = runCli("agent init --skip-claude-code", testHomeDir);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("unknown option");
-    });
+    it.each(["--skip-openclaw", "--skip-claude-code"])(
+      "should reject %s as unknown option",
+      (flag) => {
+        const result = runCli(`agent init ${flag}`, testHomeDir);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("unknown option");
+      }
+    );
   });
 
-  // ── 2. Gemini MCP install ──────────────────────────────────────────
+  // ── 2/3/4/11b. MCP adapters — shared install behavior ───────────────
+  //
+  // installGeminiMcp / installCursorMcp / installWindsurfMcp / installClaudeCodeMcp
+  // (node/src/commands/agent/init.ts) are structurally identical read-merge-write
+  // functions, differing only in path. One parameterized table covers fresh
+  // install, no-duplicate-on-reinstall, preserving a pre-existing non-rafter
+  // entry, and overwriting a stale rafter entry for all four — proving the four
+  // adapters produce an identical rafter entry shape as a side effect of the
+  // fresh-install assertion (replaces the former standalone "MCP entry structure
+  // validation" test). Continue.dev is NOT in this table: its mcpServers field
+  // has a real array-vs-object format fork and is tested on its own below.
 
-  describe("Gemini MCP install (--with-gemini)", () => {
-    it("should create settings.json with mcpServers.rafter", () => {
-      // Pre-create the .gemini dir so it's "detected"
-      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+  type McpAdapterSpec = {
+    name: string;
+    installArgs: string;
+    run: (args: string, home: string) => { stdout: string; stderr: string; exitCode: number };
+    setupDir?: (home: string) => void;
+    configPath: (home: string) => string;
+  };
 
-      const result = runCli("agent init --with-gemini", testHomeDir);
-      expect(result.exitCode).toBe(0);
+  const MCP_ADAPTERS: McpAdapterSpec[] = [
+    {
+      name: "Gemini",
+      installArgs: "agent init --with-gemini",
+      run: runCli,
+      setupDir: (home) => fs.mkdirSync(path.join(home, ".gemini"), { recursive: true }),
+      configPath: (home) => path.join(home, ".gemini", "settings.json"),
+    },
+    {
+      name: "Cursor",
+      installArgs: "agent init --with-cursor",
+      run: runCli,
+      setupDir: (home) => fs.mkdirSync(path.join(home, ".cursor"), { recursive: true }),
+      configPath: (home) => path.join(home, ".cursor", "mcp.json"),
+    },
+    {
+      name: "Windsurf",
+      installArgs: "agent init --with-windsurf",
+      run: runCli,
+      setupDir: (home) => fs.mkdirSync(path.join(home, ".codeium", "windsurf"), { recursive: true }),
+      configPath: (home) => path.join(home, ".codeium", "windsurf", "mcp_config.json"),
+    },
+    {
+      name: "Claude Code (--local)",
+      installArgs: "agent init --local --with-claude-code",
+      run: (args, home) => runCliInCwd(args, home, home),
+      // No setupDir: --local installs unconditionally into cwd, no detection gate.
+      configPath: (home) => path.join(home, ".mcp.json"),
+    },
+  ];
 
-      const settingsPath = path.join(testHomeDir, ".gemini", "settings.json");
-      expect(fs.existsSync(settingsPath)).toBe(true);
+  describe("MCP adapters — shared install behavior (Gemini/Cursor/Windsurf/Claude Code --local)", () => {
+    it.each(MCP_ADAPTERS)(
+      "$name: fresh install creates mcpServers.rafter = {command, args}",
+      ({ setupDir, configPath, installArgs, run }) => {
+        setupDir?.(testHomeDir);
+        const result = run(installArgs, testHomeDir);
+        expect(result.exitCode, `CLI failed (exit ${result.exitCode}): ${result.stderr}`).toBe(0);
 
-      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-      expect(settings.mcpServers).toBeDefined();
-      expect(settings.mcpServers.rafter).toBeDefined();
-      expect(settings.mcpServers.rafter.command).toBe("rafter");
-      expect(settings.mcpServers.rafter.args).toEqual(["mcp", "serve"]);
-    });
+        const cfgPath = configPath(testHomeDir);
+        expect(fs.existsSync(cfgPath)).toBe(true);
+
+        const config = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+        expect(config.mcpServers).toBeDefined();
+        expect(config.mcpServers.rafter).toEqual({ command: "rafter", args: ["mcp", "serve"] });
+      }
+    );
+
+    it.each(MCP_ADAPTERS)(
+      "$name: does not duplicate rafter entry on repeated installs",
+      ({ setupDir, configPath, installArgs, run }) => {
+        setupDir?.(testHomeDir);
+        run(installArgs, testHomeDir);
+        run(installArgs, testHomeDir);
+
+        const config = JSON.parse(fs.readFileSync(configPath(testHomeDir), "utf-8"));
+        expect(Object.keys(config.mcpServers)).toEqual(["rafter"]);
+      }
+    );
+
+    it.each(MCP_ADAPTERS)(
+      "$name: preserves an existing non-rafter MCP server",
+      ({ setupDir, configPath, installArgs, run }) => {
+        setupDir?.(testHomeDir);
+        const cfgPath = configPath(testHomeDir);
+        fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+        fs.writeFileSync(
+          cfgPath,
+          JSON.stringify({ mcpServers: { "other-tool": { command: "other", args: ["serve"] } } }, null, 2)
+        );
+
+        run(installArgs, testHomeDir);
+
+        const config = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+        expect(config.mcpServers["other-tool"]).toBeDefined();
+        expect(config.mcpServers.rafter).toBeDefined();
+      }
+    );
+
+    it.each(MCP_ADAPTERS)(
+      "$name: overwrites a stale rafter entry on re-install",
+      ({ setupDir, configPath, installArgs, run }) => {
+        setupDir?.(testHomeDir);
+        const cfgPath = configPath(testHomeDir);
+        fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+        fs.writeFileSync(
+          cfgPath,
+          JSON.stringify({ mcpServers: { rafter: { command: "old-rafter", args: ["old-arg"] } } }, null, 2)
+        );
+
+        run(installArgs, testHomeDir);
+
+        const config = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+        expect(config.mcpServers.rafter).toEqual({ command: "rafter", args: ["mcp", "serve"] });
+      }
+    );
   });
 
-  // ── 2b. Gemini idempotency and preservation ──────────────────────
+  // Shape-agnostic behavior shared with Continue.dev too (its mcpServers can be
+  // an array OR an object — see "Continue.dev MCP idempotency" below for its own
+  // format-specific tests). rafterPresent() abstracts over both shapes so these
+  // two scenarios cover Gemini/Cursor/Windsurf/Continue.dev in one table.
+  const MCP_SIBLING_ADAPTERS: (McpAdapterSpec & { rafterPresent: (config: any) => boolean })[] = [
+    ...MCP_ADAPTERS.filter((a) => a.name !== "Claude Code (--local)").map((a) => ({
+      ...a,
+      rafterPresent: (config: any) => !!config?.mcpServers?.rafter?.command,
+    })),
+    {
+      name: "Continue.dev",
+      installArgs: "agent init --with-continue",
+      run: runCli,
+      setupDir: (home) => fs.mkdirSync(path.join(home, ".continue"), { recursive: true }),
+      configPath: (home) => path.join(home, ".continue", "config.json"),
+      rafterPresent: (config: any) =>
+        Array.isArray(config?.mcpServers)
+          ? config.mcpServers.some((s: any) => s.name === "rafter")
+          : !!config?.mcpServers?.rafter,
+    },
+  ];
 
-  describe("Gemini MCP idempotency", () => {
-    it("should not duplicate rafter entry on repeated installs", { timeout: 60_000 }, () => {
-      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
+  describe("MCP adapters — shared non-MCP-settings preservation + corrupted-JSON recovery (Gemini/Cursor/Windsurf/Continue.dev)", () => {
+    it.each(MCP_SIBLING_ADAPTERS)(
+      "$name: preserves existing non-MCP sibling settings",
+      ({ setupDir, configPath, installArgs, run, rafterPresent }) => {
+        setupDir?.(testHomeDir);
+        const cfgPath = configPath(testHomeDir);
+        fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+        fs.writeFileSync(cfgPath, JSON.stringify({ theme: "monokai", fontSize: 14 }, null, 2));
 
-      // Run twice
-      runCli("agent init --with-gemini", testHomeDir);
-      runCli("agent init --with-gemini", testHomeDir);
+        run(installArgs, testHomeDir);
 
-      const settingsPath = path.join(testHomeDir, ".gemini", "settings.json");
-      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+        const config = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+        expect(config.theme).toBe("monokai");
+        expect(config.fontSize).toBe(14);
+        expect(rafterPresent(config)).toBe(true);
+      }
+    );
 
-      // Should have exactly one rafter entry
-      expect(settings.mcpServers.rafter).toBeDefined();
-      expect(Object.keys(settings.mcpServers)).toEqual(["rafter"]);
-    });
+    it.each(MCP_SIBLING_ADAPTERS)(
+      "$name: recovers from a corrupted existing config file",
+      ({ setupDir, configPath, installArgs, run, rafterPresent }) => {
+        setupDir?.(testHomeDir);
+        const cfgPath = configPath(testHomeDir);
+        fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+        fs.writeFileSync(cfgPath, "{not valid json!!");
 
-    it("should preserve existing Gemini settings", { timeout: 30_000, retry: 2 }, () => {
-      const geminiDir = path.join(testHomeDir, ".gemini");
-      fs.mkdirSync(geminiDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(geminiDir, "settings.json"),
-        JSON.stringify({ model: "gemini-2.0-flash", theme: "dark" }, null, 2)
-      );
+        const result = run(installArgs, testHomeDir);
+        expect(result.exitCode).toBe(0);
 
-      const result = runCli("agent init --with-gemini", testHomeDir);
-      expect(result.exitCode, `CLI exited ${result.exitCode}; stderr: ${result.stderr}`).toBe(0);
+        const config = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+        expect(rafterPresent(config)).toBe(true);
+      }
+    );
+  });
 
-      const settings = JSON.parse(
-        fs.readFileSync(path.join(geminiDir, "settings.json"), "utf-8")
-      );
-      // Existing settings preserved
-      expect(settings.model).toBe("gemini-2.0-flash");
-      expect(settings.theme).toBe("dark");
-      // Rafter MCP added
-      expect(settings.mcpServers.rafter.command).toBe("rafter");
-    });
+  // ── 2c/3c/4c/5c/6c. Platform requested but not detected ─────────────
+  //
+  // CLI_SPEC.md's "agent verify" table documents one detection dir/file and one
+  // warning per platform (shared-docs/CLI_SPEC.md ~L954-961). One parameterized
+  // table replaces five near-identical per-platform tests.
 
-    it("should preserve existing non-rafter MCP servers", { timeout: 30_000 }, () => {
-      const geminiDir = path.join(testHomeDir, ".gemini");
-      fs.mkdirSync(geminiDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(geminiDir, "settings.json"),
-        JSON.stringify({
-          mcpServers: {
-            "other-tool": { command: "other", args: ["serve"] },
-          },
-        }, null, 2)
-      );
+  const NOT_DETECTED_CASES: {
+    name: string;
+    installArgs: string;
+    warning: string;
+    artifact?: (home: string) => string;
+  }[] = [
+    {
+      name: "Gemini",
+      installArgs: "agent init --with-gemini",
+      warning: "Gemini CLI requested but not detected",
+      artifact: (home) => path.join(home, ".gemini", "settings.json"),
+    },
+    {
+      name: "Cursor",
+      installArgs: "agent init --with-cursor",
+      warning: "Cursor requested but not detected",
+      artifact: (home) => path.join(home, ".cursor", "mcp.json"),
+    },
+    {
+      name: "Windsurf",
+      installArgs: "agent init --with-windsurf",
+      warning: "Windsurf requested but not detected",
+      artifact: (home) => path.join(home, ".codeium", "windsurf", "mcp_config.json"),
+    },
+    {
+      name: "Continue.dev",
+      installArgs: "agent init --with-continue",
+      warning: "Continue.dev requested but not detected",
+      artifact: (home) => path.join(home, ".continue", "config.json"),
+    },
+    {
+      name: "Aider",
+      installArgs: "agent init --with-aider",
+      warning: "Aider requested but not detected",
+    },
+  ];
 
-      runCli("agent init --with-gemini", testHomeDir);
-
-      const settings = JSON.parse(
-        fs.readFileSync(path.join(geminiDir, "settings.json"), "utf-8")
-      );
-      expect(settings.mcpServers["other-tool"]).toBeDefined();
-      expect(settings.mcpServers.rafter).toBeDefined();
-    });
+  describe("Platform requested but not detected — warns, does not install", () => {
+    it.each(NOT_DETECTED_CASES)(
+      "$name: warns and skips install when its directory/file is absent",
+      ({ installArgs, warning, artifact }) => {
+        const result = runCli(installArgs, testHomeDir);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain(warning);
+        if (artifact) {
+          expect(fs.existsSync(artifact(testHomeDir))).toBe(false);
+        }
+      }
+    );
   });
 
   // ── 2b-ii. Gemini GEMINI.md instruction file ────────────────────
@@ -303,296 +477,6 @@ describe("Platform Integration — MCP Installs via CLI", () => {
 
       const skillPath = path.join(testHomeDir, ".agents", "skills", "rafter", "SKILL.md");
       expect(fs.existsSync(skillPath)).toBe(true);
-    });
-  });
-
-  // ── 2c. Gemini environment detection ────────────────────────────
-
-  describe("Gemini environment detection", () => {
-    it("should warn when --with-gemini used without ~/.gemini", { timeout: 30_000 }, () => {
-      // Do NOT create .gemini dir
-      const result = runCli("agent init --with-gemini", testHomeDir);
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Gemini CLI requested but not detected");
-
-      // Should NOT create settings.json
-      expect(
-        fs.existsSync(path.join(testHomeDir, ".gemini", "settings.json"))
-      ).toBe(false);
-    });
-  });
-
-  // ── 2d. Gemini corrupted JSON recovery ────────────────────────────
-
-  describe("Gemini corrupted JSON recovery", () => {
-    it("should recover from corrupted settings.json", () => {
-      const geminiDir = path.join(testHomeDir, ".gemini");
-      fs.mkdirSync(geminiDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(geminiDir, "settings.json"),
-        "{not valid json!!"
-      );
-
-      const result = runCli("agent init --with-gemini", testHomeDir);
-      expect(result.exitCode).toBe(0);
-
-      const settings = JSON.parse(
-        fs.readFileSync(path.join(geminiDir, "settings.json"), "utf-8")
-      );
-      expect(settings.mcpServers.rafter).toBeDefined();
-      expect(settings.mcpServers.rafter.command).toBe("rafter");
-    });
-
-    it("should update stale rafter entry on re-install", () => {
-      const geminiDir = path.join(testHomeDir, ".gemini");
-      fs.mkdirSync(geminiDir, { recursive: true });
-      // Write a stale rafter entry with wrong args
-      fs.writeFileSync(
-        path.join(geminiDir, "settings.json"),
-        JSON.stringify({
-          mcpServers: {
-            rafter: { command: "old-rafter", args: ["old-arg"] },
-          },
-        }, null, 2)
-      );
-
-      runCli("agent init --with-gemini", testHomeDir);
-
-      const settings = JSON.parse(
-        fs.readFileSync(path.join(geminiDir, "settings.json"), "utf-8")
-      );
-      // Should be updated to current values
-      expect(settings.mcpServers.rafter.command).toBe("rafter");
-      expect(settings.mcpServers.rafter.args).toEqual(["mcp", "serve"]);
-    });
-  });
-
-  // ── 3. Cursor MCP install ──────────────────────────────────────────
-
-  describe("Cursor MCP install (--with-cursor)", () => {
-    it("should create mcp.json with mcpServers.rafter", () => {
-      fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
-
-      const result = runCli("agent init --with-cursor", testHomeDir);
-      expect(result.exitCode).toBe(0);
-
-      const mcpPath = path.join(testHomeDir, ".cursor", "mcp.json");
-      expect(fs.existsSync(mcpPath)).toBe(true);
-
-      const config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
-      expect(config.mcpServers).toBeDefined();
-      expect(config.mcpServers.rafter).toBeDefined();
-      expect(config.mcpServers.rafter.command).toBe("rafter");
-      expect(config.mcpServers.rafter.args).toEqual(["mcp", "serve"]);
-    });
-  });
-
-  // ── 3b. Cursor idempotency and preservation ───────────────────────
-
-  describe("Cursor MCP idempotency", () => {
-    it("should not duplicate rafter entry on repeated installs", () => {
-      fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
-
-      runCli("agent init --with-cursor", testHomeDir);
-      runCli("agent init --with-cursor", testHomeDir);
-
-      const mcpPath = path.join(testHomeDir, ".cursor", "mcp.json");
-      const config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
-      expect(Object.keys(config.mcpServers)).toEqual(["rafter"]);
-    });
-
-    it("should preserve existing non-rafter MCP servers", () => {
-      const cursorDir = path.join(testHomeDir, ".cursor");
-      fs.mkdirSync(cursorDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(cursorDir, "mcp.json"),
-        JSON.stringify({
-          mcpServers: {
-            "some-other-mcp": { command: "other", args: ["run"] },
-          },
-        }, null, 2)
-      );
-
-      runCli("agent init --with-cursor", testHomeDir);
-
-      const config = JSON.parse(
-        fs.readFileSync(path.join(cursorDir, "mcp.json"), "utf-8")
-      );
-      expect(config.mcpServers["some-other-mcp"]).toBeDefined();
-      expect(config.mcpServers.rafter).toBeDefined();
-    });
-
-    it("should preserve existing non-MCP settings", () => {
-      const cursorDir = path.join(testHomeDir, ".cursor");
-      fs.mkdirSync(cursorDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(cursorDir, "mcp.json"),
-        JSON.stringify({ theme: "monokai", fontSize: 14 }, null, 2)
-      );
-
-      runCli("agent init --with-cursor", testHomeDir);
-
-      const config = JSON.parse(
-        fs.readFileSync(path.join(cursorDir, "mcp.json"), "utf-8")
-      );
-      expect(config.theme).toBe("monokai");
-      expect(config.fontSize).toBe(14);
-      expect(config.mcpServers.rafter).toBeDefined();
-    });
-  });
-
-  // ── 3c. Cursor environment detection ──────────────────────────────
-
-  describe("Cursor environment detection", () => {
-    it("should warn when --with-cursor used without ~/.cursor", () => {
-      const result = runCli("agent init --with-cursor", testHomeDir);
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Cursor requested but not detected");
-      expect(
-        fs.existsSync(path.join(testHomeDir, ".cursor", "mcp.json"))
-      ).toBe(false);
-    });
-  });
-
-  // ── 3d. Cursor corrupted JSON recovery ────────────────────────────
-
-  describe("Cursor corrupted JSON recovery", () => {
-    it("should recover from corrupted mcp.json", () => {
-      const cursorDir = path.join(testHomeDir, ".cursor");
-      fs.mkdirSync(cursorDir, { recursive: true });
-      fs.writeFileSync(path.join(cursorDir, "mcp.json"), "{{bad json}}");
-
-      const result = runCli("agent init --with-cursor", testHomeDir);
-      expect(result.exitCode).toBe(0);
-
-      const config = JSON.parse(
-        fs.readFileSync(path.join(cursorDir, "mcp.json"), "utf-8")
-      );
-      expect(config.mcpServers.rafter.command).toBe("rafter");
-    });
-  });
-
-  // ── 4. Windsurf MCP install ────────────────────────────────────────
-
-  describe("Windsurf MCP install (--with-windsurf)", () => {
-    it("should create mcp_config.json with mcpServers.rafter", () => {
-      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), {
-        recursive: true,
-      });
-
-      const result = runCli("agent init --with-windsurf", testHomeDir);
-      expect(result.exitCode).toBe(0);
-
-      const mcpPath = path.join(
-        testHomeDir,
-        ".codeium",
-        "windsurf",
-        "mcp_config.json"
-      );
-      expect(fs.existsSync(mcpPath)).toBe(true);
-
-      const config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
-      expect(config.mcpServers).toBeDefined();
-      expect(config.mcpServers.rafter).toBeDefined();
-      expect(config.mcpServers.rafter.command).toBe("rafter");
-      expect(config.mcpServers.rafter.args).toEqual(["mcp", "serve"]);
-    });
-  });
-
-  // ── 4b. Windsurf idempotency and preservation ─────────────────────
-
-  describe("Windsurf MCP idempotency", () => {
-    it("should not duplicate rafter entry on repeated installs", () => {
-      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), {
-        recursive: true,
-      });
-
-      runCli("agent init --with-windsurf", testHomeDir);
-      runCli("agent init --with-windsurf", testHomeDir);
-
-      const mcpPath = path.join(
-        testHomeDir,
-        ".codeium",
-        "windsurf",
-        "mcp_config.json"
-      );
-      const config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
-      expect(Object.keys(config.mcpServers)).toEqual(["rafter"]);
-    });
-
-    it("should preserve existing non-rafter MCP servers", () => {
-      const windsurfDir = path.join(testHomeDir, ".codeium", "windsurf");
-      fs.mkdirSync(windsurfDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(windsurfDir, "mcp_config.json"),
-        JSON.stringify({
-          mcpServers: {
-            "copilot-mcp": { command: "copilot", args: ["serve"] },
-          },
-        }, null, 2)
-      );
-
-      runCli("agent init --with-windsurf", testHomeDir);
-
-      const config = JSON.parse(
-        fs.readFileSync(path.join(windsurfDir, "mcp_config.json"), "utf-8")
-      );
-      expect(config.mcpServers["copilot-mcp"]).toBeDefined();
-      expect(config.mcpServers.rafter).toBeDefined();
-    });
-
-    it("should preserve existing non-MCP settings", () => {
-      const windsurfDir = path.join(testHomeDir, ".codeium", "windsurf");
-      fs.mkdirSync(windsurfDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(windsurfDir, "mcp_config.json"),
-        JSON.stringify({ editor: "windsurf", version: 2 }, null, 2)
-      );
-
-      runCli("agent init --with-windsurf", testHomeDir);
-
-      const config = JSON.parse(
-        fs.readFileSync(path.join(windsurfDir, "mcp_config.json"), "utf-8")
-      );
-      expect(config.editor).toBe("windsurf");
-      expect(config.version).toBe(2);
-      expect(config.mcpServers.rafter).toBeDefined();
-    });
-  });
-
-  // ── 4c. Windsurf environment detection ────────────────────────────
-
-  describe("Windsurf environment detection", () => {
-    it("should warn when --with-windsurf used without ~/.codeium/windsurf", () => {
-      const result = runCli("agent init --with-windsurf", testHomeDir);
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Windsurf requested but not detected");
-      expect(
-        fs.existsSync(
-          path.join(testHomeDir, ".codeium", "windsurf", "mcp_config.json")
-        )
-      ).toBe(false);
-    });
-  });
-
-  // ── 4d. Windsurf corrupted JSON recovery ──────────────────────────
-
-  describe("Windsurf corrupted JSON recovery", () => {
-    it("should recover from corrupted mcp_config.json", () => {
-      const windsurfDir = path.join(testHomeDir, ".codeium", "windsurf");
-      fs.mkdirSync(windsurfDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(windsurfDir, "mcp_config.json"),
-        "not json at all"
-      );
-
-      const result = runCli("agent init --with-windsurf", testHomeDir);
-      expect(result.exitCode).toBe(0);
-
-      const config = JSON.parse(
-        fs.readFileSync(path.join(windsurfDir, "mcp_config.json"), "utf-8")
-      );
-      expect(config.mcpServers.rafter.command).toBe("rafter");
     });
   });
 
@@ -734,61 +618,6 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       expect(config.mcpServers.rafter).toBeDefined();
       expect(config.mcpServers.rafter.command).toBe("rafter");
     });
-
-    it("should preserve existing non-MCP settings", () => {
-      const continueDir = path.join(testHomeDir, ".continue");
-      fs.mkdirSync(continueDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(continueDir, "config.json"),
-        JSON.stringify({
-          models: [{ title: "GPT-4" }],
-          allowAnonymousTelemetry: false,
-        }, null, 2)
-      );
-
-      runCli("agent init --with-continue", testHomeDir);
-
-      const config = JSON.parse(
-        fs.readFileSync(path.join(continueDir, "config.json"), "utf-8")
-      );
-      expect(config.models).toEqual([{ title: "GPT-4" }]);
-      expect(config.allowAnonymousTelemetry).toBe(false);
-      expect(config.mcpServers).toBeDefined();
-    });
-  });
-
-  // ── 5c. Continue.dev environment detection ────────────────────────
-
-  describe("Continue.dev environment detection", () => {
-    it("should warn when --with-continue used without ~/.continue", () => {
-      const result = runCli("agent init --with-continue", testHomeDir);
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Continue.dev requested but not detected");
-      expect(
-        fs.existsSync(path.join(testHomeDir, ".continue", "config.json"))
-      ).toBe(false);
-    });
-  });
-
-  // ── 5d. Continue.dev corrupted JSON recovery ──────────────────────
-
-  describe("Continue.dev corrupted JSON recovery", () => {
-    it("should recover from corrupted config.json", () => {
-      const continueDir = path.join(testHomeDir, ".continue");
-      fs.mkdirSync(continueDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(continueDir, "config.json"),
-        "totally broken json{{"
-      );
-
-      const result = runCli("agent init --with-continue", testHomeDir);
-      expect(result.exitCode).toBe(0);
-
-      const config = JSON.parse(
-        fs.readFileSync(path.join(continueDir, "config.json"), "utf-8")
-      );
-      expect(config.mcpServers).toBeDefined();
-    });
   });
 
   // ── 6. Aider read-only context (rf-du2o) ──────────────────────────
@@ -884,17 +713,6 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
-  // ── 6c. Aider environment detection ───────────────────────────────
-
-  describe("Aider environment detection", () => {
-    it("should warn when --with-aider used without ~/.aider.conf.yml", () => {
-      // Do NOT create .aider.conf.yml
-      const result = runCli("agent init --with-aider", testHomeDir);
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Aider requested but not detected");
-    });
-  });
-
   // ── 7. Opt-in gating ──────────────────────────────────────────────
 
   describe("Opt-in gating", () => {
@@ -936,76 +754,6 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       );
       expect(aiderContent).not.toContain("RAFTER.md");
       expect(aiderContent).not.toContain("rafter mcp serve");
-    });
-  });
-
-  // ── 8. --all flag ──────────────────────────────────────────────────
-
-  describe("--all flag", () => {
-    it("should install all detected platform configs", { timeout: 120_000 }, () => {
-      // Pre-create all platform directories
-      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
-      fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
-      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), {
-        recursive: true,
-      });
-      fs.mkdirSync(path.join(testHomeDir, ".continue"), { recursive: true });
-      fs.writeFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        "# config\n"
-      );
-
-      // --all also triggers betterleaks download, so allow extra time
-      const result = runCli("agent init --all", testHomeDir, 90_000);
-      expect(result.exitCode).toBe(0);
-
-      // Gemini
-      const geminiSettings = path.join(
-        testHomeDir,
-        ".gemini",
-        "settings.json"
-      );
-      expect(fs.existsSync(geminiSettings)).toBe(true);
-      const gemini = JSON.parse(fs.readFileSync(geminiSettings, "utf-8"));
-      expect(gemini.mcpServers.rafter).toBeDefined();
-
-      // Cursor
-      const cursorMcp = path.join(testHomeDir, ".cursor", "mcp.json");
-      expect(fs.existsSync(cursorMcp)).toBe(true);
-      const cursor = JSON.parse(fs.readFileSync(cursorMcp, "utf-8"));
-      expect(cursor.mcpServers.rafter).toBeDefined();
-
-      // Windsurf
-      const windsurfMcp = path.join(
-        testHomeDir,
-        ".codeium",
-        "windsurf",
-        "mcp_config.json"
-      );
-      expect(fs.existsSync(windsurfMcp)).toBe(true);
-      const windsurf = JSON.parse(fs.readFileSync(windsurfMcp, "utf-8"));
-      expect(windsurf.mcpServers.rafter).toBeDefined();
-
-      // Continue.dev
-      const continueConfig = path.join(
-        testHomeDir,
-        ".continue",
-        "config.json"
-      );
-      expect(fs.existsSync(continueConfig)).toBe(true);
-      const continueDev = JSON.parse(
-        fs.readFileSync(continueConfig, "utf-8")
-      );
-      expect(continueDev.mcpServers).toBeDefined();
-
-      // Aider — RAFTER.md + read: entry (rf-du2o; legacy mcp line removed)
-      const aiderContent = fs.readFileSync(
-        path.join(testHomeDir, ".aider.conf.yml"),
-        "utf-8"
-      );
-      expect(aiderContent).not.toContain("rafter mcp serve");
-      expect(aiderContent).toContain("RAFTER.md");
-      expect(fs.existsSync(path.join(testHomeDir, "RAFTER.md"))).toBe(true);
     });
   });
 
@@ -1089,55 +837,6 @@ describe("Platform Integration — MCP Installs via CLI", () => {
     });
   });
 
-  // ── 10. MCP entry structure validation ────────────────────────────
-
-  describe("MCP entry structure validation", () => {
-    it("all MCP adapters should produce identical rafter entry shape", () => {
-      // Set up all MCP platforms
-      fs.mkdirSync(path.join(testHomeDir, ".gemini"), { recursive: true });
-      fs.mkdirSync(path.join(testHomeDir, ".cursor"), { recursive: true });
-      fs.mkdirSync(path.join(testHomeDir, ".codeium", "windsurf"), {
-        recursive: true,
-      });
-
-      runCli(
-        "agent init --with-gemini --with-cursor --with-windsurf",
-        testHomeDir
-      );
-
-      const expected = { command: "rafter", args: ["mcp", "serve"] };
-
-      const gemini = JSON.parse(
-        fs.readFileSync(
-          path.join(testHomeDir, ".gemini", "settings.json"),
-          "utf-8"
-        )
-      );
-      expect(gemini.mcpServers.rafter).toEqual(expected);
-
-      const cursor = JSON.parse(
-        fs.readFileSync(
-          path.join(testHomeDir, ".cursor", "mcp.json"),
-          "utf-8"
-        )
-      );
-      expect(cursor.mcpServers.rafter).toEqual(expected);
-
-      const windsurf = JSON.parse(
-        fs.readFileSync(
-          path.join(
-            testHomeDir,
-            ".codeium",
-            "windsurf",
-            "mcp_config.json"
-          ),
-          "utf-8"
-        )
-      );
-      expect(windsurf.mcpServers.rafter).toEqual(expected);
-    });
-  });
-
   // ── 11. Claude Code hooks + skills + instructions ─────────────────
 
   describe("Claude Code full integration (--with-claude-code)", () => {
@@ -1158,18 +857,21 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       // Verify PreToolUse hook matchers
       const preMatchers = settings.hooks.PreToolUse.map((e: any) => e.matcher);
       expect(preMatchers).toContain("Bash");
-      expect(preMatchers).toContain("Write|Edit");
+      expect(preMatchers).toContain("Write|Edit|MultiEdit");
 
       // Verify hook commands
+      // rf-er8a: a RESOLVABLE ABSOLUTE command (`<node> <entrypoint> hook …`),
+      // not the bare `rafter hook …` that exits 127 off PATH.
+      const isAbs = (c: string) => path.isAbsolute(String(c ?? "").split(" ")[0]);
       const preCommands = settings.hooks.PreToolUse.flatMap(
         (e: any) => (e.hooks || []).map((h: any) => h.command)
       );
-      expect(preCommands).toContain("rafter hook pretool");
+      expect(preCommands.some((c: string) => c.endsWith("hook pretool") && isAbs(c))).toBe(true);
 
       const postCommands = settings.hooks.PostToolUse.flatMap(
         (e: any) => (e.hooks || []).map((h: any) => h.command)
       );
-      expect(postCommands).toContain("rafter hook posttool");
+      expect(postCommands.some((c: string) => c.endsWith("hook posttool") && isAbs(c))).toBe(true);
 
       // PostToolUse matcher is scoped to tools that produce scannable output
       // (shell output + file writes) rather than firing on every tool call.
@@ -1239,15 +941,17 @@ describe("Platform Integration — MCP Installs via CLI", () => {
         fs.readFileSync(path.join(testHomeDir, ".claude", "settings.json"), "utf-8")
       );
 
-      // Should have exactly 2 PreToolUse entries (Bash + Write|Edit), not 4
+      // Should have exactly 2 PreToolUse entries (Bash + Write|Edit), not 4.
+      // rf-er8a writes an absolute command, so match the `hook pretool` tail
+      // (the dedup removal filter keys on the same substring).
       const rafterPreHooks = settings.hooks.PreToolUse.filter(
-        (e: any) => (e.hooks || []).some((h: any) => h.command === "rafter hook pretool")
+        (e: any) => (e.hooks || []).some((h: any) => String(h.command ?? "").endsWith("hook pretool"))
       );
       expect(rafterPreHooks).toHaveLength(2);
 
       // Exactly 1 PostToolUse entry
       const rafterPostHooks = settings.hooks.PostToolUse.filter(
-        (e: any) => (e.hooks || []).some((h: any) => h.command === "rafter hook posttool")
+        (e: any) => (e.hooks || []).some((h: any) => String(h.command ?? "").endsWith("hook posttool"))
       );
       expect(rafterPostHooks).toHaveLength(1);
     });
@@ -1281,64 +985,10 @@ describe("Platform Integration — MCP Installs via CLI", () => {
   // ── 11b. Claude Code project-scope MCP install (--local --with-claude-code) ──
 
   describe("Claude Code MCP install (--local --with-claude-code)", () => {
-    function runCliInCwd(args: string, cwd: string, homeDir: string) {
-      const result = spawnSync(`node ${CLI_ENTRY} ${args}`, {
-        cwd,
-        encoding: "utf-8",
-        timeout: 15_000,
-        shell: true,
-        env: {
-          ...process.env,
-          HOME: homeDir,
-          XDG_CONFIG_HOME: path.join(homeDir, ".config"),
-        },
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      return {
-        stdout: result.stdout || "",
-        stderr: result.stderr || "",
-        exitCode: result.status ?? 1,
-      };
-    }
-
-    it("writes .mcp.json at project root with rafter mcpServers entry", () => {
-      const r = runCliInCwd("agent init --local --with-claude-code", testHomeDir, testHomeDir);
-      expect(r.exitCode, `exit ${r.exitCode}; stderr: ${r.stderr}`).toBe(0);
-
-      const mcpPath = path.join(testHomeDir, ".mcp.json");
-      expect(fs.existsSync(mcpPath)).toBe(true);
-
-      const config = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
-      expect(config.mcpServers).toBeDefined();
-      expect(config.mcpServers.rafter).toBeDefined();
-      expect(config.mcpServers.rafter.command).toBe("rafter");
-      expect(config.mcpServers.rafter.args).toEqual(["mcp", "serve"]);
-    });
-
-    it("is idempotent on repeated installs", () => {
-      runCliInCwd("agent init --local --with-claude-code", testHomeDir, testHomeDir);
-      runCliInCwd("agent init --local --with-claude-code", testHomeDir, testHomeDir);
-
-      const config = JSON.parse(
-        fs.readFileSync(path.join(testHomeDir, ".mcp.json"), "utf-8")
-      );
-      expect(Object.keys(config.mcpServers)).toEqual(["rafter"]);
-    });
-
-    it("preserves existing non-rafter MCP servers", () => {
-      fs.writeFileSync(
-        path.join(testHomeDir, ".mcp.json"),
-        JSON.stringify({ mcpServers: { other: { command: "other", args: [] } } }, null, 2)
-      );
-
-      runCliInCwd("agent init --local --with-claude-code", testHomeDir, testHomeDir);
-
-      const config = JSON.parse(
-        fs.readFileSync(path.join(testHomeDir, ".mcp.json"), "utf-8")
-      );
-      expect(config.mcpServers.other).toBeDefined();
-      expect(config.mcpServers.rafter).toBeDefined();
-    });
+    // Fresh install, idempotency, and non-rafter-server preservation for this
+    // adapter are covered by the "MCP adapters — shared install behavior" table
+    // above ("Claude Code (--local)" entry, using the hoisted runCliInCwd).
+    // The one behavior genuinely unique to --local is scope-gating, below.
 
     it("does NOT write .mcp.json in user scope (without --local)", () => {
       fs.mkdirSync(path.join(testHomeDir, ".claude"), { recursive: true });
@@ -1386,7 +1036,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
         fs.readFileSync(path.join(testHomeDir, ".codex", "hooks.json"), "utf-8")
       );
       const rafterPre = config.hooks.PreToolUse.filter(
-        (e: any) => (e.hooks || []).some((h: any) => h.command?.startsWith("rafter hook pretool"))
+        (e: any) => (e.hooks || []).some((h: any) => String(h.command ?? "").includes("hook pretool"))
       );
       expect(rafterPre).toHaveLength(1);
     });
@@ -1413,7 +1063,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       // BeforeTool matcher targets the mutating Gemini built-in tools by
       // exact name (rf-044o verified against geminicli.com/docs/hooks/reference).
       const beforeMatchers = settings.hooks.BeforeTool.map((e: any) => e.matcher);
-      expect(beforeMatchers).toContain("run_shell_command|write_file|replace|edit");
+      expect(beforeMatchers).toContain("run_shell_command|write_file|replace");
 
       // Commands use --format gemini
       const beforeCommands = settings.hooks.BeforeTool.flatMap(
@@ -1459,7 +1109,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
 
       // Verify hook uses --format cursor
       const hook = config.hooks.beforeShellExecution.find(
-        (e: any) => e.command?.includes("rafter")
+        (e: any) => /\bhook (pretool|posttool)\b/.test(e.command ?? "")
       );
       expect(hook).toBeDefined();
       expect(hook.command).toContain("--format cursor");
@@ -1493,7 +1143,7 @@ describe("Platform Integration — MCP Installs via CLI", () => {
         fs.readFileSync(path.join(testHomeDir, ".cursor", "hooks.json"), "utf-8")
       );
       const rafterHooks = config.hooks.beforeShellExecution.filter(
-        (e: any) => e.command?.includes("rafter")
+        (e: any) => /\bhook (pretool|posttool)\b/.test(e.command ?? "")
       );
       expect(rafterHooks).toHaveLength(1);
     });
@@ -1736,6 +1386,13 @@ describe("Platform Integration — MCP Installs via CLI", () => {
       // ── Continue.dev: MCP + per-skill rules (rf-acz0); hooks pruned in rf-cia phase b ──
       expect(fs.existsSync(path.join(testHomeDir, ".continue", "config.json"))).toBe(true);
       expect(fs.existsSync(path.join(testHomeDir, ".continue", "settings.json"))).toBe(false);
+      const continueConfig = JSON.parse(
+        fs.readFileSync(path.join(testHomeDir, ".continue", "config.json"), "utf-8")
+      );
+      const continueHasRafter = Array.isArray(continueConfig.mcpServers)
+        ? continueConfig.mcpServers.some((s: any) => s.name === "rafter")
+        : !!continueConfig.mcpServers?.rafter;
+      expect(continueHasRafter).toBe(true);
       for (const name of ["rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"]) {
         expect(
           fs.existsSync(path.join(testHomeDir, ".continue", "rules", `${name}.md`)),

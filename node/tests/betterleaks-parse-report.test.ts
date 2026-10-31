@@ -28,16 +28,25 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+describe("BetterleaksScanner redaction", () => {
+  const convert = (scanner as any).convertToPatternMatch.bind(scanner);
+
+  // betterleaks returns whole PEM blocks as the secret; one finding must not
+  // print a 1,700-character run of asterisks.
+  it("bounds the redacted length of a long secret", () => {
+    const pem = "-----BEGIN RSA PRIVATE KEY-----" + "A".repeat(1600) + "-----END RSA PRIVATE KEY-----";
+    const r = convert({ RuleID: "private-key", Tags: [], StartLine: 1, StartColumn: 1, Secret: pem }).redacted;
+    expect(r.length).toBeLessThanOrEqual(24);
+    expect(r.startsWith("----") && r.endsWith("----")).toBe(true);
+  });
+});
+
 describe("BetterleaksScanner.parseResults", () => {
   // #217 — betterleaks >=1.1.2 writes the literal `null` for a clean scan via
   // the `dir`/`git` subcommands. Regression guard: this is an empty result, not
   // a version mismatch, and must not emit warning noise on every clean file.
-  it("treats a literal `null` report as an empty result set", () => {
+  it("treats a literal `null` report as an empty result set without warning", () => {
     expect(parseResults(writeReport("null"))).toEqual([]);
-  });
-
-  it("does not warn on a `null` report", () => {
-    parseResults(writeReport("null"));
     expect(stderrSpy).not.toHaveBeenCalled();
   });
 
@@ -73,5 +82,16 @@ describe("BetterleaksScanner.parseResults", () => {
     expect(parseResults(writeReport("{not json"))).toEqual([]);
     expect(stderrSpy).toHaveBeenCalledOnce();
     expect(String(stderrSpy.mock.calls[0][0])).toContain("Failed to parse");
+  });
+});
+
+describe("BetterleaksScanner.convertToPatternMatch", () => {
+  const convert = (scanner as any).convertToPatternMatch.bind(scanner);
+
+  // betterleaks 1.1.x reports StartColumn one past the 1-based column on every
+  // line but the first; the regex engine reports the true column.
+  it("reports the 1-based column on line 1 and on later lines", () => {
+    expect(convert({ RuleID: "jwt", Tags: [], StartLine: 1, StartColumn: 1, Secret: "eyJ" }).column).toBe(1);
+    expect(convert({ RuleID: "jwt", Tags: [], StartLine: 2, StartColumn: 6, Secret: "eyJ" }).column).toBe(5);
   });
 });

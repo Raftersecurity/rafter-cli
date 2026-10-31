@@ -26,8 +26,8 @@ ignore:
   # as AKIAIOSFODNN7EXAMPLE) and their "vulnerabilities" are on purpose.
   - paths: ["demo/**"]
     reason: "Demo app: intentional FAKE secrets (canonical AWS-docs example keys, sk_test Stripe, an example JWT) used to showcase rafter detection. Not real credentials."
-  - paths: ["README.md", "outreach-drafts.md", ".github/workflows/test-comprehensive.yml", ".rafter.yml"]
-    reason: "Documentation / CI examples and this policy file reference the canonical AWS-docs example access key (a well-known public non-secret) to illustrate detection."
+  - paths: ["README.md", ".github/workflows/test-comprehensive.yml", ".rafter.yml"]
+    reason: "Documentation / CI examples and this policy file reference AWS-docs-style example access keys (deliberately fake, not real credentials) to illustrate detection. (The canonical AKIAIOSFODNN7EXAMPLE itself is intentionally exempt from detection — sable/#230 — so these use a non-EXAMPLE fake key instead; this file's own comments above still name the canonical key by way of explanation.)"
   - paths: ["**/fixtures/**", "fixtures/**"]
     reason: "Test fixtures: intentionally-vulnerable / fake-secret inputs that exercise the scanner (e.g. requests-without-timeout in fixtures/vulnerable-repo)."
   - paths: ["**/tests/**", "**/test_*.py", "**/*.test.ts", "**/fixtures/**", ".github/fixtures/**"]

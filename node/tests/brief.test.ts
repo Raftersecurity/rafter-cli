@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { execFileSync, spawnSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import path from "path";
 
 const CLI = path.resolve(__dirname, "../dist/index.js");
@@ -103,10 +103,18 @@ describe("brief command — topic rendering", () => {
     expect(r.stdout.length).toBeGreaterThan(100);
   });
 
-  it("renders commands topic with the command reference heading", () => {
+  it("renders commands topic with real command content, not just the heading", () => {
     const r = rafter("brief commands");
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("Rafter Command Reference");
+    // The extractor pulls these from the Fast Path + Quick Decision Table
+    // sections of the live skill docs. A heading-only regression (the
+    // extractor targeting headings that no longer exist) would leave the
+    // output at just the title line, so assert on actual command content.
+    expect(r.stdout).toContain("rafter run");
+    expect(r.stdout).toContain("rafter secrets");
+    expect(r.stdout).toContain("rafter skill review");
+    expect(r.stdout.length).toBeGreaterThan(200);
   });
 
   it("rejects 'pricing' topic — removed; pricing lives in marketing surfaces", () => {
@@ -215,6 +223,42 @@ describe("rafter skill — CYOA hierarchy", () => {
       expect(r.stdout).toContain(slug);
     }
   });
+});
+
+describe("shipped resource docs — no reference to the nonexistent 'rafter audit' command", () => {
+  // issue #231 item 4a: there is no top-level `rafter audit` command (it's
+  // `rafter agent audit`), and an unknown subcommand used to print general
+  // help rather than erroring, so a wrong hint here was easy to miss. Scans
+  // both runtimes' shipped resource trees — the node/python copies of these
+  // platform-rule files are kept byte-identical, so one guard covers both.
+  function walk(dir: string): string[] {
+    if (!existsSync(dir)) return [];
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...walk(full));
+      else if (/\.(md|mdc)$/.test(entry.name)) out.push(full);
+    }
+    return out;
+  }
+
+  const roots = [
+    path.resolve(__dirname, "../resources"),
+    path.resolve(__dirname, "../../python/rafter_cli/resources"),
+  ];
+
+  for (const root of roots) {
+    const files = walk(root);
+    it(`none of ${files.length} doc(s) under ${path.relative(path.resolve(__dirname, "../.."), root)} say the bare command`, () => {
+      const offenders = files.filter((f) =>
+        readFileSync(f, "utf-8").includes("`rafter audit`"),
+      );
+      expect(
+        offenders,
+        `these docs reference a nonexistent 'rafter audit' command (it's 'rafter agent audit'): ${offenders.join(", ")}`,
+      ).toEqual([]);
+    });
+  }
 });
 
 describe("brief command — error handling", () => {

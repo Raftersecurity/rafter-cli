@@ -1,7 +1,9 @@
 import { Command } from "commander";
 import fs from "fs";
+import os from "os";
 import { resolveComponent, recordComponentState, getComponentRegistry } from "./components.js";
 import { fmt } from "../../utils/formatter.js";
+import { InstallSession, reportKeptSummary, reportUnchangedSummary } from "./install-files.js";
 
 /**
  * `rafter agent enable <component-id>...` — install one or more specific components.
@@ -18,6 +20,11 @@ export function createEnableCommand(): Command {
     .option("--force", "Install even if platform is not detected on this machine")
     .action((components: string[], opts) => {
       let exitCode = 0;
+      // Skill / rule / sub-agent files keep local edits, as in `agent init`.
+      const session = new InstallSession({
+        root: os.homedir(),
+        out: { info: (m?: string) => console.log(m ?? ""), warn: (m: string) => console.log(m) },
+      });
       const seenIds = new Set<string>();
       for (const raw of components) {
         if (seenIds.has(raw)) continue;
@@ -47,7 +54,7 @@ export function createEnableCommand(): Command {
         }
 
         try {
-          spec.install();
+          spec.install(session);
           recordComponentState(spec.id, true);
           console.log(fmt.success(`Enabled ${spec.id} → ${spec.path}`));
         } catch (e) {
@@ -55,6 +62,9 @@ export function createEnableCommand(): Command {
           exitCode = 1;
         }
       }
+      session.save();
+      reportUnchangedSummary(session);
+      reportKeptSummary(session, "remove the file and re-run 'rafter agent enable' to replace it");
       process.exit(exitCode);
     });
 }

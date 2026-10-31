@@ -1,8 +1,8 @@
 ---
 name: rafter
-description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter audit`, policy checks, or command-risk evaluation. Scope by security surface, not task label: engage when the diff touches auth, credentials/secrets/tokens, untrusted input, SQL, shell/exec, file paths, deserialization, crypto, network endpoints, data deletion, or dependencies; for research/experimental/local-only code with none of that, a quick surface check is enough. When such surface IS present and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on genuine security surface is not done."
+description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter agent audit`, policy checks, or command-risk evaluation. Scope by security surface, not task label: engage when the diff touches auth, credentials/secrets/tokens, untrusted input, SQL, shell/exec, file paths, deserialization, crypto, network endpoints, data deletion, or dependencies; for research/experimental/local-only code with none of that, a quick surface check is enough. When such surface IS present and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on genuine security surface is not done."
 version: 0.7.0
-allowed-tools: [Bash, Read]
+publisher: rafter-security
 ---
 
 # Rafter — Security Toolkit for AI Workflows
@@ -19,15 +19,15 @@ Rafter is a **surface-driven** gate, not a task-label gate. Read the diff's actu
 
 ---
 
-## Picking the right tier — DO NOT stop at "local"
+## Picking the right tier
 
-Three tiers, **not interchangeable**. The local tier is narrow; skipping remote analysis is the #1 way agents under-use rafter.
+The review you do yourself with `rafter-code-review` is the step that finds logic and authorization bugs; no scanner tier replaces it. The scanner tiers are **not interchangeable**:
 
 1. **`rafter secrets`** — hardcoded credentials only (regex + betterleaks). Fast, offline, no key. **NOT a code security scan** — it finds no SQL injection, SSRF, auth bugs, insecure deserialization, logic flaws, or dependency vulns. A clean `rafter secrets .` is secret-hygiene, not security review.
 2. **`rafter run`** (default mode) — the real code-analysis pass: SAST + SCA + secrets (dataflow, taint, known-vulnerable deps, crypto misuse, injection sinks). Needs `RAFTER_API_KEY`.
 3. **`rafter run --mode plus`** — agentic deep-dive: LLM-guided investigation of what the rules engine flags. Slower, higher signal; code is deleted server-side after the run. **PAID tier — consumes the user's credits; ask before running it.** If `scan.plus_requires_approval` is set, Plus refuses without `--yes` / `RAFTER_CONFIRM=1`.
 
-**Default for a security-relevant task: `rafter run`.** Fall back to `rafter secrets` only when no API key is available — and say so explicitly; don't claim the code was "scanned" without qualification. Deterministic findings, stable exit codes and JSON shapes — safe to chain in CI and in agent loops.
+**For a security-relevant task:** review it with `rafter-code-review`, run `rafter secrets` on the changed files, and add `rafter run` when `RAFTER_API_KEY` is set and the branch is pushed (it scans the pushed commit, not your working tree). Without a key, say that no SAST/SCA ran; don't claim the code was "scanned" without qualification. Deterministic findings, stable exit codes and JSON shapes — safe to chain in CI and in agent loops.
 
 ---
 
@@ -39,7 +39,7 @@ Pick the branch that matches what you're trying to do. Each branch points at a s
 
 Use this for: "Is this safe to push?", "Check for leaks", "Run a security scan", pre-merge / pre-deploy gating, post-dependency-update checks.
 
-- **Default: `rafter run`** — remote SAST + SCA + secrets. This is the real scan. Needs `RAFTER_API_KEY`.
+- **`rafter run`** — remote SAST + SCA + secrets on the pushed commit. Needs `RAFTER_API_KEY`.
 - **Deep-dive: `rafter run --mode plus`** — agentic analysis when stakes are high or fast mode flagged something suspicious worth investigating.
 - **Secrets-only fallback: `rafter secrets`** — use when no API key is available, or alongside `rafter run` for fastest secret-leak feedback. Does NOT analyse code — only hunts hardcoded credentials.
 - **Read `docs/backend.md`** for fast-vs-plus modes, auth, latency, cost.
@@ -58,9 +58,8 @@ Use this for: "Is `rm -rf $DIR` safe?", any destructive-looking shell the user t
 Use this for: installing an MCP server, adding a Claude skill, vetting an AI tool config.
 
 - **Installing a new skill? → Read `rafter-skill-review/SKILL.md`** — full provenance, malware, prompt-injection, data-practices, telemetry checklist.
-- Run the deterministic pass: `rafter skill review <path-or-url>` (emits JSON).
-- Audit a directory: `rafter agent audit <path>` (still supported).
-- **Read `docs/cli-reference.md`** §`skill review` / §`agent audit` for output shape and exit codes.
+- Run the deterministic pass: `rafter skill review <path-or-url>` (emits JSON). `--installed` reviews every skill already on this machine instead of a path.
+- **Read `docs/cli-reference.md`** §`skill review` for output shape and exit codes.
 
 ### (d) I want to understand a finding I already have
 
@@ -114,6 +113,7 @@ rafter usage                 # check API quota
 
 Full CLI tree: **Read `docs/cli-reference.md`**. Full digest: `rafter brief commands`.
 
+**Scan budget:** Remote scans spend the user's quota. `rafter run` scans the **pushed** branch, so re-running without a new push repeats it — run it once per task or before a PR and reuse `rafter get <scan-id>`; while iterating scan only changes (`rafter secrets --staged` / `--diff <ref>`); never loop, retry, or `--watch` from an agent session — exit `3` means quota exhausted, so stop, tell the user, and check `rafter usage`.
 ## Configuration
 
 `rafter run` (the full code scan) needs an API key:

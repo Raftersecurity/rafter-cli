@@ -1,12 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { createHash } from "crypto";
-import { ConfigManager } from "../core/config-manager.js";
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { openclawLegacySkillPath, openclawSkillPath } from "../commands/agent/install-files.js";
 
 export interface SkillMetadata {
   name: string;
@@ -15,20 +10,12 @@ export interface SkillMetadata {
   last_updated: string;
 }
 
-export interface SkillInstallResult {
-  ok: boolean;
-  sourcePath: string;
-  destPath: string;
-  error?: string;
-}
-
+/**
+ * Read-only view of the OpenClaw skill install, for `agent verify`, `agent
+ * status` and `agent audit-skill`. Installing and updating go through
+ * install-files.ts like every other platform.
+ */
 export class SkillManager {
-  private configManager: ConfigManager;
-
-  constructor() {
-    this.configManager = new ConfigManager();
-  }
-
   /**
    * Path to the OpenClaw root directory.
    *
@@ -65,36 +52,14 @@ export class SkillManager {
    * Path to the Rafter Security SKILL.md file.
    */
   getRafterSkillPath(): string {
-    return path.join(this.getRafterSkillDir(), "SKILL.md");
+    return openclawSkillPath(os.homedir());
   }
 
   /**
    * Legacy install path used by rafter ≤ 0.7.7. Removed on reinstall.
    */
   getLegacyRafterSkillPath(): string {
-    return path.join(this.getOpenClawRoot(), "skills", "rafter-security.md");
-  }
-
-  /**
-   * Get path to old skill-auditor (for migration)
-   */
-  getOldSkillAuditorPath(): string {
-    return path.join(this.getOpenClawRoot(), "skills", "rafter-skill-auditor.md");
-  }
-
-  /**
-   * Get path to Rafter Security skill source in CLI resources
-   */
-  getRafterSkillSourcePath(): string {
-    // Go up from src/utils/ to node/ then into resources/
-    return path.join(__dirname, "..", "..", "resources", "rafter-security-skill.md");
-  }
-
-  /**
-   * Get path to backups directory
-   */
-  getBackupsDir(): string {
-    return path.join(this.getOpenClawSkillsDir(), ".backups");
+    return openclawLegacySkillPath(os.homedir());
   }
 
   /**
@@ -121,13 +86,6 @@ export class SkillManager {
    */
   isRafterSkillInstalled(): boolean {
     return fs.existsSync(this.getRafterSkillPath());
-  }
-
-  /**
-   * Check if old skill-auditor is installed (for migration)
-   */
-  hasOldSkillAuditor(): boolean {
-    return fs.existsSync(this.getOldSkillAuditorPath());
   }
 
   /**
@@ -171,349 +129,5 @@ export class SkillManager {
     } catch (e) {
       return null;
     }
-  }
-
-  /**
-   * Get version of Rafter Security skill in CLI resources
-   */
-  getSourceVersion(): string | null {
-    try {
-      const content = fs.readFileSync(this.getRafterSkillSourcePath(), "utf-8");
-      const metadata = this.parseSkillMetadata(content);
-      return metadata?.version || null;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /**
-   * Calculate hash of file content (excluding frontmatter for version)
-   */
-  calculateContentHash(content: string): string {
-    // Remove frontmatter for hash calculation
-    const withoutFrontmatter = content.replace(/^---\n[\s\S]*?\n---\n/, '');
-    return createHash('sha256').update(withoutFrontmatter).digest('hex').substring(0, 8);
-  }
-
-  /**
-   * Check if installed skill has been modified by user
-   */
-  isSkillModified(): boolean {
-    if (!this.isRafterSkillInstalled()) {
-      return false;
-    }
-
-    try {
-      const installedContent = fs.readFileSync(this.getRafterSkillPath(), "utf-8");
-      const sourceContent = fs.readFileSync(this.getRafterSkillSourcePath(), "utf-8");
-
-      const installedHash = this.calculateContentHash(installedContent);
-      const sourceHash = this.calculateContentHash(sourceContent);
-
-      return installedHash !== sourceHash;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /**
-   * Remove the rafter ≤ 0.7.7 install path
-   * (`~/.openclaw/skills/rafter-security.md`). OpenClaw never read that
-   * path; we strip it on reinstall so the user is left with just the
-   * canonical ClawHub-shaped skill (rf-zgwj migration).
-   */
-  removeLegacyRafterSkill(): void {
-    const legacy = this.getLegacyRafterSkillPath();
-    if (!fs.existsSync(legacy)) return;
-    try {
-      fs.unlinkSync(legacy);
-      console.log(`✓ Removed legacy ${legacy} (superseded by ClawHub-shaped skill at ${this.getRafterSkillPath()})`);
-    } catch {
-      /* best-effort */
-    }
-    // Clean up empty parent if we just emptied it. Don't touch dirs that
-    // contain other user content.
-    const legacyDir = path.dirname(legacy);
-    try {
-      const entries = fs.readdirSync(legacyDir);
-      if (entries.length === 0) {
-        fs.rmdirSync(legacyDir);
-      }
-    } catch {
-      /* best-effort */
-    }
-  }
-
-  /**
-   * Migrate from old separate skill-auditor to combined Rafter Security skill
-   */
-  async migrateOldSkill(): Promise<void> {
-    if (this.hasOldSkillAuditor()) {
-      try {
-        // Remove old skill-auditor file
-        fs.unlinkSync(this.getOldSkillAuditorPath());
-        console.log("✓ Migrated from separate skill-auditor to combined Rafter Security skill");
-      } catch (e) {
-        // Ignore migration errors
-      }
-    }
-  }
-
-  /**
-   * Install Rafter Security skill to OpenClaw (verbose result).
-   *
-   * rf-zgwj: writes to the canonical ClawHub workspace location
-   * (`~/.openclaw/workspace/skills/rafter-security/SKILL.md`) so OpenClaw
-   * auto-discovers it at session start. Earlier versions wrote to
-   * `~/.openclaw/skills/rafter-security.md` — that file is removed on
-   * reinstall as a migration step.
-   */
-  async installRafterSkillVerbose(force: boolean = false): Promise<SkillInstallResult> {
-    const skillPath = this.getRafterSkillPath();
-    const sourcePath = this.getRafterSkillSourcePath();
-
-    if (!this.isOpenClawInstalled()) {
-      return { ok: false, sourcePath, destPath: skillPath, error: `OpenClaw not found: ${this.getOpenClawRoot()}` };
-    }
-
-    // Check if already installed and not forcing
-    if (!force && this.isRafterSkillInstalled()) {
-      // Still strip the legacy file on reinstall — a previous rafter
-      // version may have left it behind alongside a hand-installed skill.
-      this.removeLegacyRafterSkill();
-      return { ok: true, sourcePath, destPath: skillPath };
-    }
-
-    try {
-      // Ensure the skill dir (NOT just the parent skills dir) exists; the
-      // ClawHub format is one directory per skill.
-      const skillDir = this.getRafterSkillDir();
-      if (!fs.existsSync(skillDir)) {
-        fs.mkdirSync(skillDir, { recursive: true });
-      }
-
-      // Verify source exists
-      if (!fs.existsSync(sourcePath)) {
-        return { ok: false, sourcePath, destPath: skillPath, error: `Source skill file not found: ${sourcePath}` };
-      }
-
-      // Copy skill file
-      const sourceContent = fs.readFileSync(sourcePath, "utf-8");
-      fs.writeFileSync(skillPath, sourceContent, "utf-8");
-
-      // Migration: strip the rafter ≤ 0.7.7 install path (rf-zgwj).
-      this.removeLegacyRafterSkill();
-
-      // Update config
-      const version = this.getSourceVersion();
-      if (version) {
-        this.configManager.set("agent.skills.installedVersion", version);
-        this.configManager.set("agent.skills.lastChecked", new Date().toISOString());
-      }
-
-      // Migrate old skill-auditor if present
-      await this.migrateOldSkill();
-
-      return { ok: true, sourcePath, destPath: skillPath };
-    } catch (e) {
-      return { ok: false, sourcePath, destPath: skillPath, error: String(e) };
-    }
-  }
-
-  /**
-   * Install Rafter Security skill to OpenClaw
-   */
-  async installRafterSkill(force: boolean = false): Promise<boolean> {
-    const result = await this.installRafterSkillVerbose(force);
-    if (!result.ok && result.error) {
-      console.error(`Failed to install Rafter Security skill: ${result.error}`);
-    }
-    return result.ok;
-  }
-
-  /**
-   * Backup current skill before updating
-   */
-  backupSkill(): boolean {
-    if (!this.isRafterSkillInstalled()) {
-      return false;
-    }
-
-    try {
-      const backupsDir = this.getBackupsDir();
-      if (!fs.existsSync(backupsDir)) {
-        fs.mkdirSync(backupsDir, { recursive: true });
-      }
-
-      const version = this.getInstalledVersion() || "unknown";
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const backupPath = path.join(backupsDir, `rafter-security.md.v${version}.${timestamp}`);
-
-      const content = fs.readFileSync(this.getRafterSkillPath(), "utf-8");
-      fs.writeFileSync(backupPath, content, "utf-8");
-
-      // Keep only last 3 backups
-      this.cleanupOldBackups(3);
-
-      return true;
-    } catch (e) {
-      console.error(`Failed to backup skill: ${e}`);
-      return false;
-    }
-  }
-
-  /**
-   * Remove old backups, keeping only the most recent N
-   */
-  private cleanupOldBackups(keep: number): void {
-    const backupsDir = this.getBackupsDir();
-    if (!fs.existsSync(backupsDir)) {
-      return;
-    }
-
-    try {
-      const files = fs.readdirSync(backupsDir)
-        .filter(f => f.startsWith("rafter-security.md.v") || f.startsWith("rafter-skill-auditor.md.v"))
-        .map(f => ({
-          name: f,
-          path: path.join(backupsDir, f),
-          mtime: fs.statSync(path.join(backupsDir, f)).mtime
-        }))
-        .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-
-      // Remove old backups
-      files.slice(keep).forEach(file => {
-        fs.unlinkSync(file.path);
-      });
-    } catch (e) {
-      // Ignore cleanup errors
-    }
-  }
-
-  /**
-   * Update Rafter Security skill to latest version
-   */
-  async updateRafterSkill(options: {
-    force?: boolean;
-    backup?: boolean;
-  } = {}): Promise<{ updated: boolean; message: string }> {
-    if (!this.isOpenClawInstalled()) {
-      return { updated: false, message: "OpenClaw not installed" };
-    }
-
-    if (!this.isRafterSkillInstalled()) {
-      // Install if not present
-      const installed = await this.installRafterSkill();
-      return {
-        updated: installed,
-        message: installed ? "Rafter Security skill installed" : "Failed to install Rafter Security skill"
-      };
-    }
-
-    const installedVersion = this.getInstalledVersion();
-    const sourceVersion = this.getSourceVersion();
-
-    if (!sourceVersion) {
-      return { updated: false, message: "Could not determine source version" };
-    }
-
-    // Check if update needed
-    if (!options.force && installedVersion === sourceVersion) {
-      return { updated: false, message: "Rafter Security skill is up to date" };
-    }
-
-    // Check if modified
-    if (!options.force && this.isSkillModified()) {
-      return {
-        updated: false,
-        message: "Skill has been modified. Use --force to overwrite."
-      };
-    }
-
-    // Backup if requested
-    const config = this.configManager.load();
-    if (options.backup !== false && config.agent?.skills.backupBeforeUpdate) {
-      this.backupSkill();
-    }
-
-    // Install new version
-    const installed = await this.installRafterSkill(true);
-    if (installed) {
-      return {
-        updated: true,
-        message: `Updated Rafter Security skill: ${installedVersion || 'unknown'} → ${sourceVersion}`
-      };
-    } else {
-      return {
-        updated: false,
-        message: "Failed to update Rafter Security skill"
-      };
-    }
-  }
-
-  /**
-   * Remove Rafter Security skill
-   */
-  removeRafterSkill(): boolean {
-    if (!this.isRafterSkillInstalled()) {
-      return false;
-    }
-
-    try {
-      fs.unlinkSync(this.getRafterSkillPath());
-
-      // Clear config
-      this.configManager.set("agent.skills.installedVersion", undefined);
-
-      return true;
-    } catch (e) {
-      console.error(`Failed to remove Rafter Security skill: ${e}`);
-      return false;
-    }
-  }
-
-  /**
-   * Check if skill update is available
-   */
-  isUpdateAvailable(): boolean {
-    if (!this.isRafterSkillInstalled()) {
-      return false;
-    }
-
-    const installedVersion = this.getInstalledVersion();
-    const sourceVersion = this.getSourceVersion();
-
-    if (!installedVersion || !sourceVersion) {
-      return false;
-    }
-
-    return installedVersion !== sourceVersion;
-  }
-
-  /**
-   * Check for updates and auto-update if configured
-   */
-  async checkAndUpdate(silent: boolean = true): Promise<void> {
-    const config = this.configManager.load();
-
-    // Skip if auto-update disabled
-    if (!config.agent?.skills.autoUpdate) {
-      return;
-    }
-
-    // Check if update available
-    if (!this.isUpdateAvailable()) {
-      return;
-    }
-
-    // Update silently
-    const result = await this.updateRafterSkill({ backup: true });
-
-    if (!silent && result.updated) {
-      console.log(`✓ ${result.message}`);
-    }
-
-    // Update last checked timestamp
-    this.configManager.set("agent.skills.lastChecked", new Date().toISOString());
   }
 }

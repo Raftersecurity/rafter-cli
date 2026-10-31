@@ -13,6 +13,7 @@ from pathlib import Path
 
 import requests
 import typer
+from rich.markup import escape
 
 from ...utils.api import api_url, api_get, EXIT_GENERAL_ERROR, resolve_key
 from ...utils.formatter import fmt, print_stderr
@@ -66,7 +67,11 @@ def from_scan(
         try:
             target_repo, _, _, _ = detect_repo(repo)
         except RuntimeError as e:
-            print_stderr(fmt.error(str(e)))
+            # e can embed a remote URL/host (sable-pqmw); escape it before
+            # it reaches Rich's markup parser, or a value containing e.g.
+            # "[/bold]" crashes with an uncaught MarkupError instead of a
+            # clean error + exit code.
+            print_stderr(fmt.error(escape(str(e))))
             raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     if not quiet:
@@ -173,7 +178,11 @@ def from_text(
         try:
             target_repo, _, _, _ = detect_repo(repo)
         except RuntimeError as e:
-            print_stderr(fmt.error(str(e)))
+            # e can embed a remote URL/host (sable-pqmw); escape it before
+            # it reaches Rich's markup parser, or a value containing e.g.
+            # "[/bold]" crashes with an uncaught MarkupError instead of a
+            # clean error + exit code.
+            print_stderr(fmt.error(escape(str(e))))
             raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
     # Parse text
@@ -259,10 +268,19 @@ def _drafts_from_backend(scan_id: str, api_key: str | None) -> list[IssueDraft]:
     return [
         build_from_backend_vulnerability(
             BackendVulnerability(
-                rule_id=v["ruleId"],
-                level=v.get("level", "warning"),
-                message=v.get("message", ""),
-                file=v.get("file", ""),
+                rule_id=v.get("rule_id") or v.get("ruleId") or "",
+                severity=v.get("severity") or "",
+                title=v.get("title") or "",
+                description=v.get("description") or "",
+                file_path=v.get("file_path"),
+                line_start=v.get("line_start"),
+                line_end=v.get("line_end"),
+                cwe=v.get("cwe"),
+                confidence=v.get("confidence"),
+                # Pre-rename names — fallback for old cached payloads.
+                level=v.get("level") or "",
+                message=v.get("message") or "",
+                file=v.get("file") or "",
                 line=v.get("line"),
             )
         )

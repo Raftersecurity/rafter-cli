@@ -12,7 +12,7 @@ install state across all registered components.
 """
 from __future__ import annotations
 
-import importlib.resources
+import inspect
 import json
 import re
 from dataclasses import dataclass
@@ -23,6 +23,20 @@ from typing import Any, Callable
 import yaml
 
 from ..core.config_manager import ConfigManager
+from .skill import KNOWN_SKILL_NAMES
+from .install_files import (
+    RULE_SKILLS,
+    InstallOutput,
+    InstallSession,
+    cleanup_legacy_openclaw,
+    cleanup_retired_rules,
+    cleanup_retired_skills,
+    cursor_agent_artifacts,
+    openclaw_skill_artifacts,
+    openclaw_skill_path,
+    rule_artifacts,
+    skill_artifacts,
+)
 
 
 # ── instruction block (mirrors node/src/commands/agent/instruction-block.ts) ──
@@ -31,56 +45,72 @@ RAFTER_MARKER_START = "<!-- rafter:start -->"
 RAFTER_MARKER_END = "<!-- rafter:end -->"
 
 RAFTER_INSTRUCTION_BLOCK = f"""{RAFTER_MARKER_START}
-## Security: Rafter (surface-driven review gate)
+## Security: Rafter
 
-Rafter is this project's security review gate — driven by the change's **security
-surface**, not by the task label. When a diff touches a real surface (below), it is
-**not complete** until a rafter skill (or `rafter run`) has reviewed it: don't mark
-done, don't hand off, don't open a PR without that pass. When it touches **none** of
-that surface — research / experimental / local-only / throwaway code (training
-scripts, data analysis, plotting, model eval, notebooks, pure computation over
-trusted local data) — a quick surface check is enough; proceed without the full
-gate. Judge by the diff's actual surface, not the "research" label: research code
-that reads a secret, shells out, hits the network, parses untrusted input, or bumps
-a dependency still gets the full gate.
+Security-relevant code is not done until you have reviewed it yourself. Rafter
+gives you the map and the questions; the review is yours. Code is
+security-relevant when it decides who may do what, or touches untrusted input,
+queries, shell, file paths, parsing or (de)serialization, crypto or TLS,
+credentials or tokens, outbound requests, data deletion, or dependencies.
+Analysis scripts, plots and pure computation over trusted local data need only
+a quick look for those.
 
-**Stop and invoke when the change touches that surface:**
-
-- Designing auth, payments, credentials, tokens, sessions, file upload,
-  user/untrusted data, deserialization, network endpoints, or data deletion
-  → **`rafter-secure-design`** (before writing code).
-- Diff touches user/untrusted input, SQL/query building, shell/exec, auth,
-  credentials, file paths, (de)serialization, crypto, network endpoints/outbound
-  fetchers (SSRF), data deletion, or dependencies → **`rafter-code-review`** +
-  `rafter run` (before declaring done).
-- About to install or forward a third-party SKILL.md, MCP manifest, Cursor
-  rule, or agent config → **`rafter-skill-review`** (before copying anywhere).
-- Security-adjacent but the angle isn't clear → **`rafter`** (the router skill,
-  powerful toolkit to help you write more secure code).
-
-**CLI:**
-
-- `rafter run` — remote SAST + SCA + secrets (real code analysis, needs `RAFTER_API_KEY`)
-- `rafter secrets .` — local secrets only (offline; NOT a code-security scan)
-- `rafter run --mode plus` — everything in default (`--mode fast`) plus
-  powerful agentic deep-dives (needs `RAFTER_API_KEY`). **Plus is a PAID tier
-  and consumes the user's credits — ask the user before running it.** Enforced
-  when `scan.plus_requires_approval` is set (then pass `--yes` to confirm).
+- Designing such a feature → **`rafter-secure-design`**, before writing code.
+- Reviewing a diff or auditing code → **`rafter-code-review`**. Start with
+  `rafter gates <path>`: it lists the functions that make security decisions.
+- Installing a third-party skill, MCP server or agent config →
+  **`rafter-skill-review`**, before copying it anywhere.
+- `rafter secrets <paths>` finds hardcoded credentials only. A clean result is
+  not a code review.
+- `rafter run` adds remote SAST + SCA on the pushed commit (needs
+  `RAFTER_API_KEY`). `--mode plus` is paid: ask the user first.
 {RAFTER_MARKER_END}"""
 
 
-def _inject_instruction_file(file_path: Path) -> None:
+# Aider has no skill-loading mechanism — `rafter-secure-design`,
+# `rafter-code-review`, and `rafter-skill-review` above are names, not files
+# it can load, unlike Claude Code / Codex / Gemini where each one is a real
+# skill directory. This note tells an Aider session what's actually runnable
+# instead of leaving those names as dead pointers.
+AIDER_NOTE_MARKER_START = "<!-- rafter:aider-note:start -->"
+AIDER_NOTE_MARKER_END = "<!-- rafter:aider-note:end -->"
+
+AIDER_SKILL_NOTE = f"""{AIDER_NOTE_MARKER_START}
+**Note for Aider**: the skill names above (`rafter`, `rafter-secure-design`,
+`rafter-code-review`, `rafter-skill-review`) are not separate files here —
+Aider has no skill-loading mechanism, only this one file. For the fuller
+walkthroughs those skills provide on other platforms, run these in a terminal:
+`rafter brief shift-left` (design & review routing), `rafter brief scanning`
+(full CLI + guardrails), or `rafter skill review <path>` (the real pre-install
+check).
+{AIDER_NOTE_MARKER_END}"""
+
+
+def _inject_marked_block(file_path: Path, block: str, start_marker: str, end_marker: str) -> None:
+    """Shared idempotent marker-block injector: replace the block between the
+    given markers if present, otherwise append it."""
     file_path.parent.mkdir(parents=True, exist_ok=True)
     existing = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
-    start = existing.find(RAFTER_MARKER_START)
-    end = existing.find(RAFTER_MARKER_END)
+    start = existing.find(start_marker)
+    end = existing.find(end_marker)
     if start != -1 and end != -1:
-        next_content = existing[:start] + RAFTER_INSTRUCTION_BLOCK + existing[end + len(RAFTER_MARKER_END):]
+        next_content = existing[:start] + block + existing[end + len(end_marker):]
     else:
         if existing and not existing.endswith("\n\n"):
             existing = existing + ("\n" if existing.endswith("\n") else "\n\n")
-        next_content = existing + RAFTER_INSTRUCTION_BLOCK + "\n"
+        next_content = existing + block + "\n"
     file_path.write_text(next_content, encoding="utf-8")
+
+
+def _inject_instruction_file(file_path: Path) -> None:
+    _inject_marked_block(file_path, RAFTER_INSTRUCTION_BLOCK, RAFTER_MARKER_START, RAFTER_MARKER_END)
+
+
+def _inject_aider_note(file_path: Path) -> None:
+    """Append (or idempotently update) the Aider-specific skill note. Separate
+    marker pair from the main block, so this can live alongside it in the same
+    file (RAFTER.md) without disturbing the shared instruction block."""
+    _inject_marked_block(file_path, AIDER_SKILL_NOTE, AIDER_NOTE_MARKER_START, AIDER_NOTE_MARKER_END)
 
 
 def _has_marker_block(file_path: Path) -> bool:
@@ -90,19 +120,37 @@ def _has_marker_block(file_path: Path) -> bool:
     return RAFTER_MARKER_START in content and RAFTER_MARKER_END in content
 
 
-def _strip_marker_block(file_path: Path) -> bool:
+def _strip_marker_block(
+    file_path: Path,
+    start_marker: str = RAFTER_MARKER_START,
+    end_marker: str = RAFTER_MARKER_END,
+) -> bool:
     if not file_path.exists():
         return False
     content = file_path.read_text(encoding="utf-8")
-    start = content.find(RAFTER_MARKER_START)
-    end = content.find(RAFTER_MARKER_END)
+    start = content.find(start_marker)
+    end = content.find(end_marker)
     if start == -1 or end == -1:
         return False
     before = content[:start].rstrip()
-    after = content[end + len(RAFTER_MARKER_END):].lstrip("\n")
+    after = content[end + len(end_marker):].lstrip("\n")
     next_content = (before + "\n" if before else "") + after
     file_path.write_text(next_content, encoding="utf-8")
     return True
+
+
+def _retire_instruction_file(file_path: Path) -> str | None:
+    """Take rafter's block out of an instruction file rafter no longer writes
+    (e.g. the consolidated .cursor/rules/rafter-security.mdc). The file is
+    deleted only when nothing else is left in it; a file without the block is
+    not rafter's and is left alone. Returns "removed", "stripped" or None.
+    """
+    if not _strip_marker_block(file_path):
+        return None
+    if file_path.read_text(encoding="utf-8").strip():
+        return "stripped"
+    file_path.unlink()
+    return "removed"
 
 
 # ── JSON helpers ──────────────────────────────────────────────────────
@@ -146,14 +194,12 @@ RAFTER_OPENCODE_MCP_ENTRY: dict[str, Any] = {
 }
 
 
-# ── Skill template lookup ─────────────────────────────────────────────
-
-def _skill_text(*segments: str) -> str | None:
-    try:
-        ref = importlib.resources.files("rafter_cli.resources").joinpath(*segments)
-        return ref.read_text(encoding="utf-8")
-    except Exception:
-        return None
+def _with_session(session: InstallSession | None, fn: Callable[[InstallSession], None]) -> None:
+    """Run `fn` with the caller's session, or a fresh one that is saved afterwards."""
+    s = session or InstallSession(root=Path.home(), out=InstallOutput())
+    fn(s)
+    if session is None:
+        s.save()
 
 
 # ── Component spec dataclass ─────────────────────────────────────────
@@ -167,8 +213,18 @@ class ComponentSpec:
     detect_dir: Path
     path: Path
     is_installed: Callable[[], bool]
-    install: Callable[[], None]
+    # Skill and rule files go through the session's write policy
+    # (install_files.py), so a locally edited file is kept, not overwritten.
+    # Called with no session, the component uses its own rooted at home.
+    install: Callable[..., None]
     uninstall: Callable[[], None]
+
+    def install_with(self, session: InstallSession) -> None:
+        """Install, passing `session` to components that write whole files."""
+        if "session" in inspect.signature(self.install).parameters:
+            self.install(session=session)
+        else:
+            self.install()
 
 
 # ── Per-component builders ────────────────────────────────────────────
@@ -205,7 +261,7 @@ def _claude_code_hooks() -> ComponentSpec:
                 del hooks["SessionStart"]
         hooks["PreToolUse"].extend([
             {"matcher": "Bash", "hooks": [pre]},
-            {"matcher": "Write|Edit", "hooks": [pre]},
+            {"matcher": "Write|Edit|MultiEdit", "hooks": [pre]},
         ])
         # Narrow to tools that produce scannable output (shell output + file
         # writes); avoids firing posttool on every Read/MCP call (latency).
@@ -258,14 +314,9 @@ def _claude_code_instructions() -> ComponentSpec:
 
 
 # Canonical rafter-authored skills installed by a per-platform "skills"
-# component. Mirrors node/src/commands/agent/components.ts. Keep in sync with
-# the SKILL.md files shipped under rafter_cli/resources/skills/.
-_COMPONENT_SKILL_NAMES: tuple[str, ...] = (
-    "rafter",
-    "rafter-secure-design",
-    "rafter-code-review",
-    "rafter-skill-review",
-)
+# component — the single `KNOWN_SKILL_NAMES` list in `.skill`, so this and
+# `agent init` (install_files.py) can't drift apart.
+_COMPONENT_SKILL_NAMES: tuple[str, ...] = KNOWN_SKILL_NAMES
 
 
 def _skills_component(
@@ -283,17 +334,15 @@ def _skills_component(
     def is_installed() -> bool:
         return any(p.exists() for p in dest_paths)
 
-    def install() -> None:
-        for name in _COMPONENT_SKILL_NAMES:
-            dest = skills_base_dir / name / "SKILL.md"
-            content = _skill_text("skills", name, "SKILL.md")
-            if content is None and name == "rafter":
-                # Legacy fallback — older python packages used rafter-security-skill.md
-                content = _skill_text("rafter-security-skill.md")
-            if content is None:
-                continue
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(content, encoding="utf-8")
+    def install(session: InstallSession | None = None) -> None:
+        def run(s: InstallSession) -> None:
+            # SKILL.md only, matching what uninstall removes (init also installs docs/).
+            s.apply_all([a for a in skill_artifacts(skills_base_dir, platform, cid) if a.dest.name == "SKILL.md"])
+            # Clean up any rafter skill directory left over from a rename —
+            # never a user's own or a modified one (publisher tag or hash proof).
+            cleanup_retired_skills(s, skills_base_dir)
+
+        _with_session(session, run)
 
     def uninstall() -> None:
         for p in dest_paths:
@@ -505,22 +554,39 @@ def _cursor_hooks() -> ComponentSpec:
 
 def _cursor_instructions() -> ComponentSpec:
     home = Path.home()
-    detect_dir = home / ".cursor"
-    file_path = detect_dir / "rules" / "rafter-security.mdc"
+    rules_dir = home / ".cursor" / "rules"
+    agent_path = home / ".cursor" / "agents" / "rafter.md"
+    legacy_path = rules_dir / "rafter-security.mdc"
+
+    def is_installed() -> bool:
+        return all((rules_dir / f"{n}.mdc").exists() for n in RULE_SKILLS) and agent_path.exists()
+
+    def install(session: InstallSession | None = None) -> None:
+        def run(s: InstallSession) -> None:
+            s.apply_all(rule_artifacts("cursor", home))
+            cleanup_retired_rules(s, "cursor")
+            _retire_instruction_file(legacy_path)
+            s.apply_all(cursor_agent_artifacts(home))
+        _with_session(session, run)
 
     def uninstall() -> None:
-        if file_path.exists():
-            file_path.unlink()
+        for name in RULE_SKILLS:
+            p = rules_dir / f"{name}.mdc"
+            if p.exists():
+                p.unlink()
+        _retire_instruction_file(legacy_path)
+        if agent_path.exists():
+            agent_path.unlink()
 
     return ComponentSpec(
         id="cursor.instructions",
         platform="cursor",
         kind="instructions",
-        description="Cursor global rule block (~/.cursor/rules/rafter-security.mdc)",
-        detect_dir=detect_dir,
-        path=file_path,
-        is_installed=lambda: _has_marker_block(file_path),
-        install=lambda: _inject_instruction_file(file_path),
+        description="Cursor per-skill rules + rafter sub-agent (~/.cursor/rules/, ~/.cursor/agents/rafter.md)",
+        detect_dir=home / ".cursor",
+        path=rules_dir,
+        is_installed=is_installed,
+        install=install,
         uninstall=uninstall,
     )
 
@@ -587,8 +653,9 @@ def _gemini_hooks() -> ComponentSpec:
         h["AfterTool"] = _filter_hooks(h["AfterTool"], lambda e: _hook_entry_has_rafter(e, "rafter hook posttool"))
         # Explicit Gemini built-in tool names per geminicli.com/docs/hooks/reference
         # (rf-044o verification).
+        #  No tool is named `edit`: Gemini's edit tool is `replace`.
         h["BeforeTool"].append({
-            "matcher": "run_shell_command|write_file|replace|edit",
+            "matcher": "run_shell_command|write_file|replace",
             "hooks": [{"type": "command", "command": "rafter hook pretool --format gemini", "timeout": 5000}],
         })
         h["AfterTool"].append({
@@ -659,12 +726,7 @@ def _gemini_mcp() -> ComponentSpec:
 
 
 # Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3).
-_WINDSURF_RULE_SKILLS: tuple[str, ...] = (
-    "rafter",
-    "rafter-secure-design",
-    "rafter-code-review",
-    "rafter-skill-review",
-)
+_WINDSURF_RULE_SKILLS: tuple[str, ...] = RULE_SKILLS
 
 
 def _windsurf_rules() -> ComponentSpec:
@@ -681,18 +743,8 @@ def _windsurf_rules() -> ComponentSpec:
     def is_installed() -> bool:
         return all((rules_dir / f"{n}.md").exists() for n in _WINDSURF_RULE_SKILLS)
 
-    def install() -> None:
-        rules_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            res = importlib.resources.files("rafter_cli.resources")
-        except Exception:
-            return
-        for name in _WINDSURF_RULE_SKILLS:
-            try:
-                content = res.joinpath("windsurf-rules", f"{name}.md").read_text(encoding="utf-8")
-            except Exception:
-                continue
-            (rules_dir / f"{name}.md").write_text(content, encoding="utf-8")
+    def install(session: InstallSession | None = None) -> None:
+        _with_session(session, lambda s: s.apply_all(rule_artifacts("windsurf", Path.cwd())))
 
     def uninstall() -> None:
         for name in _WINDSURF_RULE_SKILLS:
@@ -751,12 +803,7 @@ def _windsurf_mcp() -> ComponentSpec:
 
 
 # Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0).
-_CONTINUE_RULE_SKILLS: tuple[str, ...] = (
-    "rafter",
-    "rafter-secure-design",
-    "rafter-code-review",
-    "rafter-skill-review",
-)
+_CONTINUE_RULE_SKILLS: tuple[str, ...] = RULE_SKILLS
 
 
 def _continue_rules() -> ComponentSpec:
@@ -775,18 +822,8 @@ def _continue_rules() -> ComponentSpec:
     def is_installed() -> bool:
         return all((rules_dir / f"{n}.md").exists() for n in _CONTINUE_RULE_SKILLS)
 
-    def install() -> None:
-        rules_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            res = importlib.resources.files("rafter_cli.resources")
-        except Exception:
-            return
-        for name in _CONTINUE_RULE_SKILLS:
-            try:
-                content = res.joinpath("continue-rules", f"{name}.md").read_text(encoding="utf-8")
-            except Exception:
-                continue
-            (rules_dir / f"{name}.md").write_text(content, encoding="utf-8")
+    def install(session: InstallSession | None = None) -> None:
+        _with_session(session, lambda s: s.apply_all(rule_artifacts("continue", Path.cwd())))
 
     def uninstall() -> None:
         for name in _CONTINUE_RULE_SKILLS:
@@ -1015,6 +1052,7 @@ def _aider_read() -> ComponentSpec:
 
     def install() -> None:
         _inject_instruction_file(rafter_md_path)
+        _inject_aider_note(rafter_md_path)
         raw = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
         # Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
         raw = _AIDER_LEGACY_MCP_BLOCK_RE.sub("\n", raw)
@@ -1046,9 +1084,19 @@ def _aider_read() -> ComponentSpec:
         config_path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
 
     def uninstall() -> None:
-        if rafter_md_path.exists():
+        # Excise only the managed block; any user content in RAFTER.md survives.
+        # If the file was ours alone (nothing but the block), remove it.
+        # A RAFTER.md with no markers is user-authored — leave it untouched.
+        # Both managed blocks go: the main one and the Aider note that refers
+        # to "the skill names above" — left alone it would be an orphan.
+        stripped_main = _strip_marker_block(rafter_md_path)
+        stripped_note = _strip_marker_block(
+            rafter_md_path, AIDER_NOTE_MARKER_START, AIDER_NOTE_MARKER_END
+        )
+        if rafter_md_path.exists() and (stripped_main or stripped_note):
             try:
-                rafter_md_path.unlink()
+                if not rafter_md_path.read_text(encoding="utf-8").strip():
+                    rafter_md_path.unlink()
             except OSError:
                 pass
         if not config_path.exists():
@@ -1081,15 +1129,13 @@ def _aider_read() -> ComponentSpec:
 
 def _openclaw_skill() -> ComponentSpec:
     home = Path.home()
-    detect_dir = home / ".openclaw"
-    skill_path = detect_dir / "skills" / "rafter-security.md"
+    skill_path = openclaw_skill_path(home)
 
-    def install() -> None:
-        skill_path.parent.mkdir(parents=True, exist_ok=True)
-        # Try primary skill location, then legacy resource name.
-        content = _skill_text("skills", "rafter", "SKILL.md") or _skill_text("rafter-security-skill.md")
-        if content is not None:
-            skill_path.write_text(content, encoding="utf-8")
+    def install(session: InstallSession | None = None) -> None:
+        def run(s: InstallSession) -> None:
+            s.apply_all(openclaw_skill_artifacts(home))
+            cleanup_legacy_openclaw(s)
+        _with_session(session, run)
 
     def uninstall() -> None:
         if skill_path.exists():
@@ -1099,8 +1145,8 @@ def _openclaw_skill() -> ComponentSpec:
         id="openclaw.skills",
         platform="openclaw",
         kind="skills",
-        description="OpenClaw rafter-security skill",
-        detect_dir=detect_dir,
+        description="OpenClaw rafter-security skill (~/.openclaw/workspace/skills/rafter-security/SKILL.md)",
+        detect_dir=home / ".openclaw",
         path=skill_path,
         is_installed=lambda: skill_path.exists(),
         install=install,

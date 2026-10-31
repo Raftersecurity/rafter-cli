@@ -4,6 +4,38 @@ import { ConfigManager } from "../core/config-manager.js";
 export const API = "https://rafter.so/api/";
 
 /**
+ * The API base in effect right now.
+ *
+ * `RAFTER_API_URL`, read fresh on every call rather than cached at import
+ * time, overrides the production default in `API`. This is how the test
+ * suite points the CLI at a local, non-routable port instead of the live
+ * backend — see `node/tests/env-isolation-setup.ts`. Production never sets
+ * the var, so this is a no-op outside tests.
+ *
+ * Every request carries the API key, so the override must be https, or plain
+ * http to a loopback host. Anything else is ignored with a warning. A remote
+ * https override is honored with a one-time notice, since the key goes there.
+ */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+let warnedApiOverride = false;
+
+function resolveApiBase(): string {
+  const override = process.env.RAFTER_API_URL;
+  if (!override) return API;
+  let url: URL | null = null;
+  try { url = new URL(override); } catch { /* reported below */ }
+  const loopback = url !== null && LOOPBACK_HOSTS.has(url.hostname);
+  const allowed = url !== null && (url.protocol === "https:" || (url.protocol === "http:" && loopback));
+  if (!loopback && !warnedApiOverride) {
+    warnedApiOverride = true;
+    console.error(allowed
+      ? `rafter: RAFTER_API_URL is set; sending requests and your API key to ${url!.origin}`
+      : `rafter: ignoring RAFTER_API_URL (must be https, or http to localhost); using ${API}`);
+  }
+  return allowed ? override : API;
+}
+
+/**
  * sable-2s6p — the HTTP client for every authenticated Rafter API call.
  *
  * `maxRedirects: 0` is the point of it. axios (via follow-redirects) replays
@@ -49,7 +81,7 @@ apiClient.interceptors.response.use(undefined, (error: any) => {
 
 /** Join API with a path segment without producing a double slash, regardless of leading/trailing slashes on either side. */
 export function apiUrl(path: string): string {
-  return `${API.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  return `${resolveApiBase().replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
 // Exit codes
@@ -78,7 +110,12 @@ export function handle403(e: any): number {
   if (typeof body === "object" && body?.scan_mode) {
     const mode = body.scan_mode;
     const limit = body.limit ?? "?";
-    const used = body.used ?? limit;
+    // The API sends `remaining`, not `used`; `used` is kept for older servers.
+    const used =
+      body.used ??
+      (typeof body.limit === "number" && typeof body.remaining === "number"
+        ? body.limit - body.remaining
+        : limit);
     console.error(
       `Error: ${mode.charAt(0).toUpperCase() + mode.slice(1)} scan limit reached (${used}/${limit} used this billing period).\nUpgrade your plan or wait for your quota to reset.`
     );

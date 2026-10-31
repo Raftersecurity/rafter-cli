@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from pathlib import Path
 
+import pytest
 import yaml
+from typer.testing import CliRunner
 
 from rafter_cli.commands.agent import (
     _install_claude_code_hooks,
@@ -121,16 +125,6 @@ class TestHermesDetection:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         (tmp_path / ".hermes").mkdir()
         assert "hermes" in _detect_agent_platforms()
-
-    def test_hermes_mcp_component_registered(self, tmp_path, monkeypatch):
-        from rafter_cli.commands import agent_components
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        agent_components.reset_registry_cache()
-        try:
-            ids = [c.id for c in agent_components.get_registry()]
-            assert "hermes.mcp" in ids
-        finally:
-            agent_components.reset_registry_cache()
 
     def test_hermes_mcp_component_install_uninstall(self, tmp_path, monkeypatch):
         from rafter_cli.commands import agent_components
@@ -268,16 +262,6 @@ class TestOpenCodeDetection:
         (tmp_path / ".config" / "opencode").mkdir(parents=True)
         assert "opencode" in _detect_agent_platforms()
 
-    def test_opencode_mcp_component_registered(self, tmp_path, monkeypatch):
-        from rafter_cli.commands import agent_components
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        agent_components.reset_registry_cache()
-        try:
-            ids = [c.id for c in agent_components.get_registry()]
-            assert "opencode.mcp" in ids
-        finally:
-            agent_components.reset_registry_cache()
-
     def test_opencode_mcp_component_install_uninstall(self, tmp_path, monkeypatch):
         from rafter_cli.commands import agent_components
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -332,7 +316,7 @@ class TestInstallClaudeCodeHooks:
 
         matchers = [e["matcher"] for e in settings["hooks"]["PreToolUse"]]
         assert "Bash" in matchers
-        assert "Write|Edit" in matchers
+        assert "Write|Edit|MultiEdit" in matchers
 
         # PostToolUse is scoped to tools that produce scannable output (shell
         # output + file writes), not every tool call — avoids firing posttool
@@ -636,20 +620,13 @@ class TestInstallAiderRead:
 class TestFlagRejection:
     """--skip-openclaw and --skip-claude-code are NOT valid flags for `agent init`."""
 
-    def test_skip_openclaw_rejected(self):
+    @pytest.mark.parametrize("flag", ["--skip-openclaw", "--skip-claude-code"])
+    def test_removed_skip_flag_rejected(self, flag):
         from typer.testing import CliRunner
         from rafter_cli.__main__ import app
 
         runner = CliRunner()
-        result = runner.invoke(app, ["agent", "init", "--skip-openclaw"])
-        assert result.exit_code != 0, f"Expected non-zero exit code, got {result.exit_code}"
-
-    def test_skip_claude_code_rejected(self):
-        from typer.testing import CliRunner
-        from rafter_cli.__main__ import app
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["agent", "init", "--skip-claude-code"])
+        result = runner.invoke(app, ["agent", "init", flag])
         assert result.exit_code != 0, f"Expected non-zero exit code, got {result.exit_code}"
 
 
@@ -766,12 +743,54 @@ class TestDryRun:
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.chdir(tmp_path)
+        # Keep a betterleaks on the developer's PATH out of view: the plan only
+        # lists a download when the real run would perform one (#231).
+        monkeypatch.setenv("PATH", str(tmp_path / "emptybin"))
 
         runner = CliRunner()
         result = runner.invoke(app, ["agent", "init", "--with-betterleaks", "--dry-run"])
         assert result.exit_code == 0
         assert "DOWNLOAD" in result.stdout
         assert "betterleaks" in result.stdout
+
+
+# ── --all warnings (rafter-cli#231) ───────────────────────────────────
+
+
+class TestAllFlagUndetectedWarnings:
+    """`--all` means "install all DETECTED integrations" per its own
+    --help text, so an undetected platform shouldn't get an individual
+    "requested but not detected" warning just because --all was passed —
+    that noise buries the warnings that matter. An explicit
+    --with-<platform> on a platform that turns out to be missing should
+    still warn (rafter-cli#231)."""
+
+    def test_all_does_not_warn_about_undetected_platforms(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        # No platform directories created — every platform is undetected.
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--all"])
+        assert result.exit_code == 0, result.output
+        for label in (
+            "OpenClaw", "Claude Code", "Codex CLI", "Gemini CLI", "Cursor",
+            "Windsurf", "Continue.dev", "Aider", "Hermes", "OpenCode",
+        ):
+            assert f"{label} requested but not detected" not in result.output
+
+    def test_explicit_with_flag_still_warns_when_undetected(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["agent", "init", "--with-codex"])
+        assert result.exit_code == 0, result.output
+        assert "Codex CLI requested but not detected" in result.output
 
 
 # ── Codex skill installation tests ───────────────────────────────────
@@ -786,16 +805,16 @@ class TestInstallCodexSkills:
         assert ok, f"Expected success, got error: {error}"
         assert error == ""
 
-        # Must mirror _AGENT_SKILLS in python/rafter_cli/commands/agent.py.
+        # Must mirror KNOWN_SKILL_NAMES in python/rafter_cli/commands/skill.py.
         for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
             skill_path = tmp_path / ".agents" / "skills" / name / "SKILL.md"
             assert skill_path.exists(), f"{name} SKILL.md should be installed"
             assert skill_path.read_text().strip(), f"{name} SKILL.md should not be empty"
 
-    def test_overwrites_existing_skills(self, tmp_path, monkeypatch):
+    def test_keeps_skill_content_rafter_did_not_write(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        # Pre-create with stale content
+        # Content no rafter release shipped: a user's edit, not a stale copy.
         backend_dir = tmp_path / ".agents" / "skills" / "rafter"
         backend_dir.mkdir(parents=True)
         (backend_dir / "SKILL.md").write_text("old content")
@@ -803,8 +822,8 @@ class TestInstallCodexSkills:
         ok, error = _install_codex_skills(tmp_path)
         assert ok
 
-        content = (backend_dir / "SKILL.md").read_text()
-        assert content != "old content", "Skill should be updated on reinstall"
+        assert (backend_dir / "SKILL.md").read_text() == "old content"
+        assert "name: rafter" in (backend_dir / "SKILL.md.rafter-new").read_text()
 
 
 # ── Gemini skill installation tests ──────────────────────────────────
@@ -819,7 +838,7 @@ class TestInstallGeminiSkills:
         assert ok, f"Expected success, got error: {error}"
         assert error == ""
 
-        # Mirrors _AGENT_SKILLS — same list as codex.
+        # Mirrors KNOWN_SKILL_NAMES — same list as codex.
         for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
             skill_path = tmp_path / ".agents" / "skills" / name / "SKILL.md"
             assert skill_path.exists(), f"{name} SKILL.md should be installed"
@@ -888,12 +907,13 @@ class TestRegisterGeminiSkills:
 
 # ── OpenClaw skill installation tests ────────────────────────────────
 
-from rafter_cli.commands.agent import _install_openclaw_skill
-
 
 class TestInstallOpenClawSkill:
     """rf-zgwj — OpenClaw integration writes a ClawHub-shaped skill at the
-    canonical workspace path, not the legacy single-file path."""
+    canonical workspace path, not the legacy single-file path, under the same
+    keep-edited-files policy as every other platform."""
+
+    REPO = Path(__file__).resolve().parents[2]
 
     def _canonical_path(self, root: Path) -> Path:
         return root / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md"
@@ -901,204 +921,139 @@ class TestInstallOpenClawSkill:
     def _legacy_path(self, root: Path) -> Path:
         return root / ".openclaw" / "skills" / "rafter-security.md"
 
+    def _init(self, tmp_path, monkeypatch) -> str:
+        from rafter_cli.__main__ import app
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.chdir(tmp_path)
+        result = CliRunner().invoke(app, ["agent", "init", "--with-openclaw"])
+        assert result.exit_code == 0, result.output
+        return result.output
+
     def test_installs_skill_at_clawhub_workspace_path(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
         (tmp_path / ".openclaw").mkdir()
-
-        ok, source, dest, error = _install_openclaw_skill()
-        assert ok, f"Expected success, got error: {error}"
-        assert error == ""
-
+        output = self._init(tmp_path, monkeypatch)
         dest_path = self._canonical_path(tmp_path)
-        assert dest_path.exists(), "SKILL.md should be installed at canonical path"
-        assert dest_path.read_text().strip(), "SKILL.md should not be empty"
-        assert str(dest_path) == dest
+        assert dest_path.read_text().startswith("---\nname: rafter-security\n")
+        assert re.search(r"added +\S+\.openclaw/workspace/skills/rafter-security/SKILL\.md", output)
 
-    def test_fails_when_openclaw_dir_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    def test_does_not_install_when_openclaw_dir_missing(self, tmp_path, monkeypatch):
+        output = self._init(tmp_path, monkeypatch)
+        assert "OpenClaw requested but not detected" in output
+        assert not self._canonical_path(tmp_path).exists()
 
-        ok, source, dest, error = _install_openclaw_skill()
-        assert not ok, "Should fail when .openclaw is missing"
-        assert "not found" in error.lower()
-
-    def test_overwrites_existing_clawhub_skill(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".openclaw").mkdir()
-        skill_dir = self._canonical_path(tmp_path).parent
-        skill_dir.mkdir(parents=True)
-        (skill_dir / "SKILL.md").write_text("old content")
-
-        ok, source, dest, error = _install_openclaw_skill()
-        assert ok
-
-        content = self._canonical_path(tmp_path).read_text()
-        assert content != "old content", "SKILL.md should be updated on reinstall"
-
-    def test_creates_workspace_skills_directory_tree(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".openclaw").mkdir()
-
-        ok, source, dest, error = _install_openclaw_skill()
-        assert ok
-
-        assert self._canonical_path(tmp_path).parent.is_dir(), (
-            "Should create workspace/skills/rafter-security/"
-        )
-
-    def test_strips_legacy_skill_on_reinstall(self, tmp_path, monkeypatch):
-        """rf-zgwj migration: the rafter ≤ 0.7.7 install left a file at
-        ~/.openclaw/skills/rafter-security.md. OpenClaw never read it.
-        Reinstall removes it and writes the canonical ClawHub-shaped skill."""
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    def test_keeps_edited_skill_and_edited_legacy_file(self, tmp_path, monkeypatch):
         legacy = self._legacy_path(tmp_path)
         legacy.parent.mkdir(parents=True)
-        legacy.write_text("---\nname: rafter-security\nversion: 0.6.0\n---\n# old\n")
+        legacy.write_text("---\nname: rafter-security\nversion: 0.6.0\n---\n# my notes\n")
+        self._init(tmp_path, monkeypatch)
+        skill = self._canonical_path(tmp_path)
+        skill.write_text(skill.read_text() + "\nmine\n")
+        edited = skill.read_text()
 
-        ok, _src, _dest, _err = _install_openclaw_skill()
-        assert ok
+        output = self._init(tmp_path, monkeypatch)
+        assert skill.read_text() == edited
+        assert Path(f"{skill}.rafter-new").exists()
+        assert legacy.exists()
+        assert re.search(r"kept +\S+rafter-security/SKILL\.md", output)
+        assert "Kept legacy" in output
 
+    def test_strips_legacy_skill_that_is_rafters_content(self, tmp_path, monkeypatch):
+        """rf-zgwj migration: the rafter ≤ 0.7.7 install left a file at
+        ~/.openclaw/skills/rafter-security.md. OpenClaw never read it.
+        Reinstall removes it when its bytes are ones a release shipped."""
+        legacy = self._legacy_path(tmp_path)
+        legacy.parent.mkdir(parents=True)
+        shutil.copyfile(self.REPO / "fixtures" / "install-0.11.2" / "home" / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md", legacy)
+
+        output = self._init(tmp_path, monkeypatch)
         assert self._canonical_path(tmp_path).exists()
         assert not legacy.exists(), "Legacy file should be stripped on reinstall"
+        assert f"Removed legacy {legacy}" in output
 
 
-# ── Codex AGENTS.md instruction file tests ──────────────────────────
+# ── Codex AGENTS.md / Gemini GEMINI.md instruction file tests ───────
+#
+# Both platforms write a marker-delimited instructions file at the same
+# relative shape: <platform-dir>/<filename>. Parametrized over both.
 
 
-class TestCodexAgentsInstructionFile:
-    """`rafter agent init --with-codex` should write AGENTS.md with the rafter marker block."""
+class TestMarkerInstructionFile:
+    """`rafter agent init --with-<platform>` should write the marker-delimited
+    instructions file (AGENTS.md for Codex, GEMINI.md for Gemini)."""
 
-    def test_writes_user_scope_agents_md(self, tmp_path, monkeypatch):
+    PLATFORMS = [
+        ("--with-codex", ".codex", "AGENTS.md"),
+        ("--with-gemini", ".gemini", "GEMINI.md"),
+    ]
+
+    @pytest.mark.parametrize("flag,platform_dir,filename", PLATFORMS)
+    def test_writes_user_scope_marker_file(self, tmp_path, monkeypatch, flag, platform_dir, filename):
         from typer.testing import CliRunner
         from rafter_cli.__main__ import app
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".codex").mkdir()
+        (tmp_path / platform_dir).mkdir()
 
         runner = CliRunner()
-        result = runner.invoke(app, ["agent", "init", "--with-codex"])
+        result = runner.invoke(app, ["agent", "init", flag])
         assert result.exit_code == 0, result.output
 
-        agents_path = tmp_path / ".codex" / "AGENTS.md"
-        assert agents_path.exists(), "~/.codex/AGENTS.md should be created"
+        marker_path = tmp_path / platform_dir / filename
+        assert marker_path.exists(), f"~/{platform_dir}/{filename} should be created"
 
-        content = agents_path.read_text()
+        content = marker_path.read_text()
         assert "<!-- rafter:start -->" in content
         assert "<!-- rafter:end -->" in content
 
-    def test_idempotent_on_repeat_install(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("flag,platform_dir,filename", PLATFORMS)
+    def test_idempotent_on_repeat_install(self, tmp_path, monkeypatch, flag, platform_dir, filename):
         from typer.testing import CliRunner
         from rafter_cli.__main__ import app
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".codex").mkdir()
+        (tmp_path / platform_dir).mkdir()
 
         runner = CliRunner()
-        runner.invoke(app, ["agent", "init", "--with-codex"])
-        first = (tmp_path / ".codex" / "AGENTS.md").read_text()
-        runner.invoke(app, ["agent", "init", "--with-codex"])
-        second = (tmp_path / ".codex" / "AGENTS.md").read_text()
+        runner.invoke(app, ["agent", "init", flag])
+        marker_path = tmp_path / platform_dir / filename
+        first = marker_path.read_text()
+        runner.invoke(app, ["agent", "init", flag])
+        second = marker_path.read_text()
 
         assert first == second
 
-    def test_preserves_existing_user_content(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("flag,platform_dir,filename", PLATFORMS)
+    def test_preserves_existing_user_content(self, tmp_path, monkeypatch, flag, platform_dir, filename):
         from typer.testing import CliRunner
         from rafter_cli.__main__ import app
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".codex").mkdir()
-        agents_path = tmp_path / ".codex" / "AGENTS.md"
-        agents_path.write_text("# My personal instructions\n\nDo the thing.\n")
+        (tmp_path / platform_dir).mkdir()
+        marker_path = tmp_path / platform_dir / filename
+        marker_path.write_text("# My personal instructions\n\nDo the thing.\n")
 
         runner = CliRunner()
-        runner.invoke(app, ["agent", "init", "--with-codex"])
+        runner.invoke(app, ["agent", "init", flag])
 
-        content = agents_path.read_text()
+        content = marker_path.read_text()
         assert "# My personal instructions" in content
         assert "Do the thing." in content
         assert "<!-- rafter:start -->" in content
 
-    def test_skipped_without_with_codex(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("flag,platform_dir,filename", PLATFORMS)
+    def test_skipped_without_flag(self, tmp_path, monkeypatch, flag, platform_dir, filename):
         from typer.testing import CliRunner
         from rafter_cli.__main__ import app
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".codex").mkdir()
+        (tmp_path / platform_dir).mkdir()
         (tmp_path / ".claude").mkdir()
 
         runner = CliRunner()
         runner.invoke(app, ["agent", "init", "--with-claude-code"])
 
-        assert not (tmp_path / ".codex" / "AGENTS.md").exists()
-
-
-# ── Gemini GEMINI.md instruction file tests ─────────────────────────
-
-
-class TestGeminiInstructionFile:
-    """`rafter agent init --with-gemini` should write GEMINI.md with the rafter marker block."""
-
-    def test_writes_user_scope_gemini_md(self, tmp_path, monkeypatch):
-        from typer.testing import CliRunner
-        from rafter_cli.__main__ import app
-
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".gemini").mkdir()
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["agent", "init", "--with-gemini"])
-        assert result.exit_code == 0, result.output
-
-        gemini_path = tmp_path / ".gemini" / "GEMINI.md"
-        assert gemini_path.exists(), "~/.gemini/GEMINI.md should be created"
-
-        content = gemini_path.read_text()
-        assert "<!-- rafter:start -->" in content
-        assert "<!-- rafter:end -->" in content
-
-    def test_idempotent_on_repeat_install(self, tmp_path, monkeypatch):
-        from typer.testing import CliRunner
-        from rafter_cli.__main__ import app
-
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".gemini").mkdir()
-
-        runner = CliRunner()
-        runner.invoke(app, ["agent", "init", "--with-gemini"])
-        first = (tmp_path / ".gemini" / "GEMINI.md").read_text()
-        runner.invoke(app, ["agent", "init", "--with-gemini"])
-        second = (tmp_path / ".gemini" / "GEMINI.md").read_text()
-
-        assert first == second
-
-    def test_preserves_existing_user_content(self, tmp_path, monkeypatch):
-        from typer.testing import CliRunner
-        from rafter_cli.__main__ import app
-
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".gemini").mkdir()
-        gemini_path = tmp_path / ".gemini" / "GEMINI.md"
-        gemini_path.write_text("# My personal instructions\n\nDo the thing.\n")
-
-        runner = CliRunner()
-        runner.invoke(app, ["agent", "init", "--with-gemini"])
-
-        content = gemini_path.read_text()
-        assert "# My personal instructions" in content
-        assert "Do the thing." in content
-        assert "<!-- rafter:start -->" in content
-
-    def test_skipped_without_with_gemini(self, tmp_path, monkeypatch):
-        from typer.testing import CliRunner
-        from rafter_cli.__main__ import app
-
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".gemini").mkdir()
-        (tmp_path / ".claude").mkdir()
-
-        runner = CliRunner()
-        runner.invoke(app, ["agent", "init", "--with-claude-code"])
-
-        assert not (tmp_path / ".gemini" / "GEMINI.md").exists()
+        assert not (tmp_path / platform_dir / filename).exists()
 
 
 class TestGeminiWithSkillsEndToEnd:
@@ -1121,6 +1076,32 @@ class TestGeminiWithSkillsEndToEnd:
         for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
             skill = tmp_path / ".agents" / "skills" / name / "SKILL.md"
             assert skill.exists(), f"{name} SKILL.md should be installed via --with-gemini"
+
+    def test_installs_gemini_hooks(self, tmp_path, monkeypatch):
+        # Without BeforeTool hooks, Gemini's shell and write tools bypass the
+        # command policy and the secret gate entirely; Node always installed them.
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".gemini").mkdir()
+        (tmp_path / ".gemini" / "settings.json").write_text(json.dumps({"theme": "dark"}))
+        monkeypatch.setattr("rafter_cli.commands.agent.shutil.which", lambda name: None if name == "gemini" else "/usr/bin/" + name)
+
+        runner = CliRunner()
+        for _ in range(2):  # a re-run must not duplicate entries
+            result = runner.invoke(app, ["agent", "init", "--with-gemini"])
+            assert result.exit_code == 0, result.output
+
+        settings = json.loads((tmp_path / ".gemini" / "settings.json").read_text())
+        assert settings["theme"] == "dark"
+        assert "rafter" in settings["mcpServers"]
+        before = settings["hooks"]["BeforeTool"]
+        after = settings["hooks"]["AfterTool"]
+        assert len(before) == 1 and len(after) == 1
+        assert before[0]["matcher"] == "run_shell_command|write_file|replace"
+        assert before[0]["hooks"][0]["command"].endswith("hook pretool --format gemini")
+        assert after[0]["hooks"][0]["command"].endswith("hook posttool --format gemini")
 
     def test_calls_gemini_skills_link_when_gemini_available(self, tmp_path, monkeypatch):
         from typer.testing import CliRunner
@@ -1147,7 +1128,8 @@ class TestGeminiWithSkillsEndToEnd:
 
         # One probe + one link per skill (3 skills)
         link_only = [c for c in link_calls if c[1:3] == ["skills", "link"]]
-        assert len(link_only) == 3
+        from rafter_cli.commands.skill import KNOWN_SKILL_NAMES
+        assert len(link_only) == len(KNOWN_SKILL_NAMES)
 
 
 class TestInstallClaudeCodeMcp:
@@ -1249,8 +1231,9 @@ _CURSOR_SHIPPED_SKILLS = (
 class TestInstallCursorHooks:
     """Cursor hooks must cover preToolUse, postToolUse, and beforeShellExecution."""
 
-    def test_writes_all_three_events_from_scratch(self, tmp_path):
+    def test_writes_all_three_events_from_scratch(self, tmp_path, monkeypatch):
         from rafter_cli.commands.agent import _install_cursor_hooks
+        monkeypatch.setattr("rafter_cli.commands.agent._resolve_rafter_path", lambda: "/opt/rafter/bin/rafter")
         _install_cursor_hooks(tmp_path)
 
         hooks_path = tmp_path / ".cursor" / "hooks.json"
@@ -1262,9 +1245,9 @@ class TestInstallCursorHooks:
             assert isinstance(entries, list) and entries, f"missing {event}"
 
         pre = next(e for e in cfg["hooks"]["preToolUse"] if "rafter" in e.get("command", ""))
-        assert pre["command"] == "rafter hook pretool --format cursor"
+        assert pre["command"] == "/opt/rafter/bin/rafter hook pretool --format cursor"
         post = next(e for e in cfg["hooks"]["postToolUse"] if "rafter" in e.get("command", ""))
-        assert post["command"] == "rafter hook posttool --format cursor"
+        assert post["command"] == "/opt/rafter/bin/rafter hook posttool --format cursor"
 
     def test_idempotent_no_duplicates(self, tmp_path):
         from rafter_cli.commands.agent import _install_cursor_hooks
@@ -1450,13 +1433,44 @@ class TestInstallClaudeCodeSubAgents:
 
         assert first == second
 
-    def test_overwrites_stale_subagent_content(self, tmp_path):
+    def test_keeps_subagent_content_rafter_did_not_write(self, tmp_path):
         agents_dir = tmp_path / ".claude" / "agents"
         agents_dir.mkdir(parents=True)
         (agents_dir / "rafter.md").write_text("stale content from previous version")
 
         _install_claude_code_subagents(tmp_path)
 
-        content = (agents_dir / "rafter.md").read_text()
-        assert content != "stale content from previous version"
-        assert "name: rafter" in content
+        assert (agents_dir / "rafter.md").read_text() == "stale content from previous version"
+        assert "name: rafter" in (agents_dir / "rafter.md.rafter-new").read_text()
+
+
+# ── Help text points at the current skill-review command ─────────────────
+
+
+class TestSkillScannerHelpText:
+    """issue #231 item 4b: `agent audit-skill` is deprecated in favour of
+    `rafter skill review`; the install flags' help text still pointed at it."""
+
+    @staticmethod
+    def _flat_help(args: list[str]) -> str:
+        from typer.testing import CliRunner
+        from rafter_cli.__main__ import app
+
+        # Typer forces Rich colour when GITHUB_ACTIONS/FORCE_COLOR is set, and
+        # Rich styles "-" and "-deep" separately, so the raw text never holds
+        # "--deep". Strip the escapes, then collapse whitespace, since Rich
+        # also wraps to terminal width.
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 0, result.output
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+        return " ".join(plain.split())
+
+    def test_init_help_describes_with_skill_scanner_via_skill_review(self):
+        flat = self._flat_help(["agent", "init", "--help"])
+        assert "skill review --deep" in flat
+        assert "audit-skill --deep" not in flat
+
+    def test_update_skill_scanner_help_describes_via_skill_review(self):
+        flat = self._flat_help(["agent", "update-skill-scanner", "--help"])
+        assert "skill review --deep" in flat
+        assert "audit-skill --deep" not in flat

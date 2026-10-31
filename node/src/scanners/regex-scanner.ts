@@ -8,7 +8,45 @@ import { loadCustomPatterns } from "../core/custom-patterns.js";
 export interface ScanResult {
   file: string;
   matches: PatternMatch[];
+  /**
+   * Set when the file could not be read (sable-ilbx). A read failure must be
+   * distinguishable from a clean scan — otherwise "no findings" silently means
+   * "could not open". The scan command surfaces these separately.
+   */
+  readError?: string;
 }
+
+/** A human-readable reason for a file read failure. */
+function readErrorReason(e: any): string {
+  if (e && e.code === "EACCES") return "permission denied";
+  if (e && e.code) return String(e.code);
+  return e instanceof Error ? e.message : "could not read file";
+}
+
+// Keep in step with DEFAULT_EXCLUDE in python/rafter_cli/scanners/regex_scanner.py.
+export const DEFAULT_EXCLUDE: readonly string[] = [
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".next",
+  "coverage",
+  ".vscode",
+  ".idea",
+  // Vendored / virtual-env / generated dirs that cause false positives
+  "vendor",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".tox",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  "results",
+  ".terraform",
+  "bower_components",
+  ".trigger", // Trigger.dev build output (bundled JS + source maps)
+];
 
 export class RegexScanner {
   private engine: PatternEngine;
@@ -37,7 +75,9 @@ export class RegexScanner {
       const matches = this.engine.scanWithPosition(content);
       return { file: filePath, matches };
     } catch (e) {
-      return { file: filePath, matches: [] };
+      // A file we could not read is not a clean scan — surface it distinctly
+      // (sable-ilbx) so "no findings" cannot mean "could not open".
+      return { file: filePath, matches: [], readError: readErrorReason(e) };
     }
   }
 
@@ -49,7 +89,9 @@ export class RegexScanner {
 
     for (const filePath of filePaths) {
       const result = this.scanFile(filePath);
-      if (result.matches.length > 0) {
+      // Keep a result that has findings, and also one that failed to read, so
+      // a permission-denied file is not silently dropped (sable-ilbx).
+      if (result.matches.length > 0 || result.readError) {
         results.push(result);
       }
     }
@@ -74,27 +116,7 @@ export class RegexScanner {
      */
     respectGitignore?: boolean;
   }): ScanResult[] {
-    const exclude = options?.exclude || [
-      "node_modules",
-      ".git",
-      "dist",
-      "build",
-      ".next",
-      "coverage",
-      ".vscode",
-      ".idea",
-      // Vendored / virtual-env / generated dirs that cause false positives
-      "vendor",
-      ".venv",
-      "venv",
-      "__pycache__",
-      ".tox",
-      ".mypy_cache",
-      ".pytest_cache",
-      "results",
-      ".terraform",
-      "bower_components"
-    ];
+    const exclude = options?.exclude || [...DEFAULT_EXCLUDE];
 
     // Merge policy excludePaths into the exclude list
     if (options?.excludePaths) {
@@ -218,7 +240,7 @@ export class RegexScanner {
  *
  * Batched: all candidate paths are piped through one subprocess.
  */
-function filterGitIgnored(files: string[], scanRoot: string): string[] {
+export function filterGitIgnored(files: string[], scanRoot: string): string[] {
   if (files.length === 0) return files;
 
   // Locate the git work tree that owns scanRoot. Bail out (no filter) if

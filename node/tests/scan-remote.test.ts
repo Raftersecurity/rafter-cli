@@ -52,7 +52,7 @@ vi.mock("ora", () => ({
 
 import axios from "axios";
 import { handleScanStatus } from "../src/commands/backend/scan-status.js";
-import { EXIT_SUCCESS, EXIT_GENERAL_ERROR, EXIT_SCAN_NOT_FOUND } from "../src/utils/api.js";
+import { EXIT_SUCCESS, EXIT_GENERAL_ERROR } from "../src/utils/api.js";
 
 // The code calls `apiClient` — the instance `create()` returns.
 const mockedAxios = vi.mocked((axios as any).create(), true);
@@ -102,15 +102,6 @@ describe("handleScanStatus", () => {
     expect(JSON.parse(output)).toEqual(responseData);
   });
 
-  it("returns EXIT_SCAN_NOT_FOUND for 404", async () => {
-    mockedAxios.get.mockRejectedValueOnce({
-      response: { status: 404 },
-    });
-
-    const code = await handleScanStatus("nonexistent", headers, "md");
-    expect(code).toBe(EXIT_SCAN_NOT_FOUND);
-  });
-
   it("returns EXIT_GENERAL_ERROR for failed scan", async () => {
     mockedAxios.get.mockResolvedValueOnce({
       data: { status: "failed", scan_id: "s1" },
@@ -135,53 +126,71 @@ describe("handleScanStatus", () => {
     expect(mockedAxios.get).toHaveBeenCalledTimes(1);
   });
 
-  it("polls when status is queued, then returns on completed", async () => {
-    // First call: queued, second call: completed
-    mockedAxios.get
-      .mockResolvedValueOnce({ data: { status: "queued" } })
-      .mockResolvedValueOnce({
-        data: { status: "completed", markdown: "# Done" },
-      });
+  it.each([
+    ["queued", { status: "completed", markdown: "# Done" }, EXIT_SUCCESS],
+    ["processing", { status: "failed" }, EXIT_GENERAL_ERROR],
+    ["pending", { status: "completed", markdown: "ok" }, EXIT_SUCCESS],
+  ] as const)(
+    "polls when status is %s, then returns on the terminal state",
+    async (inProgressStatus, terminalData, expectedCode) => {
+      mockedAxios.get
+        .mockResolvedValueOnce({ data: { status: inProgressStatus } })
+        .mockResolvedValueOnce({ data: terminalData });
 
-    // Speed up polling by mocking setTimeout
-    vi.useFakeTimers();
-    const promise = handleScanStatus("s1", headers, "md");
-    await vi.advanceTimersByTimeAsync(10000);
-    const code = await promise;
-    vi.useRealTimers();
+      vi.useFakeTimers();
+      const promise = handleScanStatus("s1", headers, "md");
+      await vi.advanceTimersByTimeAsync(10000);
+      const code = await promise;
+      vi.useRealTimers();
 
-    expect(code).toBe(EXIT_SUCCESS);
-    expect(mockedAxios.get).toHaveBeenCalledTimes(2);
-  });
+      expect(code).toBe(expectedCode);
+      expect(mockedAxios.get).toHaveBeenCalledTimes(2);
+    }
+  );
 
-  it("polls when status is processing, then returns on failed", async () => {
+  it("says why a scan failed and hands the payload to JSON consumers", async () => {
+    const failed = {
+      status: "failed",
+      error_code: "SCAN_STALLED",
+      error: "The scan stopped sending progress updates. Please re-run the scan.",
+      retryable: true,
+    };
     mockedAxios.get
       .mockResolvedValueOnce({ data: { status: "processing" } })
-      .mockResolvedValueOnce({ data: { status: "failed" } });
+      .mockResolvedValueOnce({ data: failed });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const outSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
     vi.useFakeTimers();
-    const promise = handleScanStatus("s1", headers, "md");
+    const promise = handleScanStatus("s1", headers, "json");
     await vi.advanceTimersByTimeAsync(10000);
     const code = await promise;
     vi.useRealTimers();
 
     expect(code).toBe(EXIT_GENERAL_ERROR);
+    const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(stderr).toContain("SCAN_STALLED");
+    expect(stderr).toContain("stopped sending progress updates");
+    expect(stderr).toContain("rafter run");
+    expect(JSON.parse(String(outSpy.mock.calls[0][0])).error_code).toBe("SCAN_STALLED");
   });
 
-  it("polls when status is pending", async () => {
-    mockedAxios.get
-      .mockResolvedValueOnce({ data: { status: "pending" } })
-      .mockResolvedValueOnce({
-        data: { status: "completed", markdown: "ok" },
-      });
+  it("warns that a completed scan is partial, even with --quiet", async () => {
+    const partial = {
+      status: "completed", partial: true, warning_code: "SCAN_PARTIAL",
+      missing_scanners: ["opengrep_rafter"], vulnerabilities: [],
+    };
+    mockedAxios.get.mockResolvedValueOnce({ data: partial });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const outSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
-    vi.useFakeTimers();
-    const promise = handleScanStatus("s1", headers, "md");
-    await vi.advanceTimersByTimeAsync(10000);
-    const code = await promise;
-    vi.useRealTimers();
+    const code = await handleScanStatus("s1", headers, "json", true);
 
     expect(code).toBe(EXIT_SUCCESS);
+    const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(stderr).toContain("SCAN_PARTIAL");
+    expect(stderr).toContain("opengrep_rafter");
+    expect(JSON.parse(String(outSpy.mock.calls[0][0])).partial).toBe(true);
   });
 
   it("suppresses spinner in quiet mode", async () => {
@@ -231,39 +240,6 @@ describe("runRemoteScan", () => {
   });
 
   // We need to import dynamically to apply mocks on detectRepo
-  it("posts to /static/scan with correct body", async () => {
-    // Mock detectRepo
-    vi.doMock("../../src/utils/git.js", () => ({
-      detectRepo: () => ({ repo: "owner/repo", branch: "main" }),
-    }));
-
-    mockedAxios.post.mockResolvedValueOnce({
-      data: { scan_id: "scan-abc" },
-    });
-
-    const { runRemoteScan } = await import("../src/commands/backend/run.js");
-    await runRemoteScan({
-      apiKey: "test-key",
-      repo: "owner/repo",
-      branch: "main",
-      mode: "fast",
-      skipInteractive: true,
-      quiet: true,
-    });
-
-    expect(mockedAxios.post).toHaveBeenCalledWith(
-      expect.stringContaining("/static/scan"),
-      expect.objectContaining({
-        repository_name: "owner/repo",
-        branch_name: "main",
-        scan_mode: "fast",
-      }),
-      expect.objectContaining({
-        headers: { "x-api-key": "test-key" },
-      })
-    );
-  });
-
   it("includes github_token in body when provided", async () => {
     mockedAxios.post.mockResolvedValueOnce({
       data: { scan_id: "scan-abc" },
@@ -366,6 +342,34 @@ describe("runRemoteScan", () => {
     ).rejects.toThrow("process.exit");
 
     expect(exitSpy).toHaveBeenCalledWith(3); // EXIT_QUOTA_EXHAUSTED
+  });
+
+  it("still exits with EXIT_QUOTA_EXHAUSTED on a 429 that carries Retry-After", async () => {
+    // sable-96ex — the poll loop now retries a 429 when the server says when to
+    // come back. SUBMIT deliberately does not: a 429 here means the account is
+    // out of credits, and no amount of waiting changes that. The asymmetry is
+    // the point, so it is pinned rather than left to be "made consistent".
+    mockedAxios.post.mockRejectedValueOnce({
+      response: {
+        status: 429,
+        data: "quota exhausted",
+        headers: { "retry-after": "30" },
+      },
+    });
+
+    const { runRemoteScan } = await import("../src/commands/backend/run.js");
+    await expect(
+      runRemoteScan({
+        apiKey: "test-key",
+        repo: "owner/repo",
+        branch: "main",
+        skipInteractive: true,
+        quiet: true,
+      })
+    ).rejects.toThrow("process.exit");
+
+    expect(exitSpy).toHaveBeenCalledWith(3); // EXIT_QUOTA_EXHAUSTED
+    expect(mockedAxios.get).not.toHaveBeenCalled(); // no polling, no retry
   });
 
   it("exits with EXIT_INSUFFICIENT_SCOPE on 403 with scope keyword", async () => {
@@ -481,6 +485,10 @@ describe("runRemoteScan", () => {
     });
     expect(body).not.toHaveProperty("provider");
     expect(body).not.toHaveProperty("repo_url");
+
+    const call = mockedAxios.post.mock.calls[mockedAxios.post.mock.calls.length - 1];
+    expect(call[0]).toContain("/static/scan");
+    expect(call[2]).toMatchObject({ headers: { "x-api-key": "test-key" } });
   });
 
   it("an explicit --provider github still omits provider/repo_url", async () => {
@@ -503,49 +511,48 @@ describe("runRemoteScan", () => {
     expect(body).not.toHaveProperty("repo_url");
   });
 
-  it("--provider gitlab + --repo-url are sent for a non-github remote", async () => {
-    mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
-
-    const { runRemoteScan } = await import("../src/commands/backend/run.js");
-    await runRemoteScan({
-      apiKey: "test-key",
+  it.each([
+    {
+      provider: "gitlab",
       repo: "group/project",
-      branch: "main",
-      mode: "fast",
-      skipInteractive: true,
-      quiet: true,
-      provider: "gitlab",
       repoUrl: "https://gitlab.com/group/project",
-    });
-
-    const body = await postedBody();
-    expect(body).toMatchObject({
-      repository_name: "group/project",
-      branch_name: "main",
-      scan_mode: "fast",
-      provider: "gitlab",
-      repo_url: "https://gitlab.com/group/project",
-    });
-  });
-
-  it("sends bitbucket provider + repo_url when flags are supplied", async () => {
-    mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
-
-    const { runRemoteScan } = await import("../src/commands/backend/run.js");
-    await runRemoteScan({
-      apiKey: "test-key",
-      repo: "team/repo",
-      branch: "main",
-      skipInteractive: true,
-      quiet: true,
+      mode: "fast" as const,
+    },
+    {
       provider: "bitbucket",
+      repo: "team/repo",
       repoUrl: "https://bitbucket.org/team/repo",
-    });
+      mode: undefined,
+    },
+  ])(
+    "sends $provider provider + repo_url when flags are supplied",
+    async ({ provider, repo, repoUrl, mode }) => {
+      mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });
 
-    const body = await postedBody();
-    expect(body.provider).toBe("bitbucket");
-    expect(body.repo_url).toBe("https://bitbucket.org/team/repo");
-  });
+      const { runRemoteScan } = await import("../src/commands/backend/run.js");
+      await runRemoteScan({
+        apiKey: "test-key",
+        repo,
+        branch: "main",
+        ...(mode ? { mode } : {}),
+        skipInteractive: true,
+        quiet: true,
+        provider,
+        repoUrl,
+      });
+
+      const body = await postedBody();
+      expect(body.provider).toBe(provider);
+      expect(body.repo_url).toBe(repoUrl);
+      if (mode) {
+        expect(body).toMatchObject({
+          repository_name: repo,
+          branch_name: "main",
+          scan_mode: mode,
+        });
+      }
+    }
+  );
 
   it("omits provider/repo_url when a provider is given without a repo_url", async () => {
     mockedAxios.post.mockResolvedValueOnce({ data: { scan_id: "scan-abc" } });

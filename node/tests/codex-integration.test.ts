@@ -67,11 +67,15 @@ describe("Codex CLI Integration", () => {
   // ── 1. Skill installation ─────────────────────────────────────────
 
   describe("Skill installation (--with-codex)", () => {
-    it("should create all AGENT_SKILLS files in ~/.agents/skills/", () => {
+    it("should create all AGENT_SKILLS files in ~/.agents/skills/ as a proper hierarchy", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
 
       const result = runCli("agent init --with-codex", testHomeDir);
       expect(result.exitCode).toBe(0);
+
+      expect(
+        fs.statSync(path.join(testHomeDir, ".agents", "skills")).isDirectory()
+      ).toBe(true);
 
       // Must mirror AGENT_SKILLS in node/src/commands/agent/init.ts.
       const expected = [
@@ -80,18 +84,18 @@ describe("Codex CLI Integration", () => {
         "rafter-code-review",
       ];
       for (const name of expected) {
-        const skillPath = path.join(
-          testHomeDir,
-          ".agents",
-          "skills",
-          name,
-          "SKILL.md"
-        );
+        const skillDir = path.join(testHomeDir, ".agents", "skills", name);
+        expect(fs.statSync(skillDir).isDirectory(), `${name} should be a directory`).toBe(true);
+        const skillPath = path.join(skillDir, "SKILL.md");
         expect(fs.existsSync(skillPath), `${name} should be installed`).toBe(true);
       }
     });
 
-    it("backend skill should contain valid frontmatter", () => {
+    it.each([
+      "rafter",
+      "rafter-secure-design",
+      "rafter-code-review",
+    ])("%s skill should contain valid frontmatter", (name) => {
       fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
       runCli("agent init --with-codex", testHomeDir);
 
@@ -100,53 +104,19 @@ describe("Codex CLI Integration", () => {
           testHomeDir,
           ".agents",
           "skills",
-          "rafter",
+          name,
           "SKILL.md"
         ),
         "utf-8"
       );
       // Check frontmatter markers
       expect(skillContent).toMatch(/^---\n/);
-      expect(skillContent).toContain("name: rafter");
-      expect(skillContent).toContain("version:");
-      expect(skillContent).toContain("allowed-tools:");
-    });
-
-    it("secure-design skill should contain valid frontmatter", () => {
-      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
-      runCli("agent init --with-codex", testHomeDir);
-
-      const skillContent = fs.readFileSync(
-        path.join(
-          testHomeDir,
-          ".agents",
-          "skills",
-          "rafter-secure-design",
-          "SKILL.md"
-        ),
-        "utf-8"
-      );
-      expect(skillContent).toMatch(/^---\n/);
       expect(skillContent).toContain("name:");
       expect(skillContent).toContain("version:");
-    });
-
-    it("skill files should contain rafter CLI commands", () => {
-      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
-      runCli("agent init --with-codex", testHomeDir);
-
-      const backendContent = fs.readFileSync(
-        path.join(
-          testHomeDir,
-          ".agents",
-          "skills",
-          "rafter",
-          "SKILL.md"
-        ),
-        "utf-8"
-      );
-      // Should reference rafter CLI usage
-      expect(backendContent).toContain("rafter");
+      if (name === "rafter") {
+        expect(skillContent).toContain("name: rafter");
+        expect(skillContent).toContain("description:");
+      }
     });
   });
 
@@ -185,27 +155,22 @@ describe("Codex CLI Integration", () => {
 
     it("should overwrite stale skill content on re-install", () => {
       fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
-      const skillDir = path.join(
-        testHomeDir,
-        ".agents",
-        "skills",
-        "rafter"
+      const skillFile = path.join(testHomeDir, ".agents", "skills", "rafter", "SKILL.md");
+      fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+      // The SKILL.md published 0.11.2 installed: rafter's own, so it is replaced.
+      // (Content rafter never shipped counts as the user's and is kept.)
+      const stale = fs.readFileSync(
+        path.join(PROJECT_ROOT, "..", "fixtures", "install-0.11.2", "home", ".agents", "skills", "rafter", "SKILL.md"),
+        "utf-8",
       );
-      fs.mkdirSync(skillDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(skillDir, "SKILL.md"),
-        "---\nname: rafter\nversion: 0.0.1\n---\nOld content\n"
-      );
+      fs.writeFileSync(skillFile, stale);
 
       runCli("agent init --with-codex", testHomeDir);
 
-      const content = fs.readFileSync(
-        path.join(skillDir, "SKILL.md"),
-        "utf-8"
-      );
-      // Should be overwritten with the current template, not the old content
-      expect(content).not.toContain("Old content");
-      expect(content).not.toContain("version: 0.0.1");
+      const content = fs.readFileSync(skillFile, "utf-8");
+      const current = fs.readFileSync(path.join(PROJECT_ROOT, "resources", "skills", "rafter", "SKILL.md"), "utf-8");
+      expect(stale).not.toBe(current);
+      expect(content).toBe(current);
     });
   });
 
@@ -248,40 +213,6 @@ describe("Codex CLI Integration", () => {
   // ── 4. Directory structure ────────────────────────────────────────
 
   describe("Codex directory structure", () => {
-    it("should create ~/.agents/skills/ hierarchy", () => {
-      fs.mkdirSync(path.join(testHomeDir, ".codex"), { recursive: true });
-      runCli("agent init --with-codex", testHomeDir);
-
-      expect(
-        fs.statSync(path.join(testHomeDir, ".agents", "skills")).isDirectory()
-      ).toBe(true);
-      expect(
-        fs.statSync(
-          path.join(testHomeDir, ".agents", "skills", "rafter")
-        ).isDirectory()
-      ).toBe(true);
-      expect(
-        fs.statSync(
-          path.join(
-            testHomeDir,
-            ".agents",
-            "skills",
-            "rafter-secure-design"
-          )
-        ).isDirectory()
-      ).toBe(true);
-      expect(
-        fs.statSync(
-          path.join(
-            testHomeDir,
-            ".agents",
-            "skills",
-            "rafter-code-review"
-          )
-        ).isDirectory()
-      ).toBe(true);
-    });
-
     it("should not affect ~/.codex directory itself", () => {
       const codexDir = path.join(testHomeDir, ".codex");
       fs.mkdirSync(codexDir, { recursive: true });

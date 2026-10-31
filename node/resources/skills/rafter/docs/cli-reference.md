@@ -3,7 +3,7 @@
 Full command tree for the `rafter` CLI. Commands group by concern: **scanning**, **agent** (local security primitives), **hook** (platform bridges), **policy**, **ci**, **mcp**, **docs/brief**, **notify**, **report**.
 
 Global flags:
-- `-a, --agent` — plain output (no colors/emoji) for AI consumers.
+- `-a, --agent` — plain output (no colors/emoji) for AI consumers. Works before or after the subcommand name.
 - `--version`, `version` — print version.
 
 Exit codes (consistent across commands):
@@ -30,15 +30,16 @@ Key options: `--repo org/repo`, `--branch <name>`, `--mode fast|plus`, `--format
 
 Example: `rafter run --repo myorg/api --branch feature/auth --mode plus --format json`
 
-### `rafter secrets [path]`
+### `rafter secrets [path...]`
 
-Local secret scan. Deterministic, offline, no API key. Dual-engine: Betterleaks binary if present, built-in regex fallback (21+ patterns).
+Local secret scan. Deterministic, offline, no API key. Dual-engine: Betterleaks binary if present, built-in regex fallback (21+ patterns). Accepts one or more paths; findings merge into a single report.
 
 When: pre-commit, pre-push, fast first pass before remote scan, air-gapped envs.
 
-Useful flags: `--history` (scan git history with Betterleaks), `--format json`, `--quiet`.
+Useful flags: `--history` (scan git history with Betterleaks), `--format json`, `--out <file>` (write JSON/SARIF to a file instead of stdout — for a sandbox with no shell redirects), `--quiet`.
 
 Example: `rafter secrets . --format json`
+Example (several paths, writing to a file): `rafter secrets src/ infra/ --json --out findings.json`
 
 (Back-compat aliases: `rafter scan local` and `rafter agent scan`. Prefer `rafter secrets`.)
 
@@ -64,19 +65,19 @@ When: before firing multiple remote scans, or when the user asks about limits.
 
 Classify and optionally run a shell command through Rafter's risk tiers (critical / high / medium / low).
 
-When: any time a destructive-looking command is about to be executed by an agent. Use `--dry-run` to classify without running.
+When: any time a destructive-looking command is about to be executed by an agent. Use `--dry-run` to classify without running: exit 0 = allowed, 1 = blocked, 2 = needs a person's approval. Without `--dry-run`, a command that needs approval is only ever approved by a person at an interactive terminal; from an agent's shell it is denied.
 
 Example: `rafter agent exec --dry-run -- rm -rf $WORK_DIR`
 
-### `rafter agent audit [path]`
+### `rafter agent audit [opts]`
 
-Audit a directory for suspicious or risky code patterns — focused on plugins, skills, extensions, and tooling a user might install.
+View audit log entries — the local JSONL trail of hook decisions and security-relevant events (not a code or directory scan). Filter with `--last <n>`, `--event <type>`, `--agent <type>`, `--since <date>`, `--repo <pattern>`, `--cwd <pattern>`. Use `--verify` to check the hash chain for tampering, `--share` to generate a redacted excerpt for issue reports.
 
-When: vetting a third-party skill, MCP server, or CLI plugin before install.
+When: postmortems ("why did this command run?"), confirming the audit trail is intact.
 
-### `rafter agent audit-skill <path>`
+### `rafter agent audit-skill <path>` (deprecated)
 
-Audit a single skill file (SKILL.md). Flags prompt-injection, unbounded tool use, exfiltration patterns.
+Deprecated alias for `rafter skill review <path>` — emits a stderr warning and forwards to it. Use `rafter skill review` directly; see Skill Management below.
 
 ### `rafter agent status` · `rafter agent verify`
 
@@ -107,9 +108,35 @@ Snapshot current findings so only *new* ones fail future scans.
 
 Emit a ready-to-paste instruction block for an agent's system prompt.
 
+### `rafter agent update`
+
+Bring every installed rafter skill, rule, instruction block, hook and MCP entry up to this CLI's version. The pretool hook already refreshes unmodified skill and rule files once a day after an upgrade.
+A file you or the user edited is kept, and the new version is written beside it as `<file>.rafter-new`; `rafter agent status` lists each one.
+To reconcile: merge the local changes into `<file>.rafter-new`, move it over `<file>`, then run `rafter agent update` (or delete `<file>.rafter-new` to keep the local version as is).
+
 ### `rafter agent update-betterleaks`
 
 Download / upgrade the Betterleaks binary Rafter uses for local scans.
+
+---
+
+## Skill Management
+
+### `rafter skill review [path-or-url]`
+
+Security review of a skill / plugin / extension before installing it — the real pre-install vetting command. Accepts a local path, git URL, or shorthand (`github:`, `gitlab:`, `npm:`); `--installed` reviews every skill already installed on this machine instead of a path.
+
+When: vetting a third-party skill, MCP server, or CLI plugin before install, or auditing what's already installed.
+
+Example: `rafter skill review github:someorg/some-skill` · `rafter skill review --installed --summary`
+
+### `rafter skill list`
+
+List rafter-authored skills and their install state per platform.
+
+### `rafter skill install <name>` · `rafter skill uninstall <name>`
+
+Install or remove a rafter-authored skill (e.g. `rafter`, `rafter-secure-design`) to/from detected platforms or an explicit path.
 
 ---
 
@@ -190,7 +217,7 @@ Emit shell completion script.
 | Fast secret check locally | `rafter secrets .` |
 | Full repo security review | `rafter run` (then `rafter get <id>`) |
 | "Is this command safe?" | `rafter agent exec --dry-run -- <cmd>` |
-| "Is this skill safe to install?" | `rafter agent audit <path>` |
+| "Is this skill safe to install?" | `rafter skill review <path-or-url>` |
 | Add pre-commit protection | `rafter agent install-hook` |
 | Wire up CI | `rafter ci init` |
 | Connect an agent | `rafter agent init --with-<platform>` |

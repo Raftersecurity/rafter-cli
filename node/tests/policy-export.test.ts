@@ -24,7 +24,7 @@ describe("Policy export — Claude format", () => {
             hooks: [{ type: "command", command: "rafter hook pretool" }],
           },
           {
-            matcher: "Write|Edit",
+            matcher: "Write|Edit|MultiEdit",
             hooks: [{ type: "command", command: "rafter hook pretool" }],
           },
         ],
@@ -36,7 +36,7 @@ describe("Policy export — Claude format", () => {
     expect(config.hooks.PreToolUse).toHaveLength(2);
     const matchers = config.hooks.PreToolUse.map((e) => e.matcher);
     expect(matchers).toContain("Bash");
-    expect(matchers).toContain("Write|Edit");
+    expect(matchers).toContain("Write|Edit|MultiEdit");
 
     // Verify hook entries
     for (const entry of config.hooks.PreToolUse) {
@@ -57,7 +57,7 @@ describe("Policy export — Claude format", () => {
               hooks: [{ type: "command", command: "rafter hook pretool" }],
             },
             {
-              matcher: "Write|Edit",
+              matcher: "Write|Edit|MultiEdit",
               hooks: [{ type: "command", command: "rafter hook pretool" }],
             },
           ],
@@ -162,43 +162,5 @@ describe("Policy export — Codex format", () => {
     expect(cfg.agent?.commandPolicy.requireApproval).toEqual(
       DEFAULT_REQUIRE_APPROVAL
     );
-  });
-});
-
-describe("Policy export — file output", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-output-"));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("writes to file when --output is specified", () => {
-    const outputPath = path.join(tmpDir, "output.json");
-    const content = '{"test": true}\n';
-
-    // Simulate what the export command does with --output
-    const dir = path.dirname(outputPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(outputPath, content, "utf-8");
-
-    expect(fs.existsSync(outputPath)).toBe(true);
-    expect(fs.readFileSync(outputPath, "utf-8")).toBe(content);
-  });
-
-  it("creates nested directories for --output path", () => {
-    const outputPath = path.join(tmpDir, "nested", "dir", "policy.json");
-    const content = '{"test": true}\n';
-
-    const dir = path.dirname(outputPath);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(outputPath, content, "utf-8");
-
-    expect(fs.existsSync(outputPath)).toBe(true);
   });
 });

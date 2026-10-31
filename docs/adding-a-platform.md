@@ -128,7 +128,7 @@ Most agent platforms now ship some flavor of "context that the agent fetches whe
 
 | Platform | Primitive | Frontmatter |
 |---|---|---|
-| Claude Code | `.claude/skills/<name>/SKILL.md` | `name`, `description`, `allowed-tools` |
+| Claude Code | `.claude/skills/<name>/SKILL.md` | `name`, `description` (no `allowed-tools`: it makes invoking the skill need an approval, which non-interactive sessions cannot give, so the skill would load nothing) |
 | Codex CLI | `~/.agents/skills/<name>/SKILL.md` | same as Claude (the skill format is shared via the `.agents/` convention) |
 | Gemini CLI | `~/.agents/skills/` + `gemini skills link` runtime registration | (rf-yit lesson: file-presence ≠ runtime registration) |
 | Cursor | `.cursor/rules/<name>.mdc` | `description`, `alwaysApply`, `globs` |

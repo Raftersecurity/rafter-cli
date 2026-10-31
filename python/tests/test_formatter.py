@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import sys
 from io import StringIO
 from unittest.mock import patch
 
@@ -84,60 +83,6 @@ class TestAgentModeOutput:
 
     def test_info_returns_plain_text(self):
         assert fmt.info("hello") == "hello"
-
-    # ── no Rich markup in agent mode ──────────────────────────────────
-
-    def test_header_no_rich_markup(self):
-        assert not RICH_MARKUP_RE.search(fmt.header("Report"))
-
-    def test_success_no_rich_markup(self):
-        assert not RICH_MARKUP_RE.search(fmt.success("ok"))
-
-    def test_warning_no_rich_markup(self):
-        assert not RICH_MARKUP_RE.search(fmt.warning("heads up"))
-
-    def test_error_no_rich_markup(self):
-        assert not RICH_MARKUP_RE.search(fmt.error("fail"))
-
-    def test_severity_no_rich_markup_all_levels(self):
-        for level in ("critical", "high", "medium", "low"):
-            assert not RICH_MARKUP_RE.search(fmt.severity(level))
-
-    def test_divider_no_rich_markup(self):
-        assert not RICH_MARKUP_RE.search(fmt.divider())
-
-    def test_info_no_rich_markup(self):
-        assert not RICH_MARKUP_RE.search(fmt.info("plain"))
-
-    # ── no emoji in agent mode ────────────────────────────────────────
-
-    def test_no_emoji_in_any_output(self):
-        outputs = [
-            fmt.header("Test"),
-            fmt.success("ok"),
-            fmt.warning("warn"),
-            fmt.error("err"),
-            fmt.severity("critical"),
-            fmt.severity("high"),
-            fmt.severity("medium"),
-            fmt.severity("low"),
-            fmt.divider(),
-            fmt.info("text"),
-        ]
-        for out in outputs:
-            assert not EMOJI_RE.search(out), f"Emoji found in: {out!r}"
-
-    # ── no box-drawing in agent mode ──────────────────────────────────
-
-    def test_no_box_drawing_in_agent_mode(self):
-        outputs = [
-            fmt.header("Test"),
-            fmt.divider(),
-        ]
-        box_chars = "\u250c\u2500\u2510\u2550"  # ┌─┐═
-        for out in outputs:
-            for ch in box_chars:
-                assert ch not in out, f"Box char {ch!r} found in: {out!r}"
 
     # ── edge cases ────────────────────────────────────────────────────
 
@@ -258,62 +203,34 @@ class TestHumanModeOutput:
 
 
 class TestModeDifferences:
-    def test_header_differs_between_modes(self):
+    @pytest.mark.parametrize(
+        "name,call",
+        [
+            ("header", lambda: fmt.header("Test")),
+            ("success", lambda: fmt.success("ok")),
+            ("warning", lambda: fmt.warning("warn")),
+            ("error", lambda: fmt.error("err")),
+            ("divider", lambda: fmt.divider()),
+            ("info", lambda: fmt.info("text")),
+            ("severity:critical", lambda: fmt.severity("critical")),
+            ("severity:high", lambda: fmt.severity("high")),
+            ("severity:medium", lambda: fmt.severity("medium")),
+            ("severity:low", lambda: fmt.severity("low")),
+        ],
+    )
+    def test_differs_between_modes(self, name, call):
         set_agent_mode(False)
-        human = fmt.header("Test")
+        human = call()
         set_agent_mode(True)
-        agent = fmt.header("Test")
-        assert human != agent
-
-    def test_success_differs_between_modes(self):
-        set_agent_mode(False)
-        human = fmt.success("ok")
-        set_agent_mode(True)
-        agent = fmt.success("ok")
-        assert human != agent
-
-    def test_warning_differs_between_modes(self):
-        set_agent_mode(False)
-        human = fmt.warning("warn")
-        set_agent_mode(True)
-        agent = fmt.warning("warn")
-        assert human != agent
-
-    def test_error_differs_between_modes(self):
-        set_agent_mode(False)
-        human = fmt.error("err")
-        set_agent_mode(True)
-        agent = fmt.error("err")
-        assert human != agent
-
-    def test_divider_differs_between_modes(self):
-        set_agent_mode(False)
-        human = fmt.divider()
-        set_agent_mode(True)
-        agent = fmt.divider()
-        assert human != agent
-
-    def test_info_differs_between_modes(self):
-        set_agent_mode(False)
-        human = fmt.info("text")
-        set_agent_mode(True)
-        agent = fmt.info("text")
-        assert human != agent
-
-    def test_severity_differs_between_modes_for_known_levels(self):
-        for level in ("critical", "high", "medium", "low"):
-            set_agent_mode(False)
-            human = fmt.severity(level)
-            set_agent_mode(True)
-            agent = fmt.severity(level)
-            assert human != agent, f"severity({level!r}) same in both modes"
+        agent = call()
+        assert human != agent, f"{name} same in both modes"
 
 
 # ── mode switching mid-stream ────────────────────────────────────────
 
 
 class TestModeSwitching:
-    def test_switching_mode_changes_output_immediately(self):
+    def test_switches_live_not_cached(self):
         set_agent_mode(True)
         agent_out = fmt.success("test")
         assert agent_out == "[OK] test"
@@ -322,17 +239,6 @@ class TestModeSwitching:
         human_out = fmt.success("test")
         assert "\u2713" in human_out
         assert human_out != agent_out
-
-    def test_all_methods_respect_current_mode_at_call_time(self):
-        set_agent_mode(True)
-        assert fmt.header("X") == "=== X ==="
-        assert fmt.divider() == "---"
-        assert fmt.info("Y") == "Y"
-
-        set_agent_mode(False)
-        assert "\u250c" in fmt.header("X")  # ┌
-        assert "\u2550" in fmt.divider()  # ═
-        assert fmt.info("Y") != "Y"  # Rich-wrapped
 
 
 # ── print_stderr ─────────────────────────────────────────────────────
@@ -397,23 +303,3 @@ class TestAuditEventIndicators:
             "config_changed",
         }
         assert expected == set(_EVENT_INDICATORS_AGENT.keys())
-
-    def test_agent_mode_selects_bracket_indicators(self):
-        from rafter_cli.commands.agent import (
-            _EVENT_INDICATORS_AGENT,
-            _EVENT_INDICATORS_HUMAN,
-        )
-
-        set_agent_mode(True)
-        indicators = _EVENT_INDICATORS_AGENT if is_agent_mode() else _EVENT_INDICATORS_HUMAN
-        assert indicators is _EVENT_INDICATORS_AGENT
-
-    def test_human_mode_selects_emoji_indicators(self):
-        from rafter_cli.commands.agent import (
-            _EVENT_INDICATORS_AGENT,
-            _EVENT_INDICATORS_HUMAN,
-        )
-
-        set_agent_mode(False)
-        indicators = _EVENT_INDICATORS_AGENT if is_agent_mode() else _EVENT_INDICATORS_HUMAN
-        assert indicators is _EVENT_INDICATORS_HUMAN

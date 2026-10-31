@@ -53,8 +53,10 @@ describe("policy-loader validatePolicy (via loadPolicy)", () => {
     );
   });
 
-  it("should strip invalid risk_level", async () => {
-    setupMocks({ version: "1", risk_level: "extreme" });
+  // Inputs folded in from policy-loader.test.ts ("invalid", "invalid-mode",
+  // "not a number") so each invalid shape is still exercised once.
+  it.each(["extreme", "invalid"])("should strip invalid risk_level (%s)", async (riskLevel) => {
+    setupMocks({ version: "1", risk_level: riskLevel });
 
     const policy = await callLoadPolicy();
 
@@ -65,10 +67,10 @@ describe("policy-loader validatePolicy (via loadPolicy)", () => {
     );
   });
 
-  it("should strip invalid command_policy.mode", async () => {
+  it.each(["yolo", "invalid-mode"])("should strip invalid command_policy.mode (%s)", async (mode) => {
     setupMocks({
       version: "1",
-      command_policy: { mode: "yolo" },
+      command_policy: { mode },
     });
 
     const policy = await callLoadPolicy();
@@ -151,10 +153,10 @@ describe("policy-loader validatePolicy (via loadPolicy)", () => {
     );
   });
 
-  it("should strip non-numeric retention_days", async () => {
+  it.each(["thirty", "not a number"])("should strip non-numeric retention_days (%s)", async (days) => {
     setupMocks({
       version: "1",
-      audit: { retention_days: "thirty" },
+      audit: { retention_days: days },
     });
 
     const policy = await callLoadPolicy();

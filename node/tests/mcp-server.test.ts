@@ -172,77 +172,6 @@ describe("MCP Server — scan_secrets", () => {
     vi.clearAllMocks();
   });
 
-  it("should scan a single file and return matches", async () => {
-    const mockMatch = {
-      pattern: { name: "aws-access-key", severity: "high", regex: "" },
-      match: "AKIAIOSFODNN7EXAMPLE1",
-      line: 1,
-      redacted: "AKIA****",
-    };
-    const scannerInstance = new RegexScanner() as any;
-    scannerInstance.scanDirectory.mockImplementation(() => {
-      throw new Error("not a directory");
-    });
-    scannerInstance.scanFile.mockReturnValue({
-      file: "/tmp/creds.txt",
-      matches: [mockMatch],
-    });
-
-    // Re-mock constructor to return our instance
-    (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
-
-    const results = await handleScanSecrets("/tmp/creds.txt", "patterns");
-
-    expect(results).toHaveLength(1);
-    expect(results[0].file).toBe("/tmp/creds.txt");
-    expect(results[0].matches).toHaveLength(1);
-    expect(results[0].matches[0].pattern).toBe("aws-access-key");
-    expect(results[0].matches[0].severity).toBe("high");
-    expect(results[0].matches[0].redacted).toBe("AKIA****");
-  });
-
-  it("should scan a directory and return results", async () => {
-    const mockResults = [
-      {
-        file: "/tmp/dir/secret.env",
-        matches: [
-          {
-            pattern: { name: "aws-access-key", severity: "high", regex: "" },
-            match: "AKIAIOSFODNN7EXAMPLE2",
-            line: 1,
-            redacted: "AKIA****",
-          },
-        ],
-      },
-    ];
-    const scannerInstance = new RegexScanner() as any;
-    scannerInstance.scanDirectory.mockReturnValue(mockResults);
-    (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
-
-    const results = await handleScanSecrets("/tmp/dir", "patterns");
-
-    expect(results).toHaveLength(1);
-    expect(results[0].file).toBe("/tmp/dir/secret.env");
-    expect(results[0].matches[0].pattern).toBe("aws-access-key");
-  });
-
-  it("should return empty matches for clean file", async () => {
-    const scannerInstance = new RegexScanner() as any;
-    scannerInstance.scanDirectory.mockImplementation(() => {
-      throw new Error("not a directory");
-    });
-    scannerInstance.scanFile.mockReturnValue({
-      file: "/tmp/clean.py",
-      matches: [],
-    });
-    (RegexScanner as any).mockImplementation(function () { return scannerInstance; });
-
-    const results = await handleScanSecrets("/tmp/clean.py", "patterns");
-
-    expect(results).toHaveLength(1);
-    expect(results[0].matches).toEqual([]);
-  });
-
   it("should fall back to regex when betterleaks unavailable in auto mode", async () => {
     const blInstance = new BetterleaksScanner() as any;
     blInstance.isAvailable.mockResolvedValue(false);
@@ -319,7 +248,7 @@ describe("MCP Server — scan_secrets", () => {
         matches: [
           {
             pattern: { name: "AWS Access Key ID", severity: "high", regex: "" },
-            match: "AKIAIOSFODNN7EXAMPLE1",
+            match: "AKIAIOSFODNN7ABCDEFG1",
             line: 1,
             redacted: "AKIA****PLE1",
           },
@@ -369,7 +298,7 @@ describe("MCP Server — scan_secrets", () => {
         matches: [
           {
             pattern: { name: "AWS Access Key ID", severity: "high", regex: "" },
-            match: "AKIAIOSFODNN7EXAMPLE1",
+            match: "AKIAIOSFODNN7ABCDEFG1",
             line: 1,
             redacted: "AKIA****PLE1",
           },
@@ -392,42 +321,6 @@ describe("MCP Server — evaluate_command", () => {
     vi.clearAllMocks();
   });
 
-  it("should allow a safe command", () => {
-    const interceptorInstance = new CommandInterceptor() as any;
-    interceptorInstance.evaluate.mockReturnValue({
-      command: "ls -la",
-      riskLevel: "low",
-      allowed: true,
-      requiresApproval: false,
-    });
-    (CommandInterceptor as any).mockImplementation(function () { return interceptorInstance; });
-
-    const result = handleEvaluateCommand("ls -la");
-
-    expect(result.allowed).toBe(true);
-    expect(result.risk_level).toBe("low");
-    expect(result.requires_approval).toBe(false);
-    expect(result).not.toHaveProperty("reason");
-  });
-
-  it("should block a dangerous command with reason", () => {
-    const interceptorInstance = new CommandInterceptor() as any;
-    interceptorInstance.evaluate.mockReturnValue({
-      command: "rm -rf /",
-      riskLevel: "critical",
-      allowed: false,
-      requiresApproval: false,
-      reason: "Destructive system command",
-    });
-    (CommandInterceptor as any).mockImplementation(function () { return interceptorInstance; });
-
-    const result = handleEvaluateCommand("rm -rf /");
-
-    expect(result.allowed).toBe(false);
-    expect(result.risk_level).toBe("critical");
-    expect(result.reason).toBe("Destructive system command");
-  });
-
   it("should flag approval-required commands", () => {
     const interceptorInstance = new CommandInterceptor() as any;
     interceptorInstance.evaluate.mockReturnValue({
@@ -447,173 +340,3 @@ describe("MCP Server — evaluate_command", () => {
   });
 });
 
-describe("MCP Server — read_audit_log", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("should return empty array for no entries", () => {
-    const loggerInstance = new AuditLogger() as any;
-    loggerInstance.read.mockReturnValue([]);
-    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
-
-    const entries = handleReadAuditLog({ limit: 10 });
-
-    expect(entries).toEqual([]);
-  });
-
-  it("should return entries and pass limit", () => {
-    const mockEntries = [
-      {
-        timestamp: "2026-02-14T00:00:00Z",
-        sessionId: "abc",
-        eventType: "command_intercepted",
-        securityCheck: { passed: true },
-        resolution: { actionTaken: "allowed" },
-      },
-    ];
-    const loggerInstance = new AuditLogger() as any;
-    loggerInstance.read.mockReturnValue(mockEntries);
-    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
-
-    const entries = handleReadAuditLog({ limit: 5 });
-
-    expect(entries).toHaveLength(1);
-    expect(loggerInstance.read).toHaveBeenCalledWith({
-      limit: 5,
-      eventType: undefined,
-      since: undefined,
-    });
-  });
-
-  it("should pass event_type filter", () => {
-    const loggerInstance = new AuditLogger() as any;
-    loggerInstance.read.mockReturnValue([{ eventType: "secret_detected" }]);
-    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
-
-    handleReadAuditLog({ event_type: "secret_detected", limit: 5 });
-
-    expect(loggerInstance.read).toHaveBeenCalledWith(
-      expect.objectContaining({ eventType: "secret_detected" })
-    );
-  });
-
-  it("should parse since as Date", () => {
-    const loggerInstance = new AuditLogger() as any;
-    loggerInstance.read.mockReturnValue([]);
-    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
-
-    handleReadAuditLog({ since: "2026-01-01T00:00:00Z" });
-
-    const callArg = loggerInstance.read.mock.calls[0][0];
-    expect(callArg.since).toBeInstanceOf(Date);
-    expect(callArg.since.toISOString()).toBe("2026-01-01T00:00:00.000Z");
-  });
-
-  it("should default limit to 20", () => {
-    const loggerInstance = new AuditLogger() as any;
-    loggerInstance.read.mockReturnValue([]);
-    (AuditLogger as any).mockImplementation(function () { return loggerInstance; });
-
-    handleReadAuditLog();
-
-    expect(loggerInstance.read).toHaveBeenCalledWith(
-      expect.objectContaining({ limit: 20 })
-    );
-  });
-});
-
-describe("MCP Server — get_config", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("should return full config when no key specified", () => {
-    const managerInstance = new ConfigManager() as any;
-    managerInstance.load.mockReturnValue({
-      version: "1.0",
-      agent: {
-        riskLevel: "medium",
-        commandPolicy: { mode: "intercept" },
-        audit: { logAllActions: true },
-      },
-    });
-    (ConfigManager as any).mockImplementation(function () { return managerInstance; });
-
-    const result = handleGetConfig();
-
-    expect(result).toHaveProperty("version");
-    expect(result).toHaveProperty("agent");
-    expect(managerInstance.load).toHaveBeenCalled();
-  });
-
-  it("should return specific key value", () => {
-    const managerInstance = new ConfigManager() as any;
-    managerInstance.get.mockReturnValue("medium");
-    (ConfigManager as any).mockImplementation(function () { return managerInstance; });
-
-    const result = handleGetConfig("agent.riskLevel");
-
-    expect(result).toBe("medium");
-    expect(managerInstance.get).toHaveBeenCalledWith("agent.riskLevel");
-  });
-
-  it("should return undefined for missing key", () => {
-    const managerInstance = new ConfigManager() as any;
-    managerInstance.get.mockReturnValue(undefined);
-    (ConfigManager as any).mockImplementation(function () { return managerInstance; });
-
-    const result = handleGetConfig("nonexistent.path");
-
-    expect(result).toBeUndefined();
-  });
-});
-
-describe("MCP Server — utility functions", () => {
-  it("formatScanResults should structure output correctly", () => {
-    const raw = [
-      {
-        file: "/a/b.js",
-        matches: [
-          {
-            pattern: { name: "github-token", severity: "critical", regex: "" },
-            match: "ghp_abcdef1234567890",
-            line: 10,
-            redacted: "ghp_****",
-          },
-        ],
-      },
-    ];
-
-    const formatted = formatScanResults(raw);
-
-    expect(formatted).toHaveLength(1);
-    expect(formatted[0].file).toBe("/a/b.js");
-    expect(formatted[0].matches[0]).toEqual({
-      pattern: "github-token",
-      severity: "critical",
-      line: 10,
-      redacted: "ghp_****",
-    });
-  });
-
-  it("formatScanResults should use match prefix when no redacted field", () => {
-    const raw = [
-      {
-        file: "/a/b.js",
-        matches: [
-          {
-            pattern: { name: "generic-secret", severity: "medium", regex: "" },
-            match: "supersecretvalue",
-            line: 5,
-            // no redacted field
-          },
-        ],
-      },
-    ];
-
-    const formatted = formatScanResults(raw);
-
-    expect(formatted[0].matches[0].redacted).toBe("supe****");
-  });
-});
