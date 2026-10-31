@@ -523,8 +523,12 @@ def pretool(
     _write_pretool_decision(decision, format)
     # Once a day after an upgrade: bring installed skill and rule files up to this version.
     sys.stdout.flush()
-    from .auto_update import run_hook_auto_update
-    run_hook_auto_update()
+    try:
+        from .auto_update import run_hook_auto_update
+
+        run_hook_auto_update()
+    except Exception:
+        pass  # the decision is written; exiting non-zero now would make the agent ignore it
 
 
 def decide_pretool(raw: str, fmt: str) -> dict:

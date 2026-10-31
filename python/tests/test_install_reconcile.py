@@ -228,3 +228,15 @@ def test_cli_hook_status_and_update_agree_on_reconcile_state(home):
     again = CliRunner().invoke(app, ["agent", "update"]).output
     assert str(skill) not in again
     assert json.loads(CliRunner().invoke(app, ["agent", "status", "--json"]).stdout)["needs_reconcile"] == []
+
+
+def test_hook_decision_stands_when_the_auto_update_module_cannot_load(home, monkeypatch):
+    """Fails if the hook imports the auto-updater outside its guard: an import
+    error would exit 1 after the decision is written, and Claude Code ignores
+    the stdout of a hook that exits non-zero, so a deny would be lost."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "rafter_cli.commands.auto_update", None)  # import now raises
+    r = CliRunner().invoke(app, ["hook", "pretool"], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}))
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
