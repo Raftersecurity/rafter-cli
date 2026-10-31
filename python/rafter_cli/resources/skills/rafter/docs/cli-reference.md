@@ -69,15 +69,15 @@ When: any time a destructive-looking command is about to be executed by an agent
 
 Example: `rafter agent exec --dry-run -- rm -rf $WORK_DIR`
 
-### `rafter agent audit [path]`
+### `rafter agent audit [opts]`
 
-Audit a directory for suspicious or risky code patterns — focused on plugins, skills, extensions, and tooling a user might install.
+View audit log entries — the local JSONL trail of hook decisions and security-relevant events (not a code or directory scan). Filter with `--last <n>`, `--event <type>`, `--agent <type>`, `--since <date>`, `--repo <pattern>`, `--cwd <pattern>`. Use `--verify` to check the hash chain for tampering, `--share` to generate a redacted excerpt for issue reports.
 
-When: vetting a third-party skill, MCP server, or CLI plugin before install.
+When: postmortems ("why did this command run?"), confirming the audit trail is intact.
 
-### `rafter agent audit-skill <path>`
+### `rafter agent audit-skill <path>` (deprecated)
 
-Audit a single skill file (SKILL.md). Flags prompt-injection, unbounded tool use, exfiltration patterns.
+Deprecated alias for `rafter skill review <path>` — emits a stderr warning and forwards to it. Use `rafter skill review` directly; see Skill Management below.
 
 ### `rafter agent status` · `rafter agent verify`
 
@@ -111,6 +111,26 @@ Emit a ready-to-paste instruction block for an agent's system prompt.
 ### `rafter agent update-betterleaks`
 
 Download / upgrade the Betterleaks binary Rafter uses for local scans.
+
+---
+
+## Skill Management
+
+### `rafter skill review [path-or-url]`
+
+Security review of a skill / plugin / extension before installing it — the real pre-install vetting command. Accepts a local path, git URL, or shorthand (`github:`, `gitlab:`, `npm:`); `--installed` reviews every skill already installed on this machine instead of a path.
+
+When: vetting a third-party skill, MCP server, or CLI plugin before install, or auditing what's already installed.
+
+Example: `rafter skill review github:someorg/some-skill` · `rafter skill review --installed --summary`
+
+### `rafter skill list`
+
+List rafter-authored skills and their install state per platform.
+
+### `rafter skill install <name>` · `rafter skill uninstall <name>`
+
+Install or remove a rafter-authored skill (e.g. `rafter`, `rafter-secure-design`) to/from detected platforms or an explicit path.
 
 ---
 
@@ -191,7 +211,7 @@ Emit shell completion script.
 | Fast secret check locally | `rafter secrets .` |
 | Full repo security review | `rafter run` (then `rafter get <id>`) |
 | "Is this command safe?" | `rafter agent exec --dry-run -- <cmd>` |
-| "Is this skill safe to install?" | `rafter agent audit <path>` |
+| "Is this skill safe to install?" | `rafter skill review <path-or-url>` |
 | Add pre-commit protection | `rafter agent install-hook` |
 | Wire up CI | `rafter ci init` |
 | Connect an agent | `rafter agent init --with-<platform>` |

@@ -24,6 +24,7 @@ import path from "path";
 import { fmt } from "../../utils/formatter.js";
 import { createRequire } from "module";
 import { minimatch } from "minimatch";
+import { countScan } from "../../core/usage-counters.js";
 
 const _require = createRequire(import.meta.url);
 const { version: CLI_VERSION } = _require("../../../package.json");
@@ -255,6 +256,7 @@ export function createScanCommand(): Command {
       // Determine scan engine (once for every path, so the engine report in
       // the merged output describes the whole run, not just the last path).
       const requestedEngine = opts.engine || "auto";
+      const scanStart = Date.now();
       const selected = await selectEngine(requestedEngine, opts.quiet || false, autoUpdateEnabled(opts, scanCfg));
       const engine = selected.engine;
       // Threaded through the scan so a scan-time fall-back (e.g. a betterleaks
@@ -287,6 +289,7 @@ export function createScanCommand(): Command {
         }
       }
 
+      countScan(report, Date.now() - scanStart);
       outputScanResults(applyBaseline(allResults, baselineEntries), opts, undefined, true, suppressions, report);
     });
 }

@@ -331,6 +331,20 @@ Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `pol
 
 Point the log at a repo-local path by setting `agent.audit.logPath` in `.rafter.yml` (e.g. `.rafter/audit.jsonl`) so every contributor can verify their own chain independently. Retention pruning rewrites the log atomically and re-seals the chain, preserving a sidecar manifest (`audit.jsonl.retention.log`) that records the hashes of pruned entries — verify still passes after legitimate cleanup, and fails on forgery.
 
+### Usage Counters
+
+rafter keeps a few local counts so a bug report can say what happened: unknown commands and flags, exit codes per command, hook decisions per risk tier, scan engine fall-backs and durations, and crash error classes.
+They live in `~/.rafter/usage/` for seven days.
+They hold no paths, repo names, command lines, secrets or error messages, and rafter has no code that uploads them: nothing leaves this machine.
+
+```sh
+rafter telemetry show          # counts for the last 7 days, plus skill staleness
+rafter telemetry show --json   # paste into an issue
+rafter telemetry clear         # delete ~/.rafter/usage
+```
+
+Turn counting off with `rafter agent config set agent.usage.enabled false`, `RAFTER_TELEMETRY=0`, or `DO_NOT_TRACK=1`. A project `.rafter.yml` cannot change this setting.
+
 ### Configuration
 
 ```sh
@@ -538,6 +552,7 @@ Exit codes are part of Rafter's output contract — CI pipelines and orchestrato
 ├── audit.jsonl        # Security event log (JSON lines)
 ├── bin/betterleaks    # Betterleaks binary
 ├── patterns/          # Custom patterns (reserved)
+├── usage/             # Local usage counters, 7 days (rafter telemetry show)
 └── git-hooks/         # Global pre-commit hook (if --global)
 ```
 

@@ -21,6 +21,8 @@ from .commands.report import report_main
 from .commands.scan import scan_app, secrets_app
 from .commands.sites import sites_app
 from .commands.skill import skill_app
+from .commands.telemetry import telemetry_app
+from .core import usage_counters
 from .utils.formatter import set_agent_mode
 
 app = typer.Typer(
@@ -41,6 +43,7 @@ def _version_callback(value: bool):
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         False, "--version", "-V", help="Show version and exit.",
         callback=_version_callback, is_eager=True,
@@ -50,6 +53,7 @@ def main(
     ),
 ):
     """Rafter CLI — the default security agent for AI workflows."""
+    usage_counters.track_click_tree(ctx)
     if agent:
         set_agent_mode(True)
 
@@ -118,6 +122,7 @@ app.add_typer(notify_app)
 app.add_typer(policy_app)
 app.add_typer(sites_app)
 app.add_typer(skill_app)
+app.add_typer(telemetry_app)
 app.command("report")(report_main)
 
 
@@ -169,15 +174,16 @@ def _allow_agent_flag_at_any_depth(cmd: Any) -> None:
             _allow_agent_flag_at_any_depth(sub)
 
 
-def run_cli() -> None:
-    """Real console-script entry point (see ``pyproject.toml``). Builds the
-    Click command tree once and patches it with the any-depth `-a` flag
-    before running, since `app()` would rebuild an unpatched tree itself.
+def run() -> None:
+    """Console-script entry point (see ``pyproject.toml``): the app, wrapped by
+    the local usage counters. Builds the Click command tree once and patches it
+    with the any-depth `-a` flag first, since `app()` would rebuild an unpatched
+    tree itself.
     """
     command = typer.main.get_command(app)
     _allow_agent_flag_at_any_depth(command)
-    command()
+    usage_counters.run_app(command)
 
 
 if __name__ == "__main__":
-    run_cli()
+    run()

@@ -24,7 +24,7 @@ watchdog = "^4.0.0"
 cryptography = ">=46.0.7,<47"
 
 [tool.poetry.scripts]
-rafter = "rafter_cli.__main__:run_cli"
+rafter = "rafter_cli.__main__:run"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"

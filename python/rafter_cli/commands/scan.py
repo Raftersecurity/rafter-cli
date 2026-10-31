@@ -10,12 +10,15 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from typing import List, Optional
 
 import typer
 
 from ..utils.formatter import fmt
 from rich import print as rprint
+
+from ..core.usage_counters import count_scan
 
 scan_app = typer.Typer(
     name="scan",
@@ -238,6 +241,7 @@ def scan_local(
         _watch_and_scan(resolved_paths[0], engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
+    scan_start = time.monotonic()
     eng, select_reason = _select_engine(engine, quiet, auto_update_enabled)
     report = _build_engine_report(engine, eng, select_reason)
 
@@ -252,6 +256,7 @@ def scan_local(
                 print(f"Scanning file: {p} ({_engine_label(eng)})", file=sys.stderr)
             all_results.extend(_scan_file(p, eng, custom_patterns, report=report))
 
+    count_scan(report, time.monotonic() - scan_start)
     filtered = _apply_baseline(all_results, baseline_entries)
     _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions, report=report, out=out)
 

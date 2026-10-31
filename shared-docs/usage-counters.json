@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "description": "Allowlist for the local usage counters in ~/.rafter/usage. Every counter key is a family name followed by ':'-separated parts, and every part is either a value from an enum below or a string that matches a pattern below. Any other key is dropped. Node (node/src/core/usage-counters.ts) and Python (python/rafter_cli/core/usage_counters.py) embed these values and test that they match this file.",
+  "families": {
+    "unknown_command": ["unknown_command"],
+    "unknown_option": ["unknown_option"],
+    "command": ["command_path", "literal:exit", "exit"],
+    "hook": ["hook_tool", "hook_decision", "hook_risk"],
+    "scan_engine": ["scan_engine", "scan_engine"],
+    "scan_fallback": ["scan_fallback"],
+    "scan_duration": ["scan_engine", "duration_bucket"],
+    "error_class": ["command_path", "error_class"]
+  },
+  "patterns": {
+    "unknown_command": "^[a-z][a-z-]{0,31}$",
+    "unknown_option": "^--[a-z][a-z-]{0,31}$",
+    "command_path": "^[a-z][a-z0-9-]{0,31}(\\.[a-z][a-z0-9-]{0,31}){0,3}$",
+    "error_class": "^([A-Z][A-Za-z0-9]{0,29})?(Error|Exception|Exit|Interrupt)$"
+  },
+  "pattern_fallback": "other",
+  "enums": {
+    "exit": ["0", "1", "2", "other"],
+    "hook_tool": ["shell", "write", "other"],
+    "hook_decision": ["allow", "deny", "defer", "ask", "error"],
+    "hook_risk": ["low", "medium", "high", "critical", "none"],
+    "scan_engine": ["auto", "betterleaks", "patterns", "both"],
+    "scan_fallback": ["missing", "timeout", "error", "stale", "other"],
+    "duration_bucket": ["lt1s", "1-5s", "5-30s", "30-120s", "gt120s"]
+  },
+  "duration_bucket_edges_seconds": [1, 5, 30, 120],
+  "retention_days": 7
+}
