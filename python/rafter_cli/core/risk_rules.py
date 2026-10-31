@@ -28,7 +28,8 @@ _CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt"
 # because a pattern is loose (tracked for follow-up, not papered over with a broad
 # rule that would hard-block benign commands): a payload piped into a non-shell
 # interpreter (`echo '<code>' | python3`); a variable-split or base64/$() blob;
-# the quoted-operand forms of php -r, socat exec:'/bin/sh', gawk, telnet, rcat.
+# the quoted-operand forms of php -r, gawk, telnet, rcat. (socat's quoted
+# EXEC:/SYSTEM: program is read: socat is code-carrying, sable-gmgh.)
 # `... | sh` and base64-into-shell still degrade to high via shell_program_from_stream.
 _REVERSE_SHELL_PATTERNS: list[str] = [
     # bash/zsh net redirect `>& /dev/tcp/host/port`: output to the socket or
@@ -578,8 +579,10 @@ def _process_segment(
             has_eval_flag = True
     # sable-lbyp: rafter's own `agent exec` runs its operand, so the hook must
     # see through its own binary the way it sees through `bash -c`.
+    # sable-gmgh: socat's EXEC:/SYSTEM: addresses run a program, so a quoted
+    # one (`EXEC:"bash -li",pty`) is a command, not prose.
     code_carrying = (
-        has_shell_exec or has_eval_flag or exec_ in _EVAL_EXECS
+        has_shell_exec or has_eval_flag or exec_ in _EVAL_EXECS or exec_ == "socat"
         or _rafter_exec_runs_operand(pieces, exec_idx)
     )
 

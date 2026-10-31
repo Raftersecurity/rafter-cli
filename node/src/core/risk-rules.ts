@@ -45,8 +45,9 @@ const CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt";
  *     whose stdin the sanitizer redacts (the broadest gap);
  *   - a payload split across shell variables (`a=/dev/tc;b=p/…`) or hidden in an
  *     unreadable `$(…)`/base64 blob;
- *   - the quoted-operand forms of `php -r`, `socat exec:'/bin/sh'` (the program
- *     half quoted), `gawk /inet/`, `telnet`, and the non-standard `rcat`.
+ *   - the quoted-operand forms of `php -r`, `gawk /inet/`, `telnet`, and the
+ *     non-standard `rcat`. (socat's quoted `EXEC:`/`SYSTEM:` program is read:
+ *     socat is code-carrying, sable-gmgh.)
  * `… | sh` and base64-into-shell still degrade to high via shellProgramFromStream.
  */
 const REVERSE_SHELL_PATTERN_SOURCES: string[] = [
@@ -545,8 +546,11 @@ function processSegment(
   }
   // sable-lbyp: rafter's own `agent exec` runs its operand, so the hook must
   // see through its own binary the way it sees through `bash -c`.
+  // sable-gmgh: socat's EXEC:/SYSTEM: addresses run a program, so a quoted one
+  // (`EXEC:"bash -li",pty`) is a command, not prose.
   const codeCarrying =
-    hasShellExec || hasEvalFlag || EVAL_EXECS.has(exec) || rafterExecRunsOperand(pieces, execIdx);
+    hasShellExec || hasEvalFlag || EVAL_EXECS.has(exec) || exec === "socat" ||
+    rafterExecRunsOperand(pieces, execIdx);
 
   // sable-c6an. Two questions the code conflated, and conflating them gets one
   // of them wrong:
