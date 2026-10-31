@@ -15,6 +15,10 @@ from ..core.custom_patterns import load_custom_patterns
 class ScanResult:
     file: str
     matches: list[PatternMatch] = field(default_factory=list)
+    # Set when the file could not be read (sable-ilbx). A read failure must be
+    # distinguishable from a clean scan — otherwise "no findings" silently means
+    # "could not open". The scan command surfaces these separately.
+    read_error: str | None = None
 
 
 BINARY_EXTENSIONS = frozenset([
@@ -27,10 +31,14 @@ BINARY_EXTENSIONS = frozenset([
     ".pyc", ".class", ".o", ".a",
 ])
 
+# Keep in step with the default exclude list in node/src/scanners/regex-scanner.ts.
 DEFAULT_EXCLUDE = [
     "node_modules", ".git", "dist", "build",
     ".next", "coverage", ".vscode", ".idea",
-    "__pycache__", ".mypy_cache", ".ruff_cache",
+    # Vendored / virtual-env / generated dirs that cause false positives
+    "vendor", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache",
+    ".pytest_cache", ".ruff_cache", "results", ".terraform", "bower_components",
+    ".trigger",  # Trigger.dev build output (bundled JS + source maps)
 ]
 
 
@@ -50,8 +58,13 @@ class RegexScanner:
         # Suppression is applied at the scan command boundary (engine-agnostic).
         try:
             content = Path(file_path).read_text(errors="ignore")
-        except (OSError, UnicodeDecodeError):
-            return ScanResult(file=file_path)
+        except PermissionError:
+            # A file we could not read is not a clean scan — surface it
+            # distinctly (sable-ilbx) so "no findings" cannot mean "could not
+            # open".
+            return ScanResult(file=file_path, read_error="permission denied")
+        except OSError as exc:
+            return ScanResult(file=file_path, read_error=exc.strerror or "could not read file")
         matches = self._engine.scan_with_position(content)
         return ScanResult(file=file_path, matches=matches)
 
@@ -59,7 +72,9 @@ class RegexScanner:
         results: list[ScanResult] = []
         for fp in file_paths:
             r = self.scan_file(fp)
-            if r.matches:
+            # Keep a result that has findings, and also one that failed to read,
+            # so a permission-denied file is not silently dropped (sable-ilbx).
+            if r.matches or r.read_error:
                 results.append(r)
         return results
 

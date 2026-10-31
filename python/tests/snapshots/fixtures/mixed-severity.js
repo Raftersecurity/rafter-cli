@@ -1,7 +1,7 @@
 // File with mixed severity patterns
 const config = {
   // Critical: AWS key
-  awsKey: "AKIAIOSFODNN7EXAMPLE",
+  awsKey: "AKIAIOSFODNN7ABCDEFG",
   // High: generic API key
   api_key: "sk_t3st_FAKE1kJOvBiI2HlWgH4olfQ2",
   // High: bearer token

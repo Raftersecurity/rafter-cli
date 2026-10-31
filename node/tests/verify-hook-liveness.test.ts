@@ -30,6 +30,16 @@ describe("runConfiguredHook (rf-fuwy liveness executor)", () => {
     expect(r.error).toBeUndefined();
   });
 
+  it("reads the decision from a hook that exits without reading stdin", () => {
+    // The stand-in above never reads its payload either, so the stdin write races
+    // the hook's exit and fails with EPIPE on a few percent of spawns. A payload
+    // larger than the pipe buffer makes that race lose every time.
+    const cmd = `printf '%s' '{"hookSpecificOutput":{"permissionDecision":"deny"}}'`;
+    const r = runConfiguredHook(cmd, "x".repeat(256 * 1024));
+    expect(r.decision).toBe("deny");
+    expect(r.error).toBeUndefined();
+  });
+
   it("reads an allow decision from a permissive hook", () => {
     const cmd = `printf '%s' '{"hookSpecificOutput":{"permissionDecision":"allow"}}'`;
     const r = runConfiguredHook(cmd, "echo hello");

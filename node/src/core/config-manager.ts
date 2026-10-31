@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { RafterConfig } from "./config-schema.js";
 import { getDefaultConfig, getConfigPath, getRafterDir, CONFIG_VERSION } from "./config-defaults.js";
-import { loadPolicy } from "./policy-loader.js";
+import { loadPolicy, findPolicyFile } from "./policy-loader.js";
 
 const VALID_RISK_LEVELS = new Set(["minimal", "moderate", "aggressive"]);
 const VALID_COMMAND_MODES = new Set(["allow-all", "approve-dangerous", "deny-list"]);
@@ -46,6 +46,25 @@ export function redactConfigSecrets<T>(value: T): T {
 /**
  * Validate a parsed config JSON object, warning and falling back to defaults for invalid fields.
  */
+/**
+ * The Python CLI writes the shared config file with snake_case keys
+ * (`backend.api_key`, `agent.risk_level`). Rename them to camelCase so a config
+ * written by either CLI reads the same here. Component IDs under
+ * `agent.components` are data, not field names, and keep their spelling.
+ * Where both spellings exist, the camelCase one (Node's own) wins.
+ */
+function camelizeKeys(value: any, keepKeys = false): any {
+  if (Array.isArray(value)) return value.map((v) => camelizeKeys(v));
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, any> = {};
+  for (const [key, v] of Object.entries(value)) {
+    const camel = keepKeys ? key : key.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+    if (camel !== key && camel in value) continue;
+    out[camel] = camelizeKeys(v, !keepKeys && camel === "components");
+  }
+  return out;
+}
+
 function validateConfig(raw: any): RafterConfig {
   if (!raw || typeof raw !== "object") {
     console.error("Warning: config file is not a JSON object — using defaults.");
@@ -82,6 +101,10 @@ function validateConfig(raw: any): RafterConfig {
       if (cp.blockedPatterns !== undefined && (!Array.isArray(cp.blockedPatterns) || !cp.blockedPatterns.every((v: any) => typeof v === "string"))) {
         console.error('Warning: config "agent.commandPolicy.blockedPatterns" must be an array of strings — using default.');
         cp.blockedPatterns = [...defaults.agent!.commandPolicy.blockedPatterns];
+      }
+      if (cp.allowedPatterns !== undefined && (!Array.isArray(cp.allowedPatterns) || !cp.allowedPatterns.every((v: any) => typeof v === "string"))) {
+        console.error('Warning: config "agent.commandPolicy.allowedPatterns" must be an array of strings — using default.');
+        cp.allowedPatterns = [...(defaults.agent!.commandPolicy.allowedPatterns ?? [])];
       }
       if (cp.requireApproval !== undefined && (!Array.isArray(cp.requireApproval) || !cp.requireApproval.every((v: any) => typeof v === "string"))) {
         console.error('Warning: config "agent.commandPolicy.requireApproval" must be an array of strings — using default.');
@@ -155,6 +178,8 @@ function validateConfig(raw: any): RafterConfig {
   return raw as RafterConfig;
 }
 
+let warnedProjectLogPath = false;
+
 export class ConfigManager {
   private configPath: string;
 
@@ -173,7 +198,7 @@ export class ConfigManager {
     try {
       const content = fs.readFileSync(this.configPath, "utf-8");
       const parsed = JSON.parse(content);
-      const config = validateConfig(parsed);
+      const config = validateConfig(camelizeKeys(parsed));
 
       // Migrate config if needed
       return this.migrate(config);
@@ -313,17 +338,35 @@ export class ConfigManager {
   }
 
   /**
-   * Load config merged with .rafter.yml policy (policy wins)
+   * Load config merged with .rafter.yml policy (policy wins).
+   *
+   * `baseDir` is the scan target: the policy and its ignore globs are
+   * discovered and anchored from there, not the process cwd (sable-lu0j), so
+   * an ambient `.rafter.yml` in cwd cannot govern a scan of a different tree.
+   * Defaults to cwd, which is correct for `--staged`/hook runs that scan the
+   * repo the command runs in.
    */
-  loadWithPolicy(): RafterConfig {
+  loadWithPolicy(baseDir?: string): RafterConfig {
     const config = this.load();
-    const policy = loadPolicy();
+    const policy = loadPolicy(baseDir);
     if (!policy) return config;
 
-    // Ensure agent block exists
+    // Ensure agent block exists, AND that commandPolicy inside it does.
+    //
+    // Checking only for `agent` was not enough. A config file that carries an
+    // `agent` block without a `commandPolicy` key — a partial or hand-edited
+    // ~/.rafter/config.json, which is a normal thing to have — reaches the
+    // assignments below and throws
+    //   TypeError: Cannot set properties of undefined (setting 'mode')
+    // the moment the repo also has a .rafter.yml with a command_policy block.
+    // Found 2026-09-10 by an end-to-end test that loads a real config instead
+    // of a stub; the stubbed unit tests could not see it.
+    const agentDefaults = getDefaultConfig().agent!;
     if (!config.agent) {
-      const defaults = getDefaultConfig();
-      config.agent = defaults.agent;
+      config.agent = agentDefaults;
+    }
+    if (!config.agent.commandPolicy) {
+      config.agent.commandPolicy = { ...agentDefaults.commandPolicy };
     }
 
     // Risk level
@@ -356,10 +399,15 @@ export class ConfigManager {
       }
     }
 
-    // Ignore rules — top-level policy key, applied per finding at scan time
+    // Ignore rules — top-level policy key, applied per finding at scan time.
+    // Record the directory the globs are relative to (the `.rafter.yml`'s own
+    // directory) so they anchor to the policy's tree, not an absolute path
+    // anywhere on disk (sable-lu0j).
     if (policy.ignore && config.agent) {
       if (!config.agent.scan) config.agent.scan = {};
       config.agent.scan.ignore = policy.ignore;
+      const policyPath = findPolicyFile(baseDir);
+      if (policyPath) config.agent.scan.ignoreBaseDir = path.dirname(policyPath);
     }
 
     // Audit settings
@@ -370,8 +418,14 @@ export class ConfigManager {
       if (policy.audit.logLevel) {
         config.agent.audit.logLevel = policy.audit.logLevel as any;
       }
-      if (policy.audit.logPath) {
-        config.agent.audit.logPath = policy.audit.logPath;
+      // audit.log_path is honored only from the global config; a project
+      // value is ignored, with a warning, logged once per process.
+      if (policy.audit.logPath && !warnedProjectLogPath) {
+        warnedProjectLogPath = true;
+        console.error(
+          'rafter: ignoring "audit.log_path" in the project policy file — the audit log location ' +
+          "can only be set in ~/.rafter/config.json (agent.audit.logPath).",
+        );
       }
     }
 
@@ -508,14 +562,15 @@ function unionPatterns(floor: string[], project: string[]): string[] {
  * `allowOverride` is true the pre-sable-nz4y replace semantics are used.
  */
 export function mergeCommandPolicy(
-  target: { mode: string; blockedPatterns: string[]; requireApproval: string[] },
-  project: { mode?: string; blockedPatterns?: string[]; requireApproval?: string[] },
+  target: { mode: string; blockedPatterns: string[]; requireApproval: string[]; allowedPatterns?: string[] },
+  project: { mode?: string; blockedPatterns?: string[]; requireApproval?: string[]; allowedPatterns?: string[] },
   allowOverride: boolean
 ): void {
   if (allowOverride) {
     if (project.mode) target.mode = project.mode as any;
     if (project.blockedPatterns) target.blockedPatterns = project.blockedPatterns;
     if (project.requireApproval) target.requireApproval = project.requireApproval;
+    if (project.allowedPatterns) target.allowedPatterns = project.allowedPatterns;
     return;
   }
 
@@ -537,5 +592,20 @@ export function mergeCommandPolicy(
   }
   if (project.requireApproval) {
     target.requireApproval = unionPatterns(target.requireApproval, project.requireApproval);
+  }
+
+  // allowedPatterns is NOT unioned, and that asymmetry is the whole point.
+  // Unioning blockedPatterns or requireApproval can only ever ADD restriction,
+  // so a project contributing to them is safe. An allowlist is the opposite:
+  // it is a grant. Union it and a cloned repo ships
+  //   command_policy: { allowed_patterns: [".*"] }
+  // and waves every non-critical command through — which is precisely the
+  // bypass the floor exists to prevent (sable-nz4y / rf-adth). So the owner's
+  // allowlist stands and the project's is refused unless the owner has
+  // explicitly opted into project override.
+  if (project.allowedPatterns) {
+    console.error(
+      `Warning: project policy sets agent.commandPolicy.allowed_patterns, which can only loosen command policy — ignoring. Set agent.commandPolicy.allowProjectOverride: true in your global config to allow project policies to loosen command policy.`
+    );
   }
 }

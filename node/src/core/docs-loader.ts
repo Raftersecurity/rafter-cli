@@ -69,8 +69,21 @@ function isExpired(fetchedAt: number, ttlSeconds: number): boolean {
   return Date.now() - fetchedAt > ttlSeconds * 1000;
 }
 
+/**
+ * Resolve a policy `docs: path:` entry to an absolute file path, confined to
+ * the project root (sable-fwup).
+ *
+ * A path entry comes from a project `.rafter.yml`, so it is attacker-controlled
+ * for anyone who can land a file in the repo. Without containment, an absolute
+ * path or a `../` escape read any file on disk through `docs show` / the MCP
+ * `get_doc` tool. The path is confined to the git root (cwd when there is no
+ * repo): absolute paths are rejected, and the resolved path — after following
+ * symlinks — must stay inside the root.
+ */
 function resolvePolicyPath(relative: string): string {
-  if (path.isAbsolute(relative)) return relative;
+  if (path.isAbsolute(relative)) {
+    throw new Error(`docs path must be relative to the project root: ${relative}`);
+  }
   let root: string;
   try {
     root = execSync("git rev-parse --show-toplevel", {
@@ -80,7 +93,27 @@ function resolvePolicyPath(relative: string): string {
   } catch {
     root = process.cwd();
   }
-  return path.resolve(root, relative);
+  const realRoot = fs.realpathSync(root);
+  const abs = path.resolve(realRoot, relative);
+
+  // Lexical containment first, so a `../` escape is rejected before any file
+  // access.
+  const rel = path.relative(realRoot, abs);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(`docs path escapes the project root: ${relative}`);
+  }
+
+  // Symlink containment: resolve the real path when the target exists and
+  // re-check, so an in-repo symlink cannot point outside the root.
+  if (fs.existsSync(abs)) {
+    const real = fs.realpathSync(abs);
+    const realRel = path.relative(realRoot, real);
+    if (realRel.startsWith("..") || path.isAbsolute(realRel)) {
+      throw new Error(`docs path resolves outside the project root: ${relative}`);
+    }
+    return real;
+  }
+  return abs;
 }
 
 /**

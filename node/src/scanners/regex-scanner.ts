@@ -8,6 +8,19 @@ import { loadCustomPatterns } from "../core/custom-patterns.js";
 export interface ScanResult {
   file: string;
   matches: PatternMatch[];
+  /**
+   * Set when the file could not be read (sable-ilbx). A read failure must be
+   * distinguishable from a clean scan — otherwise "no findings" silently means
+   * "could not open". The scan command surfaces these separately.
+   */
+  readError?: string;
+}
+
+/** A human-readable reason for a file read failure. */
+function readErrorReason(e: any): string {
+  if (e && e.code === "EACCES") return "permission denied";
+  if (e && e.code) return String(e.code);
+  return e instanceof Error ? e.message : "could not read file";
 }
 
 export class RegexScanner {
@@ -37,7 +50,9 @@ export class RegexScanner {
       const matches = this.engine.scanWithPosition(content);
       return { file: filePath, matches };
     } catch (e) {
-      return { file: filePath, matches: [] };
+      // A file we could not read is not a clean scan — surface it distinctly
+      // (sable-ilbx) so "no findings" cannot mean "could not open".
+      return { file: filePath, matches: [], readError: readErrorReason(e) };
     }
   }
 
@@ -49,7 +64,9 @@ export class RegexScanner {
 
     for (const filePath of filePaths) {
       const result = this.scanFile(filePath);
-      if (result.matches.length > 0) {
+      // Keep a result that has findings, and also one that failed to read, so
+      // a permission-denied file is not silently dropped (sable-ilbx).
+      if (result.matches.length > 0 || result.readError) {
         results.push(result);
       }
     }
@@ -74,6 +91,7 @@ export class RegexScanner {
      */
     respectGitignore?: boolean;
   }): ScanResult[] {
+    // Keep in step with DEFAULT_EXCLUDE in python/rafter_cli/scanners/regex_scanner.py.
     const exclude = options?.exclude || [
       "node_modules",
       ".git",
@@ -91,9 +109,11 @@ export class RegexScanner {
       ".tox",
       ".mypy_cache",
       ".pytest_cache",
+      ".ruff_cache",
       "results",
       ".terraform",
-      "bower_components"
+      "bower_components",
+      ".trigger", // Trigger.dev build output (bundled JS + source maps)
     ];
 
     // Merge policy excludePaths into the exclude list

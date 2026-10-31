@@ -113,6 +113,15 @@ export interface Suppression {
   reason?: string;
   /** Where the suppression was defined — surfaced in JSON output. */
   source?: ".rafterignore" | ".rafter.yml";
+  /**
+   * Absolute directory the glob is relative to — the tree that owns this rule
+   * (the `.rafter.yml`'s or `.rafterignore`'s directory) (sable-lu0j). When
+   * set, a file matches only if it lies inside this directory, and the glob is
+   * matched against the path relative to it, so a relative rule cannot reach a
+   * file outside its own tree. When absent, matching falls back to the legacy
+   * path-suffix behavior.
+   */
+  baseDir?: string;
 }
 
 export interface SuppressedFinding {
@@ -138,6 +147,9 @@ export function loadSuppressions(projectRoot: string = process.cwd()): Suppressi
   const file = path.join(projectRoot, ".rafterignore");
   if (!fs.existsSync(file)) return [];
 
+  // `.rafterignore` globs are relative to the file's own directory, so anchor
+  // them there (sable-lu0j).
+  const baseDir = path.resolve(projectRoot);
   const suppressions: Suppression[] = [];
   try {
     const lines = fs.readFileSync(file, "utf-8").split("\n");
@@ -146,12 +158,13 @@ export function loadSuppressions(projectRoot: string = process.cwd()): Suppressi
       if (!line || line.startsWith("#")) continue;
       const colonIdx = line.indexOf(":");
       if (colonIdx === -1) {
-        suppressions.push({ pathGlob: line, source: ".rafterignore" });
+        suppressions.push({ pathGlob: line, source: ".rafterignore", baseDir });
       } else {
         suppressions.push({
           pathGlob: line.slice(0, colonIdx).trim(),
           patternName: line.slice(colonIdx + 1).trim() || undefined,
           source: ".rafterignore",
+          baseDir,
         });
       }
     }
@@ -165,8 +178,14 @@ export function loadSuppressions(projectRoot: string = process.cwd()): Suppressi
  * Convert .rafter.yml ignore rules into the flat Suppression list used at scan time.
  * Each entry's path globs cross-product with its rule names.
  */
-export function policyIgnoreToSuppressions(rules: ScanIgnoreRule[] | undefined): Suppression[] {
+export function policyIgnoreToSuppressions(
+  rules: ScanIgnoreRule[] | undefined,
+  baseDir?: string,
+): Suppression[] {
   if (!rules || rules.length === 0) return [];
+  // The globs are relative to the `.rafter.yml`'s own directory, so anchor
+  // them there (sable-lu0j) — a rule cannot match files outside that tree.
+  const anchor = baseDir ? path.resolve(baseDir) : undefined;
   const out: Suppression[] = [];
   for (const rule of rules) {
     if (!Array.isArray(rule.paths) || rule.paths.length === 0) continue;
@@ -178,6 +197,7 @@ export function policyIgnoreToSuppressions(rules: ScanIgnoreRule[] | undefined):
           patternName: ruleName,
           reason: rule.reason,
           source: ".rafter.yml",
+          baseDir: anchor,
         });
       }
     }
@@ -195,7 +215,7 @@ export function findSuppression(
   suppressions: Suppression[]
 ): Suppression | null {
   for (const s of suppressions) {
-    if (matchGlob(s.pathGlob, filePath)) {
+    if (matchGlob(s.pathGlob, filePath, s.baseDir)) {
       if (!s.patternName || s.patternName.toLowerCase() === patternName.toLowerCase()) {
         return s;
       }
@@ -218,7 +238,9 @@ export function applySuppressions<R extends { file: string; matches: PatternMatc
   for (const r of results) {
     const kept: PatternMatch[] = [];
     for (const m of r.matches) {
-      const hit = findSuppression(r.file, m.pattern.name, suppressions);
+      // A merged finding is suppressed only when every engine's rule is.
+      const hits = (m.ruleNames ?? [m.pattern.name]).map((n) => findSuppression(r.file, n, suppressions));
+      const hit = hits.every(Boolean) ? hits[0] : null;
       if (hit) {
         suppressed.push({
           file: r.file,
@@ -249,7 +271,7 @@ export function isSuppressed(
   suppressions: Suppression[]
 ): boolean {
   for (const s of suppressions) {
-    if (matchGlob(s.pathGlob, filePath)) {
+    if (matchGlob(s.pathGlob, filePath, s.baseDir)) {
       if (!s.patternName || s.patternName.toLowerCase() === patternName.toLowerCase()) {
         return true;
       }
@@ -266,12 +288,23 @@ export function isSuppressed(
  * matching the glob against any suffix of the path so that relative globs
  * like `tests/fixtures/**` match absolute paths under any project root.
  */
-function matchGlob(glob: string, filePath: string): boolean {
+function matchGlob(glob: string, filePath: string, baseDir?: string): boolean {
   const g = glob.replace(/\\/g, "/");
-  const f = filePath.replace(/\\/g, "/");
+  let f = filePath.replace(/\\/g, "/");
+
+  // When the rule has a base directory (sable-lu0j), the glob is relative to
+  // that tree: a file outside it never matches, and the glob is tested against
+  // the file's path relative to the base. This stops a relative rule in one
+  // tree's `.rafter.yml` from suppressing findings in another tree.
+  if (baseDir) {
+    const rel = path.relative(path.resolve(baseDir), path.resolve(filePath));
+    if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return false;
+    f = rel.replace(/\\/g, "/");
+  }
+
   if (minimatch(f, g, { dot: true, matchBase: true })) return true;
   // Auto-anchor relative globs to "anywhere in the path" so that `tests/**`
-  // matches `/abs/project/tests/foo`. Skip if the user already anchored.
+  // matches `project/tests/foo`. Skip if the user already anchored.
   if (g.startsWith("/") || g.startsWith("**/") || g.startsWith("**")) return false;
   return minimatch(f, "**/" + g, { dot: true });
 }

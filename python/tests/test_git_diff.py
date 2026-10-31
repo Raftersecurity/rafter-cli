@@ -28,13 +28,13 @@ class TestParseUnifiedDiffAddedLines:
                 "--- a/src/config.py",
                 "+++ b/src/config.py",
                 "@@ -0,0 +1,2 @@",
-                "+key = 'AKIAIOSFODNN7EXAMPLE'",
+                "+key = 'AKIAIOSFODNN7ABCDEFG'",
                 "+new = 1",
             ]
         )
         lines = parse_unified_diff_added_lines(patch)
         assert lines == [
-            AddedDiffLine(file="src/config.py", line=1, text="key = 'AKIAIOSFODNN7EXAMPLE'"),
+            AddedDiffLine(file="src/config.py", line=1, text="key = 'AKIAIOSFODNN7ABCDEFG'"),
             AddedDiffLine(file="src/config.py", line=2, text="new = 1"),
         ]
 
@@ -150,13 +150,13 @@ class TestParseUnifiedDiffAddedLines:
                 "--- a/c.py",
                 "+++ b/c.py",
                 "@@ -0,0 +1,2 @@",
-                "+++counter AKIAIOSFODNN7EXAMPLE",
-                "++ spaced AKIAIOSFODNN7EXAMPLE",
+                "+++counter AKIAIOSFODNN7ABCDEFG",
+                "++ spaced AKIAIOSFODNN7ABCDEFG",
             ]
         )
         assert parse_unified_diff_added_lines(patch) == [
-            AddedDiffLine(file="c.py", line=1, text="++counter AKIAIOSFODNN7EXAMPLE"),
-            AddedDiffLine(file="c.py", line=2, text="+ spaced AKIAIOSFODNN7EXAMPLE"),
+            AddedDiffLine(file="c.py", line=1, text="++counter AKIAIOSFODNN7ABCDEFG"),
+            AddedDiffLine(file="c.py", line=2, text="+ spaced AKIAIOSFODNN7ABCDEFG"),
         ]
 
     def test_handles_crlf_line_endings(self):
@@ -166,11 +166,11 @@ class TestParseUnifiedDiffAddedLines:
                 "--- a/w.py",
                 "+++ b/w.py",
                 "@@ -0,0 +1 @@",
-                "+key = 'AKIAIOSFODNN7EXAMPLE'",
+                "+key = 'AKIAIOSFODNN7ABCDEFG'",
             ]
         )
         assert parse_unified_diff_added_lines(patch) == [
-            AddedDiffLine(file="w.py", line=1, text="key = 'AKIAIOSFODNN7EXAMPLE'"),
+            AddedDiffLine(file="w.py", line=1, text="key = 'AKIAIOSFODNN7ABCDEFG'"),
         ]
 
     def test_splits_only_on_newline_not_bare_cr_or_formfeed(self):
@@ -182,12 +182,12 @@ class TestParseUnifiedDiffAddedLines:
                 "--- a/f.py",
                 "+++ b/f.py",
                 "@@ -0,0 +1 @@",
-                "+SECRET=\x0cAKIAIOSFODNN7EXAMPLE",
+                "+SECRET=\x0cAKIAIOSFODNN7ABCDEFG",
             ]
         )
         lines = parse_unified_diff_added_lines(patch)
         assert lines == [
-            AddedDiffLine(file="f.py", line=1, text="SECRET=\x0cAKIAIOSFODNN7EXAMPLE"),
+            AddedDiffLine(file="f.py", line=1, text="SECRET=\x0cAKIAIOSFODNN7ABCDEFG"),
         ]
 
     def test_ignores_rename_with_no_content_change(self):
@@ -209,7 +209,7 @@ class TestScanAddedDiffLines:
                 [
                     "+++ b/secret.py",
                     "@@ -0,0 +1,1 @@",
-                    "+API = 'AKIAIOSFODNN7EXAMPLE'",
+                    "+API = 'AKIAIOSFODNN7ABCDEFG'",
                 ]
             )
         )
@@ -225,7 +225,7 @@ class TestScanAddedDiffLines:
     def test_groups_findings_per_file(self):
         ghp = "ghp_123456789012345678901234567890123456"
         added = [
-            AddedDiffLine(file="a.py", line=1, text="k = 'AKIAIOSFODNN7EXAMPLE'"),
+            AddedDiffLine(file="a.py", line=1, text="k = 'AKIAIOSFODNN7ABCDEFG'"),
             AddedDiffLine(file="a.py", line=2, text=f"t = '{ghp}'"),
         ]
         results = scan_added_diff_lines(added, "/repo")

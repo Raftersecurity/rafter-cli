@@ -40,28 +40,32 @@ See what Rafter does before reading another word.
 
 ```sh
 # Drop a .env file with credentials in a test repo
-echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' > .env
+echo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG' > .env
 
 rafter secrets .
-# → CRITICAL  .env:1  aws-access-key-id  AKIA***AMPLE
+# → CRITICAL  .env:1  aws-access-key-id  AKIA***DEFG
 # → exit 1
 ```
 
 **2. Install the pre-commit hook**
 
 ```sh
-rafter agent init --all
-# → Installs all detected integrations
-# → Downloads Betterleaks (or falls back to built-in scanner)
+rafter agent install-hook
+# → Writes .git/hooks/pre-commit in the current repo
+# → Add --global to apply it to every repo via core.hooksPath
 ```
+
+`rafter agent init --all` is a separate step: it wires up every detected agent (hooks, skills, MCP) and downloads Betterleaks.
+It does not install a git hook.
 
 **3. Try to commit—hook blocks it**
 
 ```sh
 git add . && git commit -m 'add config'
-# → [rafter] Scanning staged files for secrets...
-# → CRITICAL  .env:1  aws-access-key-id
-# → Commit blocked. Remove secrets or use git commit --no-verify to bypass.
+# → Rafter: Scanning staged files for secrets...
+# → CRITICAL  AWS Access Key ID  (.env, line 1)
+# → Commit blocked. Remove secrets before committing.
+# → To bypass (NOT recommended): git commit --no-verify
 ```
 
 **4. Review the audit log**
@@ -107,7 +111,7 @@ pnpm add -g @rafter-security/cli
 pip install rafter-cli
 ```
 
-Requires Python 3.10+. Full feature parity with Node.js including local security toolkit and MCP server.
+Requires Python 3.11+. Full feature parity with Node.js including local security toolkit and MCP server.
 
 ---
 
@@ -116,7 +120,7 @@ Requires Python 3.10+. Full feature parity with Node.js including local security
 Agentic security audits backed by a full SAST/SCA toolchain, via the Rafter API. The analysis engine examines your codebase the way a professional cybersecurity auditor would — following data flows across files, reasoning about authentication and authorization logic, and identifying vulnerabilities that pattern-matching alone cannot catch — then validates and enriches findings with industry-standard static analysis, dependency scanning, and secret detection. Runs against the **remote repository** on GitHub, not local files. Your code is deleted immediately after analysis completes. Auto-detection uses your local Git config to determine which repo and branch to analyze.
 
 ```sh
-export RAFTER_API_KEY="your-key"   # or use .env file
+export RAFTER_API_KEY="your-key"
 
 rafter run                                    # scan current repo (auto-detected)
 rafter scan --repo myorg/myrepo --branch main # scan specific repo
@@ -129,16 +133,16 @@ rafter usage                                  # check quota
 
 ```sh
 # Filter high-severity vulnerabilities (SARIF levels: error, warning, note)
-rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="error")'
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.severity=="error")'
 
 # Count vulnerabilities
 rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
 
 # Extract all affected file paths
-rafter get SCAN_ID --format json | jq -r '.vulnerabilities[].file' | sort | uniq
+rafter get SCAN_ID --format json | jq -r '.vulnerabilities[].file_path' | sort | uniq
 
 # CSV export
-rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
+rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.severity, .rule_id, .file_path, .line_start] | @csv'
 
 # CI gate: fail if vulnerabilities found
 if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then
@@ -153,7 +157,7 @@ rafter get SCAN_ID > scan_results.json
 
 1. Sign up at [rafter.so](https://rafter.so)
 2. Dashboard → Settings → API Keys
-3. `export RAFTER_API_KEY="your-key"` or add to `.env`
+3. `export RAFTER_API_KEY="your-key"`
 
 ---
 
@@ -199,7 +203,7 @@ rafter secrets .              # scan directory
 rafter secrets ./config.js    # scan specific file
 rafter secrets --staged       # scan git staged files only
 rafter secrets --diff HEAD~1  # scan files changed since a git ref
-rafter secrets --history      # scan full git history (requires betterleaks engine)
+rafter secrets --history      # scan every commit on every ref (both engines)
 rafter secrets --json         # structured output
 rafter secrets --quiet        # silent unless secrets found (CI-friendly)
 ```
@@ -270,6 +274,9 @@ rafter agent exec "rm -rf /"                       # critical → blocked
 | Medium | Approval on moderate+ | `sudo`, `chmod`, `kill -9`, `systemctl` |
 | Low | Allowed | `npm install`, `git commit`, `ls`, `cat` |
 
+Approval needs a person at an interactive terminal.
+The agent hook (PreToolUse) cannot prompt, so it denies an approval-required command such as `curl … | sh` outright, and its reason tells a person to run `rafter agent exec '<command>'` to approve it.
+
 For git commands (`git commit`, `git push`), Rafter scans staged files for secrets before execution and blocks if any are found.
 
 ### Skills — Install, Audit, Manage
@@ -288,7 +295,6 @@ Rafter ships four first-party skills you can install into any supported agent:
 ```sh
 rafter skill list                              # show installed + available skills
 rafter skill install rafter-code-review        # install one
-rafter skill install --all                     # install all four
 rafter skill uninstall rafter-secure-design    # remove one
 ```
 

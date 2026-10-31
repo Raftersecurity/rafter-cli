@@ -1,7 +1,7 @@
 import { Command, Option } from "commander";
 import { CommandInterceptor } from "../../core/command-interceptor.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
-import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
+import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import { execSync } from "child_process";
 import readline from "readline";
 import { fmt } from "../../utils/formatter.js";
@@ -71,6 +71,11 @@ export function createExecCommand(): Command {
       // Step 3: Pre-execution scanning for git commands
       if (!opts.skipScan && isGitCommand(command)) {
         const scanResult = await scanStagedFiles();
+        if (scanResult.scanError) {
+          console.error(`Error: secret scan could not run (${scanResult.scanError}); command blocked`);
+          interceptor.logEvaluation(evaluation, "blocked");
+          process.exit(2);
+        }
         if (scanResult.secretsFound) {
           console.error(`\n${fmt.warning("Secrets detected in staged files!")}\n`);
           console.error(`Found ${scanResult.count} secret(s) in ${scanResult.files} file(s)`);
@@ -146,7 +151,7 @@ export function joinCommandParts(parts: string[]): string {
   return parts.map(shellQuote).join(" ");
 }
 
-function shellQuote(token: string): string {
+export function shellQuote(token: string): string {
   if (token === "") return "''";
   if (/^[A-Za-z0-9_\/:=@.,+%-]+$/.test(token)) return token;
   return `'${token.replace(/'/g, `'\\''`)}'`;
@@ -157,21 +162,28 @@ function isGitCommand(command: string): boolean {
          command.trim().startsWith("git push");
 }
 
-async function scanStagedFiles(): Promise<{ secretsFound: boolean; count: number; files: number }> {
+async function scanStagedFiles(): Promise<{ secretsFound: boolean; count: number; files: number; scanError?: string }> {
+  let repoRoot: string;
+  try {
+    repoRoot = execSync("git rev-parse --show-toplevel", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // Not a git repo: no staged files to scan.
+    return { secretsFound: false, count: 0, files: 0 };
+  }
   try {
     const patch = execSync("git diff -U0 --no-color --cached --diff-filter=ACM", {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"],
+      // At the default 1 MiB buffer a large commit skipped the scan silently (#274).
+      maxBuffer: gitDiffMaxBuffer(),
     }).trim();
 
     if (!patch) {
       return { secretsFound: false, count: 0, files: 0 };
     }
-
-    const repoRoot = execSync("git rev-parse --show-toplevel", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "ignore"],
-    }).trim();
 
     const addedLines = parseUnifiedDiffAddedLines(patch);
     if (addedLines.length === 0) {
@@ -186,9 +198,12 @@ async function scanStagedFiles(): Promise<{ secretsFound: boolean; count: number
       count: totalMatches,
       files: results.length,
     };
-  } catch {
-    // If git command fails (not in repo, etc.), skip scanning
-    return { secretsFound: false, count: 0, files: 0 };
+  } catch (error: any) {
+    // Inside a repo, a scan that could not run must not read as "no secrets".
+    const scanError = error?.code === "ENOBUFS"
+      ? "staged diff too large for the scanner to read"
+      : (error?.message ?? String(error));
+    return { secretsFound: false, count: 0, files: 0, scanError };
   }
 }
 

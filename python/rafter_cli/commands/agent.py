@@ -33,6 +33,7 @@ from ..core.config_manager import (
 )
 from ..core.pattern_engine import PatternEngine
 from ..scanners.betterleaks import BetterleaksScanner
+from ..scanners.git_history_scan import git_repo_root, scan_git_history
 from ..scanners.regex_scanner import RegexScanner, ScanResult
 from ..scanners.secret_patterns import DEFAULT_SECRET_PATTERNS
 from ..scanners.union import union_scan_results
@@ -98,6 +99,24 @@ agent_app.add_typer(config_app)
 # ── init helpers ─────────────────────────────────────────────────────
 
 
+def _init_print(quiet: bool, *objects: Any) -> None:
+    """Print informational/progress/success output for `agent init` unless --quiet."""
+    if not quiet:
+        rprint(*objects)
+
+
+def _init_alert(quiet: bool, *objects: Any) -> None:
+    """Print a warning or error for `agent init`.
+
+    Never suppressed. Under --quiet it goes to stderr so stdout stays empty;
+    otherwise it keeps its existing stdout destination.
+    """
+    if quiet:
+        rprint(*objects, file=sys.stderr)
+    else:
+        rprint(*objects)
+
+
 def _resolve_rafter_path() -> str:
     """Find the absolute path to the rafter binary for reliable hook invocation.
 
@@ -134,10 +153,11 @@ _AGENT_SKILLS: list[dict[str, str]] = [
     {"name": "rafter", "description": "Rafter Remote"},
     {"name": "rafter-secure-design", "description": "Rafter Secure Design"},
     {"name": "rafter-code-review", "description": "Rafter Code Review"},
+    {"name": "rafter-skill-review", "description": "Rafter Skill Review"},
 ]
 
 
-def _install_claude_code_hooks(root: Path) -> None:
+def _install_claude_code_hooks(root: Path, quiet: bool = False) -> None:
     """Install Rafter PreToolUse hooks into <root>/.claude/settings.json."""
     claude_dir = root / ".claude"
     settings_path = claude_dir / "settings.json"
@@ -150,7 +170,7 @@ def _install_claude_code_hooks(root: Path) -> None:
         try:
             settings = json.loads(settings_path.read_text())
         except (json.JSONDecodeError, ValueError):
-            rprint(fmt.warning("Existing settings.json was unreadable, creating new one"))
+            _init_alert(quiet, fmt.warning("Existing settings.json was unreadable, creating new one"))
 
     # Merge hooks — don't overwrite existing non-Rafter hooks
     if "hooks" not in settings:
@@ -203,7 +223,7 @@ def _install_claude_code_hooks(root: Path) -> None:
     post_hook = {"type": "command", "command": post_command}
     settings["hooks"]["PreToolUse"].extend([
         {"matcher": "Bash", "hooks": [pre_hook]},
-        {"matcher": "Write|Edit", "hooks": [pre_hook]},
+        {"matcher": "Write|Edit|MultiEdit", "hooks": [pre_hook]},
     ])
     # Narrow to tools that produce scannable output (shell output + file
     # writes). Firing posttool on every tool — including Read and MCP calls —
@@ -213,16 +233,16 @@ def _install_claude_code_hooks(root: Path) -> None:
     ])
 
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
-    rprint(fmt.success(f"Installed PreToolUse hooks to {settings_path}"))
-    rprint(fmt.success(f"Installed PostToolUse hooks to {settings_path}"))
+    _init_print(quiet, fmt.success(f"Installed PreToolUse hooks to {settings_path}"))
+    _init_print(quiet, fmt.success(f"Installed PostToolUse hooks to {settings_path}"))
     if rafter_bin != "rafter":
-        rprint(fmt.info(f"Using resolved path: {rafter_bin}"))
+        _init_print(quiet, fmt.info(f"Using resolved path: {rafter_bin}"))
 
 
 # ── init ─────────────────────────────────────────────────────────────
 
 
-def _copy_skill_tree(skill_name: str, dest_dir: Path, label: str) -> None:
+def _copy_skill_tree(skill_name: str, dest_dir: Path, label: str, quiet: bool = False) -> None:
     """Copy the full skill source tree (SKILL.md + any docs/ etc.) into dest_dir.
 
     Skills can ship a ``docs/`` subfolder of reference material referenced by
@@ -231,7 +251,7 @@ def _copy_skill_tree(skill_name: str, dest_dir: Path, label: str) -> None:
     res = importlib.resources.files("rafter_cli.resources").joinpath("skills", skill_name)
     skill_md = res.joinpath("SKILL.md")
     if not skill_md.is_file():
-        rprint(fmt.warning(f"{label} skill template not found in package resources"))
+        _init_alert(quiet, fmt.warning(f"{label} skill template not found in package resources"))
         return
 
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -251,7 +271,7 @@ def _copy_skill_tree(skill_name: str, dest_dir: Path, label: str) -> None:
                 child_target.write_bytes(child.read_bytes())
 
     _walk(res, dest_dir)
-    rprint(fmt.success(f"Installed {label} skill to {dest_dir}"))
+    _init_print(quiet, fmt.success(f"Installed {label} skill to {dest_dir}"))
 
 
 def _print_dry_run_plan(
@@ -271,6 +291,9 @@ def _print_dry_run_plan(
     want_betterleaks: bool,
     want_skill_scanner: bool,
     risk_level: str,
+    betterleaks_existing: Path | None = None,
+    betterleaks_supported: bool = True,
+    claude_code_mcp_disabled: bool = False,
 ) -> None:
     """Print every file path the install would touch — without writing anything (rf-hrtd).
 
@@ -298,6 +321,9 @@ def _print_dry_run_plan(
         suffix = f"   ({note})" if note else ""
         print(f"  REMOVE    {p}{suffix}")
 
+    def S(p: Path, note: str) -> None:
+        print(f"  SKIP      {p}   ({note})")
+
     rprint()
     rprint(fmt.info("DRY RUN — no files will be created or modified."))
     scope_note = f" (cwd: {root})" if scope == "project" else ""
@@ -312,7 +338,12 @@ def _print_dry_run_plan(
     if want_betterleaks:
         print()
         print("Betterleaks (--with-betterleaks / --all):")
-        D(home / ".rafter" / "bin" / "betterleaks", "binary, ~12MB from GitHub releases")
+        if betterleaks_existing:
+            S(betterleaks_existing, "betterleaks already present; no download")
+        elif not betterleaks_supported:
+            S(home / ".rafter" / "bin" / "betterleaks", "no betterleaks build for this platform; pattern-based scanning")
+        else:
+            D(home / ".rafter" / "bin" / "betterleaks", "binary, ~12MB from GitHub releases")
 
     if want_skill_scanner:
         print()
@@ -323,11 +354,16 @@ def _print_dry_run_plan(
         print()
         print("Claude Code (--with-claude-code):")
         W(root / ".claude" / "settings.json", "PreToolUse + PostToolUse hooks merged")
-        for s in ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"):
-            W(root / ".claude" / "skills" / s / "SKILL.md")
+        for s in _AGENT_SKILLS:
+            W(root / ".claude" / "skills" / s["name"] / "SKILL.md")
         W(root / ".claude" / "agents" / "rafter.md", "sub-agent")
         W(root / ".claude" / "CLAUDE.md", "rafter:start/end marker block")
-        W(root / ".mcp.json", "project-scope MCP config")
+        # .mcp.json is a project-scope file; the user-scope install never writes it.
+        if scope == "project":
+            if claude_code_mcp_disabled:
+                S(root / ".mcp.json", "claude-code.mcp disabled")
+            else:
+                W(root / ".mcp.json", "project-scope MCP config")
 
     if want_codex:
         print()
@@ -404,16 +440,16 @@ def _print_dry_run_plan(
     rprint()
 
 
-def _install_skills_to(skills_dir: Path) -> None:
+def _install_skills_to(skills_dir: Path, quiet: bool = False) -> None:
     """Install all _AGENT_SKILLS into <skills_dir>, including any docs/ trees."""
     skills_dir.mkdir(parents=True, exist_ok=True)
     for skill in _AGENT_SKILLS:
-        _copy_skill_tree(skill["name"], skills_dir / skill["name"], skill["description"])
+        _copy_skill_tree(skill["name"], skills_dir / skill["name"], skill["description"], quiet=quiet)
 
 
-def _install_claude_code_skills(root: Path) -> None:
+def _install_claude_code_skills(root: Path, quiet: bool = False) -> None:
     """Copy all four Rafter skills into <root>/.claude/skills/."""
-    _install_skills_to(root / ".claude" / "skills")
+    _install_skills_to(root / ".claude" / "skills", quiet=quiet)
 
 
 # Sub-agents shipped by `rafter agent init --with-claude-code`. These land in
@@ -426,7 +462,7 @@ _CLAUDE_CODE_SUBAGENTS: list[dict[str, str]] = [
 ]
 
 
-def _install_claude_code_subagents(root: Path) -> None:
+def _install_claude_code_subagents(root: Path, quiet: bool = False) -> None:
     """Copy sub-agent definitions into <root>/.claude/agents/<name>.md."""
     agents_dir = root / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
@@ -436,9 +472,9 @@ def _install_claude_code_subagents(root: Path) -> None:
         try:
             content = res.joinpath("agents", f"{sub['name']}.md").read_text(encoding="utf-8")
             dest_path.write_text(content, encoding="utf-8")
-            rprint(fmt.success(f"Installed {sub['description']} sub-agent to {dest_path}"))
+            _init_print(quiet, fmt.success(f"Installed {sub['description']} sub-agent to {dest_path}"))
         except Exception:
-            rprint(fmt.warning(f"{sub['description']} sub-agent template not found in package resources"))
+            _init_alert(quiet, fmt.warning(f"{sub['description']} sub-agent template not found in package resources"))
 
 
 def _install_global_instructions(
@@ -449,6 +485,7 @@ def _install_global_instructions(
     root: Path,
     scope: str,
     windsurf: bool = False,
+    quiet: bool = False,
 ) -> None:
     """Install Rafter instruction files for platforms that support them.
 
@@ -467,9 +504,9 @@ def _install_global_instructions(
         try:
             file_path = root / ".claude" / "CLAUDE.md"
             _inject_instruction_file(file_path)
-            rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
+            _init_print(quiet, fmt.success(f"Installed Rafter instructions to {file_path}"))
         except Exception as e:
-            rprint(fmt.warning(f"Failed to write Claude Code instructions: {e}"))
+            _init_alert(quiet, fmt.warning(f"Failed to write Claude Code instructions: {e}"))
 
     if codex or windsurf:
         try:
@@ -481,17 +518,17 @@ def _install_global_instructions(
             readers = " + ".join(
                 name for name, on in [("Codex", codex), ("Windsurf", windsurf)] if on
             )
-            rprint(fmt.success(f"Installed Rafter instructions for {readers} to {file_path}"))
+            _init_print(quiet, fmt.success(f"Installed Rafter instructions for {readers} to {file_path}"))
         except Exception as e:
-            rprint(fmt.warning(f"Failed to write AGENTS.md: {e}"))
+            _init_alert(quiet, fmt.warning(f"Failed to write AGENTS.md: {e}"))
 
     if gemini:
         try:
             file_path = root / ".gemini" / "GEMINI.md" if scope == "user" else root / "GEMINI.md"
             _inject_instruction_file(file_path)
-            rprint(fmt.success(f"Installed Rafter instructions to {file_path}"))
+            _init_print(quiet, fmt.success(f"Installed Rafter instructions to {file_path}"))
         except Exception as e:
-            rprint(fmt.warning(f"Failed to write Gemini instructions: {e}"))
+            _init_alert(quiet, fmt.warning(f"Failed to write Gemini instructions: {e}"))
 
     # Cursor uses per-skill rules at <root>/.cursor/rules/<skill>.mdc plus
     # the rafter sub-agent at <root>/.cursor/agents/rafter.md. Both are
@@ -501,7 +538,7 @@ def _install_global_instructions(
     _ = cursor  # parameter kept for call-site compatibility
 
 
-def _install_openclaw_skill() -> tuple[bool, str, str, str]:
+def _install_openclaw_skill(quiet: bool = False) -> tuple[bool, str, str, str]:
     """Install Rafter Security skill to OpenClaw. Returns (ok, source, dest, error).
 
     rf-zgwj: writes to the canonical ClawHub workspace location
@@ -542,7 +579,7 @@ def _install_openclaw_skill() -> tuple[bool, str, str, str]:
     if legacy_path.exists():
         try:
             legacy_path.unlink()
-            rprint(fmt.success(f"Removed legacy {legacy_path} (superseded by ClawHub-shaped skill at {dest_path})"))
+            _init_print(quiet, fmt.success(f"Removed legacy {legacy_path} (superseded by ClawHub-shaped skill at {dest_path})"))
             # Drop the empty parent if we just emptied it.
             legacy_parent = legacy_path.parent
             try:
@@ -556,28 +593,28 @@ def _install_openclaw_skill() -> tuple[bool, str, str, str]:
     return True, source_path, str(dest_path), ""
 
 
-def _install_codex_skills(root: Path) -> tuple[bool, str]:
+def _install_codex_skills(root: Path, quiet: bool = False) -> tuple[bool, str]:
     """Install all Rafter skills to <root>/.agents/skills/ for Codex CLI."""
     try:
-        _install_skills_to(root / ".agents" / "skills")
+        _install_skills_to(root / ".agents" / "skills", quiet=quiet)
         return True, ""
     except Exception as e:
         return False, str(e)
 
 
-def _install_gemini_skills(root: Path) -> tuple[bool, str]:
+def _install_gemini_skills(root: Path, quiet: bool = False) -> tuple[bool, str]:
     """Install all Rafter skills to <root>/.agents/skills/ for Gemini CLI.
 
     Gemini shares the same skills dir as Codex — overwrite is harmless.
     """
     try:
-        _install_skills_to(root / ".agents" / "skills")
+        _install_skills_to(root / ".agents" / "skills", quiet=quiet)
         return True, ""
     except Exception as e:
         return False, str(e)
 
 
-def _register_gemini_skills(skills_dir: Path) -> None:
+def _register_gemini_skills(skills_dir: Path, quiet: bool = False) -> None:
     """Register installed skills with Gemini CLI via `gemini skills link <abs>`.
 
     Requires gemini CLI >= 0.35. Missing CLI / subcommand / per-skill failures
@@ -585,7 +622,7 @@ def _register_gemini_skills(skills_dir: Path) -> None:
     """
     gemini = shutil.which("gemini")
     if not gemini:
-        rprint(fmt.warning(
+        _init_alert(quiet, fmt.warning(
             "gemini CLI not found on PATH — skipping skill registration. "
             "Skills are installed to disk; re-run after installing gemini ≥ 0.35."
         ))
@@ -600,7 +637,7 @@ def _register_gemini_skills(skills_dir: Path) -> None:
             timeout=5,
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-        rprint(fmt.warning(
+        _init_alert(quiet, fmt.warning(
             "gemini CLI does not support `skills` subcommand (needs ≥ 0.35). "
             "Skipping registration — skills are still installed to disk."
         ))
@@ -617,7 +654,7 @@ def _register_gemini_skills(skills_dir: Path) -> None:
                 capture_output=True,
                 timeout=10,
             )
-            rprint(fmt.success(f"Registered {skill['name']} with Gemini CLI"))
+            _init_print(quiet, fmt.success(f"Registered {skill['name']} with Gemini CLI"))
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
             first_line = ""
             stderr = getattr(e, "stderr", None)
@@ -626,7 +663,7 @@ def _register_gemini_skills(skills_dir: Path) -> None:
                     first_line = stderr.decode("utf-8", errors="replace").strip().split("\n", 1)[0]
                 except Exception:
                     first_line = ""
-            rprint(fmt.warning(
+            _init_alert(quiet, fmt.warning(
                 f"Failed to register {skill['name']} with Gemini CLI: {first_line or 'unknown error'}"
             ))
 
@@ -648,7 +685,7 @@ _RAFTER_OPENCODE_MCP_ENTRY = {
 }
 
 
-def _install_claude_code_mcp(root: Path) -> bool:
+def _install_claude_code_mcp(root: Path, quiet: bool = False) -> bool:
     """Install MCP server config for Claude Code (<root>/.mcp.json).
 
     Project-scope MCP config that Claude Code auto-loads on startup.
@@ -660,18 +697,18 @@ def _install_claude_code_mcp(root: Path) -> bool:
         try:
             config = json.loads(mcp_path.read_text())
         except (json.JSONDecodeError, ValueError):
-            rprint(fmt.warning("Existing .mcp.json was unreadable, creating new one"))
+            _init_alert(quiet, fmt.warning("Existing .mcp.json was unreadable, creating new one"))
 
     if "mcpServers" not in config:
         config["mcpServers"] = {}
     config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
 
     mcp_path.write_text(json.dumps(config, indent=2) + "\n")
-    rprint(fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
+    _init_print(quiet, fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
     return True
 
 
-def _install_gemini_mcp(root: Path) -> bool:
+def _install_gemini_mcp(root: Path, quiet: bool = False) -> bool:
     """Install MCP server config for Gemini CLI (<root>/.gemini/settings.json)."""
     gemini_dir = root / ".gemini"
     settings_path = gemini_dir / "settings.json"
@@ -683,22 +720,22 @@ def _install_gemini_mcp(root: Path) -> bool:
         try:
             settings = json.loads(settings_path.read_text())
         except (json.JSONDecodeError, ValueError):
-            rprint(fmt.warning("Existing Gemini settings.json was unreadable, creating new one"))
+            _init_alert(quiet, fmt.warning("Existing Gemini settings.json was unreadable, creating new one"))
 
     if "mcpServers" not in settings:
         settings["mcpServers"] = {}
     settings["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
 
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
-    rprint(fmt.success(f"Installed Rafter MCP server to {settings_path}"))
+    _init_print(quiet, fmt.success(f"Installed Rafter MCP server to {settings_path}"))
     return True
 
 
 # Cursor hook events covered by rafter (rf-svn3).
 _CURSOR_HOOK_EVENTS: tuple[tuple[str, str], ...] = (
-    ("preToolUse", "rafter hook pretool --format cursor"),
-    ("postToolUse", "rafter hook posttool --format cursor"),
-    ("beforeShellExecution", "rafter hook pretool --format cursor"),
+    ("preToolUse", "hook pretool --format cursor"),
+    ("postToolUse", "hook posttool --format cursor"),
+    ("beforeShellExecution", "hook pretool --format cursor"),
 )
 
 # Skills shipped as both Cursor rules and Claude Code / Codex / Gemini skills.
@@ -710,7 +747,81 @@ _CURSOR_RULE_SKILLS: tuple[str, ...] = (
 )
 
 
-def _install_cursor_hooks(root: Path) -> None:
+def _install_codex_hooks(root: Path, quiet: bool = False) -> None:
+    """Install Rafter PreToolUse/PostToolUse hooks into <root>/.codex/hooks.json.
+
+    Mirrors Node's installCodexHooks: Codex uses the Claude Code hook protocol,
+    and Bash + apply_patch are the tools Codex documents hook support for.
+    """
+    codex_dir = root / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    hooks_path = codex_dir / "hooks.json"
+
+    config: dict[str, Any] = {}
+    if hooks_path.exists():
+        try:
+            config = json.loads(hooks_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            _init_alert(quiet, fmt.warning("Existing Codex hooks.json was unreadable, creating new one"))
+
+    hooks = config.setdefault("hooks", {})
+    rafter_bin = _resolve_rafter_path()
+    for event, sub in (("PreToolUse", "pretool"), ("PostToolUse", "posttool")):
+        entries = hooks.get(event) or []
+        entries = [
+            e for e in entries
+            if not any(f"hook {sub}" in h.get("command", "") for h in (e.get("hooks") or []))
+        ]
+        entries.append({
+            "matcher": "Bash|apply_patch",
+            "hooks": [{"type": "command", "command": f"{rafter_bin} hook {sub}"}],
+        })
+        hooks[event] = entries
+
+    hooks_path.write_text(json.dumps(config, indent=2))
+    _init_print(quiet, fmt.success(f"Installed PreToolUse hooks to {hooks_path}"))
+    _init_print(quiet, fmt.success(f"Installed PostToolUse hooks to {hooks_path}"))
+
+
+def _install_gemini_hooks(root: Path, quiet: bool = False) -> None:
+    """Install Rafter BeforeTool/AfterTool hooks into <root>/.gemini/settings.json.
+
+    Mirrors Node's installGeminiHooks. Gemini matchers are regexes against its
+    built-in tool names; the mutating ones are matched explicitly.
+    """
+    gemini_dir = root / ".gemini"
+    gemini_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = gemini_dir / "settings.json"
+
+    settings: dict[str, Any] = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            _init_alert(quiet, fmt.warning("Existing Gemini settings.json was unreadable, creating new one"))
+
+    hooks = settings.setdefault("hooks", {})
+    rafter_bin = _resolve_rafter_path()
+    for event, sub, matcher in (
+        ("BeforeTool", "pretool", "run_shell_command|write_file|replace"),
+        ("AfterTool", "posttool", ".*"),
+    ):
+        entries = hooks.get(event) or []
+        entries = [
+            e for e in entries
+            if not any(f"hook {sub}" in str(h.get("command", "")) for h in (e.get("hooks") or []))
+        ]
+        entries.append({
+            "matcher": matcher,
+            "hooks": [{"type": "command", "command": f"{rafter_bin} hook {sub} --format gemini", "timeout": 5000}],
+        })
+        hooks[event] = entries
+
+    settings_path.write_text(json.dumps(settings, indent=2))
+    _init_print(quiet, fmt.success(f"Installed hooks to {settings_path}"))
+
+
+def _install_cursor_hooks(root: Path, quiet: bool = False) -> None:
     """Install Cursor hooks at <root>/.cursor/hooks.json.
 
     Covers preToolUse + postToolUse + beforeShellExecution. Idempotent —
@@ -726,12 +837,16 @@ def _install_cursor_hooks(root: Path) -> None:
         try:
             config = json.loads(hooks_path.read_text())
         except (json.JSONDecodeError, ValueError):
-            rprint(fmt.warning("Existing Cursor hooks.json was unreadable, creating new one"))
+            _init_alert(quiet, fmt.warning("Existing Cursor hooks.json was unreadable, creating new one"))
 
     config.setdefault("version", 1)
     config.setdefault("hooks", {})
 
-    for event, command in _CURSOR_HOOK_EVENTS:
+    # The resolved path, as for the Claude Code and Codex hooks: Cursor runs
+    # hooks without the user's shell PATH, where a bare `rafter` may not resolve.
+    rafter_bin = _resolve_rafter_path()
+    for event, args in _CURSOR_HOOK_EVENTS:
+        command = f"{rafter_bin} {args}"
         entries = config["hooks"].get(event)
         if not isinstance(entries, list):
             entries = []
@@ -743,10 +858,10 @@ def _install_cursor_hooks(root: Path) -> None:
         config["hooks"][event] = entries
 
     hooks_path.write_text(json.dumps(config, indent=2) + "\n")
-    rprint(fmt.success(f"Installed hooks to {hooks_path}"))
+    _init_print(quiet, fmt.success(f"Installed hooks to {hooks_path}"))
 
 
-def _install_cursor_rules(root: Path) -> None:
+def _install_cursor_rules(root: Path, quiet: bool = False) -> None:
     """Install per-skill Cursor rule files at <root>/.cursor/rules/<skill>.mdc.
 
     Replaces the legacy consolidated `.cursor/rules/rafter-security.mdc`.
@@ -761,23 +876,23 @@ def _install_cursor_rules(root: Path) -> None:
         try:
             content = res.joinpath("cursor-rules", f"{name}.mdc").read_text(encoding="utf-8")
         except Exception:
-            rprint(fmt.warning(f"Cursor rule template missing: {name}.mdc"))
+            _init_alert(quiet, fmt.warning(f"Cursor rule template missing: {name}.mdc"))
             continue
         dest = rules_dir / f"{name}.mdc"
         dest.write_text(content, encoding="utf-8")
-        rprint(fmt.success(f"Installed Cursor rule to {dest}"))
+        _init_print(quiet, fmt.success(f"Installed Cursor rule to {dest}"))
 
     # Migrate away from the legacy consolidated rule on reinstall.
     legacy = rules_dir / "rafter-security.mdc"
     if legacy.exists():
         try:
             legacy.unlink()
-            rprint(fmt.info(f"Removed legacy {legacy} (superseded by per-skill rules)"))
+            _init_print(quiet, fmt.info(f"Removed legacy {legacy} (superseded by per-skill rules)"))
         except OSError:
             pass
 
 
-def _install_cursor_subagents(root: Path) -> None:
+def _install_cursor_subagents(root: Path, quiet: bool = False) -> None:
     """Install the Cursor sub-agent at <root>/.cursor/agents/rafter.md.
 
     Reuses the rf-q7j Claude-Code sub-agent body, with Cursor-shape
@@ -790,13 +905,13 @@ def _install_cursor_subagents(root: Path) -> None:
     try:
         raw = res.joinpath("agents", "rafter.md").read_text(encoding="utf-8")
     except Exception:
-        rprint(fmt.warning("Rafter sub-agent template not found in resources/agents/"))
+        _init_alert(quiet, fmt.warning("Rafter sub-agent template not found in resources/agents/"))
         return
 
     cursored = _strip_frontmatter_field(raw, "tools")
     dest = agents_dir / "rafter.md"
     dest.write_text(cursored, encoding="utf-8")
-    rprint(fmt.success(f"Installed Cursor sub-agent to {dest}"))
+    _init_print(quiet, fmt.success(f"Installed Cursor sub-agent to {dest}"))
 
 
 def _strip_frontmatter_field(content: str, field: str) -> str:
@@ -813,7 +928,7 @@ def _strip_frontmatter_field(content: str, field: str) -> str:
     return f"---\n{cleaned}{body}"
 
 
-def _install_cursor_mcp(root: Path) -> bool:
+def _install_cursor_mcp(root: Path, quiet: bool = False) -> bool:
     """Install MCP server config for Cursor (<root>/.cursor/mcp.json)."""
     cursor_dir = root / ".cursor"
     mcp_path = cursor_dir / "mcp.json"
@@ -825,18 +940,18 @@ def _install_cursor_mcp(root: Path) -> bool:
         try:
             config = json.loads(mcp_path.read_text())
         except (json.JSONDecodeError, ValueError):
-            rprint(fmt.warning("Existing Cursor mcp.json was unreadable, creating new one"))
+            _init_alert(quiet, fmt.warning("Existing Cursor mcp.json was unreadable, creating new one"))
 
     if "mcpServers" not in config:
         config["mcpServers"] = {}
     config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
 
     mcp_path.write_text(json.dumps(config, indent=2) + "\n")
-    rprint(fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
+    _init_print(quiet, fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
     return True
 
 
-def _install_windsurf_mcp(root: Path) -> bool:
+def _install_windsurf_mcp(root: Path, quiet: bool = False) -> bool:
     """Install MCP server config for Windsurf (<root>/.codeium/windsurf/mcp_config.json)."""
     windsurf_dir = root / ".codeium" / "windsurf"
     mcp_path = windsurf_dir / "mcp_config.json"
@@ -848,14 +963,14 @@ def _install_windsurf_mcp(root: Path) -> bool:
         try:
             config = json.loads(mcp_path.read_text())
         except (json.JSONDecodeError, ValueError):
-            rprint(fmt.warning("Existing Windsurf mcp_config.json was unreadable, creating new one"))
+            _init_alert(quiet, fmt.warning("Existing Windsurf mcp_config.json was unreadable, creating new one"))
 
     if "mcpServers" not in config:
         config["mcpServers"] = {}
     config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
 
     mcp_path.write_text(json.dumps(config, indent=2) + "\n")
-    rprint(fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
+    _init_print(quiet, fmt.success(f"Installed Rafter MCP server to {mcp_path}"))
     return True
 
 
@@ -868,7 +983,7 @@ _WINDSURF_RULE_SKILLS: tuple[str, ...] = (
 )
 
 
-def _install_windsurf_rules(root: Path) -> None:
+def _install_windsurf_rules(root: Path, quiet: bool = False) -> None:
     """Install per-skill Windsurf rules at <root>/.windsurf/rules/<skill>.md.
 
     Workspace-scope rules consumed by Windsurf's rules system (.windsurf/rules/*.md,
@@ -888,11 +1003,11 @@ def _install_windsurf_rules(root: Path) -> None:
         try:
             content = res.joinpath("windsurf-rules", f"{name}.md").read_text(encoding="utf-8")
         except Exception:
-            rprint(fmt.warning(f"Windsurf rule template missing: {name}.md"))
+            _init_alert(quiet, fmt.warning(f"Windsurf rule template missing: {name}.md"))
             continue
         dest = rules_dir / f"{name}.md"
         dest.write_text(content, encoding="utf-8")
-        rprint(fmt.success(f"Installed Windsurf rule to {dest}"))
+        _init_print(quiet, fmt.success(f"Installed Windsurf rule to {dest}"))
 
 
 # Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0).
@@ -904,7 +1019,7 @@ _CONTINUE_RULE_SKILLS: tuple[str, ...] = (
 )
 
 
-def _install_continue_dev_rules(root: Path) -> None:
+def _install_continue_dev_rules(root: Path, quiet: bool = False) -> None:
     """Install per-skill Continue.dev rules at <root>/.continue/rules/<skill>.md.
 
     Continue.dev reads workspace rules from .continue/rules/*.md (per-rule
@@ -920,14 +1035,14 @@ def _install_continue_dev_rules(root: Path) -> None:
         try:
             content = res.joinpath("continue-rules", f"{name}.md").read_text(encoding="utf-8")
         except Exception:
-            rprint(fmt.warning(f"Continue.dev rule template missing: {name}.md"))
+            _init_alert(quiet, fmt.warning(f"Continue.dev rule template missing: {name}.md"))
             continue
         dest = rules_dir / f"{name}.md"
         dest.write_text(content, encoding="utf-8")
-        rprint(fmt.success(f"Installed Continue.dev rule to {dest}"))
+        _init_print(quiet, fmt.success(f"Installed Continue.dev rule to {dest}"))
 
 
-def _install_continue_dev_mcp(root: Path) -> bool:
+def _install_continue_dev_mcp(root: Path, quiet: bool = False) -> bool:
     """Install MCP server config for Continue.dev (<root>/.continue/config.json)."""
     continue_dir = root / ".continue"
     config_path = continue_dir / "config.json"
@@ -939,7 +1054,7 @@ def _install_continue_dev_mcp(root: Path) -> bool:
         try:
             config = json.loads(config_path.read_text())
         except (json.JSONDecodeError, ValueError):
-            rprint(fmt.warning("Existing Continue.dev config.json was unreadable, creating new one"))
+            _init_alert(quiet, fmt.warning("Existing Continue.dev config.json was unreadable, creating new one"))
 
     if "mcpServers" not in config:
         config["mcpServers"] = []
@@ -956,7 +1071,7 @@ def _install_continue_dev_mcp(root: Path) -> bool:
         config["mcpServers"]["rafter"] = {**_RAFTER_MCP_ENTRY}
 
     config_path.write_text(json.dumps(config, indent=2) + "\n")
-    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    _init_print(quiet, fmt.success(f"Installed Rafter MCP server to {config_path}"))
     return True
 
 
@@ -970,7 +1085,7 @@ _AIDER_LEGACY_MCP_LINE_RE = re.compile(
 _AIDER_READ_ENTRY = "RAFTER.md"
 
 
-def _install_aider_read(root: Path) -> bool:
+def _install_aider_read(root: Path, quiet: bool = False) -> bool:
     """Install Rafter context for Aider (rf-du2o).
 
     Aider has no native MCP support and no plugin/hook surface. Its only
@@ -1010,7 +1125,7 @@ def _install_aider_read(root: Path) -> bool:
                 config_path.write_text(f"{raw}{sep}read:\n  - {_AIDER_READ_ENTRY}\n")
             else:
                 config_path.write_text(raw)
-            rprint(fmt.success(f"Installed Rafter read-only context to {config_path}"))
+            _init_print(quiet, fmt.success(f"Installed Rafter read-only context to {config_path}"))
             return True
 
     # Normalize read: to a list of strings.
@@ -1026,13 +1141,13 @@ def _install_aider_read(root: Path) -> bool:
     parsed["read"] = reads
 
     config_path.write_text(yaml.safe_dump(parsed, sort_keys=False))
-    rprint(fmt.success(
+    _init_print(quiet, fmt.success(
         f"Installed Rafter read-only context to {rafter_md_path} + {config_path}"
     ))
     return True
 
 
-def _install_hermes_mcp(root: Path) -> bool:
+def _install_hermes_mcp(root: Path, quiet: bool = False) -> bool:
     """Install MCP server config for Hermes (<root>/.hermes/config.yaml).
 
     Hermes uses a YAML config with an ``mcp_servers:`` block (snake_case,
@@ -1057,7 +1172,7 @@ def _install_hermes_mcp(root: Path) -> bool:
             if isinstance(loaded, dict):
                 config = loaded
         except yaml.YAMLError:
-            rprint(fmt.warning("Existing Hermes config.yaml was not valid YAML, creating new one"))
+            _init_alert(quiet, fmt.warning("Existing Hermes config.yaml was not valid YAML, creating new one"))
 
     mcp_servers = config.get("mcp_servers")
     if not isinstance(mcp_servers, dict):
@@ -1066,11 +1181,11 @@ def _install_hermes_mcp(root: Path) -> bool:
     mcp_servers["rafter"] = {**_RAFTER_MCP_ENTRY}
 
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
-    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    _init_print(quiet, fmt.success(f"Installed Rafter MCP server to {config_path}"))
     return True
 
 
-def _install_opencode_mcp(root: Path) -> bool:
+def _install_opencode_mcp(root: Path, quiet: bool = False) -> bool:
     """Install MCP server config for OpenCode (<root>/.config/opencode/opencode.json).
 
     OpenCode reads a global config at ~/.config/opencode/opencode.json and a
@@ -1094,7 +1209,7 @@ def _install_opencode_mcp(root: Path) -> bool:
             if isinstance(loaded, dict):
                 config = loaded
         except (json.JSONDecodeError, ValueError):
-            rprint(fmt.warning("Existing OpenCode opencode.json was unreadable, creating new one"))
+            _init_alert(quiet, fmt.warning("Existing OpenCode opencode.json was unreadable, creating new one"))
 
     if "$schema" not in config:
         config["$schema"] = "https://opencode.ai/config.json"
@@ -1105,7 +1220,7 @@ def _install_opencode_mcp(root: Path) -> bool:
     mcp["rafter"] = {**_RAFTER_OPENCODE_MCP_ENTRY}
 
     config_path.write_text(json.dumps(config, indent=2) + "\n")
-    rprint(fmt.success(f"Installed Rafter MCP server to {config_path}"))
+    _init_print(quiet, fmt.success(f"Installed Rafter MCP server to {config_path}"))
     return True
 
 
@@ -1113,7 +1228,7 @@ def _install_opencode_mcp(root: Path) -> bool:
 def init(
     risk_level: str = typer.Option("moderate", "--risk-level", help="minimal, moderate, or aggressive"),
     with_betterleaks: bool = typer.Option(False, "--with-betterleaks", help="Download and install Betterleaks binary"),
-    with_skill_scanner: bool = typer.Option(False, "--with-skill-scanner", help="Install the optional skill-scanner deep engine (heavy; audit-skill --deep)"),
+    with_skill_scanner: bool = typer.Option(False, "--with-skill-scanner", help="Install the optional skill-scanner deep engine (heavy; skill review --deep)"),
     with_openclaw: bool = typer.Option(False, "--with-openclaw", help="Install OpenClaw integration"),
     with_claude_code: bool = typer.Option(False, "--with-claude-code", help="Install Claude Code integration"),
     with_codex: bool = typer.Option(False, "--with-codex", help="Install Codex CLI integration"),
@@ -1139,17 +1254,18 @@ def init(
         "--dry-run",
         help="Print every file path that would be created, modified, or downloaded — without making any changes (rf-hrtd).",
     ),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress informational and success output (warnings and errors still go to stderr)"),
 ):
     """Initialize agent security system."""
-    rprint(fmt.header("Rafter Agent Security Setup"))
-    rprint(fmt.divider())
-    rprint()
+    _init_print(quiet, fmt.header("Rafter Agent Security Setup"))
+    _init_print(quiet, fmt.divider())
+    _init_print(quiet)
 
     manager = ConfigManager()
     root = Path.cwd() if local else Path.home()
     scope = "project" if local else "user"
     if local:
-        rprint(fmt.info(f"Project-local install — writing configs under {root}"))
+        _init_print(quiet, fmt.info(f"Project-local install — writing configs under {root}"))
 
     # Detect environments. In local scope, don't probe user-global paths —
     # the user must opt in explicitly via --with-<platform>.
@@ -1222,43 +1338,54 @@ def init(
         detected.append("OpenCode")
 
     if detected:
-        rprint(fmt.info(f"Detected environments: {', '.join(detected)}"))
+        _init_print(quiet, fmt.info(f"Detected environments: {', '.join(detected)}"))
     else:
-        rprint(fmt.info("No agent environments detected"))
+        _init_print(quiet, fmt.info("No agent environments detected"))
 
     # Warn about requested but undetected environments (user scope only —
     # in --local scope we create the directories in CWD as needed).
+    # Gated on the EXPLICIT --with-<platform> flag, not the resolved want_*
+    # (which --all also sets): --all means "install all DETECTED
+    # integrations" per its own --help text, so an undetected platform
+    # under --all is normal and shouldn't warn individually — 9 such
+    # warnings buried the ones that actually matter (rafter-cli#231).
     if scope == "user":
-        if want_openclaw and not has_openclaw:
-            rprint(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"))
-        if want_claude_code and not has_claude_code:
-            rprint(fmt.warning("Claude Code requested but not detected (~/.claude not found)"))
-        if want_codex and not has_codex:
-            rprint(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"))
-        if want_gemini and not has_gemini:
-            rprint(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"))
-        if want_cursor and not has_cursor:
-            rprint(fmt.warning("Cursor requested but not detected (~/.cursor not found)"))
-        if want_windsurf and not has_windsurf:
-            rprint(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"))
-        if want_continue and not has_continue_dev:
-            rprint(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
-        if want_aider and not has_aider:
-            rprint(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
-        if want_hermes and not has_hermes:
-            rprint(fmt.warning("Hermes requested but not detected (~/.hermes not found)"))
-        if want_opencode and not has_opencode:
-            rprint(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"))
+        if with_openclaw and not has_openclaw:
+            _init_alert(quiet, fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"))
+        if with_claude_code and not has_claude_code:
+            _init_alert(quiet, fmt.warning("Claude Code requested but not detected (~/.claude not found)"))
+        if with_codex and not has_codex:
+            _init_alert(quiet, fmt.warning("Codex CLI requested but not detected (~/.codex not found)"))
+        if with_gemini and not has_gemini:
+            _init_alert(quiet, fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"))
+        if with_cursor and not has_cursor:
+            _init_alert(quiet, fmt.warning("Cursor requested but not detected (~/.cursor not found)"))
+        if with_windsurf and not has_windsurf:
+            _init_alert(quiet, fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"))
+        if with_continue and not has_continue_dev:
+            _init_alert(quiet, fmt.warning("Continue.dev requested but not detected (~/.continue not found)"))
+        if with_aider and not has_aider:
+            _init_alert(quiet, fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"))
+        if with_hermes and not has_hermes:
+            _init_alert(quiet, fmt.warning("Hermes requested but not detected (~/.hermes not found)"))
+        if with_opencode and not has_opencode:
+            _init_alert(quiet, fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"))
 
     # --dry-run: print every file path the command would touch, then exit
     # before any filesystem write happens (rf-hrtd). Built from the same
     # resolved want_* / has_* booleans the install path uses.
     if dry_run:
+        _bl_existing: Path | None = None
+        if want_betterleaks and not update:
+            _bl_which = shutil.which("betterleaks")
+            _bl_local = Path.home() / ".rafter" / "bin" / ("betterleaks.exe" if sys.platform == "win32" else "betterleaks")
+            _bl_existing = Path(_bl_which) if _bl_which else (_bl_local if _bl_local.exists() else None)
+        _components = manager.get("agent.components") or {}
         _print_dry_run_plan(
             root=root,
             scope=scope,
             want_openclaw=want_openclaw and has_openclaw,
-            want_claude_code=want_claude_code and (has_claude_code or local),
+            want_claude_code=want_claude_code and (has_claude_code or with_claude_code or local),
             want_codex=want_codex and (has_codex or local),
             want_gemini=want_gemini and (has_gemini or local),
             want_cursor=want_cursor and (has_cursor or local),
@@ -1270,22 +1397,25 @@ def init(
             want_betterleaks=want_betterleaks,
             want_skill_scanner=want_skill_scanner,
             risk_level=risk_level,
+            betterleaks_existing=_bl_existing,
+            betterleaks_supported=BinaryManager().is_platform_supported(),
+            claude_code_mcp_disabled=_components.get("claude-code.mcp", {}).get("enabled") is False,
         )
         return
 
     # Initialize
     manager.initialize()
-    rprint(fmt.success("Created config at ~/.rafter/config.json"))
+    _init_print(quiet, fmt.success("Created config at ~/.rafter/config.json"))
 
     # Validate + set risk level
     valid = ("minimal", "moderate", "aggressive")
     if risk_level not in valid:
-        rprint(fmt.error(f"Invalid risk level: {risk_level}"))
+        _init_alert(quiet, fmt.error(f"Invalid risk level: {risk_level}"))
         print(f"Valid options: {', '.join(valid)}", file=sys.stderr)
         raise typer.Exit(code=1)
 
     manager.set("agent.risk_level", risk_level)
-    rprint(fmt.success(f"Set risk level: {risk_level}"))
+    _init_print(quiet, fmt.success(f"Set risk level: {risk_level}"))
 
     # Betterleaks check (opt-in via --with-betterleaks or --all)
     if want_betterleaks:
@@ -1293,32 +1423,32 @@ def init(
         _bin_name = "betterleaks.exe" if sys.platform == "win32" else "betterleaks"
         _rafter_bin = Path.home() / ".rafter" / "bin" / _bin_name
         if _bl_on_path:
-            rprint(fmt.success(f"Betterleaks available on PATH ({_bl_on_path})"))
+            _init_print(quiet, fmt.success(f"Betterleaks available on PATH ({_bl_on_path})"))
         elif not update and _rafter_bin.exists():
-            rprint(fmt.success(f"Betterleaks available at {_rafter_bin}"))
+            _init_print(quiet, fmt.success(f"Betterleaks available at {_rafter_bin}"))
         else:
             if update:
-                rprint(fmt.info("Updating betterleaks binary..."))
+                _init_print(quiet, fmt.info("Updating betterleaks binary..."))
             else:
-                rprint(fmt.info("Betterleaks not found — attempting auto-download..."))
+                _init_print(quiet, fmt.info("Betterleaks not found — attempting auto-download..."))
             _bm = BinaryManager()
             if _bm.is_platform_supported():
                 try:
-                    _bm.download_betterleaks(on_progress=typer.echo)
-                    rprint(fmt.success("Betterleaks downloaded and verified."))
+                    _bm.download_betterleaks(on_progress=None if quiet else typer.echo)
+                    _init_print(quiet, fmt.success("Betterleaks downloaded and verified."))
                 except Exception as _dl_err:
-                    rprint(fmt.warning(f"Auto-download failed: {_dl_err}"))
-                    rprint(fmt.info(
+                    _init_alert(quiet, fmt.warning(f"Auto-download failed: {_dl_err}"))
+                    _init_alert(quiet, fmt.info(
                         "To fix: install betterleaks manually "
                         "(https://github.com/betterleaks/betterleaks/releases) "
                         "and ensure it is on PATH, then re-run 'rafter agent init'."
                     ))
             else:
-                rprint(fmt.warning(
+                _init_alert(quiet, fmt.warning(
                     "Betterleaks not available for this platform — "
                     "pattern-based scanning will be used instead."
                 ))
-                rprint(fmt.info(
+                _init_alert(quiet, fmt.info(
                     "To fix: install betterleaks (https://github.com/betterleaks/betterleaks/releases) "
                     "and ensure it is on PATH, then re-run 'rafter agent init'."
                 ))
@@ -1326,22 +1456,22 @@ def init(
     if want_skill_scanner:
         _ss_on_path = None if update else shutil.which("skill-scanner")
         if _ss_on_path:
-            rprint(fmt.success(f"skill-scanner available on PATH ({_ss_on_path})"))
+            _init_print(quiet, fmt.success(f"skill-scanner available on PATH ({_ss_on_path})"))
         else:
             from ..scanners.skill_scanner import SkillScannerInstaller
 
-            rprint(fmt.info(
+            _init_print(quiet, fmt.info(
                 "Installing optional skill-scanner deep engine (heavy "
                 "third-party package; isolated install)..."
             ))
-            _result = SkillScannerInstaller().install(on_progress=typer.echo)
+            _result = SkillScannerInstaller().install(on_progress=None if quiet else typer.echo)
             if _result.ok:
-                rprint(fmt.success(
+                _init_print(quiet, fmt.success(
                     f"skill-scanner installed (via {_result.via}): {_result.message}"
                 ))
             else:
-                rprint(fmt.warning(f"skill-scanner install failed: {_result.message}"))
-                rprint(fmt.info(
+                _init_alert(quiet, fmt.warning(f"skill-scanner install failed: {_result.message}"))
+                _init_alert(quiet, fmt.info(
                     "To fix: run 'rafter agent update-skill-scanner' or install "
                     "manually with 'uv tool install cisco-ai-skill-scanner'."
                 ))
@@ -1349,20 +1479,20 @@ def init(
     # Install OpenClaw skill if opted in
     openclaw_ok = False
     if has_openclaw and want_openclaw:
-        ok, source, dest, error = _install_openclaw_skill()
+        ok, source, dest, error = _install_openclaw_skill(quiet=quiet)
         openclaw_ok = ok
         if ok:
-            rprint(fmt.success(f"Installed Rafter Security skill to {dest}"))
+            _init_print(quiet, fmt.success(f"Installed Rafter Security skill to {dest}"))
             manager.set("agent.environments.openclaw.enabled", True)
         else:
-            rprint(fmt.error("Failed to install Rafter Security skill"))
-            rprint(fmt.warning(f"  Source: {source}"))
-            rprint(fmt.warning(f"  Destination: {dest}"))
+            _init_alert(quiet, fmt.error("Failed to install Rafter Security skill"))
+            _init_alert(quiet, fmt.warning(f"  Source: {source}"))
+            _init_alert(quiet, fmt.warning(f"  Destination: {dest}"))
             if error:
-                rprint(fmt.warning(f"  Error: {error}"))
+                _init_alert(quiet, fmt.warning(f"  Error: {error}"))
 
     def _local_unsupported(label: str) -> None:
-        rprint(fmt.warning(
+        _init_alert(quiet, fmt.warning(
             f"{label} is not supported in --local mode yet. Skipping. "
             "Re-run without --local to install for this platform user-globally."
         ))
@@ -1372,15 +1502,15 @@ def init(
     claude_code_ok = False
     if (has_claude_code or with_claude_code or (local and want_claude_code)) and want_claude_code:
         try:
-            _install_claude_code_skills(root)
-            _install_claude_code_subagents(root)
-            _install_claude_code_hooks(root)
+            _install_claude_code_skills(root, quiet=quiet)
+            _install_claude_code_subagents(root, quiet=quiet)
+            _install_claude_code_hooks(root, quiet=quiet)
             if scope == "project":
                 components = manager.get("agent.components") or {}
                 if components.get("claude-code.mcp", {}).get("enabled") is False:
-                    rprint(fmt.info("Skipped .mcp.json (claude-code.mcp disabled; re-enable with 'rafter agent enable claude-code.mcp')"))
+                    _init_print(quiet, fmt.info("Skipped .mcp.json (claude-code.mcp disabled; re-enable with 'rafter agent enable claude-code.mcp')"))
                 else:
-                    _install_claude_code_mcp(root)
+                    _install_claude_code_mcp(root, quiet=quiet)
                     from datetime import datetime, timezone
                     components["claude-code.mcp"] = {
                         "enabled": True,
@@ -1391,48 +1521,50 @@ def init(
                 manager.set("agent.environments.claude_code.enabled", True)
             claude_code_ok = True
         except Exception as e:
-            rprint(fmt.error(f"Failed to install Claude Code integration: {e}"))
+            _init_alert(quiet, fmt.error(f"Failed to install Claude Code integration: {e}"))
 
     # Install Codex CLI skills + hooks if opted in
     codex_ok = False
     if (has_codex or (local and want_codex)) and want_codex:
         try:
-            ok, error = _install_codex_skills(root)
+            ok, error = _install_codex_skills(root, quiet=quiet)
+            _install_codex_hooks(root, quiet=quiet)
             codex_ok = ok
             if ok and scope == "user":
                 manager.set("agent.environments.codex.enabled", True)
             elif not ok:
-                rprint(fmt.error(f"Failed to install Codex CLI skills: {error}"))
+                _init_alert(quiet, fmt.error(f"Failed to install Codex CLI skills: {error}"))
         except Exception as e:
-            rprint(fmt.error(f"Failed to install Codex CLI integration: {e}"))
+            _init_alert(quiet, fmt.error(f"Failed to install Codex CLI integration: {e}"))
 
     # Install Gemini CLI MCP + skills if opted in
     gemini_ok = False
     if (has_gemini or (local and want_gemini)) and want_gemini:
         try:
-            gemini_ok = _install_gemini_mcp(root)
-            skills_ok, skills_error = _install_gemini_skills(root)
+            gemini_ok = _install_gemini_mcp(root, quiet=quiet)
+            skills_ok, skills_error = _install_gemini_skills(root, quiet=quiet)
             if not skills_ok:
-                rprint(fmt.error(f"Failed to install Gemini CLI skills: {skills_error}"))
+                _init_alert(quiet, fmt.error(f"Failed to install Gemini CLI skills: {skills_error}"))
             else:
-                _register_gemini_skills(root / ".agents" / "skills")
+                _register_gemini_skills(root / ".agents" / "skills", quiet=quiet)
+            _install_gemini_hooks(root, quiet=quiet)
             if gemini_ok and scope == "user":
                 manager.set("agent.environments.gemini.enabled", True)
         except Exception as e:
-            rprint(fmt.error(f"Failed to install Gemini CLI integration: {e}"))
+            _init_alert(quiet, fmt.error(f"Failed to install Gemini CLI integration: {e}"))
 
     # Install Cursor MCP + hooks + per-skill rules + sub-agent if opted in
     cursor_ok = False
     if (has_cursor or (local and want_cursor)) and want_cursor:
         try:
-            cursor_ok = _install_cursor_mcp(root)
-            _install_cursor_hooks(root)
-            _install_cursor_rules(root)
-            _install_cursor_subagents(root)
+            cursor_ok = _install_cursor_mcp(root, quiet=quiet)
+            _install_cursor_hooks(root, quiet=quiet)
+            _install_cursor_rules(root, quiet=quiet)
+            _install_cursor_subagents(root, quiet=quiet)
             if cursor_ok and scope == "user":
                 manager.set("agent.environments.cursor.enabled", True)
         except Exception as e:
-            rprint(fmt.error(f"Failed to install Cursor integration: {e}"))
+            _init_alert(quiet, fmt.error(f"Failed to install Cursor integration: {e}"))
 
     # Install Windsurf integration if opted in (rf-0vr3).
     # - User scope: MCP entry under ~/.codeium/windsurf/ + per-skill workspace
@@ -1445,15 +1577,15 @@ def init(
     if want_windsurf and (has_windsurf or local):
         try:
             if has_windsurf:
-                windsurf_ok = _install_windsurf_mcp(root)
+                windsurf_ok = _install_windsurf_mcp(root, quiet=quiet)
                 if windsurf_ok:
                     manager.set("agent.environments.windsurf.enabled", True)
-            _install_windsurf_rules(root)
+            _install_windsurf_rules(root, quiet=quiet)
             if not has_windsurf:
                 # Project-scope success: rules + AGENTS.md (written below).
                 windsurf_ok = True
         except Exception as e:
-            rprint(fmt.error(f"Failed to install Windsurf integration: {e}"))
+            _init_alert(quiet, fmt.error(f"Failed to install Windsurf integration: {e}"))
 
     # Install Continue.dev integration if opted in (rf-acz0).
     # - User scope: per-skill rules (.continue/rules/) + MCP entry under
@@ -1463,14 +1595,14 @@ def init(
     if want_continue and (has_continue_dev or local):
         try:
             if has_continue_dev:
-                continue_ok = _install_continue_dev_mcp(root)
+                continue_ok = _install_continue_dev_mcp(root, quiet=quiet)
                 if continue_ok:
                     manager.set("agent.environments.continue_dev.enabled", True)
-            _install_continue_dev_rules(root)
+            _install_continue_dev_rules(root, quiet=quiet)
             if not has_continue_dev:
                 continue_ok = True
         except Exception as e:
-            rprint(fmt.error(f"Failed to install Continue.dev integration: {e}"))
+            _init_alert(quiet, fmt.error(f"Failed to install Continue.dev integration: {e}"))
 
     # Install Aider integration if opted in (rf-du2o).
     # Aider has no MCP and no hook surface — its only intercept is the
@@ -1479,11 +1611,11 @@ def init(
     aider_ok = False
     if want_aider and (has_aider or local):
         try:
-            aider_ok = _install_aider_read(root)
+            aider_ok = _install_aider_read(root, quiet=quiet)
             if aider_ok and has_aider:
                 manager.set("agent.environments.aider.enabled", True)
         except Exception as e:
-            rprint(fmt.error(f"Failed to install Aider integration: {e}"))
+            _init_alert(quiet, fmt.error(f"Failed to install Aider integration: {e}"))
 
     # Install Hermes integration if opted in (sable-gyw).
     # User scope only — Hermes reads ~/.hermes/config.yaml. MCP-only v0;
@@ -1491,11 +1623,11 @@ def init(
     hermes_ok = False
     if want_hermes and has_hermes:
         try:
-            hermes_ok = _install_hermes_mcp(root)
+            hermes_ok = _install_hermes_mcp(root, quiet=quiet)
             if hermes_ok:
                 manager.set("agent.environments.hermes.enabled", True)
         except Exception as e:
-            rprint(fmt.error(f"Failed to install Hermes integration: {e}"))
+            _init_alert(quiet, fmt.error(f"Failed to install Hermes integration: {e}"))
 
     # Install OpenCode integration if opted in (sable-l8e5).
     # User scope only — OpenCode reads a global config at
@@ -1504,11 +1636,11 @@ def init(
     opencode_ok = False
     if want_opencode and has_opencode:
         try:
-            opencode_ok = _install_opencode_mcp(root)
+            opencode_ok = _install_opencode_mcp(root, quiet=quiet)
             if opencode_ok:
                 manager.set("agent.environments.opencode.enabled", True)
         except Exception as e:
-            rprint(fmt.error(f"Failed to install OpenCode integration: {e}"))
+            _init_alert(quiet, fmt.error(f"Failed to install OpenCode integration: {e}"))
 
     # Install global instruction files for platforms that support them
     _install_global_instructions(
@@ -1519,79 +1651,81 @@ def init(
         windsurf=windsurf_ok,
         root=root,
         scope=scope,
+        quiet=quiet,
     )
 
-    rprint()
-    rprint(fmt.success("Agent security initialized!"))
-    rprint()
+    _init_print(quiet)
+    _init_print(quiet, fmt.success("Agent security initialized!"))
+    _init_print(quiet)
 
     any_integration = openclaw_ok or claude_code_ok or codex_ok or gemini_ok or cursor_ok or windsurf_ok or continue_ok or aider_ok or hermes_ok or opencode_ok
 
     if any_integration:
-        rprint("Next steps:")
+        _init_print(quiet, "Next steps:")
         if openclaw_ok:
-            rprint("  - Restart OpenClaw to load skill")
+            _init_print(quiet, "  - Restart OpenClaw to load skill")
         if claude_code_ok:
-            rprint("  - Restart Claude Code to load hooks")
+            _init_print(quiet, "  - Restart Claude Code to load hooks")
         if codex_ok:
-            rprint("  - Restart Codex CLI to load skills")
+            _init_print(quiet, "  - Restart Codex CLI to load skills")
         if gemini_ok:
-            rprint("  - Restart Gemini CLI to load MCP server")
+            _init_print(quiet, "  - Restart Gemini CLI to load MCP server")
         if cursor_ok:
-            rprint("  - Restart Cursor to load MCP server")
+            _init_print(quiet, "  - Restart Cursor to load MCP server")
         if windsurf_ok:
-            rprint("  - Restart Windsurf to load MCP server")
+            _init_print(quiet, "  - Restart Windsurf to load MCP server")
         if continue_ok:
-            rprint("  - Restart Continue.dev to load MCP server")
+            _init_print(quiet, "  - Restart Continue.dev to load MCP server")
         if aider_ok:
-            rprint("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:")
+            _init_print(quiet, "  - Restart Aider to load RAFTER.md from .aider.conf.yml read:")
         if hermes_ok:
-            rprint("  - Restart Hermes to load MCP server")
+            _init_print(quiet, "  - Restart Hermes to load MCP server")
         if opencode_ok:
-            rprint("  - Restart OpenCode to load MCP server")
+            _init_print(quiet, "  - Restart OpenCode to load MCP server")
     elif scope == "project":
-        rprint("No integrations were installed. In --local mode, pass one or more opt-in flags:")
-        rprint("  rafter agent init --local --with-claude-code")
-        rprint("  rafter agent init --local --with-codex")
-        rprint("  rafter agent init --local --with-gemini")
-        rprint("  rafter agent init --local --with-cursor")
+        _init_print(quiet, "No integrations were installed. In --local mode, pass one or more opt-in flags:")
+        _init_print(quiet, "  rafter agent init --local --with-claude-code")
+        _init_print(quiet, "  rafter agent init --local --with-codex")
+        _init_print(quiet, "  rafter agent init --local --with-gemini")
+        _init_print(quiet, "  rafter agent init --local --with-cursor")
     elif detected:
-        rprint("No integrations were installed. To install, re-run with opt-in flags:")
-        rprint("  rafter agent init --all                  # Install all detected")
+        _init_print(quiet, "No integrations were installed. To install, re-run with opt-in flags:")
+        _init_print(quiet, "  rafter agent init --all                  # Install all detected")
         if has_claude_code:
-            rprint("  rafter agent init --with-claude-code     # Claude Code only")
+            _init_print(quiet, "  rafter agent init --with-claude-code     # Claude Code only")
         if has_openclaw:
-            rprint("  rafter agent init --with-openclaw        # OpenClaw only")
+            _init_print(quiet, "  rafter agent init --with-openclaw        # OpenClaw only")
         if has_codex:
-            rprint("  rafter agent init --with-codex           # Codex CLI only")
+            _init_print(quiet, "  rafter agent init --with-codex           # Codex CLI only")
         if has_gemini:
-            rprint("  rafter agent init --with-gemini          # Gemini CLI only")
+            _init_print(quiet, "  rafter agent init --with-gemini          # Gemini CLI only")
         if has_cursor:
-            rprint("  rafter agent init --with-cursor          # Cursor only")
+            _init_print(quiet, "  rafter agent init --with-cursor          # Cursor only")
         if has_windsurf:
-            rprint("  rafter agent init --with-windsurf        # Windsurf only")
+            _init_print(quiet, "  rafter agent init --with-windsurf        # Windsurf only")
         if has_continue_dev:
-            rprint("  rafter agent init --with-continue        # Continue.dev only")
+            _init_print(quiet, "  rafter agent init --with-continue        # Continue.dev only")
         if has_aider:
-            rprint("  rafter agent init --with-aider           # Aider only")
+            _init_print(quiet, "  rafter agent init --with-aider           # Aider only")
         if has_hermes:
-            rprint("  rafter agent init --with-hermes          # Hermes only")
+            _init_print(quiet, "  rafter agent init --with-hermes          # Hermes only")
         if has_opencode:
-            rprint("  rafter agent init --with-opencode        # OpenCode only")
+            _init_print(quiet, "  rafter agent init --with-opencode        # OpenCode only")
     else:
-        rprint("No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
+        _init_print(quiet, "No agent environments detected. Install an agent tool and re-run with --with-<tool>.")
 
-    rprint()
-    rprint("  - Run: rafter secrets . (test secret scanning)")
-    rprint("  - Configure: rafter agent config show")
-    rprint()
+    _init_print(quiet)
+    _init_print(quiet, "  - Run: rafter secrets . (test secret scanning)")
+    _init_print(quiet, "  - Configure: rafter agent config show")
+    _init_print(quiet)
 
 
 # ── scan ─────────────────────────────────────────────────────────────
 
 
-def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> str:
-    """Return 'betterleaks', 'patterns', or 'both'.
+def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> tuple[str, str | None]:
+    """Return ``(engine, reason)`` where engine is 'betterleaks', 'patterns', or
+    'both' and reason explains a degradation from a wanted betterleaks to patterns.
 
     ``auto`` (the default) resolves to ``both`` whenever betterleaks is
     available and usable — rafter then runs both engines and unions their
@@ -1612,7 +1746,7 @@ def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> st
         raise typer.Exit(code=2)
 
     if preference == "patterns":
-        return "patterns"
+        return "patterns", None
 
     scanner = BetterleaksScanner()
     available = scanner.is_available()
@@ -1621,17 +1755,75 @@ def _select_engine(preference: str, quiet: bool, auto_update: bool = True) -> st
         if not available:
             if not quiet:
                 print_stderr(fmt.warning("Betterleaks requested but not available, using patterns"))
-            return "patterns"
+            return "patterns", "betterleaks requested but not available"
         return _ensure_betterleaks_usable(quiet, auto_update)
 
     # auto — run BOTH engines when betterleaks is usable; otherwise patterns.
     if not available:
-        return "patterns"
-    usable = _ensure_betterleaks_usable(quiet, auto_update)
-    return "both" if usable == "betterleaks" else "patterns"
+        return "patterns", "betterleaks not available"
+    engine, reason = _ensure_betterleaks_usable(quiet, auto_update)
+    return ("both", None) if engine == "betterleaks" else ("patterns", reason)
 
 
-def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
+def _engine_label(engine: str) -> str:
+    """Self-explanatory display label for a resolved engine — "both" alone
+    doesn't say which two engines ran (issue #231 item 6)."""
+    return "both: betterleaks + patterns" if engine == "both" else engine
+
+
+@dataclass
+class EngineReport:
+    """What engine the user asked for, what actually ran, and whether that was a
+    downgrade (sable-jiqb). Threaded through the scan so both the text and the
+    JSON output can report it: betterleaks timing out or being unavailable used
+    to drop the scan silently to the patterns engine with nothing in the JSON to
+    say so. Mirrors EngineReport in node/src/commands/agent/scan.ts.
+    """
+    requested: str          # "auto" | "betterleaks" | "patterns"
+    used: str               # the engine whose findings are in this result
+    degraded: bool          # betterleaks was wanted but did not contribute
+    reason: str | None = None
+
+
+def _build_engine_report(requested: str, resolved: str, select_reason: str | None = None) -> EngineReport:
+    """Initial report from the requested engine and the resolved engine. A
+    resolution to ``patterns`` when betterleaks was wanted (explicit or via
+    ``auto``) is a degradation; scan-time failures mutate this further below.
+    """
+    wanted_betterleaks = requested in ("auto", "betterleaks")
+    degraded = wanted_betterleaks and resolved == "patterns"
+    return EngineReport(
+        requested=requested,
+        used=resolved,
+        degraded=degraded,
+        reason=(select_reason or "betterleaks unavailable; used the patterns engine") if degraded else None,
+    )
+
+
+def _mark_degraded(report: EngineReport | None, reason: str) -> None:
+    """Record a scan-time fall-back to the patterns engine on the report."""
+    if report is None:
+        return
+    report.used = "patterns"
+    report.degraded = True
+    report.reason = reason
+
+
+def _diff_mode_report(engine_pref: str) -> EngineReport:
+    """Report for the git-diff modes (``--diff`` / ``--range`` / ``--staged``),
+    which scan added lines with the patterns engine by design. Only an explicit
+    ``--engine betterleaks`` is a degradation; ``auto`` is satisfied by patterns.
+    """
+    degraded = engine_pref == "betterleaks"
+    return EngineReport(
+        requested=engine_pref or "auto",
+        used="patterns",
+        degraded=degraded,
+        reason="diff/range/staged modes scan changed lines with the patterns engine" if degraded else None,
+    )
+
+
+def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> tuple[str, str | None]:
     """sable-o4k — guard against a stale rafter-managed betterleaks binary
     silently returning zero findings (a leftover binary from an older rafter
     parses fine with ``version`` but emits a JSON shape the current parser
@@ -1646,7 +1838,7 @@ def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
     """
     bm = BinaryManager()
     if not bm.is_managed_betterleaks_stale():
-        return "betterleaks"
+        return "betterleaks", None
 
     current = bm.get_betterleaks_version()
     cta = "Fix manually with: rafter agent update-betterleaks"
@@ -1655,7 +1847,7 @@ def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
     if not auto_update:
         if not quiet:
             print_stderr(fmt.warning(f"{stale}. Auto-update is off — using the patterns engine for this scan. {cta}"))
-        return "patterns"
+        return "patterns", f"{stale}; auto-update off"
 
     # Only prompt when there's a human at a TTY; otherwise auto-update proceeds
     # (default on) so non-interactive runs aren't left with a broken engine.
@@ -1663,7 +1855,7 @@ def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
         answer = input(f"  {stale}. Update it now? [Y/n] ").strip().lower()
         if answer not in ("", "y", "yes"):
             print_stderr(fmt.warning(f"Skipped — using the patterns engine for this scan. {cta}"))
-            return "patterns"
+            return "patterns", f"{stale}; update declined"
 
     if not quiet:
         print_stderr(fmt.info(f"Updating betterleaks to v{BETTERLEAKS_VERSION}..."))
@@ -1674,18 +1866,20 @@ def _ensure_betterleaks_usable(quiet: bool, auto_update: bool) -> str:
         )
         if not quiet:
             print_stderr(fmt.success(f"Betterleaks updated to v{BETTERLEAKS_VERSION}."))
-        return "betterleaks"
+        return "betterleaks", None
     except Exception as exc:  # noqa: BLE001 — degrade to patterns on any failure
         if not quiet:
             print_stderr(fmt.warning(f"Betterleaks update failed ({exc}) — using the patterns engine for this scan. {cta}"))
-        return "patterns"
+        return "patterns", f"betterleaks update failed ({exc})"
 
 
-def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanResult]:
+def _scan_file(file_path: str, engine: str, custom_patterns=None, report: EngineReport | None = None) -> list[ScanResult]:
     def run_patterns() -> list[ScanResult]:
         scanner = RegexScanner(custom_patterns)
         r = scanner.scan_file(file_path)
-        return [r] if r.matches else []
+        # Keep the result when it has findings OR could not be read
+        # (sable-ilbx), so a permission-denied file is not reported as clean.
+        return [r] if (r.matches or r.read_error) else []
 
     if engine == "both":
         # sable-j85 — run both engines and union. A betterleaks failure
@@ -1696,8 +1890,9 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
             result = bl.scan_file(file_path)
             if result.matches:
                 bl_results = [ScanResult(file=result.file, matches=result.matches)]
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
+            _mark_degraded(report, str(exc))
         return union_scan_results(bl_results, run_patterns())
 
     if engine == "betterleaks":
@@ -1705,7 +1900,8 @@ def _scan_file(file_path: str, engine: str, custom_patterns=None) -> list[ScanRe
             bl = BetterleaksScanner()
             result = bl.scan_file(file_path)
             return [ScanResult(file=result.file, matches=result.matches)] if result.matches else []
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            _mark_degraded(report, str(exc))
             return run_patterns()
 
     return run_patterns()
@@ -1718,6 +1914,7 @@ def _output_empty_diff_scan(
     context_label: str,
     format: str,
     suppressions,
+    report: EngineReport | None = None,
 ) -> None:
     """Emit the result of a diff scan that had no files to scan.
 
@@ -1732,8 +1929,15 @@ def _output_empty_diff_scan(
         # would emit literally as "[green]...[/green]".
         rprint(fmt.success(empty_message), file=sys.stderr)
     _output_scan_results(
-        [], json_output, quiet, context_label, format=format, suppressions=suppressions
+        [], json_output, quiet, context_label, format=format, suppressions=suppressions, report=report
     )
+
+
+def _reject_option_like_ref(ref: str) -> None:
+    """git would parse a leading "-" as one of its own options, not a ref."""
+    if ref.startswith("-"):
+        print(f'Error: invalid ref "{ref}" (a git ref cannot start with "-")', file=sys.stderr)
+        raise typer.Exit(code=2)
 
 
 def _run_git_added_line_scan(
@@ -1750,10 +1954,13 @@ def _run_git_added_line_scan(
     quiet: bool,
     format: str,
     not_repo_message: str = "Error: Not in a git repository or invalid ref",
+    engine_pref: str = "auto",
 ) -> None:
     """Parse a unified diff for + lines and scan with the patterns engine."""
     from ..utils.git_diff import parse_unified_diff_added_lines
     from ..scanners.git_diff_scan import scan_added_diff_lines
+
+    report = _diff_mode_report(engine_pref)
 
     try:
         patch = subprocess.run(
@@ -1769,14 +1976,14 @@ def _run_git_added_line_scan(
 
     if not patch.strip():
         _output_empty_diff_scan(
-            empty_message, json_output, quiet, context_label, format, suppressions
+            empty_message, json_output, quiet, context_label, format, suppressions, report
         )
         raise typer.Exit(code=0)
 
     added = parse_unified_diff_added_lines(patch)
     if not added:
         _output_empty_diff_scan(
-            empty_message, json_output, quiet, context_label, format, suppressions
+            empty_message, json_output, quiet, context_label, format, suppressions, report
         )
         raise typer.Exit(code=0)
 
@@ -1804,7 +2011,7 @@ def _run_git_added_line_scan(
     all_results = _apply_exclude_paths(all_results, exclude, repo_root)
     filtered = _apply_baseline(all_results, baseline_entries)
     _output_scan_results(
-        filtered, json_output, quiet, context_label, format=format, suppressions=suppressions
+        filtered, json_output, quiet, context_label, format=format, suppressions=suppressions, report=report
     )
 
 
@@ -1877,6 +2084,7 @@ def _scan_directory(
     *,
     history: bool = False,
     respect_gitignore: bool = True,
+    report: EngineReport | None = None,
 ) -> list[ScanResult]:
     custom = None
     exclude = None
@@ -1884,26 +2092,52 @@ def _scan_directory(
         custom = [{"name": p.name, "regex": p.regex, "severity": p.severity} for p in scan_cfg.custom_patterns] if scan_cfg.custom_patterns else None
         exclude = scan_cfg.exclude_paths or None
 
+    # sable-28lv — with --history BOTH engines read the commit history. The
+    # patterns engine used to scan the working tree instead, so without
+    # betterleaks `--history` reported a clean history it had never read.
+    repo_root: str | None = None
+    if history:
+        try:
+            repo_root = git_repo_root(dir_path)
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise typer.Exit(code=2)
+
     def run_patterns() -> list[ScanResult]:
-        scanner = RegexScanner(custom)
-        return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+        if not history:
+            scanner = RegexScanner(custom)
+            return scanner.scan_directory(dir_path, exclude_paths=exclude, respect_gitignore=respect_gitignore)
+        try:
+            return scan_git_history(dir_path, custom)
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise typer.Exit(code=2)
+
+    def run_betterleaks() -> list[ScanResult]:
+        # `betterleaks git` reports paths relative to the repo root; make them
+        # absolute like every other scan, so the union merges the two engines.
+        found = BetterleaksScanner().scan_directory(dir_path, use_git=history, respect_gitignore=respect_gitignore)
+        return [
+            ScanResult(file=os.path.join(repo_root, r.file) if repo_root else r.file, matches=r.matches)
+            for r in found
+        ]
 
     if engine == "both":
         # sable-j85 — run both engines and union; the exclude-paths post-filter
         # below applies to the merged set.
         bl_results: list[ScanResult] = []
         try:
-            bl = BetterleaksScanner()
-            bl_results = [ScanResult(file=r.file, matches=r.matches) for r in bl.scan_directory(dir_path, use_git=history)]
-        except Exception:
-            print_stderr(fmt.warning("Betterleaks scan failed, using patterns only for this run"))
+            bl_results = run_betterleaks()
+        except Exception as exc:
+            print_stderr(fmt.warning(f"{exc}; using patterns only for this run"))
+            _mark_degraded(report, str(exc))
         results = union_scan_results(bl_results, run_patterns())
     elif engine == "betterleaks":
         try:
-            bl = BetterleaksScanner()
-            results = bl.scan_directory(dir_path, use_git=history)
-            results = [ScanResult(file=r.file, matches=r.matches) for r in results]
-        except Exception:
+            results = run_betterleaks()
+        except Exception as exc:
+            print_stderr(fmt.warning(f"{exc}; falling back to patterns"))
+            _mark_degraded(report, str(exc))
             results = run_patterns()
     else:
         results = run_patterns()
@@ -1919,13 +2153,42 @@ def _output_scan_results(
     format: str = "text",
     exit_on_findings: bool = True,
     suppressions: list | None = None,
+    report: EngineReport | None = None,
 ) -> None:
     from ..core.custom_patterns import apply_suppressions
     suppressions = suppressions or []
-    kept_results, suppressed = apply_suppressions(results, suppressions)
+
+    # Partition off files that could not be read (sable-ilbx). A read failure is
+    # not a finding and not a clean pass — surface it so "no secrets detected"
+    # cannot stand in for "could not open". Warn on stderr (so stdout stays
+    # parseable), report it in the JSON/text body, and let it set the exit code.
+    read_errors = [{"file": r.file, "error": r.read_error} for r in results if r.read_error]
+    scan_results = [r for r in results if not r.read_error]
+    if read_errors and not quiet:
+        print_stderr(fmt.warning(f"Could not read {len(read_errors)} file(s); results may be incomplete."))
+
+    kept_results, suppressed = apply_suppressions(scan_results, suppressions)
+
+    # Exit code: findings dominate (1); otherwise an unreadable file is a scan
+    # that could not complete cleanly (2); a clean, complete scan is 0.
+    scan_exit_code = 1 if kept_results else (2 if read_errors else 0)
+
+    # Before the format branches, so --json and SARIF runs are recorded too. A
+    # clean scan is recorded as well: "we looked on this date and found nothing"
+    # is what a postmortem needs.
+    _log_scan_to_audit(kept_results, context)
+
+    # No silent downgrade (sable-jiqb): when betterleaks was requested/auto but
+    # patterns ran instead, say so on stderr (visible in every format without
+    # corrupting a JSON/SARIF stdout payload). The JSON body also carries it.
+    if report is not None and report.degraded and not quiet:
+        reason = f" ({report.reason})" if report.reason else ""
+        print_stderr(fmt.warning(
+            f"Engine: requested {report.requested}, used {_engine_label(report.used)}{reason}"
+        ))
 
     if format == "sarif":
-        _output_sarif(kept_results)
+        _output_sarif(kept_results, scan_exit_code)
         return
 
     if json_output or format == "json":
@@ -1950,23 +2213,42 @@ def _output_scan_results(
             "triage_applied": False,
             "results": files_out,
         }
+        # sable-jiqb — report the engine actually used and any fall-back, so a
+        # json/MCP/CI consumer is never left thinking betterleaks ran when it did not.
+        if report is not None:
+            out["engine_requested"] = report.requested
+            out["engine_used"] = report.used
+            out["degraded"] = report.degraded
+            if report.degraded and report.reason:
+                out["degraded_reason"] = report.reason
         if suppressed:
             from dataclasses import asdict
             out["_suppressed"] = [asdict(s) for s in suppressed]
+        # Files that could not be read (sable-ilbx) — a reader can tell an empty
+        # `results` from an incomplete scan.
+        if read_errors:
+            out["unreadable"] = read_errors
         print(json.dumps(out, indent=2))
         if exit_on_findings:
-            raise typer.Exit(code=1 if kept_results else 0)
+            raise typer.Exit(code=scan_exit_code)
         return
 
     if suppressed and not quiet:
         print(f"({len(suppressed)} finding(s) hidden by .rafter.yml)", file=sys.stderr)
 
     if not kept_results:
-        if not quiet:
+        if read_errors:
+            # Not a clean pass — the scan could not read some files (sable-ilbx).
+            if not quiet:
+                rprint(f"\n{fmt.warning(f'{len(read_errors)} file(s) could not be read:')}")
+                for re in read_errors:
+                    rprint(f"  {re['file']} ({re['error']})")
+                rprint()
+        elif not quiet:
             msg = f"No secrets detected in {context}" if context else "No secrets detected"
             rprint(f"\n{fmt.success(msg)}\n")
         if exit_on_findings:
-            raise typer.Exit(code=0)
+            raise typer.Exit(code=scan_exit_code)
         return
 
     rprint(f"\n{fmt.warning(f'Found secrets in {len(kept_results)} file(s):')}\n")
@@ -1985,13 +2267,61 @@ def _output_scan_results(
 
     rprint(f"\n{fmt.warning(f'Total: {total} secret(s) detected in {len(kept_results)} file(s)')}\n")
 
+    if read_errors and not quiet:
+        rprint(f"{fmt.warning(f'{len(read_errors)} file(s) could not be read:')}")
+        for re in read_errors:
+            rprint(f"  {re['file']} ({re['error']})")
+        rprint()
+
     if context == "staged files":
         rprint(f"{fmt.error('Commit blocked. Remove secrets before committing.')}\n")
     elif exit_on_findings:
         rprint("Run 'rafter agent audit' to see the security log.\n")
 
     if exit_on_findings:
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=scan_exit_code)
+
+
+def _log_scan_to_audit(results: list[ScanResult], context: str | None = None) -> None:
+    """Record that a scan ran, so ``rafter agent audit`` has something in it.
+
+    ``rafter secrets`` told the user "Run 'rafter agent audit' to see the
+    security log" and the log was always empty, because only command
+    interception ever wrote to it — three of seven beta users followed that
+    hint and hit a dead end, one of them immediately after a correct and useful
+    scan result. The first thing a careful person does with a security finding
+    is look for the record of it.
+
+    Counts and pattern NAMES only — never a matched value, not even redacted.
+    The audit log is a postmortem artifact that outlives the terminal, so it
+    must not become a second place secrets live.
+    """
+    try:
+        total_matches = sum(len(r.matches) for r in results)
+        patterns = sorted({m.pattern.name for r in results for m in r.matches})
+        details = {
+            "filesWithFindings": len(results),
+            "totalMatches": total_matches,
+            "patterns": patterns,
+        }
+        if context:
+            details["context"] = context
+        AuditLogger().log({
+            "eventType": "scan_executed",
+            "securityCheck": {
+                "passed": total_matches == 0,
+                "reason": (
+                    "Secret scan completed with no findings"
+                    if total_matches == 0
+                    else f"Secret scan found {total_matches} secret(s) in {len(results)} file(s)"
+                ),
+                "details": details,
+            },
+            "resolution": {"actionTaken": "allowed" if total_matches == 0 else "blocked"},
+        })
+    except Exception:
+        # Never let audit logging break a scan — the scan result is the product.
+        pass
 
 
 def _watch_and_scan(
@@ -2014,10 +2344,10 @@ def _watch_and_scan(
         raise typer.Exit(code=2)
 
     logger = AuditLogger()
-    eng = _select_engine(engine, quiet, auto_update)
+    eng, _ = _select_engine(engine, quiet, auto_update)
 
     if not quiet:
-        print_stderr(fmt.info(f"Watching {watch_path} for changes ({eng}). Press Ctrl+C to exit."))
+        print_stderr(fmt.info(f"Watching {watch_path} for changes ({_engine_label(eng)}). Press Ctrl+C to exit."))
 
     # Initial scan
     if os.path.isdir(watch_path):
@@ -2089,7 +2419,7 @@ def _log_watch_findings(logger: AuditLogger, results: list[ScanResult]) -> None:
             )
 
 
-def _output_sarif(results: list[ScanResult]) -> None:
+def _output_sarif(results: list[ScanResult], empty_exit_code: int = 0) -> None:
     """Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration."""
     rules: dict[str, dict] = {}
     sarif_results = []
@@ -2129,7 +2459,9 @@ def _output_sarif(results: list[ScanResult]) -> None:
         }],
     }
     print(json.dumps(sarif, indent=2))
-    raise typer.Exit(code=1 if results else 0)
+    # A read error (sable-ilbx) makes an otherwise-empty scan non-clean; the
+    # caller passes that exit code in.
+    raise typer.Exit(code=1 if results else empty_exit_code)
 
 
 @agent_app.command()
@@ -2140,10 +2472,11 @@ def scan(
     format: str = typer.Option("text", "--format", help="Output format: text, json, sarif"),
     staged: bool = typer.Option(False, "--staged", help="Scan only git staged files"),
     diff: str = typer.Option(None, "--diff", help="Scan files changed since a git ref"),
+    range_: str = typer.Option(None, "--range", help="Scan only files changed in a git commit range, e.g. main..HEAD"),
     engine: str = typer.Option("auto", "--engine", help="betterleaks or patterns"),
     baseline: bool = typer.Option(False, "--baseline", help="Filter findings present in the saved baseline"),
     watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-scan on change"),
-    history: bool = typer.Option(False, "--history", help="Scan git history for secrets (requires betterleaks engine)"),
+    history: bool = typer.Option(False, "--history", help="Scan every commit on every ref instead of the working tree"),
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
     auto_update: bool = typer.Option(True, "--auto-update/--no-auto-update", help="Auto-update a stale managed betterleaks binary; --no-auto-update falls back to the patterns engine instead (default: on)"),
 ):
@@ -2176,6 +2509,7 @@ def scan(
 
     # --diff
     if diff:
+        _reject_option_like_ref(diff)
         _run_git_added_line_scan(
             ["diff", "-U0", "--no-color", "--diff-filter=ACM", diff],
             git_cwd,
@@ -2188,6 +2522,27 @@ def scan(
             json_output=json_output,
             quiet=quiet,
             format=format,
+            engine_pref=engine,
+        )
+        return
+
+    # --range (a commit range a..b; reuses the diff plumbing so a user can scope
+    # the scan to the changed files on a huge repo)
+    if range_:
+        _reject_option_like_ref(range_)
+        _run_git_added_line_scan(
+            ["diff", "-U0", "--no-color", "--diff-filter=ACM", range_],
+            git_cwd,
+            custom_patterns,
+            scan_cfg,
+            baseline_entries,
+            suppressions,
+            f"files changed in {range_}",
+            f"No files changed in {range_}",
+            json_output=json_output,
+            quiet=quiet,
+            format=format,
+            engine_pref=engine,
         )
         return
 
@@ -2206,6 +2561,7 @@ def scan(
             quiet=quiet,
             format=format,
             not_repo_message="Error: Not in a git repository",
+            engine_pref=engine,
         )
         return
 
@@ -2220,19 +2576,20 @@ def scan(
         _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
-    eng = _select_engine(engine, quiet, auto_update_enabled)
+    eng, select_reason = _select_engine(engine, quiet, auto_update_enabled)
+    report = _build_engine_report(engine, eng, select_reason)
 
     if os.path.isdir(resolved_path):
         if not quiet:
-            print(f"Scanning directory: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore)
+            print(f"Scanning directory: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
+        results = _scan_directory(resolved_path, eng, scan_cfg, history=history, respect_gitignore=gitignore, report=report)
     else:
         if not quiet:
-            print(f"Scanning file: {resolved_path} ({eng})", file=sys.stderr)
-        results = _scan_file(resolved_path, eng, custom_patterns)
+            print(f"Scanning file: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
+        results = _scan_file(resolved_path, eng, custom_patterns, report=report)
 
     filtered = _apply_baseline(results, baseline_entries)
-    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions)
+    _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions, report=report)
 
 
 # ── audit ────────────────────────────────────────────────────────────
@@ -2495,23 +2852,30 @@ def exec_cmd(
     # Pre-exec scan for git commands (+ lines in staged diff only)
     if not skip_scan and command.strip().startswith(("git commit", "git push")):
         try:
+            rev = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+            )
+        except FileNotFoundError:
+            rev = None
+        # Outside a git repo there is nothing staged to scan.
+        if rev is not None and rev.returncode == 0:
             from ..utils.git_diff import parse_unified_diff_added_lines
             from ..scanners.git_diff_scan import scan_added_diff_lines
 
-            patch = subprocess.run(
+            # surrogateescape: a non-UTF-8 diff is still scanned, not a crash.
+            diff = subprocess.run(
                 ["git", "diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
-                capture_output=True,
-                text=True,
-            ).stdout
-            if patch.strip():
-                repo_root = subprocess.run(
-                    ["git", "rev-parse", "--show-toplevel"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                ).stdout.strip()
-                added = parse_unified_diff_added_lines(patch)
-                results = scan_added_diff_lines(added, repo_root)
+                capture_output=True, text=True, encoding="utf-8", errors="surrogateescape",
+            )
+            if diff.returncode != 0:
+                # A scan that could not run is a scan error (exit 2), never a pass.
+                detail = diff.stderr.strip() or f"git diff exited {diff.returncode}"
+                print(f"Error: secret scan could not run ({detail}); command blocked", file=sys.stderr)
+                interceptor.log_evaluation(evaluation, "blocked")
+                raise typer.Exit(code=2)
+            if diff.stdout.strip():
+                added = parse_unified_diff_added_lines(diff.stdout)
+                results = scan_added_diff_lines(added, rev.stdout.strip())
                 total = sum(len(r.matches) for r in results)
                 if results:
                     rprint(f"\n{fmt.warning('Secrets detected in staged files!')}\n")
@@ -2519,8 +2883,6 @@ def exec_cmd(
                     rprint(f"\nRun 'rafter secrets' for details.\n")
                     interceptor.log_evaluation(evaluation, "blocked")
                     raise typer.Exit(code=1)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
 
     # Requires approval — only a person at a terminal can give it.
     if evaluation.requires_approval:
@@ -2577,16 +2939,17 @@ def _get_hook_template(hook_name: str = "pre-commit") -> str:
 def install_hook(
     global_: bool = typer.Option(False, "--global", help="Install globally for all repos (via git config)"),
     push: bool = typer.Option(False, "--push", help="Install pre-push hook instead of pre-commit"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress informational and success output (errors still go to stderr)"),
 ):
     """Install git hook to scan for secrets."""
     hook_name = "pre-push" if push else "pre-commit"
     if global_:
-        _install_global_hook(hook_name)
+        _install_global_hook(hook_name, quiet=quiet)
     else:
-        _install_local_hook(hook_name)
+        _install_local_hook(hook_name, quiet=quiet)
 
 
-def _install_local_hook(hook_name: str = "pre-commit") -> None:
+def _install_local_hook(hook_name: str = "pre-commit", quiet: bool = False) -> None:
     """Install hook for the current repository."""
     try:
         git_dir = subprocess.run(
@@ -2594,7 +2957,7 @@ def _install_local_hook(hook_name: str = "pre-commit") -> None:
             capture_output=True, text=True, check=True,
         ).stdout.strip()
     except subprocess.CalledProcessError:
-        rprint(fmt.error("Not in a git repository"))
+        rprint(fmt.error("Not in a git repository"), file=sys.stderr)
         print("   Run this command from inside a git repository", file=sys.stderr)
         raise typer.Exit(code=1)
 
@@ -2607,16 +2970,21 @@ def _install_local_hook(hook_name: str = "pre-commit") -> None:
         existing = hook_path.read_text(encoding="utf-8")
         marker = f"Rafter Security Pre-{'Push' if hook_name == 'pre-push' else 'Commit'} Hook"
         if marker in existing:
-            rprint(fmt.success(f"Rafter {hook_name} hook already installed"))
+            if not quiet:
+                rprint(fmt.success(f"Rafter {hook_name} hook already installed"))
             return
         import time
         backup_path = hook_path.with_name(f"{hook_name}.backup-{int(time.time() * 1000)}")
         hook_path.rename(backup_path)
-        rprint(fmt.info(f"Backed up existing hook to: {backup_path.name}"))
+        if not quiet:
+            rprint(fmt.info(f"Backed up existing hook to: {backup_path.name}"))
 
     hook_content = _get_hook_template(hook_name)
     hook_path.write_text(hook_content, encoding="utf-8")
     hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    if quiet:
+        return
 
     rprint(fmt.success(f"Installed Rafter {hook_name} hook"))
     rprint(f"  Location: {hook_path}")
@@ -2633,7 +3001,7 @@ def _install_local_hook(hook_name: str = "pre-commit") -> None:
     rprint()
 
 
-def _install_global_hook(hook_name: str = "pre-commit") -> None:
+def _install_global_hook(hook_name: str = "pre-commit", quiet: bool = False) -> None:
     """Install hook globally for all repositories."""
     home = Path.home()
     global_hooks_dir = home / ".rafter" / "git-hooks"
@@ -2651,9 +3019,12 @@ def _install_global_hook(hook_name: str = "pre-commit") -> None:
             check=True, capture_output=True,
         )
     except subprocess.CalledProcessError:
-        rprint(fmt.error("Failed to configure global git hooks"))
+        rprint(fmt.error("Failed to configure global git hooks"), file=sys.stderr)
         print(f"   Manually run: git config --global core.hooksPath {global_hooks_dir}", file=sys.stderr)
         raise typer.Exit(code=1)
+
+    if quiet:
+        return
 
     rprint(fmt.success(f"Installed Rafter {hook_name} hook globally"))
     rprint(f"  Location: {hook_path}")
@@ -2679,6 +3050,11 @@ class _CheckResult:
     passed: bool
     detail: str
     optional: bool = False  # optional checks warn but don't fail exit code
+    # True only for an optional check whose platform/integration isn't present
+    # on this machine at all (e.g. ~/.cursor doesn't exist). Distinguishes "not
+    # applicable here" from "present but misconfigured" so the summary line
+    # doesn't count every uninstalled editor as a "core check" (rafter-cli#231).
+    not_detected: bool = False
 
 
 def _check_betterleaks() -> _CheckResult:
@@ -2741,7 +3117,7 @@ def _check_claude_code() -> _CheckResult:
     claude_dir = home / ".claude"
 
     if not claude_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-claude-code' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-claude-code' to enable", optional=True, not_detected=True)
 
     settings_path = claude_dir / "settings.json"
     if not settings_path.exists():
@@ -2777,7 +3153,7 @@ def _check_openclaw() -> _CheckResult:
     openclaw_root = home / ".openclaw"
 
     if not openclaw_root.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-openclaw' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-openclaw' to enable", optional=True, not_detected=True)
 
     skill_path = openclaw_root / "workspace" / "skills" / "rafter-security" / "SKILL.md"
     if not skill_path.exists():
@@ -2810,7 +3186,7 @@ def _check_codex() -> _CheckResult:
     home = Path.home()
 
     if not (home / ".codex").exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-codex' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-codex' to enable", optional=True, not_detected=True)
 
     skill_path = home / ".agents" / "skills" / "rafter" / "SKILL.md"
     if not skill_path.exists():
@@ -2826,7 +3202,7 @@ def _check_gemini() -> _CheckResult:
     gemini_dir = home / ".gemini"
 
     if not gemini_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-gemini' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-gemini' to enable", optional=True, not_detected=True)
 
     settings_path = gemini_dir / "settings.json"
     if not settings_path.exists():
@@ -2849,7 +3225,7 @@ def _check_cursor() -> _CheckResult:
     cursor_dir = home / ".cursor"
 
     if not cursor_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-cursor' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-cursor' to enable", optional=True, not_detected=True)
 
     mcp_path = cursor_dir / "mcp.json"
     if not mcp_path.exists():
@@ -2872,7 +3248,7 @@ def _check_windsurf() -> _CheckResult:
     windsurf_dir = home / ".codeium" / "windsurf"
 
     if not windsurf_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-windsurf' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-windsurf' to enable", optional=True, not_detected=True)
 
     mcp_path = windsurf_dir / "mcp_config.json"
     if not mcp_path.exists():
@@ -2895,7 +3271,7 @@ def _check_continue_dev() -> _CheckResult:
     continue_dir = home / ".continue"
 
     if not continue_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-continue' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-continue' to enable", optional=True, not_detected=True)
 
     config_path = continue_dir / "config.json"
     if not config_path.exists():
@@ -2931,7 +3307,7 @@ def _check_aider() -> _CheckResult:
 
     conf = project_conf if project_conf.exists() else user_conf if user_conf.exists() else None
     if conf is None:
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-aider' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-aider' to enable", optional=True, not_detected=True)
 
     try:
         raw = conf.read_text()
@@ -2972,7 +3348,7 @@ def _check_hermes() -> _CheckResult:
     hermes_dir = home / ".hermes"
 
     if not hermes_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-hermes' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-hermes' to enable", optional=True, not_detected=True)
 
     config_path = hermes_dir / "config.yaml"
     if not config_path.exists():
@@ -3000,7 +3376,7 @@ def _check_opencode() -> _CheckResult:
     opencode_dir = home / ".config" / "opencode"
 
     if not opencode_dir.exists():
-        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-opencode' to enable", optional=True)
+        return _CheckResult(name, False, "Not detected — run 'rafter agent init --with-opencode' to enable", optional=True, not_detected=True)
 
     config_path = opencode_dir / "opencode.json"
     if not config_path.exists():
@@ -3159,9 +3535,24 @@ def verify(
                 rprint(fmt.error(f"{r.name}: FAIL — {r.detail}"))
 
         rprint()
+        # "Core checks" excludes optional integrations that simply aren't
+        # present on this machine — those were never candidates to pass, so
+        # counting them in the denominator (and calling them "core" in the
+        # same breath as "optional") misrepresents a healthy install as a
+        # mostly-failing one (rafter-cli#231). An optional check that IS
+        # applicable here but still failed (e.g. hooks installed but
+        # disabled) still counts as core: it's a real, actionable warning.
+        not_applicable = [r for r in results if not r.passed and r.optional and r.not_detected]
+        core_results = [r for r in results if not (r.optional and r.not_detected)]
+        core_warned = [r for r in core_results if not r.passed and r.optional]
         if not hard_failed:
-            warn_note = f" ({len(warned)} optional check{'s' if len(warned) != 1 else ''} not configured)" if warned else ""
-            rprint(fmt.success(f"{len(passed)}/{len(results)} core checks passed{warn_note}"))
+            notes = []
+            if core_warned:
+                notes.append(f"{len(core_warned)} optional check{'s' if len(core_warned) != 1 else ''} not configured")
+            if not_applicable:
+                notes.append(f"{len(not_applicable)} optional integration{'s' if len(not_applicable) != 1 else ''} not detected")
+            warn_note = f" ({', '.join(notes)})" if notes else ""
+            rprint(fmt.success(f"{len(passed)}/{len(core_results)} core checks passed{warn_note}"))
         else:
             rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
         rprint()
@@ -3547,7 +3938,7 @@ def update_skill_scanner(
         help="skill-scanner version to install (default: pinned version)",
     ),
 ):
-    """Install or update the optional `skill-scanner` deep engine (audit-skill --deep).
+    """Install or update the optional `skill-scanner` deep engine (skill review --deep).
 
     Installs Cisco AI Defense's skill-scanner in an isolated environment (uv tool,
     or pip --user fallback). This is a heavy third-party package and its
@@ -3939,6 +4330,9 @@ def _apply_baseline(results: list[ScanResult], entries: list[dict]) -> list[Scan
         ]
         if kept:
             filtered.append(ScanResult(file=r.file, matches=kept))
+        elif r.read_error:
+            # Keep an unreadable file across a baseline filter (sable-ilbx).
+            filtered.append(ScanResult(file=r.file, matches=[], read_error=r.read_error))
     return filtered
 
 
@@ -3960,7 +4354,7 @@ def baseline_create(
 
     print(f"Scanning {resolved} to build baseline...", file=sys.stderr)
 
-    eng = _select_engine(engine, quiet=False, auto_update=scan_cfg.auto_update_betterleaks)
+    eng, _ = _select_engine(engine, quiet=False, auto_update=scan_cfg.auto_update_betterleaks)
     if os.path.isdir(resolved):
         results = _scan_directory(resolved, eng, scan_cfg)
     else:

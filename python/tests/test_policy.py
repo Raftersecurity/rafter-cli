@@ -87,12 +87,6 @@ class TestBackendCompat:
 
 
 class TestGenerateClaudeConfig:
-    def test_valid_json(self):
-        output = _generate_claude_config()
-        config = json.loads(output)
-        assert "hooks" in config
-        assert "PreToolUse" in config["hooks"]
-
     def test_has_bash_matcher(self):
         config = json.loads(_generate_claude_config())
         matchers = [entry["matcher"] for entry in config["hooks"]["PreToolUse"]]
@@ -101,7 +95,7 @@ class TestGenerateClaudeConfig:
     def test_has_write_edit_matcher(self):
         config = json.loads(_generate_claude_config())
         matchers = [entry["matcher"] for entry in config["hooks"]["PreToolUse"]]
-        assert "Write|Edit" in matchers
+        assert "Write|Edit|MultiEdit" in matchers
 
     def test_hook_command(self):
         config = json.loads(_generate_claude_config())
@@ -286,6 +280,14 @@ class TestIgnoreRules:
         assert "paths" in err
         assert len(result["ignore"]) == 1
         assert result["ignore"][0]["paths"] == ["valid/**"]
+
+    def test_entry_with_non_list_rules_skipped_not_widened(self, capsys):
+        # `rules` present but not a list used to be dropped silently, turning a
+        # rule meant for one pattern into one that suppresses every pattern.
+        raw = {"ignore": [{"paths": ["**"], "rules": "AWS Access Key"}]}
+        result = _validate_policy(_map_policy(raw), raw)
+        assert "ignore" not in result
+        assert "rules" in capsys.readouterr().err
 
     def test_empty_ignore_array_dropped(self):
         raw = {"ignore": []}

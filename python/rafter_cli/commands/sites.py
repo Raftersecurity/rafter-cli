@@ -20,7 +20,7 @@ import typer
 from ..utils.api import (
     api_get,
     api_post,
-    API_BASE,
+    api_url,
     API_TIMEOUT,
     EXIT_GENERAL_ERROR,
     EXIT_INSUFFICIENT_SCOPE,
@@ -30,7 +30,9 @@ from ..utils.api import (
     write_payload,
 )
 
-SITES_API_BASE = f"{API_BASE}static/sites"
+def sites_api_url(suffix: str = "") -> str:
+    """Sites endpoint, built per call so RAFTER_API_URL is honored."""
+    return api_url(f"static/sites{suffix}")
 
 VALID_SECTIONS = {"flight", "security", "dns"}
 
@@ -138,7 +140,7 @@ def sites_create(
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
     key = resolve_key(api_key)
     resp = api_post(
-        SITES_API_BASE,
+        sites_api_url(),
         headers={"x-api-key": key},
         json={"url": url},
         timeout=API_TIMEOUT,
@@ -177,7 +179,7 @@ def sites_scan(
 
     key = resolve_key(api_key)
     resp = api_post(
-        f"{SITES_API_BASE}/scan",
+        sites_api_url("/scan"),
         headers={"x-api-key": key},
         json=body,
         timeout=API_TIMEOUT,
@@ -212,7 +214,7 @@ def sites_list(
 
     key = resolve_key(api_key)
     resp = api_get(
-        SITES_API_BASE,
+        sites_api_url(),
         headers={"x-api-key": key},
         params=params,
         timeout=API_TIMEOUT,
@@ -237,7 +239,7 @@ def sites_get(
     key = resolve_key(api_key)
     site_id = quote(id, safe="")
     resp = api_get(
-        f"{SITES_API_BASE}/{site_id}",
+        sites_api_url(f"/{site_id}"),
         headers={"x-api-key": key},
         timeout=API_TIMEOUT,
     )

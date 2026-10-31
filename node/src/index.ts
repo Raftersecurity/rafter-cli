@@ -24,7 +24,14 @@ import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 import { createRequire } from "module";
 
-// rf-7dda: a repo `.env` must not be able to disable the hook or its timeouts.
+// Commands call process.exit() right after writing results. When stdout is a
+// pipe, Node writes asynchronously and exit drops whatever is still queued, so
+// `rafter secrets --json . | jq` got only the first 64 KiB. Write synchronously.
+// Only stdout: a blocking stderr stalls the process (including `mcp serve`)
+// when a parent pipes stderr and never reads it.
+(process.stdout as any)._handle?.setBlocking?.(true);
+
+// A repo `.env` must not be able to set any RAFTER_* variable (key, token, disables).
 guardSecurityEnvFromDotenv(() => dotenv.config());
 
 const require = createRequire(import.meta.url);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync, spawnSync } from "child_process";
+import { execFileSync, spawn, spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -37,23 +37,11 @@ function rafter(args: string | string[], opts?: { cwd?: string; env?: Record<str
 
 describe("CLI e2e — version and help", () => {
 
-  it("--version outputs a semver string", () => {
-    const r = rafter("--version");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
-  }, 30000);
-
   it("--version matches package.json version", () => {
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../package.json"), "utf-8"));
     const r = rafter("--version");
     expect(r.exitCode).toBe(0);
     expect(r.stdout.trim()).toBe(pkg.version);
-  }, 30000);
-
-  it("--help outputs usage information", () => {
-    const r = rafter("--help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("rafter");
   }, 30000);
 
   it("--help lists all top-level commands", () => {
@@ -64,38 +52,26 @@ describe("CLI e2e — version and help", () => {
     }
   }, 30000);
 
-  it("agent --help shows agent subcommands", () => {
-    const r = rafter("agent --help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("scan");
-    expect(r.stdout).toContain("exec");
-    expect(r.stdout).toContain("audit");
-  }, 30000);
-
-  it("scan --help shows scan subcommands", () => {
-    const r = rafter("scan --help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("remote");
-    expect(r.stdout).toContain("remote");
-  }, 30000);
-
-  it("policy --help shows policy subcommands", () => {
-    const r = rafter("policy --help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("export");
-  }, 30000);
-
-  it("mcp --help shows mcp subcommands", () => {
-    const r = rafter("mcp --help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("serve");
-  }, 30000);
-
-  it("ci --help shows ci subcommands", () => {
-    const r = rafter("ci --help");
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("init");
-  }, 30000);
+  // "scan" has only one visible subcommand ("local" is a hidden back-compat
+  // alias — see scan/index.ts), so it legitimately checks a single substring
+  // while the others check several.
+  it.each([
+    ["agent", ["scan", "exec", "audit"]],
+    ["scan", ["remote"]],
+    ["policy", ["export"]],
+    ["mcp", ["serve"]],
+    ["ci", ["init"]],
+  ] as const)(
+    "%s --help shows its subcommands",
+    (command, expectedSubstrings) => {
+      const r = rafter(`${command} --help`);
+      expect(r.exitCode).toBe(0);
+      for (const s of expectedSubstrings) {
+        expect(r.stdout).toContain(s);
+      }
+    },
+    30000
+  );
 });
 
 describe("CLI e2e — rafter secrets (local secret scanning)", () => {
@@ -127,14 +103,14 @@ describe("CLI e2e — rafter secrets (local secret scanning)", () => {
 
   it("exits 1 when secrets detected", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIAIOSFODNN7ABCDEFG\n");
     const r = rafter(`secrets ${f} --engine patterns --quiet`);
     expect(r.exitCode).toBe(1);
   }, 30000);
 
   it("--json outputs valid JSON", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "EXAMPLE\n");
+    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "ABCDEFG\n");
     const r = rafter(`secrets ${f} --engine patterns --json`);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
@@ -144,7 +120,7 @@ describe("CLI e2e — rafter secrets (local secret scanning)", () => {
 
   it("--json output includes scan-mode note (no agentic triage)", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "EXAMPLE\n");
+    fs.writeFileSync(f, "AKIA" + "IOSFODNN7" + "ABCDEFG\n");
     const r = rafter(`secrets ${f} --engine patterns --json`);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
@@ -169,7 +145,7 @@ describe("CLI e2e — rafter secrets (local secret scanning)", () => {
 
   it("--format sarif outputs SARIF schema", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIAIOSFODNN7ABCDEFG\n");
     const r = rafter(`secrets ${f} --engine patterns --format sarif`);
     expect(r.exitCode).toBe(1);
     const sarif = JSON.parse(r.stdout);
@@ -182,7 +158,7 @@ describe("CLI e2e — rafter secrets (local secret scanning)", () => {
   it("scans directory recursively", () => {
     const sub = path.join(tmpDir, "src");
     fs.mkdirSync(sub);
-    fs.writeFileSync(path.join(sub, "config.ts"), "const key = '" + "AKIA" + "IOSFODNN7" + "EXAMPLE';\n");
+    fs.writeFileSync(path.join(sub, "config.ts"), "const key = '" + "AKIA" + "IOSFODNN7" + "ABCDEFG';\n");
     const r = rafter(`secrets ${tmpDir} --engine patterns --json`);
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout);
@@ -227,7 +203,7 @@ describe("CLI e2e — `scan local` back-compat alias", () => {
 
   it("scan local produces identical JSON to secrets", () => {
     const f = path.join(tmpDir, "secrets.txt");
-    fs.writeFileSync(f, "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(f, "AKIAIOSFODNN7ABCDEFG\n");
     const canonical = rafter(`secrets ${f} --engine patterns --json`);
     const alias = rafter(`scan local ${f} --engine patterns --json`);
     expect(canonical.exitCode).toBe(1);
@@ -247,6 +223,24 @@ describe("CLI e2e — command risk assessment", () => {
     const r = rafter(["agent", "exec", "rm -rf /"]);
     expect(r.exitCode).not.toBe(0);
   }, 30000);
+
+  // A staged diff that cannot be read must block the commit (exit 2), never
+  // let it through unscanned; outside a repo there is nothing to scan.
+  it("agent exec blocks git commit when the staged diff cannot be read", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-exec-diff-"));
+    try {
+      const git = (a: string) => execFileSync("git", a.split(" "), { cwd: dir, stdio: "ignore" });
+      git("init -q");
+      fs.writeFileSync(path.join(dir, "big.js"), "x".repeat(4096) + "\n");
+      git("add big.js");
+      const env = { ...process.env, HOME: dir, RAFTER_GIT_DIFF_MAX_BUFFER: "1024" };
+      const r = rafter(["agent", "exec", "git commit -m x"], { cwd: dir, env });
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("could not run");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it("agent exec allows safe commands", () => {
     const r = rafter(["agent", "exec", "echo hello"]);
@@ -303,16 +297,6 @@ describe("CLI e2e — command routing", () => {
   it("unknown command exits nonzero", () => {
     const r = rafter("nonexistent-command");
     expect(r.exitCode).not.toBe(0);
-  }, 30000);
-
-  it("secrets routes to scanner (exit 2 for missing path)", () => {
-    const r = rafter("secrets /tmp/nonexistent-rafter-routing-test");
-    expect(r.exitCode).toBe(2);
-  }, 30000);
-
-  it("agent exec routes to interceptor", () => {
-    const r = rafter(["agent", "exec", "echo routing-test"]);
-    expect(r.exitCode).toBe(0);
   }, 30000);
 
   it("policy export routes to exporter", () => {
@@ -380,17 +364,16 @@ describe("CLI e2e — dotenv loading", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("loads RAFTER_API_KEY from .env file in cwd", () => {
-    // Write a .env file with a fake API key
+  it("ignores RAFTER_API_KEY from a .env file in cwd", () => {
+    // The working directory may be an untrusted cloned repo: its .env must not
+    // supply the operator's credential. With no key anywhere else, the CLI
+    // must report the key as missing rather than use the repo's.
     fs.writeFileSync(path.join(tmpDir, ".env"), "RAFTER_API_KEY=test-key-from-dotenv\n");
-    // Run from tmpDir WITHOUT setting RAFTER_API_KEY in env — let .env provide it.
-    // The usage command will attempt to call the API (and fail), but it should NOT
-    // complain about a missing API key since .env provides one.
-    const envWithoutKey = { ...process.env };
+    const envWithoutKey = { ...process.env, HOME: tmpDir, USERPROFILE: tmpDir };
     delete envWithoutKey.RAFTER_API_KEY;
     const r = rafter("usage", { cwd: tmpDir, env: envWithoutKey as Record<string, string> });
     const combined = (r.stdout + r.stderr).toLowerCase();
-    expect(combined).not.toContain("no api key");
+    expect(combined).toContain("no api key");
   }, 30000);
 });
 
@@ -425,4 +408,50 @@ describe("CLI e2e — backend commands without API key", () => {
     });
     expect(r.exitCode).toBe(1);
   }, 30000);
+});
+
+// process.exit() right after a large stdout write used to drop everything past
+// the first 64 KiB when stdout is a pipe, so `rafter secrets --json . | jq`
+// received truncated JSON.
+describe("CLI e2e — large JSON output through a pipe", () => {
+  it("delivers all of `secrets --json` before exiting", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-pipe-"));
+    try {
+      const lines = Array.from({ length: 3000 }, (_, i) => `KEY_${i}=AKIA${String(i).padStart(16, "0")}`);
+      fs.writeFileSync(path.join(dir, "creds.env"), lines.join("\n") + "\n");
+      const r = spawnSync("node", [CLI, "secrets", "--json", "--engine", "patterns", dir], {
+        encoding: "utf-8", maxBuffer: 64 * 1024 * 1024,
+      });
+      expect(r.stdout.length).toBeGreaterThan(200_000);
+      expect(JSON.parse(r.stdout).results[0].matches).toHaveLength(3000);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A blocking stderr stalls the whole process once an MCP client that pipes
+  // stderr but never reads it lets the pipe buffer fill.
+  it("does not stall `mcp serve` when piped stderr is never read", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-stderr-"));
+    const preload = path.join(dir, "flood.cjs");
+    fs.writeFileSync(preload, `setTimeout(() => {
+      process.stderr.write("x".repeat(1 << 20));
+      process.stdout.write("AFTER_STDERR\\n");
+    }, 500);`);
+    const child = spawn("node", ["--require", preload, CLI, "mcp", "serve"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      const reached = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 8000);
+        child.stdout.on("data", (d) => {
+          if (String(d).includes("AFTER_STDERR")) { clearTimeout(timer); resolve(true); }
+        });
+      });
+      expect(reached).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15000);
 });

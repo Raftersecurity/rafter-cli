@@ -90,3 +90,15 @@ class TestResolveKeyPrecedence:
     def test_global_config_used_when_no_flag_or_env(self, home):
         # No longer a dead path.
         assert resolve_key(None) == "CONFIG-key"
+
+    def test_dotenv_cannot_supply_key(self, home, monkeypatch):
+        # A .env that python-dotenv's search would find (for example in a
+        # cloned repo that also holds the virtualenv) must not outrank the
+        # operator's stored key.
+        dotenv_file = home / "repo.env"
+        dotenv_file.write_text("RAFTER_API_KEY=REPO-key\n")
+        monkeypatch.setattr("dotenv.main.find_dotenv", lambda *a, **k: str(dotenv_file))
+        # Register RAFTER_API_KEY for restore even if a load sets it.
+        monkeypatch.setenv("RAFTER_API_KEY", "placeholder")
+        monkeypatch.delenv("RAFTER_API_KEY")
+        assert resolve_key(None) == "CONFIG-key"

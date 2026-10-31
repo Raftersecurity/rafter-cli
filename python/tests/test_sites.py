@@ -315,3 +315,25 @@ class TestMcpSitesGet:
     def test_missing_key_raises_without_crashing(self, _mock_key):
         with pytest.raises(RuntimeError, match="No API key configured"):
             handle_sites_get("p1")
+
+
+# ── RAFTER_API_URL ────────────────────────────────────────────────────
+
+
+class TestSitesHonorApiUrlOverride:
+    """The base used to be fixed at import, so Sites calls ignored RAFTER_API_URL."""
+
+    @patch("rafter_cli.commands.mcp_server.api_get")
+    @patch("rafter_cli.commands.mcp_server.resolve_mcp_api_key", return_value="test-key")
+    @patch("rafter_cli.commands.sites.api_post")
+    def test_cli_and_mcp_use_override(self, mock_post, _mock_key, mock_get, monkeypatch):
+        monkeypatch.setenv("RAFTER_API_URL", "http://127.0.0.1:9/api/")
+        mock_post.return_value = _mock_response(200, {"site": {"id": "p1"}, "created": True})
+        mock_get.return_value = _mock_response(200, {"site": {"id": "p1"}})
+
+        result = runner.invoke(sites_app, ["create", "https://example.com", "-k", "test-key"])
+        assert result.exit_code == EXIT_SUCCESS, result.output
+        assert mock_post.call_args[0][0] == "http://127.0.0.1:9/api/static/sites"
+
+        handle_sites_get("p1")
+        assert mock_get.call_args[0][0] == "http://127.0.0.1:9/api/static/sites/p1"

@@ -73,7 +73,7 @@ describe("E2E: realistic project scanning", () => {
       path.join(tmpDir, "src/config/keys.ts"),
       `// API configuration
 const API_BASE = "https://api.example.com";
-const API_KEY = "AKIAIOSFODNN7EXAMPLE";
+const API_KEY = "AKIAIOSFODNN7ABCDEFG";
 export { API_BASE, API_KEY };
 `,
     );
@@ -184,7 +184,7 @@ connection = mysql://root:password123@localhost:3306/app
     fs.mkdirSync(nmDir, { recursive: true });
     fs.writeFileSync(
       path.join(nmDir, "config.js"),
-      "module.exports = { key: 'AKIAIOSFODNN7EXAMPLE' };\n",
+      "module.exports = { key: 'AKIAIOSFODNN7ABCDEFG' };\n",
     );
 
     const scanner = new RegexScanner();
@@ -229,7 +229,7 @@ describe("E2E: mixed content scanning", () => {
     const content = [
       "// Line 1: clean",
       "// Line 2: clean",
-      `const aws = "AKIAIOSFODNN7EXAMPLE";`, // line 3
+      `const aws = "AKIAIOSFODNN7ABCDEFG";`, // line 3
       "// Line 4: clean",
       "// Line 5: clean",
       `const gh = "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789";`, // line 6
@@ -284,27 +284,22 @@ describe("E2E: edge cases", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("handles empty files gracefully", () => {
+  it("handles empty directories, empty files, and whitespace-only files", () => {
+    const scanner = new RegexScanner();
+    expect(scanner.scanDirectory(tmpDir).length).toBe(0);
+
     fs.writeFileSync(path.join(tmpDir, "empty.txt"), "");
+    expect(scanner.scanFile(path.join(tmpDir, "empty.txt")).matches.length).toBe(0);
 
-    const scanner = new RegexScanner();
-    const result = scanner.scanFile(path.join(tmpDir, "empty.txt"));
-    expect(result.matches.length).toBe(0);
-  });
-
-  it("handles files with only whitespace", () => {
     fs.writeFileSync(path.join(tmpDir, "whitespace.txt"), "   \n\n\t\t\n   ");
-
-    const scanner = new RegexScanner();
-    const result = scanner.scanFile(path.join(tmpDir, "whitespace.txt"));
-    expect(result.matches.length).toBe(0);
+    expect(scanner.scanFile(path.join(tmpDir, "whitespace.txt")).matches.length).toBe(0);
   });
 
   it("handles files with unicode content around secrets", () => {
     const content = `# 配置文件 — Configuration
 api_key = "sk1234567890abcdef"
 # Ключ доступа — Access key
-aws_key = AKIAIOSFODNN7EXAMPLE
+aws_key = AKIAIOSFODNN7ABCDEFG
 # アクセストークン — Token
 `;
 
@@ -321,7 +316,7 @@ aws_key = AKIAIOSFODNN7EXAMPLE
     fs.mkdirSync(deepPath, { recursive: true });
     fs.writeFileSync(
       path.join(deepPath, "secret.txt"),
-      "AKIAIOSFODNN7EXAMPLE\n",
+      "AKIAIOSFODNN7ABCDEFG\n",
     );
 
     const scanner = new RegexScanner();
@@ -334,12 +329,12 @@ aws_key = AKIAIOSFODNN7EXAMPLE
     for (const ext of binaryExts) {
       fs.writeFileSync(
         path.join(tmpDir, `file${ext}`),
-        "AKIAIOSFODNN7EXAMPLE\n",
+        "AKIAIOSFODNN7ABCDEFG\n",
       );
     }
 
     // One text file that should be caught
-    fs.writeFileSync(path.join(tmpDir, "file.txt"), "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(path.join(tmpDir, "file.txt"), "AKIAIOSFODNN7ABCDEFG\n");
 
     const scanner = new RegexScanner();
     const results = scanner.scanDirectory(tmpDir);
@@ -351,12 +346,6 @@ aws_key = AKIAIOSFODNN7EXAMPLE
     const scanner = new RegexScanner();
     const result = scanner.scanFile("/tmp/nonexistent-rafter-file-99999.txt");
     expect(result.matches.length).toBe(0);
-  });
-
-  it("handles empty directory", () => {
-    const scanner = new RegexScanner();
-    const results = scanner.scanDirectory(tmpDir);
-    expect(results.length).toBe(0);
   });
 });
 
@@ -393,7 +382,7 @@ describe("E2E: git --staged scanning", () => {
     // Create and stage a file with a secret
     fs.writeFileSync(
       path.join(tmpDir, "config.ts"),
-      "const key = 'AKIAIOSFODNN7EXAMPLE';\n",
+      "const key = 'AKIAIOSFODNN7ABCDEFG';\n",
     );
     git("add config.ts");
 
@@ -427,7 +416,7 @@ describe("E2E: git --staged scanning", () => {
     // Create (but don't stage) a file with a secret
     fs.writeFileSync(
       path.join(tmpDir, "secret.ts"),
-      "const key = 'AKIAIOSFODNN7EXAMPLE';\n",
+      "const key = 'AKIAIOSFODNN7ABCDEFG';\n",
     );
 
     const r = rafter(
@@ -435,6 +424,57 @@ describe("E2E: git --staged scanning", () => {
       { cwd: tmpDir },
     );
     expect(r.exitCode).toBe(0);
+  });
+
+  // #274: a staged diff over the old 1 MiB execFileSync buffer threw ENOBUFS,
+  // crashed unhandled (exit 1), and a commit gate read that as a secret finding.
+  it("scans a large staged diff (>1 MiB) without crashing", () => {
+    const big = Array.from(
+      { length: 20000 },
+      (_, i) => `const benign_${i} = "lorem ipsum dolor sit amet consectetur adipiscing";`,
+    ).join("\n");
+    // > 1 MiB of added content guarantees a staged diff past the old buffer.
+    expect(big.length).toBeGreaterThan(1024 * 1024);
+    fs.writeFileSync(path.join(tmpDir, "big.ts"), big + "\n");
+    git("add big.ts");
+
+    const r = rafter(
+      ["scan", "local", tmpDir, "--staged", "--engine", "patterns", "--quiet"],
+      { cwd: tmpDir },
+    );
+    expect(r.exitCode).toBe(0);
+  });
+
+  it("still finds a real secret inside a large staged diff", () => {
+    const big = Array.from(
+      { length: 20000 },
+      (_, i) => `const benign_${i} = "lorem ipsum dolor sit amet consectetur";`,
+    ).join("\n");
+    fs.writeFileSync(
+      path.join(tmpDir, "big.ts"),
+      big + "\nconst key = 'AKIAIOSFODNN7ABCDEFG';\n",
+    );
+    git("add big.ts");
+
+    const r = rafter(
+      ["scan", "local", tmpDir, "--staged", "--engine", "patterns", "--quiet"],
+      { cwd: tmpDir },
+    );
+    expect(r.exitCode).toBe(1);
+  });
+
+  it("reports a scan that cannot read the diff as a scan error (exit 2), not a finding", () => {
+    fs.writeFileSync(path.join(tmpDir, "x.ts"), "const x = 1;\nconst y = 2;\n");
+    git("add x.ts");
+
+    // Force the diff past the buffer so the read fails — the failure must be a
+    // scan error (exit 2), distinct from a secret finding (exit 1).
+    const r = rafter(
+      ["scan", "local", tmpDir, "--staged", "--engine", "patterns", "--quiet"],
+      { cwd: tmpDir, env: { RAFTER_GIT_DIFF_MAX_BUFFER: "16" } },
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("secret scan could not run");
   });
 });
 
@@ -473,7 +513,7 @@ describe("E2E: git --diff scanning", () => {
     // Add a file with a secret after the initial commit
     fs.writeFileSync(
       path.join(tmpDir, "secrets.ts"),
-      "const key = 'AKIAIOSFODNN7EXAMPLE';\n",
+      "const key = 'AKIAIOSFODNN7ABCDEFG';\n",
     );
     git("add secrets.ts");
     git('commit -m "add secrets"');
@@ -487,6 +527,18 @@ describe("E2E: git --diff scanning", () => {
     const parsed = JSON.parse(r.stdout);
     expect(parsed.results.length).toBeGreaterThan(0);
     expect(parsed.results[0].matches[0].pattern.name).toBe("AWS Access Key ID");
+  });
+
+  it("rejects a --diff ref that git would parse as an option", () => {
+    const target = path.join(tmpDir, "untouched.txt");
+    fs.writeFileSync(target, "keep\n");
+
+    const r = rafter(
+      ["scan", "local", tmpDir, "--diff", `--output=${target}`, "--engine", "patterns", "--quiet"],
+      { cwd: tmpDir },
+    );
+    expect(r.exitCode).toBe(2);
+    expect(fs.readFileSync(target, "utf-8")).toBe("keep\n");
   });
 
   it("exits 0 when changed files are clean", () => {
@@ -507,7 +559,7 @@ describe("E2E: git --diff scanning", () => {
     // File with secret already committed
     fs.writeFileSync(
       path.join(tmpDir, "old-secret.ts"),
-      "const old = 'AKIAIOSFODNN7EXAMPLE';\n",
+      "const old = 'AKIAIOSFODNN7ABCDEFG';\n",
     );
     git("add old-secret.ts");
     git('commit -m "old secret"');
@@ -530,7 +582,7 @@ describe("E2E: git --diff scanning", () => {
   it("does not re-flag pre-existing secrets unless they appear as + lines", () => {
     fs.writeFileSync(
       path.join(tmpDir, "config.ts"),
-      "const old = 'AKIAIOSFODNN7EXAMPLE';\n",
+      "const old = 'AKIAIOSFODNN7ABCDEFG';\n",
     );
     git("add config.ts");
     git('commit -m "config with secret"');
@@ -565,7 +617,7 @@ describe("E2E: CLI JSON output structure", () => {
   it("JSON output includes file path, pattern name, severity, and line number", () => {
     fs.writeFileSync(
       path.join(tmpDir, "test.ts"),
-      "clean\nclean\nconst key = 'AKIAIOSFODNN7EXAMPLE';\n",
+      "clean\nclean\nconst key = 'AKIAIOSFODNN7ABCDEFG';\n",
     );
 
     const r = rafter(`secrets ${tmpDir} --engine patterns --json`);
@@ -591,7 +643,7 @@ describe("E2E: CLI JSON output structure", () => {
     fs.mkdirSync(src);
     fs.writeFileSync(
       path.join(src, "a.ts"),
-      "AKIAIOSFODNN7EXAMPLE\n",
+      "AKIAIOSFODNN7ABCDEFG\n",
     );
     fs.writeFileSync(
       path.join(src, "b.ts"),
@@ -631,7 +683,7 @@ describe("E2E: SARIF output with real files", () => {
     fs.mkdirSync(src);
     fs.writeFileSync(
       path.join(src, "config.ts"),
-      "line 1\nconst key = 'AKIAIOSFODNN7EXAMPLE';\n",
+      "line 1\nconst key = 'AKIAIOSFODNN7ABCDEFG';\n",
     );
     fs.writeFileSync(
       path.join(src, "auth.ts"),
@@ -680,7 +732,7 @@ describe("E2E: baseline filtering", () => {
     const secretFile = path.join(tmpDir, "config.ts");
     fs.writeFileSync(
       secretFile,
-      "const key = 'AKIAIOSFODNN7EXAMPLE';\nconst gh = 'ghp_FAKEEFghijklmnopqrstuvwxyz0123456789';\n",
+      "const key = 'AKIAIOSFODNN7ABCDEFG';\nconst gh = 'ghp_FAKEEFghijklmnopqrstuvwxyz0123456789';\n",
     );
 
     // Create baseline that suppresses the AWS key but not the GitHub token
@@ -712,7 +764,7 @@ describe("E2E: baseline filtering", () => {
     const secretFile = path.join(tmpDir, "config.ts");
     fs.writeFileSync(
       secretFile,
-      "const key = 'AKIAIOSFODNN7EXAMPLE';\nconst gh = 'ghp_FAKEEFghijklmnopqrstuvwxyz0123456789';\n",
+      "const key = 'AKIAIOSFODNN7ABCDEFG';\nconst gh = 'ghp_FAKEEFghijklmnopqrstuvwxyz0123456789';\n",
     );
 
     // Baseline file exists but --baseline flag is not passed
@@ -755,7 +807,7 @@ describe("E2E: RegexScanner API with realistic files", () => {
   it("scanFiles returns only files with findings", () => {
     const files = [
       { name: "clean1.ts", content: "const x = 1;" },
-      { name: "dirty.ts", content: "const key = 'AKIAIOSFODNN7EXAMPLE';" },
+      { name: "dirty.ts", content: "const key = 'AKIAIOSFODNN7ABCDEFG';" },
       { name: "clean2.ts", content: "const y = 2;" },
       { name: "dirty2.ts", content: "-----BEGIN RSA PRIVATE KEY-----" },
     ];
@@ -781,7 +833,7 @@ describe("E2E: RegexScanner API with realistic files", () => {
       fs.mkdirSync(path.join(tmpDir, d));
       fs.writeFileSync(
         path.join(tmpDir, d, "file.ts"),
-        "AKIAIOSFODNN7EXAMPLE\n",
+        "AKIAIOSFODNN7ABCDEFG\n",
       );
     }
 
@@ -798,15 +850,15 @@ describe("E2E: RegexScanner API with realistic files", () => {
 
   it("scanDirectory with maxDepth limits recursion", () => {
     // Create files at different depths
-    fs.writeFileSync(path.join(tmpDir, "top.ts"), "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(path.join(tmpDir, "top.ts"), "AKIAIOSFODNN7ABCDEFG\n");
 
     const level1 = path.join(tmpDir, "level1");
     fs.mkdirSync(level1);
-    fs.writeFileSync(path.join(level1, "l1.ts"), "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(path.join(level1, "l1.ts"), "AKIAIOSFODNN7ABCDEFG\n");
 
     const level2 = path.join(level1, "level2");
     fs.mkdirSync(level2);
-    fs.writeFileSync(path.join(level2, "l2.ts"), "AKIAIOSFODNN7EXAMPLE\n");
+    fs.writeFileSync(path.join(level2, "l2.ts"), "AKIAIOSFODNN7ABCDEFG\n");
 
     const scanner = new RegexScanner();
 
@@ -820,7 +872,7 @@ describe("E2E: RegexScanner API with realistic files", () => {
 
   it("redact produces masked output for all secret types", () => {
     const secrets = [
-      "AKIAIOSFODNN7EXAMPLE",
+      "AKIAIOSFODNN7ABCDEFG",
       "ghp_FAKEEFghijklmnopqrstuvwxyz0123456789",
       fakeSecret("sk_live", "_abcdefghijklmnopqrstuvwx"),
     ];
@@ -858,7 +910,7 @@ describe("E2E: auto (both-engine) scanning (sable-j85)", () => {
     }
     // AKIA keys are exactly what betterleaks 1.1.x fails to detect; the
     // patterns engine must still surface them under the default engine.
-    fs.writeFileSync(path.join(tmpDir, "creds.txt"), "AWS_KEY=" + fakeSecret("AKIA", "IOSFODNN7EXAMPLE") + "\n");
+    fs.writeFileSync(path.join(tmpDir, "creds.txt"), "AWS_KEY=" + fakeSecret("AKIA", "IOSFODNN7ABCDEFG") + "\n");
 
     const r = rafter(["secrets", tmpDir, "--json"]); // default engine = auto = both
     expect(r.exitCode).toBe(1);

@@ -18,6 +18,7 @@ from .config_schema import (
 _VALID_RISK_LEVELS = {"minimal", "moderate", "aggressive"}
 _VALID_COMMAND_MODES = {"allow-all", "approve-dangerous", "deny-list"}
 _VALID_LOG_LEVELS = {"debug", "info", "warn", "error"}
+_warned_project_log_path = False
 
 # Config keys whose leaf name names a bearer credential — their values must be
 # masked before the config is shown to a human or handed to an MCP client.
@@ -206,6 +207,17 @@ class ConfigManager:
                 if key in cp and (not isinstance(cp[key], list) or not all(isinstance(v, str) for v in cp[key])):
                     print(f'rafter: config "commandPolicy.{key}" must be an array of strings — using default.', file=sys.stderr)
                     del cp[key]
+            # Every sibling key is validated; this one was added to node's
+            # validator and not to python's. A bare STRING is the shape
+            # `rafter agent config set agent.commandPolicy.allowedPatterns
+            # '^git status'` actually writes — json.loads fails, the raw string
+            # is stored — and python then iterates its CHARACTERS, so the first
+            # one, "^", matches every command and the allowlist allows
+            # everything. Node warned and fell back to []; python did not.
+            for key in ("allowedPatterns", "allowed_patterns"):
+                if key in cp and (not isinstance(cp[key], list) or not all(isinstance(v, str) for v in cp[key])):
+                    print(f'rafter: config "commandPolicy.{key}" must be an array of strings — using default.', file=sys.stderr)
+                    del cp[key]
             for key in ("allowProjectOverride", "allow_project_override"):
                 if key in cp and not isinstance(cp[key], bool):
                     print(f'rafter: config "commandPolicy.{key}" must be a boolean — ignoring (project policies cannot loosen command policy).', file=sys.stderr)
@@ -259,12 +271,19 @@ class ConfigManager:
     # Policy-merged config
     # ------------------------------------------------------------------
 
-    def load_with_policy(self) -> RafterConfig:
-        """Load config merged with .rafter.yml policy (policy wins)."""
-        from .policy_loader import load_policy
+    def load_with_policy(self, base_dir: str | None = None) -> RafterConfig:
+        """Load config merged with .rafter.yml policy (policy wins).
+
+        ``base_dir`` is the scan target: the policy and its ignore globs are
+        discovered and anchored from there, not the process cwd (sable-lu0j),
+        so an ambient ``.rafter.yml`` in cwd cannot govern a scan of a different
+        tree. Defaults to cwd, which is correct for ``--staged``/hook runs that
+        scan the repo the command runs in.
+        """
+        from .policy_loader import find_policy_file, load_policy
 
         config = self.load()
-        policy = load_policy()
+        policy = load_policy(base_dir)
         if not policy:
             return config
 
@@ -312,6 +331,14 @@ class ConfigManager:
                 )
                 for r in policy["ignore"]
             ]
+            # Record the directory the globs are relative to (the .rafter.yml's
+            # own directory) so they anchor to the policy's tree, not an
+            # absolute path anywhere on disk (sable-lu0j).
+            policy_path = find_policy_file(base_dir)
+            if policy_path:
+                import os
+
+                config.agent.scan.ignore_base_dir = os.path.dirname(str(policy_path))
 
         audit = policy.get("audit")
         if audit:
@@ -319,8 +346,16 @@ class ConfigManager:
                 config.agent.audit.retention_days = audit["retention_days"]
             if audit.get("log_level"):
                 config.agent.audit.log_level = audit["log_level"]
-            if audit.get("log_path"):
-                config.agent.audit.log_path = audit["log_path"]
+            # audit.log_path is honored only from the global config; a project
+            # value is ignored, with a warning, printed once per process.
+            global _warned_project_log_path
+            if audit.get("log_path") and not _warned_project_log_path:
+                _warned_project_log_path = True
+                print(
+                    'rafter: ignoring "audit.log_path" in the project policy file — the audit log '
+                    "location can only be set in ~/.rafter/config.json (agent.audit.logPath).",
+                    file=sys.stderr,
+                )
 
         return config
 
@@ -514,6 +549,8 @@ def merge_command_policy(target, project: dict, allow_override: bool) -> None:
             target.blocked_patterns = project["blocked_patterns"]
         if project.get("require_approval") is not None:
             target.require_approval = project["require_approval"]
+        if project.get("allowed_patterns") is not None:
+            target.allowed_patterns = project["allowed_patterns"]
         return
 
     mode = project.get("mode")
@@ -539,4 +576,21 @@ def merge_command_policy(target, project: dict, allow_override: bool) -> None:
     if project.get("require_approval") is not None:
         target.require_approval = _union_patterns(
             target.require_approval, project["require_approval"]
+        )
+
+    # allowed_patterns is NOT unioned, and that asymmetry is the whole point.
+    # Unioning blocked_patterns or require_approval can only ever ADD
+    # restriction, so a project contributing to them is safe. An allowlist is
+    # the opposite: it is a grant. Union it and a cloned repo ships
+    #     command_policy: {allowed_patterns: [".*"]}
+    # and waves every non-critical command through — precisely the bypass the
+    # floor exists to prevent (sable-nz4y / rf-adth). So the owner's allowlist
+    # stands and the project's is refused unless the owner opted in.
+    if project.get("allowed_patterns") is not None:
+        print(
+            "rafter: project policy sets agent.commandPolicy.allowed_patterns, which can "
+            "only loosen command policy — ignoring. Set "
+            "agent.commandPolicy.allowProjectOverride: true in your global config to "
+            "allow project policies to loosen command policy.",
+            file=sys.stderr,
         )

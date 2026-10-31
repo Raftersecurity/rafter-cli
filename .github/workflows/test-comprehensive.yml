@@ -103,7 +103,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - uses: actions/setup-python@v5
         with:
@@ -153,7 +153,10 @@ jobs:
       # ~95% of the count on 2026-09-02 (2099 executed); lower it in the same
       # PR that removes tests, so a shrink is a reviewed decision.
       - name: Assert the suite actually ran
-        run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "test-node (vitest)"
+        # backend-api.test.ts needs the RAFTER_API_KEY secret, which is not set
+        # on this repo (see the backend-api job), so all of its tests skip.
+        # Remove the exception once the secret exists.
+        run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "test-node (vitest)" --allow-all-skipped tests/backend-api.test.ts
 
       # The battery is the gate that catches a MISSING fix; the differential
       # cannot, because a fix absent on both sides is not a permissive move.
@@ -200,6 +203,21 @@ jobs:
       - name: Assert the suite actually ran
         run: python3 ../.github/scripts/test_floor.py --junit pytest-report.xml --min-executed 1530 --label "test-python (pytest)"
 
+      # sable-yy9v: a typer floor <0.16 caps click <8.2, so a fresh resolve
+      # quietly picks a compatible click and --help passes — while any venv that
+      # already holds click >=8.2 crashes with
+      # `Parameter.make_metavar() missing 'ctx'`. The lock pins an older click,
+      # so this can hide there too. Force click past whatever typer would allow
+      # and confirm --help still renders. Last step: it upgrades click and must
+      # not perturb the pytest run or the floor check above.
+      - name: Guard — help renders under the latest click
+        run: |
+          pip install -U 'click>=8.2'
+          python -c "import click; print('click', click.__version__)"
+          python -m rafter_cli --help > /dev/null
+          python -m rafter_cli agent --help > /dev/null
+          python -m rafter_cli secrets --help > /dev/null
+
   # ── E2E CLI tests ─────────────────────────────────────────────────
   e2e-node:
     needs: gate
@@ -213,7 +231,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -239,7 +257,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -263,7 +281,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -273,7 +291,7 @@ jobs:
 
       - name: Generate SARIF from fixture
         run: |
-          echo "AKIAIOSFODNN7EXAMPLE" > /tmp/test-secret.txt
+          echo "AKIAIOSFODNN7ABCDEFG" > /tmp/test-secret.txt
           node dist/index.js scan local /tmp/test-secret.txt --engine patterns --format sarif > /tmp/output.sarif || true
 
       - name: Validate SARIF structure
@@ -303,7 +321,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -346,7 +364,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -381,61 +399,6 @@ jobs:
           test -f "$TMPDIR/.git/hooks/pre-commit" || (echo "FAIL: hook not installed" && exit 1)
           echo "Hook installation verified"
 
-  # ── Cross-platform smoke test ──────────────────────────────────────
-  # Node 18 coverage that means something. package.json declares engines >=18
-  # and the shipped code genuinely works there — measured 200/200 on the built
-  # dist — but vitest 4 cannot run on Node 18 (engines ^20 || ^22 || >=24), so
-  # the matrix leg that used to sit here tested the RUNNER's unsupported path
-  # and reported on neither. 5409a84 removed it; without this job the release
-  # would ship with NO Node 18 signal at all.
-  #
-  # This runs what a Node 18 USER runs: built on 20, RUN on 18, no test
-  # framework in the way — their situation exactly, since they install a
-  # prebuilt package rather than compiling one.
-  #
-  # Gated on `run_core`, not the `run` that gates cross-platform: run_core is
-  # true on every PR, and a skipped job satisfies a required check, so coverage
-  # that only sometimes runs can be absent exactly when it matters.
-  node18-smoke:
-    needs: gate
-    if: needs.gate.outputs.run_core == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./node
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@10 --activate
-
-      - name: Install and build on a supported Node
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm run build
-
-      # Switch the runtime only — the artifact under test is the one built above.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "18"
-
-      - name: The CLI runs on Node 18
-        run: |
-          node --version
-          node ./dist/index.js --version
-
-      # Asserts the rf-fuwy liveness probe BOTH ways: a live gate yields its
-      # decision, an inert one yields none with a non-zero status. The second
-      # assertion IS rf-fuwy. Both directions mutation-checked — blanking the
-      # live fixture or making the inert one work fails the script with its own
-      # message, not an import error.
-      - name: The rf-fuwy liveness probe works on Node 18
-        run: node scripts/node18-smoke.mjs
-
   cross-platform:
     needs: gate
     if: needs.gate.outputs.run == 'true'
@@ -443,15 +406,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        # Node 18 is deliberately absent: vitest 4.1.0 declares
-        # engines.node ^20 || ^22 || >=24, so an 18 leg runs the suite on a
-        # runner that does not support it. It does not refuse outright — it
-        # runs, reports, and the report means nothing about the shipped code.
-        # engines in package.json stays >=18 because the BUILT ARTIFACT does
-        # work on 18 (measured 200/200 on dist). If we want real Node 18
-        # signal, smoke-test the built artifact under 18 — that is what users
-        # run — rather than the test runner.
-        node: ["20", "22"]
+        # Runtime-currency pass (bead sable-pvim, 2026-10-22): Node 18 and 20
+        # are both EOL (2025-04-30 and 2026-04-30). engines.node is now >=22,
+        # and vitest 4.1.12 runs directly on 22 and 24, so this matrix tests
+        # the real floor plus the next current LTS with the actual suite —
+        # strictly more signal than the old build-on-20/run-on-18 smoke job
+        # (node18-smoke, removed here) ever gave for a runtime we no longer
+        # claim to support.
+        node: ["22", "24"]
     runs-on: ${{ matrix.os }}
     defaults:
       run:

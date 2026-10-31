@@ -81,6 +81,24 @@ export interface RafterConfig {
        * floor: a project policy may tighten command policy, never loosen it.
        */
       allowProjectOverride?: boolean;
+
+      /**
+       * Positive allowlist: unanchored regexes that force a command to `low`
+       * and skip the approval prompt. For the known-safe command that would
+       * otherwise trip a broad risk tier -- the motivating case being
+       * `git push --force-with-lease` to a feature branch on a repo whose
+       * main is protected server-side.
+       *
+       * Three properties make this safe to put on a guard rail, and all three
+       * are enforced in CommandInterceptor, not here:
+       *   1. blockedPatterns always wins. An allowlist never re-opens what a
+       *      deny rule closed.
+       *   2. A `critical` command is never allowlistable.
+       *   3. A match does not apply when the command contains a chain
+       *      operator, so "^git push" cannot wave through
+       *      `rm -rf / && git push`.
+       */
+      allowedPatterns?: string[];
     };
     outputFiltering: {
       redactSecrets: boolean;
@@ -120,6 +138,14 @@ export interface RafterConfig {
       excludePaths?: string[];
       customPatterns?: ScanCustomPattern[];
       ignore?: ScanIgnoreRule[];
+      /**
+       * Absolute directory the policy's `ignore` globs are relative to — the
+       * directory that holds the `.rafter.yml` they came from (sable-lu0j).
+       * A runtime field set by `loadWithPolicy`, never read from YAML. Ignore
+       * globs anchor to this so a rule cannot match files outside the policy's
+       * own tree.
+       */
+      ignoreBaseDir?: string;
       /**
        * sable-o4k — auto-update a stale rafter-managed betterleaks binary at
        * scan time. Default true. Set false (YAML: `scan.auto_update_betterleaks`)

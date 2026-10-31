@@ -2,6 +2,9 @@ packages:
   - node
   - vscode
 
+allowBuilds:
+  esbuild: set this to true or false
+
 onlyBuiltDependencies:
   - esbuild
 
@@ -18,3 +21,12 @@ overrides:
   ip-address: '>=10.1.1'
   qs: '>=6.15.2'
   brace-expansion: '>=5.0.6'
+  # Runtime-currency pass (bead sable-pvim) — vitest 4.1.12's own vite peer
+  # range (^6 || ^7 || ^8) resolves to 7.3.1 by default, which is still
+  # vulnerable to several GHSAs patched only in later 7.3.x point releases.
+  # Force the floor forward within the same major; esbuild/picomatch ride
+  # along as vite's own transitive deps but are pinned too since tsx also
+  # depends on esbuild directly.
+  vite: '>=7.3.7 <8'
+  esbuild: '>=0.28.1'
+  picomatch: '>=4.0.4'

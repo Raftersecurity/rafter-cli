@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -100,25 +98,20 @@ class TestReportCli:
         assert result.exit_code == 0
         assert "My Audit Report" in result.stdout
 
-    def test_severity_breakdown(self):
+    def test_severity_breakdown_and_critical_risk_level(self):
         result = runner.invoke(app, ["report"], input=json.dumps(SAMPLE_RESULTS))
         assert result.exit_code == 0
         assert "Severity Breakdown" in result.stdout
         assert "Critical" in result.stdout
         assert "High" in result.stdout
         assert "Medium" in result.stdout
+        assert "Overall Risk" in result.stdout
 
     def test_empty_results_no_findings(self):
         result = runner.invoke(app, ["report"], input=json.dumps(EMPTY_RESULTS))
         assert result.exit_code == 0
         assert "<!DOCTYPE html>" in result.stdout
         assert "No Security Findings" in result.stdout
-
-    def test_critical_risk_level(self):
-        result = runner.invoke(app, ["report"], input=json.dumps(SAMPLE_RESULTS))
-        assert result.exit_code == 0
-        assert "Critical" in result.stdout
-        assert "Overall Risk" in result.stdout
 
     def test_detailed_findings_table(self):
         result = runner.invoke(app, ["report"], input=json.dumps(SAMPLE_RESULTS))
@@ -165,23 +158,9 @@ class TestReportCli:
         assert "<script>" not in result.stdout
         assert "&lt;script&gt;" in result.stdout
 
-    def test_report_help(self):
-        result = runner.invoke(app, ["report", "--help"])
-        assert result.exit_code == 0
-        assert "HTML" in result.stdout or "report" in result.stdout.lower()
-
 
 class TestGenerateHtmlReport:
     """Unit tests for the HTML generation function."""
-
-    def test_total_findings_count(self):
-        html = generate_html_report(SAMPLE_RESULTS, "Test Report")
-        assert "3" in html  # 1 + 2 findings
-
-    def test_files_affected_count(self):
-        html = generate_html_report(SAMPLE_RESULTS, "Test Report")
-        # 2 files affected
-        assert "2" in html
 
     def test_risk_level_high_only(self):
         high_only = [
@@ -278,41 +257,41 @@ class TestGenerateHtmlReport:
 
 
 class TestEscapeHtml:
-    def test_escapes_ampersand(self):
-        assert _escape_html("a & b") == "a &amp; b"
-
-    def test_escapes_angle_brackets(self):
-        assert _escape_html("<script>") == "&lt;script&gt;"
-
-    def test_escapes_quotes(self):
-        assert _escape_html('"hello"') == "&quot;hello&quot;"
-
-    def test_escapes_single_quotes(self):
-        assert _escape_html("it's") == "it&#39;s"
-
-    def test_empty_string(self):
-        assert _escape_html("") == ""
-
-    def test_no_escaping_needed(self):
-        assert _escape_html("hello world") == "hello world"
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ("a & b", "a &amp; b"),
+            ("<script>", "&lt;script&gt;"),
+            ('"hello"', "&quot;hello&quot;"),
+            ("it's", "it&#39;s"),
+            ("", ""),
+            ("hello world", "hello world"),
+        ],
+    )
+    def test_escape_html(self, raw, expected):
+        assert _escape_html(raw) == expected
 
 
 class TestSeverityRank:
-    def test_critical_is_zero(self):
-        assert _severity_rank("critical") == 0
+    @pytest.mark.parametrize(
+        "severity, expected",
+        [
+            ("critical", 0),
+            ("high", 1),
+            ("medium", 2),
+            ("low", 3),
+            ("unknown", 4),
+            ("CRITICAL", 0),
+            ("High", 1),
+        ],
+    )
+    def test_severity_rank(self, severity, expected):
+        assert _severity_rank(severity) == expected
 
-    def test_high_is_one(self):
-        assert _severity_rank("high") == 1
 
-    def test_medium_is_two(self):
-        assert _severity_rank("medium") == 2
-
-    def test_low_is_three(self):
-        assert _severity_rank("low") == 3
-
-    def test_unknown_is_four(self):
-        assert _severity_rank("unknown") == 4
-
-    def test_case_insensitive(self):
-        assert _severity_rank("CRITICAL") == 0
-        assert _severity_rank("High") == 1
+def test_renders_output_of_secrets_json_piped_into_it(tmp_path):
+    (tmp_path / "creds.env").write_text("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n")
+    scan = CliRunner().invoke(app, ["secrets", "--json", "--engine", "patterns", str(tmp_path)])
+    r = runner.invoke(app, ["report"], input=scan.stdout)
+    assert r.exit_code == 0, r.output
+    assert "AWS Access Key ID" in r.stdout

@@ -23,6 +23,8 @@ node/package */
 
 # Test output
 **/test_output.json
+# Executable test stubs kept off the (possibly noexec) system temp dir
+.exec-tmp/
 
 # General
 .env

@@ -40,6 +40,28 @@ describe("ConfigManager", () => {
     expect(loaded.agent?.riskLevel).toBe("aggressive");
   });
 
+  it("reads a config written by the Python CLI (snake_case keys)", () => {
+    // Both CLIs share ~/.rafter/config.json; Python writes snake_case.
+    fs.writeFileSync(testConfigPath, JSON.stringify({
+      version: "1.0.0",
+      initialized: "2026-01-01T00:00:00+00:00",
+      backend: { api_key: "py-key", endpoint: "https://rafter.so/api/" },
+      agent: {
+        risk_level: "aggressive",
+        environments: { claude_code: { enabled: true } },
+        command_policy: { mode: "deny-list", blocked_patterns: ["rm -rf /"], require_approval: [] },
+        components: { "claude-code.hooks": { enabled: false, updated_at: "2026-01-01" } },
+      },
+    }));
+
+    const config = manager.load();
+    expect(config.backend?.apiKey).toBe("py-key");
+    expect(config.agent?.riskLevel).toBe("aggressive");
+    expect(config.agent?.environments.claudeCode?.enabled).toBe(true);
+    expect(config.agent?.commandPolicy.blockedPatterns).toEqual(["rm -rf /"]);
+    expect(config.agent?.components?.["claude-code.hooks"]).toEqual({ enabled: false, updatedAt: "2026-01-01" });
+  });
+
   it("should get nested values", () => {
     const config = manager.load();
     config.agent!.riskLevel = "minimal";

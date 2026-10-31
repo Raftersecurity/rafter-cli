@@ -22,11 +22,18 @@ export interface SkillInstallResult {
   error?: string;
 }
 
+export interface SkillManagerOptions {
+  /** Sink for informational messages. Defaults to console.log. */
+  log?: (message: string) => void;
+}
+
 export class SkillManager {
   private configManager: ConfigManager;
+  private log: (message: string) => void;
 
-  constructor() {
+  constructor(options: SkillManagerOptions = {}) {
     this.configManager = new ConfigManager();
+    this.log = options.log ?? ((message: string) => console.log(message));
   }
 
   /**
@@ -227,7 +234,7 @@ export class SkillManager {
     if (!fs.existsSync(legacy)) return;
     try {
       fs.unlinkSync(legacy);
-      console.log(`✓ Removed legacy ${legacy} (superseded by ClawHub-shaped skill at ${this.getRafterSkillPath()})`);
+      this.log(`✓ Removed legacy ${legacy} (superseded by ClawHub-shaped skill at ${this.getRafterSkillPath()})`);
     } catch {
       /* best-effort */
     }
@@ -252,7 +259,7 @@ export class SkillManager {
       try {
         // Remove old skill-auditor file
         fs.unlinkSync(this.getOldSkillAuditorPath());
-        console.log("✓ Migrated from separate skill-auditor to combined Rafter Security skill");
+        this.log("✓ Migrated from separate skill-auditor to combined Rafter Security skill");
       } catch (e) {
         // Ignore migration errors
       }
