@@ -3,7 +3,7 @@ import { spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { GATES_FIXTURE, writeFixture } from "./fixtures/gates-fixture.js";
+import { GATES_FIXTURE, UNICODE_FIXTURE, hostileFixture, writeFixture } from "./fixtures/gates-fixture.js";
 
 /**
  * `rafter gates` end to end: a small multi-language tree with gates, a
@@ -13,8 +13,8 @@ import { GATES_FIXTURE, writeFixture } from "./fixtures/gates-fixture.js";
 
 const CLI = path.resolve(__dirname, "../dist/index.js");
 
-function rafter(args: string[]) {
-  const r = spawnSync("node", [CLI, ...args], { encoding: "utf-8", timeout: 15000 });
+function rafter(args: string[], timeout = 15000) {
+  const r = spawnSync("node", [CLI, ...args], { encoding: "utf-8", timeout });
   return { stdout: r.stdout || "", stderr: r.stderr || "", exitCode: r.status ?? 1 };
 }
 
@@ -65,5 +65,38 @@ describe("rafter gates", () => {
   it("exits 2 on a missing path or a bad --limit", () => {
     expect(rafter(["gates", path.join(root, "nope")]).exitCode).toBe(2);
     expect(rafter(["gates", root, "--limit", "0"]).exitCode).toBe(2);
+  });
+
+  it("reads Unicode as the Python scanner does: BOM, U+00A0, code-point lengths and order", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gates-u-"));
+    try {
+      writeFixture(dir, UNICODE_FIXTURE);
+      const out = JSON.parse(rafter(["gates", dir, "--json", "--no-gitignore"]).stdout);
+      expect(out.gates.map((g: any) => `${g.file}:${g.name}`)).toEqual([
+        "\uFF5A.go:authorizeAdmin",
+        "\u{1F600}.go:authorizeAdmin",
+        "long.go:authorizeUser",
+        "sig.go:verifyToken",
+        "bom.py:check_auth",
+      ]);
+      const sig = out.gates.find((g: any) => g.name === "verifyToken").signature;
+      expect(Array.from(sig as string).length).toBe(90);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("maps a hostile tree in seconds and skips the file of unclosed definitions", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-gates-h-"));
+    try {
+      writeFixture(dir, hostileFixture());
+      const r = rafter(["gates", dir, "--json", "--no-gitignore"], 10000);
+      expect(r.exitCode).toBe(0);
+      const out = JSON.parse(r.stdout);
+      expect(out.stats.files_scanned).toBe(3);
+      expect(out.gates.map((g: any) => g.file).sort()).toEqual(["body.js", "gen.go", "quote.js"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

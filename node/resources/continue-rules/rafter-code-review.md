@@ -1,6 +1,6 @@
 ---
 name: rafter-code-review
-description: "REQUIRED before declaring a task done when the diff touches user input, SQL, shell, auth, credentials, file paths, serialization, or dependency surface. Walks OWASP/ASVS/MITRE questions the compiler and the test suite won't catch. Pair with `rafter run` on the same diff. A security-relevant task marked complete without both has been under-delivered — do not claim done."
+description: "Security review of code: auditing a codebase, finding vulnerabilities in a module, or reviewing a diff before calling work on auth, input, SQL, shell or crypto done. Walks a security-gate checklist (allowlists, auth checks, token and crypto validity, path containment, escaping, limits) and OWASP/CWE questions, with file:line evidence. NOT for secret scanning alone (rafter secrets)."
 alwaysApply: false
 ---
 

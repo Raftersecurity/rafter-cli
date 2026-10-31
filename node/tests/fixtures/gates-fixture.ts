@@ -57,6 +57,37 @@ export const GATES_FIXTURE: Record<string, string> = {
   "node_modules/dep/index.js": "function authorizeVendored() {\n  return true;\n}\n",
 };
 
+const GRIN = "\u{1F600}";
+
+/**
+ * Text the two runtimes once read differently: a UTF-8 BOM, U+00A0 where a
+ * space would make a definition, non-BMP characters in a line, a signature
+ * and a file name. Mirrored in python/tests/test_gates.py.
+ */
+export const UNICODE_FIXTURE: Record<string, string> = {
+  "bom.py": "\uFEFFdef check_auth(user):\n    return verify(user)\n",
+  "nbsp.js": "function\u00A0checkAuth() {\n  return verify(x);\n}\n",
+  "long.go": `func authorizeUser() { // ${GRIN.repeat(250)}\n\tverify()\n}\n`,
+  "sig.go": `func verifyToken(t string) bool { s := "${GRIN.repeat(80)}"; return check(s) }\n`,
+  [`${GRIN}.go`]: "func authorizeAdmin() {\n}\n",
+  "\uFF5A.go": "func authorizeAdmin() {\n}\n",
+};
+
+/**
+ * Lines that made the scanner's regexes backtrack for minutes: a 900 KB body
+ * line, the same after an unclosed quote, a 900 KB first line full of "Code
+ * generated ", and 45,000 definitions whose braces never close.
+ */
+export function hostileFixture(): Record<string, string> {
+  const big = "a".repeat(900_000);
+  return {
+    "body.js": `function checkAuth() {\n${big}\n}\n`,
+    "quote.js": `function checkAuth() {\n"${big}\n}\n`,
+    "gen.go": `// ${"Code generated ".repeat(60_000)}\nfunc checkAuth() {\n}\n`,
+    "dense.go": Array.from({ length: 45_000 }, (_, i) => `func checkA${i}() {\n`).join(""),
+  };
+}
+
 export function writeFixture(root: string, files: Record<string, string>): void {
   for (const [rel, content] of Object.entries(files)) {
     const full = path.join(root, rel);

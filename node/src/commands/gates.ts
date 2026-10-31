@@ -22,11 +22,15 @@ export function createGatesCommand(): Command {
         process.exit(2);
       }
       const map = mapGates(resolved, { limit, respectGitignore: opts.gitignore });
+      if (map.stats.files_scanned === 0) {
+        console.error(`Warning: no source files scanned under ${resolved} (none found, unreadable, oversize or generated)`);
+      }
       if (opts.json) {
         process.stdout.write(JSON.stringify(map, null, 2) + "\n");
       } else {
         process.stdout.write(formatGateMap(map));
       }
-      process.exit(0);
+      // exitCode, not exit(): exit() can cut off output still buffered for a pipe.
+      process.exitCode = 0;
     });
 }
