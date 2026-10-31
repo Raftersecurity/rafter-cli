@@ -17,10 +17,28 @@ class IssueDraft:
 
 @dataclass
 class BackendVulnerability:
-    rule_id: str
-    level: str
-    message: str
-    file: str
+    """Backend vulnerability from `GET /api/static/scan` (`rafter get <id> --format json`).
+
+    The real API shape (`toRafterFindings()` on the backend) is
+    `rule_id`/`severity`/`title`/`description`/`file_path`/`line_start`/
+    `line_end` plus optional `cwe`/`confidence`. `level`/`message`/`file`/
+    `line` are the pre-rename names, kept as a fallback for old cached
+    payloads and existing tests, never the primary source.
+    """
+
+    rule_id: str = ""
+    severity: str = ""
+    title: str = ""
+    description: str = ""
+    file_path: str | None = None
+    line_start: int | None = None
+    line_end: int | None = None
+    cwe: str | None = None
+    confidence: str | None = None
+    # Pre-rename names.
+    level: str = ""
+    message: str = ""
+    file: str = ""
     line: int | None = None
 
 
@@ -67,24 +85,31 @@ def _truncate(s: str, max_len: int) -> str:
 
 
 def build_from_backend_vulnerability(vuln: BackendVulnerability) -> IssueDraft:
-    sev = _severity_label(vuln.level)
-    emoji = _severity_emoji(vuln.level)
-    fp = fingerprint(vuln.file, vuln.rule_id)
+    rule_id = vuln.rule_id or "unknown-rule"
+    level = vuln.severity or vuln.level or "note"
+    summary = vuln.title or vuln.message or "Security finding"
+    details = vuln.description or vuln.message or summary
+    file = vuln.file_path or vuln.file or "unknown file"
+    line = vuln.line_start if vuln.line_start is not None else vuln.line
 
-    title = f"{emoji} [{sev.upper()}] {vuln.rule_id}: {_truncate(vuln.message, 80)}"
+    sev = _severity_label(level)
+    emoji = _severity_emoji(level)
+    fp = fingerprint(file, rule_id)
+
+    title = f"{emoji} [{sev.upper()}] {rule_id}: {_truncate(summary, 80)}"
 
     body = f"## Security Finding\n\n"
-    body += f"**Rule:** `{vuln.rule_id}`\n"
+    body += f"**Rule:** `{rule_id}`\n"
     body += f"**Severity:** {sev}\n"
-    body += f"**File:** `{vuln.file}`"
-    if vuln.line:
-        body += f" (line {vuln.line})"
+    body += f"**File:** `{file}`"
+    if line:
+        body += f" (line {line})"
     body += "\n\n"
-    body += f"### Description\n\n{vuln.message}\n\n"
-    body += f"### Remediation\n\nReview and fix the finding in `{vuln.file}`.\n"
+    body += f"### Description\n\n{details}\n\n"
+    body += f"### Remediation\n\nReview and fix the finding in `{file}`.\n"
     body += "\n---\n*Created by [Rafter CLI](https://rafter.so) — security for AI builders*\n"
 
-    labels = ["security", f"severity:{sev}", f"rule:{vuln.rule_id}"]
+    labels = ["security", f"severity:{sev}", f"rule:{rule_id}"]
 
     return IssueDraft(
         title=title,

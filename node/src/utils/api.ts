@@ -110,7 +110,12 @@ export function handle403(e: any): number {
   if (typeof body === "object" && body?.scan_mode) {
     const mode = body.scan_mode;
     const limit = body.limit ?? "?";
-    const used = body.used ?? limit;
+    // The API sends `remaining`, not `used`; `used` is kept for older servers.
+    const used =
+      body.used ??
+      (typeof body.limit === "number" && typeof body.remaining === "number"
+        ? body.limit - body.remaining
+        : limit);
     console.error(
       `Error: ${mode.charAt(0).toUpperCase() + mode.slice(1)} scan limit reached (${used}/${limit} used this billing period).\nUpgrade your plan or wait for your quota to reset.`
     );
