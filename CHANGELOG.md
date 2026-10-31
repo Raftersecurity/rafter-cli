@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`rafter secrets` and `scan local` take several paths** (`rafter secrets a.py b.py infra/c.tf`) and merge them into one report with the same JSON shape. Before, Node scanned only the first path and Python failed with `No such command 'b.py'`. Both Node and Python.
+- **`-a` / `--agent` works after a subcommand** (`rafter secrets . -a`); both runtimes rejected it as an unknown option. `agent audit` and `skill review`, which have their own `--agent <value>` filter, keep it; `rafter -a <cmd>` still works there. Both Node and Python.
+- **`--out <file>` on `secrets` and `scan local`** writes the JSON or SARIF payload to a file, for agents whose sandbox blocks shell redirection. Both Node and Python.
+
+### Changed
+
+- **A clean text result from `rafter secrets` says it covers secrets only**, not a code security review. JSON output is unchanged. Both Node and Python.
+- **Node: `--staged`, `--diff` and `--range` outside a git repo** print `Error: Not in a git repository`, as Python does, instead of git's raw error.
+
 ## [0.11.5] - 2026-10-30
 
 ### Security
