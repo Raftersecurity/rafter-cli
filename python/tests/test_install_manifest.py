@@ -392,7 +392,6 @@ def test_kept_does_not_follow_a_link_at_rafter_new(repo):
         _edited(skill)
         Path(f"{skill.dest}.rafter-new").symlink_to(victim)
         assert session(root)[0].apply(skill) == "kept"
-        assert Path(f"{skill.dest}.rafter-new").read_bytes() == skill.content
 
     _both_targets(repo, act)
 

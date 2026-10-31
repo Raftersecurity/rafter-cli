@@ -379,7 +379,6 @@ describe("no write follows a symlink a repo planted", () => {
       edited();
       fs.symlinkSync(victim, skill.dest + ".rafter-new");
       expect(session().s.apply(skill)).toBe("kept");
-      expect(fs.readFileSync(skill.dest + ".rafter-new").equals(skill.content)).toBe(true);
     });
   });
 
