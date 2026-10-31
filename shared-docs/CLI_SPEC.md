@@ -246,12 +246,16 @@ With no topic, lists available topics and usage examples.
 
 | Topic | Description |
 |-------|-------------|
-| `security` | Local security toolkit — scanning, auditing, policy enforcement |
-| `scanning` | Remote SAST/SCA code analysis via Rafter API |
+| `scanning` | Rafter scanning (local + remote SAST/SCA) + guardrails |
 | `commands` | Condensed command reference for all rafter commands |
 | `setup` | Setup instructions for all supported platforms |
 | `setup/<platform>` | Platform-specific setup (claude-code, codex, gemini, cursor, windsurf, aider, openclaw, continue, generic) |
-| `all` | Everything — full security + scanning + setup briefing |
+| `cli-reference` | Full rafter CLI tree by category |
+| `guardrails` | PreToolUse hooks, risk tiers, overrides |
+| `backend` | Remote fast vs plus, setup, cost/latency |
+| `shift-left` | Pointers to secure-design & code-review skills |
+| `finding-triage` | How to read a finding and decide next steps |
+| `all` | Everything — full scanning + setup briefing |
 
 **Examples:**
 
@@ -259,14 +263,14 @@ With no topic, lists available topics and usage examples.
 # List available topics
 rafter brief
 
-# Get the local security briefing
-rafter brief security
+# Scanning + guardrails briefing
+rafter brief scanning
 
 # Platform-specific setup guide
 rafter brief setup/claude-code
 
 # For agents without native skill support — load context manually
-rafter brief security    # save to memory/instructions
+rafter brief scanning    # save to memory/instructions
 rafter brief commands    # save command reference
 
 # Pipe to a file for manual skill creation
@@ -563,6 +567,11 @@ Execute shell command with risk assessment and approval workflow.
 Risk tiers: critical (blocked), high (approval required), medium (approval on moderate+), low (allowed).
 
 **Approval model.** A command that requires approval is approved only by a person at an interactive terminal: the prompt is offered only when stdin is a TTY, and otherwise the command is denied with exit `1` and a message saying so. A piped `yes` is not an approval and no flag stands in for one, because anything an agent can pass, the agent can pass on its own. The machine owner widens policy in `~/.rafter/config.json` (`commandPolicy`), not per call. Both runtimes.
+
+**Rafter's own configuration is protected (rf-vnxs).** These are classified critical, so no policy, mode or allowlist can approve them, and the hook's deny message names rf-vnxs:
+- `rafter … config set` on a key under `agent.hooks`, `agent.commandPolicy` or `agent.riskLevel`, and `rafter agent disable`, at any argv position (so `bash -c "rafter …"` counts).
+- A Write/Edit/apply_patch whose target is inside the rafter dir (`~/.rafter`).
+- A shell statement that names the rafter dir and is not read-only (sable-36oe). A statement *names* the dir when any word, quoted or not, has `.rafter` as a whole path component, compared case-insensitively: `~/.rafter`, `$HOME/.rafter`, `/home/u/.rafter`, `./.rafter`, `'.rafter'` inside `python -c` code or a heredoc body, an unquoted glob that can expand to it (`~/.raf*`), or a brace list that does (`~/.{rafter,x}`). `.rafter.yml` and `.rafterignore` do not name it. The argv0 of a statement is exempt, so running `~/.rafter/bin/betterleaks version` is allowed; its arguments still count. The command is split on `;`, `&&`, `||`, `|`, `&` and newlines, including inside command substitutions, and each statement that names the dir must itself be read-only; statements that do not name it are not constrained, so `cat ~/.rafter/config.json && npm test` is allowed. A statement is read-only when it has no output redirect (other than to `/dev/null` or an fd dup such as `2>&1`) and its argv0 is a bare name or a system bin path (`/bin`, `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, and their `sbin`) in this list: `cat`, `more`, `head`, `tail`, `ls`, `stat`, `file` (not `-C`), `wc`, `grep`, `egrep`, `fgrep`, `rg` (not `--pre`), `jq`, `diff`, `cmp`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `shasum`, `b2sum`, `cksum`, `find` (not `-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, `-fprint`, `-fprint0`, `-fprintf`, `-fls`), `test`, `[`, `realpath`, `readlink`, `du`, and `cd`/`pushd`/`popd` to a target outside the dir. `sed` and `less` are deliberately absent (sed's `w`/`e` commands write and execute without `-i`; `less -o` writes a file). A `cd` into the dir is itself protected, because the agent's shell keeps its cwd between calls; that is what keeps `cd ~/.rafter && echo x > config.json` blocked. A write that never names the dir (`echo x > config.json`) is not caught. Both runtimes.
 
 ### rafter skill review [PATH_OR_URL] [OPTIONS]
 
@@ -1113,13 +1122,15 @@ Cursor is the one exception: its permission hooks block the action on an empty o
 | Platform (format) | Shell tool → command policy | File-write tools → write checks |
 |-------------------|-----------------------------|---------------------------------|
 | Claude Code (`claude`) | `Bash` (`tool_input.command`) | `Write` (`content`), `Edit` (`new_string`), `MultiEdit` (`edits[].new_string`) |
-| Codex (`claude`) | `Bash` (`tool_input.command`) | `apply_patch` (the patch text in `tool_input.command`) |
+| Codex (`claude`) | `Bash` (`tool_input.command`) | `apply_patch` (the patch text in `tool_input.command`; target paths from its `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` headers) |
 | Continue (`claude`) | `Bash` (`tool_input.command`) | `Write` (`filepath`, `content`), `Edit`, `MultiEdit` |
-| Gemini CLI (`gemini`) | `run_shell_command` (`tool_input.command`) | `write_file` (`content`), `replace` (`new_string`) |
+| Gemini CLI (`gemini`) | `run_shell_command` (`tool_input.command`) | `write_file` (`content`), `replace` (`new_string`); Gemini has no tool named `edit` |
 | Cursor (`cursor`) | `beforeShellExecution` (`command`); `preToolUse` with `Shell` (`tool_input.command`) | `preToolUse` with `Write`; `afterFileEdit` |
 | Windsurf (`windsurf`) | `pre_run_command` (`tool_info.command_line`) | `pre_write_code` (`tool_info.edits[].new_string`) |
 
-The write checks read the target from `file_path` (or `filepath`) and scan `content`, else `new_string`, else the joined `edits[].new_string`, else (for `apply_patch`) the patch text.
+The write checks read the target from `file_path` (or `filepath`) and scan `content`, else `new_string`, else the joined `edits[].new_string`, else (for `apply_patch`) the patch text. For `apply_patch`, the rafter-config guard checks every path named in the patch headers, after `~` expansion and resolution against the working directory, and denies with the same reason as a `Write` to that path.
+
+**Installed matchers.** A platform calls the hook only for tools its matcher names, so each installer's matcher covers the tools above. `agent init --with-claude-code` (and `agent enable claude-code.hooks`) registers PreToolUse matchers `Bash` and `Write|Edit|MultiEdit`; `rafter policy export --format claude` emits the same. The Codex installer registers `Bash|apply_patch`. The Gemini installer (`agent init --with-gemini` and `agent enable gemini.hooks`) registers BeforeTool matcher `run_shell_command|write_file|replace`. `agent verify` and `agent status` check that a rafter hook command is installed, not the matcher, so an install made before a matcher change keeps its old matcher until `agent init` is rerun.
 
 **Approval-required commands are denied, not asked.** A Bash command the policy marks as requiring approval (for example `curl … | sh`, which is high risk) gets `deny`, the same decision as a blocked command; the hook never returns `ask`. The reason says a person must run `rafter agent exec '<command>'` at an interactive terminal to approve it (see the approval model under `rafter agent exec`). Both runtimes.
 
@@ -1435,7 +1446,7 @@ rafter scan --repo myorg/myrepo --branch main
 rafter get SCAN_ID --format json
 
 # Pipe to jq
-rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.level=="error")'
+rafter get SCAN_ID --format json | jq '.vulnerabilities[] | select(.severity=="error")'
 
 # Count vulnerabilities
 rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
@@ -1444,7 +1455,7 @@ rafter get SCAN_ID --format json | jq '.vulnerabilities | length'
 rafter get SCAN_ID > scan_results.json
 
 # CSV export
-rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.level, .rule_id, .file, .line] | @csv'
+rafter get SCAN_ID --format json --quiet | jq -r '.vulnerabilities[] | [.severity, .rule_id, .file_path, .line_start] | @csv'
 
 # CI gate
 if rafter get SCAN_ID --format json | jq -e '.vulnerabilities | length > 0'; then

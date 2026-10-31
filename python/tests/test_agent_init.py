@@ -314,7 +314,7 @@ class TestInstallClaudeCodeHooks:
 
         matchers = [e["matcher"] for e in settings["hooks"]["PreToolUse"]]
         assert "Bash" in matchers
-        assert "Write|Edit" in matchers
+        assert "Write|Edit|MultiEdit" in matchers
 
         # PostToolUse is scoped to tools that produce scannable output (shell
         # output + file writes), not every tool call — avoids firing posttool
@@ -1105,7 +1105,7 @@ class TestGeminiWithSkillsEndToEnd:
         before = settings["hooks"]["BeforeTool"]
         after = settings["hooks"]["AfterTool"]
         assert len(before) == 1 and len(after) == 1
-        assert before[0]["matcher"] == "run_shell_command|write_file|replace|edit"
+        assert before[0]["matcher"] == "run_shell_command|write_file|replace"
         assert before[0]["hooks"][0]["command"].endswith("hook pretool --format gemini")
         assert after[0]["hooks"][0]["command"].endswith("hook posttool --format gemini")
 
@@ -1237,8 +1237,9 @@ _CURSOR_SHIPPED_SKILLS = (
 class TestInstallCursorHooks:
     """Cursor hooks must cover preToolUse, postToolUse, and beforeShellExecution."""
 
-    def test_writes_all_three_events_from_scratch(self, tmp_path):
+    def test_writes_all_three_events_from_scratch(self, tmp_path, monkeypatch):
         from rafter_cli.commands.agent import _install_cursor_hooks
+        monkeypatch.setattr("rafter_cli.commands.agent._resolve_rafter_path", lambda: "/opt/rafter/bin/rafter")
         _install_cursor_hooks(tmp_path)
 
         hooks_path = tmp_path / ".cursor" / "hooks.json"
@@ -1250,9 +1251,9 @@ class TestInstallCursorHooks:
             assert isinstance(entries, list) and entries, f"missing {event}"
 
         pre = next(e for e in cfg["hooks"]["preToolUse"] if "rafter" in e.get("command", ""))
-        assert pre["command"] == "rafter hook pretool --format cursor"
+        assert pre["command"] == "/opt/rafter/bin/rafter hook pretool --format cursor"
         post = next(e for e in cfg["hooks"]["postToolUse"] if "rafter" in e.get("command", ""))
-        assert post["command"] == "rafter hook posttool --format cursor"
+        assert post["command"] == "/opt/rafter/bin/rafter hook posttool --format cursor"
 
     def test_idempotent_no_duplicates(self, tmp_path):
         from rafter_cli.commands.agent import _install_cursor_hooks

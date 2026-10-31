@@ -197,6 +197,79 @@ class TestBuildFromBackendVulnerability:
             assert f"severity:{expected}" in draft.labels
 
 
+# ── Issue builder: real backend API shape (sable-ur8k) ─────────────────
+#
+# GET /api/static/scan (format=json) returns rule_id/severity/title/
+# description/file_path/line_start/line_end — not the pre-rename
+# rule_id/level/message/file/line dataclass defaults that
+# build_from_backend_vulnerability read exclusively. Before the fix, a
+# BackendVulnerability built only from the new names had every one of those
+# fields fall back to "" / None, so the title read as a bare "Security
+# finding" and two findings in different files fingerprinted identically on
+# "unknown file:unknown-rule".
+
+
+class TestBuildFromBackendVulnerabilityRealShape:
+    def _vuln(self, **overrides) -> BackendVulnerability:
+        defaults = dict(
+            rule_id="sql-injection", severity="error",
+            title="SQL injection in query builder",
+            description="User input flows unsanitized into a raw SQL query.",
+            file_path="src/db.py", line_start=42, line_end=44,
+        )
+        defaults.update(overrides)
+        return BackendVulnerability(**defaults)
+
+    def test_uses_title_file_path_and_line_start(self):
+        draft = build_from_backend_vulnerability(self._vuln())
+        assert "SQL injection in query builder" in draft.title
+        assert "`src/db.py`" in draft.body
+        assert "line 42" in draft.body
+
+    def test_distinct_files_give_distinct_fingerprints(self):
+        draft_a = build_from_backend_vulnerability(self._vuln(file_path="src/db.py"))
+        draft_b = build_from_backend_vulnerability(self._vuln(file_path="src/other.py"))
+        assert draft_a.fingerprint != draft_b.fingerprint
+
+
+class TestDraftsFromBackendRealShape:
+    """_drafts_from_backend must not KeyError on the real API shape (sable-ur8k).
+
+    Before the fix this indexed ``v["ruleId"]`` directly, which KeyErrors on
+    a payload that only carries ``rule_id``.
+    """
+
+    def test_does_not_keyerror_on_real_shape(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from rafter_cli.commands.issues import issues_app as mod
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "status": "completed",
+            "vulnerabilities": [
+                {
+                    "rule_id": "sql-injection",
+                    "severity": "error",
+                    "title": "SQL injection in query builder",
+                    "description": "User input flows unsanitized into a raw SQL query.",
+                    "file_path": "src/db.py",
+                    "line_start": 42,
+                    "line_end": 44,
+                },
+            ],
+        }
+        monkeypatch.setattr(mod, "api_get", lambda *a, **k: resp)
+        monkeypatch.setattr(mod, "resolve_key", lambda _k: "key")
+
+        drafts = mod._drafts_from_backend("scan-abc", "key")
+        assert len(drafts) == 1
+        assert "SQL injection in query builder" in drafts[0].title
+        assert "src/db.py" in drafts[0].body
+
+
 # ── Issue builder: local matches ──────────────────────────────────────
 
 

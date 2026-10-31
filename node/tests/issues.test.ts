@@ -432,6 +432,51 @@ describe("from-scan: backend vulnerability drafts", () => {
   });
 });
 
+// ── from-scan: real backend API shape (sable-ur8k) ────────────────────
+//
+// GET /api/static/scan (format=json) returns rule_id/severity/title/
+// description/file_path/line_start/line_end — not the pre-rename
+// ruleId/level/message/file/line that buildFromBackendVulnerability read
+// exclusively. Before the fix: severityLabel(vuln.level) threw on this shape
+// (vuln.level is undefined), and vuln.file being undefined meant every
+// vulnerability in a payload fingerprinted on "undefined:<ruleId>", so two
+// findings in different files collapsed to the same fingerprint.
+
+describe("from-scan: real backend API shape (sable-ur8k)", () => {
+  const vulnA = {
+    rule_id: "sql-injection",
+    severity: "error",
+    title: "SQL injection in query builder",
+    description: "User input flows unsanitized into a raw SQL query.",
+    file_path: "src/db.ts",
+    line_start: 42,
+    line_end: 44,
+  };
+  const vulnB = {
+    rule_id: "sql-injection",
+    severity: "error",
+    title: "SQL injection in query builder",
+    description: "Same rule, different file.",
+    file_path: "src/other.ts",
+    line_start: 10,
+  };
+
+  it("reads title, file_path and line_start from the real shape", () => {
+    const draft = buildFromBackendVulnerability(vulnA as BackendVulnerability);
+    expect(draft.title).toContain("SQL injection in query builder");
+    expect(draft.title).not.toContain("undefined");
+    expect(draft.body).toContain("`src/db.ts`");
+    expect(draft.body).toContain("line 42");
+    expect(draft.body).not.toContain("undefined");
+  });
+
+  it("gives two vulnerabilities in different files distinct fingerprints", () => {
+    const draftA = buildFromBackendVulnerability(vulnA as BackendVulnerability);
+    const draftB = buildFromBackendVulnerability(vulnB as BackendVulnerability);
+    expect(draftA.fingerprint).not.toBe(draftB.fingerprint);
+  });
+});
+
 // ── from-scan: a payload with no findings list is an error, not zero ──
 //
 // sable-fgk7. `data.vulnerabilities || []` turned a still-running scan, a
