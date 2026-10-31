@@ -1,7 +1,7 @@
 ---
 name: rafter-security
 description: Security toolkit for AI workflows. Use when scanning code or repos for vulnerabilities, auditing third-party skills/MCPs/agent configs before installing, evaluating shell commands before running them, or generating secure design questions for new features. Provides `rafter run` (remote SAST + SCA, needs RAFTER_API_KEY), `rafter secrets` (offline secrets-only), `rafter agent exec --dry-run` (command-risk classification), and `rafter skill review`.
-version: 0.10.0
+version: 0.11.4
 homepage: https://rafter.so
 metadata:
   openclaw:
@@ -97,6 +97,8 @@ rafter agent exec <command>
 - **High** (approval required): sudo rm, chmod 777, curl | bash
 - **Medium** (approval on moderate+): sudo, chmod, kill -9
 - **Low** (allowed): npm install, git commit, ls
+
+Under the PreToolUse hook, "approval required" means the call is denied: the hook cannot prompt, so `curl | bash` is refused, not asked. Do not retry it in another form; tell the user, who can approve it by running `rafter agent exec '<command>'` at an interactive terminal.
 
 ---
 

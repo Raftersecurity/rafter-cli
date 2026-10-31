@@ -103,7 +103,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - uses: actions/setup-python@v5
         with:
@@ -119,6 +119,15 @@ jobs:
         working-directory: ./python
         run: |
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
+
+      # The rf-6pqx differential compares this branch's classifier against
+      # main's, and it FAILS rather than skips when the baseline is missing —
+      # correctly, since a differential that silently skips is a vacuous gate.
+      # actions/checkout fetches only the PR ref, so `origin/main` is not in the
+      # clone and the gate cannot run at all. A depth-1 fetch is enough: the
+      # gate reads one blob, not the history.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
 
       - name: Build
         run: pnpm run build
@@ -144,7 +153,18 @@ jobs:
       # ~95% of the count on 2026-09-02 (2099 executed); lower it in the same
       # PR that removes tests, so a shrink is a reviewed decision.
       - name: Assert the suite actually ran
-        run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "test-node (vitest)"
+        # backend-api.test.ts needs the RAFTER_API_KEY secret, which is not set
+        # on this repo (see the backend-api job), so all of its tests skip.
+        # Remove the exception once the secret exists.
+        run: python3 ../.github/scripts/test_floor.py --vitest vitest-report.json --min-executed 1990 --label "test-node (vitest)" --allow-all-skipped tests/backend-api.test.ts
+
+      # The battery is the gate that catches a MISSING fix; the differential
+      # cannot, because a fix absent on both sides is not a permissive move.
+      # That makes the battery's CONTENTS load-bearing, so they get a floor of
+      # their own — in both directions, since a fix bought with an over-block
+      # is how #230 happened.
+      - name: Assert the classifier battery still gates both directions
+        run: python3 ../.github/scripts/classifier_battery_floor.py --min-cases 44
 
   test-python:
     needs: gate
@@ -165,6 +185,12 @@ jobs:
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
           pip install pytest pytest-mock pytest-asyncio
 
+      # Same reason as test-node: the differential FAILS rather than skips
+      # when main's classifier is unobtainable, and actions/checkout fetches
+      # only the PR ref. One blob is all the gate needs.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
       - name: Run all tests
         # xunit1 is the JUnit family that records `file` per test case, which
         # the floor check below groups by.
@@ -176,6 +202,21 @@ jobs:
       # 2026-09-02.
       - name: Assert the suite actually ran
         run: python3 ../.github/scripts/test_floor.py --junit pytest-report.xml --min-executed 1530 --label "test-python (pytest)"
+
+      # sable-yy9v: a typer floor <0.16 caps click <8.2, so a fresh resolve
+      # quietly picks a compatible click and --help passes — while any venv that
+      # already holds click >=8.2 crashes with
+      # `Parameter.make_metavar() missing 'ctx'`. The lock pins an older click,
+      # so this can hide there too. Force click past whatever typer would allow
+      # and confirm --help still renders. Last step: it upgrades click and must
+      # not perturb the pytest run or the floor check above.
+      - name: Guard — help renders under the latest click
+        run: |
+          pip install -U 'click>=8.2'
+          python -c "import click; print('click', click.__version__)"
+          python -m rafter_cli --help > /dev/null
+          python -m rafter_cli agent --help > /dev/null
+          python -m rafter_cli secrets --help > /dev/null
 
   # ── E2E CLI tests ─────────────────────────────────────────────────
   e2e-node:
@@ -190,7 +231,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -216,7 +257,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -240,7 +281,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -250,7 +291,7 @@ jobs:
 
       - name: Generate SARIF from fixture
         run: |
-          echo "AKIAIOSFODNN7EXAMPLE" > /tmp/test-secret.txt
+          echo "AKIAIOSFODNN7ABCDEFG" > /tmp/test-secret.txt
           node dist/index.js scan local /tmp/test-secret.txt --engine patterns --format sarif > /tmp/output.sarif || true
 
       - name: Validate SARIF structure
@@ -280,7 +321,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -323,7 +364,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
@@ -358,7 +399,6 @@ jobs:
           test -f "$TMPDIR/.git/hooks/pre-commit" || (echo "FAIL: hook not installed" && exit 1)
           echo "Hook installation verified"
 
-  # ── Cross-platform smoke test ──────────────────────────────────────
   cross-platform:
     needs: gate
     if: needs.gate.outputs.run == 'true'
@@ -366,7 +406,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: ["18", "20", "22"]
+        # Runtime-currency pass (bead sable-pvim, 2026-10-22): Node 18 and 20
+        # are both EOL (2025-04-30 and 2026-04-30). engines.node is now >=22,
+        # and vitest 4.1.12 runs directly on 22 and 24, so this matrix tests
+        # the real floor plus the next current LTS with the actual suite —
+        # strictly more signal than the old build-on-20/run-on-18 smoke job
+        # (node18-smoke, removed here) ever gave for a runtime we no longer
+        # claim to support.
+        node: ["22", "24"]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -380,6 +427,13 @@ jobs:
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10 --activate
+
+      # The rf-6pqx differential compares this branch's classifier against main's
+      # and FAILS rather than skips when the baseline is missing — correctly, but
+      # that means EVERY job running the suite has to supply it. actions/checkout
+      # fetches only the PR ref. A depth-1 fetch is enough: one blob, not history.
+      - name: Fetch main for the differential gate
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
 
       - name: Install and build
         run: |

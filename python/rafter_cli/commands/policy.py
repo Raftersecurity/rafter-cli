@@ -23,7 +23,7 @@ def _generate_claude_config() -> str:
                     "hooks": [{"type": "command", "command": "rafter hook pretool"}],
                 },
                 {
-                    "matcher": "Write|Edit",
+                    "matcher": "Write|Edit|MultiEdit",
                     "hooks": [{"type": "command", "command": "rafter hook pretool"}],
                 },
             ],

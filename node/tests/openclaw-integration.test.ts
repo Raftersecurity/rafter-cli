@@ -107,17 +107,6 @@ describe("OpenClaw Integration", () => {
       expect(parts.length).toBeGreaterThanOrEqual(3);
     });
 
-    it("skill should contain rafter CLI references", () => {
-      fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
-      runCli("agent init --with-openclaw", testHomeDir);
-
-      const skillContent = fs.readFileSync(
-        path.join(testHomeDir, SKILL_FILE_REL),
-        "utf-8",
-      );
-      expect(skillContent).toContain("rafter");
-    });
-
     it("creates the workspace skills dir tree if absent", () => {
       // Only create .openclaw — not the workspace/skills/<name>/ tree.
       fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
@@ -149,18 +138,13 @@ describe("OpenClaw Integration", () => {
   // ── 2. Environment detection ──────────────────────────────────────
 
   describe("OpenClaw environment detection", () => {
-    it("should warn when --with-openclaw used without ~/.openclaw", () => {
+    it("should warn and NOT install the skill when --with-openclaw is used without ~/.openclaw", () => {
       // Do NOT create .openclaw dir
       const result = runCli("agent init --with-openclaw", testHomeDir);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(
         "OpenClaw requested but not detected"
       );
-    });
-
-    it("should NOT install skill when ~/.openclaw is absent", () => {
-      runCli("agent init --with-openclaw", testHomeDir);
-
       expect(fs.existsSync(path.join(testHomeDir, SKILL_FILE_REL))).toBe(false);
     });
 
@@ -239,32 +223,24 @@ describe("OpenClaw Integration", () => {
   // ── 3. Idempotency ────────────────────────────────────────────────
 
   describe("OpenClaw idempotency", () => {
-    it("should not corrupt skill on repeated installs", () => {
+    it("should succeed silently and not corrupt the skill on repeated installs", () => {
       fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
 
-      runCli("agent init --with-openclaw", testHomeDir);
+      const first = runCli("agent init --with-openclaw", testHomeDir);
+      expect(first.exitCode).toBe(0);
       const firstContent = fs.readFileSync(
         path.join(testHomeDir, SKILL_FILE_REL),
         "utf-8",
       );
 
-      runCli("agent init --with-openclaw", testHomeDir);
+      const second = runCli("agent init --with-openclaw", testHomeDir);
+      expect(second.exitCode).toBe(0);
       const secondContent = fs.readFileSync(
         path.join(testHomeDir, SKILL_FILE_REL),
         "utf-8",
       );
 
       expect(secondContent).toBe(firstContent);
-    });
-
-    it("should succeed silently when skill already installed", () => {
-      fs.mkdirSync(path.join(testHomeDir, ".openclaw"), { recursive: true });
-
-      const first = runCli("agent init --with-openclaw", testHomeDir);
-      expect(first.exitCode).toBe(0);
-
-      const second = runCli("agent init --with-openclaw", testHomeDir);
-      expect(second.exitCode).toBe(0);
     });
   });
 

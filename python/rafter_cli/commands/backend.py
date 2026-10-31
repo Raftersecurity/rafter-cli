@@ -25,7 +25,7 @@ from ..utils.api import (
     resolve_key,
     write_payload,
 )
-from ..utils.git import detect_repo
+from ..utils.git import _run, branch_from_env, detect_repo, remote_branch_sha
 
 
 def _plus_approval_gate_enabled() -> bool:
@@ -448,24 +448,53 @@ def _handle_scan_status_interactive(
             if status == "completed":
                 if not quiet:
                     print("Scan completed!", file=sys.stderr)
+                _warn_if_partial(data)
                 return write_payload(data, fmt, quiet)
             elif status == "failed":
-                print("Scan failed.", file=sys.stderr)
-                raise typer.Exit(code=EXIT_GENERAL_ERROR)
+                _report_failed_scan(data, fmt)
         if not quiet:
             print(f"Scan status: {status}", file=sys.stderr)
     elif status == "completed":
         if not quiet:
             print("Scan completed!", file=sys.stderr)
+        _warn_if_partial(data)
         return write_payload(data, fmt, quiet)
     elif status == "failed":
-        print("Scan failed.", file=sys.stderr)
-        raise typer.Exit(code=EXIT_GENERAL_ERROR)
+        _report_failed_scan(data, fmt)
     else:
         if not quiet:
             print(f"Scan status: {status}", file=sys.stderr)
 
+    _warn_if_partial(data)
     return write_payload(data, fmt, quiet)
+
+
+def _warn_if_partial(data: dict) -> None:
+    """A completed scan the API marks partial (some scanners did not finish) is
+    not a clean result. Say so on stderr, even with --quiet."""
+    if data.get("partial") is not True and data.get("warning_code") != "SCAN_PARTIAL":
+        return
+    code = data["warning_code"] if isinstance(data.get("warning_code"), str) else "SCAN_PARTIAL"
+    missing = data.get("missing_scanners")
+    tail = f" Scanners that did not finish: {', '.join(map(str, missing))}." if isinstance(missing, list) and missing else ""
+    print(
+        f"Warning: Scan completed with gaps ({code}): some scanners did not finish, "
+        f"so findings may be missing.{tail} Do not treat this result as clean.",
+        file=sys.stderr,
+    )
+
+
+def _report_failed_scan(data: dict, fmt: str) -> None:
+    """A failed scan: say why on stderr, as the API explains it, and in JSON
+    mode hand the payload to stdout so an agent can read error_code/retryable."""
+    code = f" ({data['error_code']})" if isinstance(data.get("error_code"), str) else ""
+    reason = f": {data['error']}" if isinstance(data.get("error"), str) and data["error"] else ""
+    print(f"Scan failed{code}{reason}", file=sys.stderr)
+    if data.get("retryable") is True:
+        print("This failure is retryable: start a new scan with `rafter run`.", file=sys.stderr)
+    if fmt == "json":
+        write_payload(data, fmt)
+    raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
 
 def _do_remote_scan(
@@ -498,6 +527,30 @@ def _do_remote_scan(
 
     if not (repo and branch) and not quiet:
         print(f"Repo auto-detected: {repo_slug} @ {branch_name} (note: scanning remote)", file=sys.stderr)
+
+    # The backend clones the remote, so an auto-detected branch that was never
+    # pushed can only fail there. Say so now instead of queueing that scan.
+    # A repo_url is inferred only when the slug came from the origin remote.
+    if detected_repo_url and not branch and not branch_from_env():
+        remote_sha = remote_branch_sha(branch_name)
+        if remote_sha is None:
+            print(
+                f'Branch "{branch_name}" does not exist on the remote (origin). Rafter scans '
+                "the remote repository: push the branch first, or pass --branch to scan one that exists.",
+                file=sys.stderr,
+            )
+            raise typer.Exit(code=EXIT_GENERAL_ERROR)
+        if remote_sha and not quiet:
+            try:
+                head = _run(["git", "rev-parse", "HEAD"])
+            except Exception:
+                head = None
+            if head and head != remote_sha:
+                print(
+                    f"Note: local HEAD differs from origin/{branch_name}; "
+                    f"the scan covers the pushed commit {remote_sha[:7]}.",
+                    file=sys.stderr,
+                )
 
     # Explicit flags override inferred values.
     resolved_provider = provider or detected_provider
@@ -591,6 +644,9 @@ def register_backend_commands(app: typer.Typer) -> None:
                 print(f"Error: {e}", file=sys.stderr)
                 raise typer.Exit(code=EXIT_GENERAL_ERROR)
             data = resp.json()
+            if data.get("status") == "failed":
+                _report_failed_scan(data, fmt)
+            _warn_if_partial(data)
             return write_payload(data, fmt, quiet)
 
         _handle_scan_status_interactive(scan_id, headers, fmt, quiet)

@@ -2,12 +2,16 @@ import { Command } from "commander";
 import { CommandInterceptor, CommandEvaluation } from "../../core/command-interceptor.js";
 import { RegexScanner, ScanResult } from "../../scanners/regex-scanner.js";
 import { AuditLogger } from "../../core/audit-logger.js";
+import os from "node:os";
+import { modifiesRafterSecurityConfig } from "../../core/risk-rules.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { getRafterDir } from "../../core/config-defaults.js";
 import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
 import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
+import { shellQuote } from "../agent/exec.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
-import { parseUnifiedDiffAddedLines } from "../../utils/git-diff.js";
+import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
 import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
 import fs from "fs";
@@ -61,6 +65,7 @@ interface HookInput {
 }
 
 interface HookDecision {
+  // "allow" = rafter has no objection; written as a no-decision (see writeDecision).
   decision: "allow" | "deny";
   reason?: string;
 }
@@ -78,18 +83,34 @@ const RISK_DESCRIPTIONS: Record<string, string> = {
 
 function formatBlockedMessage(command: string, evaluation: CommandEvaluation): string {
   const cmdDisplay = command.length > 60 ? command.slice(0, 60) + "..." : command;
+  // rf-vnxs: say what actually happened. "irreversible system damage" is the
+  // wrong sentence for a config write, and a wrong reason teaches the agent to
+  // hunt for a way around a rule whose shape it was never told.
+  if (modifiesRafterSecurityConfig(command)) {
+    return (
+      `\u2717 Rafter blocked: ${cmdDisplay}\n` +
+      `  Rule: rafter security configuration is protected (rf-vnxs)\n` +
+      `  Risk: CRITICAL\u2014this command reconfigures or removes rafter's own\n` +
+      `        guardrail. The gate cannot approve its own disarming. A person\n` +
+      `        must make this change outside an agent session.`
+    );
+  }
   const rule = evaluation.matchedPattern ?? "policy violation";
   const label = RISK_LABELS[evaluation.riskLevel] ?? evaluation.riskLevel.toUpperCase();
   const desc = RISK_DESCRIPTIONS[evaluation.riskLevel] ?? "";
   return `\u2717 Rafter blocked: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}`;
 }
 
-function formatApprovalMessage(command: string, evaluation: CommandEvaluation): string {
+export function formatApprovalMessage(command: string, evaluation: CommandEvaluation): string {
   const cmdDisplay = command.length > 60 ? command.slice(0, 60) + "..." : command;
   const rule = evaluation.matchedPattern ?? "policy match";
   const label = RISK_LABELS[evaluation.riskLevel] ?? evaluation.riskLevel.toUpperCase();
   const desc = RISK_DESCRIPTIONS[evaluation.riskLevel] ?? "";
-  return `\u26a0 Rafter: approval required\n  Command: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}\n\nTo approve: rafter agent exec --approve "${command}"\nTo configure: rafter agent config set agent.riskLevel minimal`;
+  // The command is echoed into a suggested shell invocation, so it must be
+  // quoted as data, not interpolated raw \u2014 a raw double-quoted echo lets a
+  // command containing `"`, `$`, or a backtick break out of the quoting or
+  // get shell-expanded when pasted (rf issue #231 item 5).
+  return `\u26a0 Rafter: approval required\n  Command: ${cmdDisplay}\n  Rule: ${rule}\n  Risk: ${label}\u2014${desc}\n\nTo approve: a person must run \`rafter agent exec ${shellQuote(command)}\` at an\n            interactive terminal and confirm. There is no flag that\n            skips the prompt.`;
 }
 
 export function createHookPretoolCommand(): Command {
@@ -103,32 +124,46 @@ export function createHookPretoolCommand(): Command {
     .option("--format <format>", "Output format: claude (default, also Codex/Continue), cursor, gemini, windsurf", "claude")
     .action(async (opts) => {
       const format = (opts.format || "claude") as HookFormat;
+      let decision: HookDecision;
       try {
-        const input = await readStdin();
-        let raw: Record<string, any>;
-
-        try {
-          raw = JSON.parse(input);
-        } catch {
-          // Can't parse → fail open
-          writeDecision({ decision: "allow" }, format);
-          return;
-        }
-
-        // Validate payload is an object with expected shape
-        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-          writeDecision({ decision: "allow" }, format);
-          return;
-        }
-
-        const payload = normalizeInput(raw, format);
-        const decision = evaluateToolCall(payload);
-        writeDecision(decision, format);
-      } catch {
-        // Any unexpected error → fail open
-        writeDecision({ decision: "allow" }, format);
+        decision = decidePretool(await readStdin(), format);
+      } catch (e) {
+        decision = denyOnError(e);
       }
+      writeDecision(decision, format);
     });
+}
+
+/**
+ * Decide one PreToolUse call from its raw stdin text. Input that is not a JSON
+ * object is allowed (nothing to evaluate). Any exception thrown while
+ * evaluating fails CLOSED: an unexpected error is not evidence the call is
+ * safe. Conditions the loaders already handle (a malformed .rafter.yml warns
+ * and falls back to defaults) never throw, so they do not reach this.
+ */
+export function decidePretool(input: string, format: HookFormat): HookDecision {
+  let raw: Record<string, any>;
+  try {
+    raw = JSON.parse(input);
+  } catch {
+    return { decision: "allow" };
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { decision: "allow" };
+  }
+  try {
+    return evaluateToolCall(normalizeInput(raw, format));
+  } catch (e) {
+    return denyOnError(e);
+  }
+}
+
+function denyOnError(e: unknown): HookDecision {
+  const type = e instanceof Error ? e.constructor.name : typeof e;
+  const msg = e instanceof Error ? e.message : String(e);
+  const reason = `rafter hook error: ${type}: ${msg}; denying to be safe`;
+  console.error(reason);
+  return { decision: "deny", reason };
 }
 
 /**
@@ -189,16 +224,68 @@ function evaluateToolCall(payload: HookInput): HookDecision {
   const control = resolveHookControl();
   if (!control.hookEnabled) return { decision: "allow" };
 
-  if (tool_name === "Bash") {
+  if (SHELL_TOOLS.has(tool_name)) {
     return evaluateBash(tool_input?.command || "", control);
   }
 
-  if (tool_name === "Write" || tool_name === "Edit") {
+  if (WRITE_TOOLS.has(tool_name)) {
     if (!control.secretScanEnabled) return { decision: "allow" };
-    return evaluateWrite(tool_input || {});
+    return evaluateWrite(normalizeWriteInput(tool_name, tool_input || {}));
   }
 
   return { decision: "allow" };
+}
+
+/**
+ * Shell and file-write tools under each platform's own name, so the same
+ * policy applies whatever the tool is called.
+ *   Shell: Bash (Claude Code, Codex, Continue), Shell (Cursor preToolUse),
+ *          run_shell_command (Gemini CLI).
+ *   Write: Write/Edit (Claude Code, Continue, Cursor), MultiEdit (Claude Code,
+ *          Continue), write_file/replace (Gemini CLI), apply_patch (Codex).
+ */
+const SHELL_TOOLS = new Set(["Bash", "Shell", "run_shell_command"]);
+const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "write_file", "replace", "apply_patch"]);
+
+/**
+ * Map each write tool's input onto the { file_path, content } shape that
+ * evaluateWrite reads: Continue's Write names its path `filepath`; MultiEdit
+ * and Windsurf's pre_write_code carry `edits[].new_string`; Codex's
+ * apply_patch carries the whole patch in `command`, with its target paths
+ * in the patch headers (`patch_paths`).
+ */
+function normalizeWriteInput(toolName: string, input: Record<string, any>): Record<string, any> {
+  const out = { ...input };
+  if (out.file_path === undefined && typeof input.filepath === "string") out.file_path = input.filepath;
+  if (!out.content && !out.new_string) {
+    if (Array.isArray(input.edits)) {
+      out.content = input.edits.map((e: any) => (typeof e?.new_string === "string" ? e.new_string : "")).join("\n");
+    } else if (toolName === "apply_patch" && typeof input.command === "string") {
+      out.content = input.command;
+    }
+  }
+  if (toolName === "apply_patch" && typeof input.command === "string") {
+    out.patch_paths = applyPatchPaths(input.command);
+  }
+  return out;
+}
+
+/**
+ * Every path an apply_patch names. The patch format carries its targets only
+ * in hunk headers, which Codex matches on the trimmed line:
+ * `*** Add File: <path>`, `*** Update File: <path>`, `*** Delete File: <path>`
+ * and `*** Move to: <path>` (codex-rs/apply-patch, apply_patch.lark).
+ */
+const APPLY_PATCH_HEADERS = ["*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "];
+
+function applyPatchPaths(patch: string): string[] {
+  const paths: string[] = [];
+  for (const raw of patch.split("\n")) {
+    const line = raw.trim();
+    const header = APPLY_PATCH_HEADERS.find((h) => line.startsWith(h));
+    if (header) paths.push(line.slice(header.length).trim());
+  }
+  return paths;
 }
 
 function evaluateBash(command: string, control: HookControl): HookDecision {
@@ -235,6 +322,14 @@ function evaluateBash(command: string, control: HookControl): HookDecision {
   const trimmed = command.trim();
   if (control.secretScanEnabled && (trimmed.startsWith("git commit") || trimmed.startsWith("git push"))) {
     const scanResult = scanStagedFiles();
+    if (scanResult.scanError) {
+      audit.logCommandIntercepted(command, false, "blocked", `secret scan could not run: ${scanResult.scanError}`);
+      return {
+        decision: "deny",
+        reason: `Rafter: secret scan of the staged diff could not run (${scanResult.scanError}); ` +
+          "commit blocked rather than allowed unscanned. Run 'rafter secrets --staged' to investigate.",
+      };
+    }
     if (scanResult.secretsFound) {
       // Audit per file so the log records WHICH file + pattern, not a bare count.
       for (const r of scanResult.findings) {
@@ -253,7 +348,46 @@ function evaluateBash(command: string, control: HookControl): HookDecision {
   return { decision: "allow" };
 }
 
+/**
+ * True if this write targets rafter's own configuration directory.
+ *
+ * rf-vnxs, fourth route. Blocking the CLI invocation is not enough: the config
+ * is a FILE, and an agent holding a Write/Edit tool does not need the CLI to
+ * disable the hook — it can write `~/.rafter/config.json` directly. Three
+ * independent routes to the unblockable tier had already been found one at a
+ * time in this codebase; this is the one that would have been the fourth.
+ */
+function writesRafterSecurityConfig(filePath: string): boolean {
+  if (!filePath) return false;
+  try {
+    const expanded = filePath.startsWith("~")
+      ? path.join(os.homedir(), filePath.slice(1))
+      : filePath;
+    const target = path.resolve(expanded);
+    const rafterDir = path.resolve(getRafterDir());
+    return target === rafterDir || target.startsWith(rafterDir + path.sep);
+  } catch {
+    return false;
+  }
+}
+
 function evaluateWrite(toolInput: Record<string, any>): HookDecision {
+  // rf-vnxs: checked FIRST, and before the no-content early return, because a
+  // truncating write with empty content disables the hook just as well as one
+  // carrying JSON. apply_patch names its targets only in the patch headers.
+  const targets: string[] = [toolInput.file_path ?? "", ...(toolInput.patch_paths ?? [])];
+  if (targets.some(writesRafterSecurityConfig)) {
+    return {
+      decision: "deny",
+      reason:
+        "\u2717 Rafter blocked: write to rafter's own configuration\n" +
+        "  Rule: rafter security configuration is protected (rf-vnxs)\n" +
+        "  Risk: CRITICAL\u2014editing this file reconfigures or removes the\n" +
+        "        guardrail. The gate cannot approve its own disarming. A\n" +
+        "        person must make this change outside an agent session.",
+    };
+  }
+
   // Write uses "content", Edit uses "new_string"
   const content = toolInput.content || toolInput.new_string || "";
   if (!content) {
@@ -300,6 +434,8 @@ interface StagedScanResult {
   findings: ScanResult[];
   /** Repo root, for rendering finding paths relative to the user's tree. */
   repoRoot: string;
+  /** Set when the staged diff could not be read; the commit gate must deny. */
+  scanError?: string;
 }
 
 /**
@@ -322,12 +458,18 @@ export function scanStagedFiles(cwd: string = process.cwd()): StagedScanResult {
   const empty: StagedScanResult = {
     secretsFound: false, count: 0, files: 0, findings: [], repoRoot: cwd,
   };
+  let repoRoot: string;
   try {
-    const repoRoot = execSync("git rev-parse --show-toplevel", gitOpts).trim() || cwd;
-
+    repoRoot = execSync("git rev-parse --show-toplevel", gitOpts).trim() || cwd;
+  } catch {
+    return empty; // Not a git repo: no staged files to scan.
+  }
+  try {
+    // At the default 1 MiB buffer a larger staged diff threw ENOBUFS, the catch
+    // below returned "no secrets", and the commit skipped the scan (#274).
     const patch = execSync(
       "git diff -U0 --no-color --cached --diff-filter=ACM",
-      gitOpts,
+      { ...gitOpts, maxBuffer: gitDiffMaxBuffer() },
     ).trim();
     if (!patch) {
       return { ...empty, repoRoot };
@@ -352,8 +494,12 @@ export function scanStagedFiles(cwd: string = process.cwd()): StagedScanResult {
       findings: kept,
       repoRoot,
     };
-  } catch {
-    return empty;
+  } catch (error: any) {
+    // Inside a repo, a scan that could not run must not read as "no secrets".
+    const scanError = error?.code === "ENOBUFS"
+      ? "staged diff too large for the scanner to read"
+      : (error?.message ?? String(error));
+    return { ...empty, repoRoot, scanError };
   }
 }
 
@@ -420,6 +566,14 @@ function readStdin(): Promise<string> {
   });
 }
 
+/**
+ * Write the decision in the platform's format. The hook only ever DENIES: an
+ * internal "allow" means "rafter has no objection", and is written as the
+ * platform's no-decision form so the platform's own permission settings still
+ * apply. Approving would skip those settings (a Claude Code PreToolUse "allow"
+ * skips the permission prompt), making an agent more permissive with rafter
+ * installed than without it. Cursor is the one exception; see below.
+ */
 function writeDecision(decision: HookDecision, format: HookFormat): void {
   const isDeny = decision.decision === "deny";
   const reason = decision.reason ?? "";
@@ -427,6 +581,10 @@ function writeDecision(decision: HookDecision, format: HookFormat): void {
   switch (format) {
     case "cursor": {
       // Cursor: { permission: "allow"|"deny"|"ask", agentMessage?, userMessage? }
+      // Cursor has no neutral answer: its permission hooks block on an empty or
+      // schema-invalid response, so "allow" is the only way to let a call
+      // proceed. "ask" would force a prompt on every call, overriding the
+      // user's own allowlist in the other direction.
       const output: Record<string, any> = {
         permission: isDeny ? "deny" : "allow",
       };
@@ -439,7 +597,7 @@ function writeDecision(decision: HookDecision, format: HookFormat): void {
     }
 
     case "gemini": {
-      // Gemini: {} for allow, { decision: "deny", reason: "..." } for deny
+      // Gemini: {} for no decision, { decision: "deny", reason: "..." } for deny
       if (isDeny) {
         process.stdout.write(JSON.stringify({ decision: "deny", reason }) + "\n");
       } else {
@@ -449,21 +607,26 @@ function writeDecision(decision: HookDecision, format: HookFormat): void {
     }
 
     case "windsurf": {
-      // Windsurf: exit 0 for allow, exit 2 + stderr for deny
+      // Windsurf: exit 0 to proceed normally, exit 2 + stderr for deny
       if (isDeny) {
         process.stderr.write(reason + "\n");
         process.exit(2);
       }
-      // Allow: exit 0 (no output needed)
+      // No decision: exit 0 (no output needed)
       break;
     }
 
     default: {
-      // Claude Code / Codex / Continue.dev: hookSpecificOutput envelope
+      // Claude Code / Codex / Continue.dev: hookSpecificOutput envelope for a
+      // deny; `{}` (no permissionDecision) leaves the call to the normal flow.
+      if (!isDeny) {
+        process.stdout.write("{}\n");
+        break;
+      }
       const output = {
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
-          permissionDecision: isDeny ? "deny" : "allow",
+          permissionDecision: "deny",
           permissionDecisionReason: reason,
         },
       };

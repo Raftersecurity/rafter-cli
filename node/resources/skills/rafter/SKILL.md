@@ -1,8 +1,7 @@
 ---
 name: rafter
-description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter audit`, policy checks, or command-risk evaluation. Scope by security surface, not task label: engage when the diff touches auth, credentials/secrets/tokens, untrusted input, SQL, shell/exec, file paths, deserialization, crypto, network endpoints, data deletion, or dependencies; for research/experimental/local-only code with none of that, a quick surface check is enough. When such surface IS present and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on genuine security surface is not done."
+description: "Entry point for rafter. Invoke when a sub-skill is unclear, or when the task needs `rafter run` (remote SAST+SCA), `rafter secrets` (local secrets-only), `rafter agent audit`, policy checks, or command-risk evaluation. Scope by security surface, not task label: engage when the diff touches auth, credentials/secrets/tokens, untrusted input, SQL, shell/exec, file paths, deserialization, crypto, network endpoints, data deletion, or dependencies; for research/experimental/local-only code with none of that, a quick surface check is enough. When such surface IS present and no rafter skill or CLI call has been made, invoke this before handing the task off — an un-evaluated \"done\" on genuine security surface is not done."
 version: 0.7.0
-allowed-tools: [Bash, Read]
 ---
 
 # Rafter — Security Toolkit for AI Workflows
@@ -114,6 +113,7 @@ rafter usage                 # check API quota
 
 Full CLI tree: **Read `docs/cli-reference.md`**. Full digest: `rafter brief commands`.
 
+**Scan budget:** Remote scans spend the user's quota. `rafter run` scans the **pushed** branch, so re-running without a new push repeats it — run it once per task or before a PR and reuse `rafter get <scan-id>`; while iterating scan only changes (`rafter secrets --staged` / `--diff <ref>`); never loop, retry, or `--watch` from an agent session — exit `3` means quota exhausted, so stop, tell the user, and check `rafter usage`.
 ## Configuration
 
 `rafter run` (the full code scan) needs an API key:

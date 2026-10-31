@@ -17,6 +17,51 @@ describe("RegexScanner", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  // The Node and Python CLIs must skip the same directories by default: Python
+  // once scanned vendor/ and reported 19,920 findings where Node reported 271.
+  it("skips the same default directories as the Python CLI", () => {
+    const skipped = ["node_modules", ".git", "dist", "build", ".next", "coverage", ".vscode", ".idea", "vendor", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "results", ".terraform", "bower_components", ".trigger"];
+    for (const dir of skipped) {
+      fs.mkdirSync(path.join(tmpDir, dir), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, dir, "creds.env"), "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n");
+    }
+    fs.writeFileSync(path.join(tmpDir, "creds.env"), "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n");
+    const results = scanner.scanDirectory(tmpDir, { respectGitignore: false });
+    expect(results.map((r) => path.relative(tmpDir, r.file))).toEqual(["creds.env"]);
+  });
+
+  // sable-ilbx — a file that cannot be read is not a clean scan. The scanner
+  // swallowed the read error and returned nothing, so a permission-denied file
+  // looked identical to one with no secrets.
+  describe("unreadable files", () => {
+    it("scanFile surfaces a read error instead of an empty result", () => {
+      const f = path.join(tmpDir, "secret.env");
+      fs.writeFileSync(f, "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdef1234567890ABCDEFGHIJKL\n");
+      fs.chmodSync(f, 0o000);
+      try {
+        const res = scanner.scanFile(f);
+        expect(res.readError).toBeTruthy();
+        expect(res.matches).toHaveLength(0);
+      } finally {
+        fs.chmodSync(f, 0o644);
+      }
+    });
+
+    it("scanDirectory reports an unreadable file rather than dropping it", () => {
+      const f = path.join(tmpDir, "secret.env");
+      fs.writeFileSync(f, "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdef1234567890ABCDEFGHIJKL\n");
+      fs.chmodSync(f, 0o000);
+      try {
+        const results = scanner.scanDirectory(tmpDir, { respectGitignore: false });
+        const unreadable = results.filter((r) => r.readError);
+        expect(unreadable).toHaveLength(1);
+        expect(unreadable[0].file).toBe(f);
+      } finally {
+        fs.chmodSync(f, 0o644);
+      }
+    });
+  });
+
   describe("symlink handling", () => {
     it("should not follow symlinked directories", () => {
       // Create an "outside" directory with a secret
@@ -24,7 +69,7 @@ describe("RegexScanner", () => {
       fs.mkdirSync(outsideDir);
       fs.writeFileSync(
         path.join(outsideDir, "secret.txt"),
-        "AKIAIOSFODNN7EXAMPLE\n"
+        "AKIAIOSFODNN7ABCDEFG\n"
       );
 
       // Create the scan target with a symlink pointing outside
@@ -43,7 +88,7 @@ describe("RegexScanner", () => {
       const outsideDir = path.join(tmpDir, "outside");
       fs.mkdirSync(outsideDir);
       const secretFile = path.join(outsideDir, "secret.txt");
-      fs.writeFileSync(secretFile, "AKIAIOSFODNN7EXAMPLE\n");
+      fs.writeFileSync(secretFile, "AKIAIOSFODNN7ABCDEFG\n");
 
       // Create the scan target with a symlink to the secret file
       const scanDir = path.join(tmpDir, "project");
@@ -60,7 +105,7 @@ describe("RegexScanner", () => {
     // Assemble the fixture key from characters at runtime so the literal
     // substring is not present in source — avoids self-tripping the
     // pre-commit scanner that this test is exercising.
-    const FAKE_AWS = ["A","K","I","A","I","O","S","F","O","D","N","N","7","E","X","A","M","P","L","E"].join("");
+    const FAKE_AWS = ["A","K","I","A","I","O","S","F","O","D","N","N","7","A","B","C","D","E","F","G"].join("");
     const SECRET_BODY = "AWS_KEY=" + FAKE_AWS + "\n";
 
     function setUpRepo(): { scanDir: string; visible: string; hidden: string } {

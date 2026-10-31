@@ -24,7 +24,7 @@ def _bl_match(name: str, match: str, line: int) -> PatternMatch:
 def test_scan_file_both_unions_betterleaks_and_patterns(tmp_path):
     f = tmp_path / "creds.txt"
     # An AWS key the patterns engine catches but betterleaks 1.1.x misses.
-    f.write_text("AWS_KEY=AKIAIOSFODNN7EXAMPLE\n")
+    f.write_text("AWS_KEY=AKIAIOSFODNN7ABCDEFG\n")
 
     with patch("rafter_cli.commands.agent.BetterleaksScanner") as mock_bl:
         # betterleaks finds nothing on this file (its AKIA blind spot).
@@ -53,7 +53,7 @@ def test_scan_directory_both_attributes_betterleaks_only_finding(tmp_path):
 
 
 def test_scan_directory_both_degrades_when_betterleaks_errors(tmp_path):
-    (tmp_path / "creds.txt").write_text("AWS_KEY=AKIAIOSFODNN7EXAMPLE\n")
+    (tmp_path / "creds.txt").write_text("AWS_KEY=AKIAIOSFODNN7ABCDEFG\n")
 
     with patch("rafter_cli.commands.agent.BetterleaksScanner") as mock_bl:
         mock_bl.return_value.scan_directory.side_effect = RuntimeError("boom")

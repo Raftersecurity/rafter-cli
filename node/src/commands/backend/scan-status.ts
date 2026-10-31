@@ -378,10 +378,11 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
         status = poll.data.status;
         if (status === "completed") {
           spinner?.succeed("Scan completed");
+          warnIfPartial(poll.data);
           return writePayload(poll.data, fmt, quiet);
         } else if (status === "failed") {
-          spinner?.fail("Scan failed");
-          return EXIT_GENERAL_ERROR;
+          spinner?.stop();
+          return reportFailedScan(poll.data, fmt);
         }
       }
     } catch (e: any) {
@@ -398,15 +399,46 @@ export async function handleScanStatus(scan_id: string, headers: any, fmt: strin
     if (!quiet) {
       console.error("Scan completed");
     }
+    warnIfPartial(poll.data);
     return writePayload(poll.data, fmt, quiet);
   } else if (status === "failed") {
-    console.error("Scan failed");
-    return EXIT_GENERAL_ERROR;
+    return reportFailedScan(poll.data, fmt);
   } else {
     if (!quiet) {
       console.error(`Scan status: ${status}`);
     }
   }
 
+  warnIfPartial(poll.data);
   return writePayload(poll.data, fmt, quiet);
+}
+
+/**
+ * A failed scan: say why on stderr, as the API explains it, and in JSON mode
+ * hand the payload to stdout so an agent can read `error_code`/`retryable`.
+ */
+export function reportFailedScan(data: any, fmt?: string): number {
+  const code = typeof data?.error_code === "string" ? ` (${data.error_code})` : "";
+  const reason = typeof data?.error === "string" && data.error ? `: ${data.error}` : "";
+  console.error(output.error(`Scan failed${code}${reason}`));
+  if (data?.retryable === true) {
+    console.error("This failure is retryable: start a new scan with `rafter run`.");
+  }
+  if (fmt === "json") writePayload(data, fmt);
+  return EXIT_GENERAL_ERROR;
+}
+
+/**
+ * A completed scan the API marks partial (some scanners did not finish) is
+ * not a clean result. Say so on stderr, even with --quiet.
+ */
+export function warnIfPartial(data: any): void {
+  if (data?.partial !== true && data?.warning_code !== "SCAN_PARTIAL") return;
+  const code = typeof data?.warning_code === "string" ? data.warning_code : "SCAN_PARTIAL";
+  const missing = Array.isArray(data?.missing_scanners) && data.missing_scanners.length
+    ? ` Scanners that did not finish: ${data.missing_scanners.join(", ")}.`
+    : "";
+  console.error(output.warning(
+    `Scan completed with gaps (${code}): some scanners did not finish, so findings may be missing.${missing} Do not treat this result as clean.`
+  ));
 }

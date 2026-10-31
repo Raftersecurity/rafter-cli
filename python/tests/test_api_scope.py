@@ -1,12 +1,10 @@
 """Tests for API key scope enforcement (403 handling)."""
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
 
-import click
-import pytest
 import typer
+import pytest
 
 from rafter_cli.utils.api import (
     EXIT_GENERAL_ERROR,
@@ -110,7 +108,7 @@ class TestRemoteScan403:
         )
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -130,7 +128,7 @@ class TestRemoteScan403:
         mock_post.return_value = _mock_response(403, "forbidden")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -147,7 +145,7 @@ class TestRemoteScan403:
         mock_post.return_value = _mock_response(429, "quota exhausted")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -198,18 +196,6 @@ class TestReadOnlyEndpoints:
         result = _handle_scan_status_interactive("abc", {"x-api-key": "read_key"}, "json", True)
         assert result == 0
 
-    @patch("rafter_cli.commands.backend.api_get")
-    def test_get_usage_200_with_read_key(self, mock_get, capsys):
-        """GET /api/static/usage works with read-only key."""
-        mock_get.return_value = _mock_response(200, "")
-        mock_get.return_value.json.return_value = {
-            "scans_used": 5,
-            "scans_limit": 100,
-        }
-        # Directly call the usage endpoint logic pattern
-        resp = mock_get.return_value
-        assert resp.status_code == 200
-
 
 # ── Backward compatibility: 401 still handled as before ──────────────
 
@@ -223,7 +209,7 @@ class TestBackwardCompatibility:
         mock_post.return_value = _mock_response(401, "invalid api key")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",
@@ -241,7 +227,7 @@ class TestBackwardCompatibility:
         mock_post.return_value = _mock_response(500, "internal server error")
         from rafter_cli.commands.backend import _do_remote_scan
 
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        with pytest.raises(typer.exceptions.Exit) as exc_info:
             _do_remote_scan(
                 repo="org/repo",
                 branch="main",

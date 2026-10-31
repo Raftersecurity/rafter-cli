@@ -4,12 +4,15 @@ from __future__ import annotations
 import json
 import math
 import os
+import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 import typer
 
 from ..core.audit_logger import AuditLogger
+from ..core.risk_rules import modifies_rafter_security_config
 from ..core.command_interceptor import CommandInterceptor
 from ..scanners.regex_scanner import RegexScanner
 
@@ -37,6 +40,17 @@ _RISK_DESCRIPTIONS = {
 
 def _format_blocked_message(command: str, evaluation) -> str:
     cmd_display = command[:60] + "..." if len(command) > 60 else command
+    # rf-vnxs: say what actually happened. "irreversible system damage" is the
+    # wrong sentence for a config write, and a wrong reason teaches the agent to
+    # go looking for a way around a rule it was never told the shape of.
+    if modifies_rafter_security_config(command):
+        return (
+            f"\u2717 Rafter blocked: {cmd_display}\n"
+            f"  Rule: rafter security configuration is protected (rf-vnxs)\n"
+            f"  Risk: CRITICAL\u2014this command reconfigures or removes rafter's own\n"
+            f"        guardrail. The gate cannot approve its own disarming. A person\n"
+            f"        must make this change outside an agent session."
+        )
     rule = evaluation.matched_pattern or "policy violation"
     label = _RISK_LABELS.get(evaluation.risk_level, evaluation.risk_level.upper())
     desc = _RISK_DESCRIPTIONS.get(evaluation.risk_level, "")
@@ -54,8 +68,13 @@ def _format_approval_message(command: str, evaluation) -> str:
         f"  Rule: {rule}\n"
         f"  Risk: {label}\u2014{desc}\n"
         f"\n"
-        f'To approve: rafter agent exec --approve "{command}"\n'
-        f"To configure: rafter agent config set agent.riskLevel minimal"
+        # The command is echoed into a suggested shell invocation, so it must
+        # be quoted as data, not interpolated raw into a double-quoted string
+        # \u2014 that lets a command containing `"`, `$`, or a backtick break out
+        # of the quoting or get shell-expanded when pasted (issue #231 item 5).
+        f"To approve: a person must run `rafter agent exec {shlex.quote(command)}` at an\n"
+        f"            interactive terminal and confirm. There is no flag that\n"
+        f"            skips the prompt."
     )
 
 
@@ -95,11 +114,23 @@ def _read_stdin() -> str:
 
 
 def _write_pretool_decision(decision: dict, fmt: str = "claude") -> None:
-    """Write a PreToolUse hook decision in the platform's expected format."""
+    """Write a PreToolUse hook decision in the platform's expected format.
+
+    The hook only ever DENIES: an internal "allow" means "rafter has no
+    objection", and is written as the platform's no-decision form so the
+    platform's own permission settings still apply. Approving would skip those
+    settings (a Claude Code PreToolUse "allow" skips the permission prompt),
+    making an agent more permissive with rafter installed than without it.
+    Cursor is the one exception; see below.
+    """
     is_deny = decision.get("decision") == "deny"
     reason = decision.get("reason", "")
 
     if fmt == "cursor":
+        # Cursor has no neutral answer: its permission hooks block on an empty
+        # or schema-invalid response, so "allow" is the only way to let a call
+        # proceed. "ask" would force a prompt on every call, overriding the
+        # user's own allowlist in the other direction.
         out: dict = {"permission": "deny" if is_deny else "allow"}
         if is_deny and reason:
             out["agentMessage"] = reason
@@ -117,13 +148,18 @@ def _write_pretool_decision(decision: dict, fmt: str = "claude") -> None:
             sys.stderr.write(reason + "\n")
             sys.stderr.flush()
             sys.exit(2)
-        # Allow: exit 0 (no output needed)
+        # No decision: exit 0 (no output needed)
     else:
-        # Claude Code / Codex / Continue.dev
+        # Claude Code / Codex / Continue.dev: hookSpecificOutput envelope for a
+        # deny; `{}` (no permissionDecision) leaves the call to the normal flow.
+        if not is_deny:
+            sys.stdout.write("{}\n")
+            sys.stdout.flush()
+            return
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "permissionDecision": "deny" if is_deny else "allow",
+                "permissionDecision": "deny",
                 "permissionDecisionReason": reason,
             },
         }
@@ -278,15 +314,25 @@ def _scan_staged_files() -> dict:
     """
     empty = {"secrets_found": False, "count": 0, "files": 0, "findings": [], "repo_root": os.getcwd()}
     try:
-        repo_root = subprocess.run(
+        rev = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True,
-        ).stdout.strip() or os.getcwd()
-
-        output = subprocess.run(
+        )
+    except OSError:
+        return empty
+    if rev.returncode != 0:
+        return empty  # Not a git repo: no staged files to scan.
+    repo_root = rev.stdout.strip() or os.getcwd()
+    try:
+        # surrogateescape: a non-UTF-8 diff is still scanned instead of raising
+        # into the pretool's outer error-handling catch.
+        diff = subprocess.run(
             ["git", "diff", "-U0", "--no-color", "--cached", "--diff-filter=ACM"],
-            capture_output=True, text=True,
-        ).stdout
+            capture_output=True, text=True, encoding="utf-8", errors="surrogateescape",
+        )
+        if diff.returncode != 0:
+            raise RuntimeError(diff.stderr.strip() or f"git diff exited {diff.returncode}")
+        output = diff.stdout
         if not output.strip():
             return {**empty, "repo_root": repo_root}
 
@@ -313,9 +359,9 @@ def _scan_staged_files() -> dict:
             "findings": kept,
             "repo_root": repo_root,
         }
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
-        print(f"rafter: staged file scan failed: {exc}", file=sys.stderr)
-        return empty
+    except Exception as exc:
+        # Inside a repo, a scan that could not run must not read as "no secrets".
+        return {**empty, "repo_root": repo_root, "scan_error": str(exc)}
 
 
 def _evaluate_bash(command: str, control=None) -> dict:
@@ -357,6 +403,15 @@ def _evaluate_bash(command: str, control=None) -> dict:
     trimmed = command.strip()
     if control.secret_scan_enabled and trimmed.startswith(("git commit", "git push")):
         result = _scan_staged_files()
+        if result.get("scan_error"):
+            audit.log_command_intercepted(
+                command, False, "blocked", f"secret scan could not run: {result['scan_error']}"
+            )
+            return {
+                "decision": "deny",
+                "reason": f"Rafter: secret scan of the staged diff could not run ({result['scan_error']}); "
+                "commit blocked rather than allowed unscanned. Run 'rafter secrets --staged' to investigate.",
+            }
         if result["secrets_found"]:
             # Audit per file so the log records WHICH file + pattern, not a bare count.
             repo_root = result.get("repo_root") or os.getcwd()
@@ -376,7 +431,44 @@ def _evaluate_bash(command: str, control=None) -> dict:
     return {"decision": "allow"}
 
 
+def _writes_rafter_security_config(file_path: str) -> bool:
+    """True if this write targets rafter's own configuration directory.
+
+    rf-vnxs, fourth route. Blocking the CLI invocation is not enough: the config
+    is a FILE, and an agent with a Write/Edit tool does not need the CLI to
+    disable the hook — it can write ``~/.rafter/config.json`` directly. Three
+    independent routes to the unblockable tier had already been found one at a
+    time in this codebase; this is the one that would have been the fourth.
+    """
+    if not file_path:
+        return False
+    try:
+        from ..core.config_schema import get_rafter_dir
+
+        target = Path(file_path).expanduser().resolve()
+        rafter_dir = get_rafter_dir().expanduser().resolve()
+    except Exception:
+        return False
+    return target == rafter_dir or rafter_dir in target.parents
+
+
 def _evaluate_write(tool_input: dict) -> dict:
+    # rf-vnxs: checked FIRST, and before the no-content early return, because a
+    # truncating write with empty content disables the hook just as well as one
+    # carrying JSON. apply_patch names its targets only in the patch headers.
+    targets = [tool_input.get("file_path", ""), *tool_input.get("patch_paths", [])]
+    if any(_writes_rafter_security_config(t) for t in targets):
+        return {
+            "decision": "deny",
+            "reason": (
+                "\u2717 Rafter blocked: write to rafter's own configuration\n"
+                "  Rule: rafter security configuration is protected (rf-vnxs)\n"
+                "  Risk: CRITICAL\u2014editing this file reconfigures or removes the\n"
+                "        guardrail. The gate cannot approve its own disarming. A\n"
+                "        person must make this change outside an agent session."
+            ),
+        }
+
     content = tool_input.get("content", "") or tool_input.get("new_string", "")
     if not content:
         return {"decision": "allow"}
@@ -418,46 +510,109 @@ def pretool(
 ):
     """PreToolUse hook handler. Reads tool input JSON from stdin, writes decision to stdout."""
     try:
-        raw = _read_stdin()
+        decision = decide_pretool(_read_stdin(), format)
+    except Exception as exc:
+        decision = _deny_on_error(exc)
+    _write_pretool_decision(decision, format)
 
-        try:
-            payload = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            _write_pretool_decision({"decision": "allow"}, format)
-            return
 
-        # Validate payload is a dict with expected shape
-        if not isinstance(payload, dict):
-            _write_pretool_decision({"decision": "allow"}, format)
-            return
+def decide_pretool(raw: str, fmt: str) -> dict:
+    """Decide one PreToolUse call from its raw stdin text.
 
-        tool_name, tool_input = _normalize_pretool_input(payload, format)
+    Input that is not a JSON object is allowed (nothing to evaluate). Any
+    exception raised while evaluating fails CLOSED: an unexpected error is not
+    evidence the call is safe. Conditions the loaders already handle (a
+    malformed .rafter.yml warns and falls back to defaults) never raise, so
+    they do not reach this.
+    """
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return {"decision": "allow"}
+    if not isinstance(payload, dict):
+        return {"decision": "allow"}
+    try:
+        return _evaluate_tool_call(payload, fmt)
+    except Exception as exc:
+        return _deny_on_error(exc)
 
-        if not isinstance(tool_input, dict):
-            tool_input = {}
 
-        # Honor the (trusted-source-only) hook off-switch before doing any work.
-        from ..core.hook_control import resolve_hook_control
+def _evaluate_tool_call(payload: dict, fmt: str) -> dict:
+    tool_name, tool_input = _normalize_pretool_input(payload, fmt)
+    if not isinstance(tool_input, dict):
+        tool_input = {}
 
-        control = resolve_hook_control()
-        if not control.hook_enabled:
-            _write_pretool_decision({"decision": "allow"}, format)
-            return
+    # Honor the (trusted-source-only) hook off-switch before doing any work.
+    from ..core.hook_control import resolve_hook_control
 
-        if tool_name == "Bash":
-            decision = _evaluate_bash(tool_input.get("command", ""), control)
-        elif tool_name in ("Write", "Edit"):
-            if not control.secret_scan_enabled:
-                decision = {"decision": "allow"}
-            else:
-                decision = _evaluate_write(tool_input)
-        else:
-            decision = {"decision": "allow"}
+    control = resolve_hook_control()
+    if not control.hook_enabled:
+        return {"decision": "allow"}
 
-        _write_pretool_decision(decision, format)
-    except Exception:
-        # Any unexpected error -> fail open
-        _write_pretool_decision({"decision": "allow"}, format)
+    if tool_name in _SHELL_TOOLS:
+        return _evaluate_bash(tool_input.get("command", ""), control)
+    if tool_name in _WRITE_TOOLS:
+        if not control.secret_scan_enabled:
+            return {"decision": "allow"}
+        return _evaluate_write(_normalize_write_input(tool_name, tool_input))
+    return {"decision": "allow"}
+
+
+# Shell and file-write tools under each platform's own name, so the same
+# policy applies whatever the tool is called.
+#   Shell: Bash (Claude Code, Codex, Continue), Shell (Cursor preToolUse),
+#          run_shell_command (Gemini CLI).
+#   Write: Write/Edit (Claude Code, Continue, Cursor), MultiEdit (Claude Code,
+#          Continue), write_file/replace (Gemini CLI), apply_patch (Codex).
+_SHELL_TOOLS = frozenset({"Bash", "Shell", "run_shell_command"})
+_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "write_file", "replace", "apply_patch"})
+
+
+def _normalize_write_input(tool_name: str, tool_input: dict) -> dict:
+    """Map each write tool's input onto the {file_path, content} shape _evaluate_write reads.
+
+    Continue's Write names its path ``filepath``; MultiEdit and Windsurf's
+    pre_write_code carry ``edits[].new_string``; Codex's apply_patch carries
+    the whole patch in ``command``, with its target paths in the patch
+    headers (``patch_paths``).
+    """
+    out = dict(tool_input)
+    if "file_path" not in out and isinstance(tool_input.get("filepath"), str):
+        out["file_path"] = tool_input["filepath"]
+    if not out.get("content") and not out.get("new_string"):
+        edits = tool_input.get("edits")
+        if isinstance(edits, list):
+            out["content"] = "\n".join(
+                e["new_string"] for e in edits if isinstance(e, dict) and isinstance(e.get("new_string"), str)
+            )
+        elif tool_name == "apply_patch" and isinstance(tool_input.get("command"), str):
+            out["content"] = tool_input["command"]
+    if tool_name == "apply_patch" and isinstance(tool_input.get("command"), str):
+        out["patch_paths"] = _apply_patch_paths(tool_input["command"])
+    return out
+
+
+# The apply_patch format carries its targets only in hunk headers, which Codex
+# matches on the trimmed line (codex-rs/apply-patch, apply_patch.lark).
+_APPLY_PATCH_HEADERS = ("*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: ")
+
+
+def _apply_patch_paths(patch: str) -> list[str]:
+    """Every path an apply_patch names."""
+    paths = []
+    for raw in patch.split("\n"):
+        line = raw.strip()
+        for header in _APPLY_PATCH_HEADERS:
+            if line.startswith(header):
+                paths.append(line[len(header):].strip())
+                break
+    return paths
+
+
+def _deny_on_error(exc: Exception) -> dict:
+    reason = f"rafter hook error: {type(exc).__name__}: {exc}; denying to be safe"
+    print(reason, file=sys.stderr)
+    return {"decision": "deny", "reason": reason}
 
 
 @hook_app.command(
@@ -505,6 +660,13 @@ def posttool(
             redacted["content"] = scanner.redact(content_text)
             modified = True
 
+        # Scan and redact the error field (sable-t578). A tool that fails and
+        # echoes a credential in its error text surfaces it like output.
+        error_text = tool_response.get("error", "")
+        if error_text and isinstance(error_text, str) and scanner.has_secrets(error_text):
+            redacted["error"] = scanner.redact(error_text)
+            modified = True
+
         if modified:
             audit = AuditLogger()
             match_count = 0
@@ -512,6 +674,8 @@ def posttool(
                 match_count += len(scanner.scan_text(output_text))
             if content_text and isinstance(content_text, str):
                 match_count += len(scanner.scan_text(content_text))
+            if error_text and isinstance(error_text, str):
+                match_count += len(scanner.scan_text(error_text))
             audit.log_content_sanitized(f"{tool_name} tool response", match_count)
             _write_posttool_output({"action": "modify", "tool_response": redacted}, format)
             return

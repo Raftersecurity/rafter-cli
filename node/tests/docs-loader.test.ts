@@ -208,6 +208,29 @@ docs:
     expect(res.content).toContain("Internal Rules");
   });
 
+  // sable-fwup — a project .rafter.yml docs entry must not be able to read a
+  // file outside the project root. An absolute path, a ../ escape, or an
+  // in-repo symlink pointing out all resolved and read before this fix.
+  it("refuses an absolute docs path", async () => {
+    await expect(freshFetchDoc({ id: "abs", path: "/etc/passwd" })).rejects.toThrow();
+  });
+
+  it("refuses a docs path that escapes the project root with ..", async () => {
+    const escape = path.relative(tmpDir, "/etc/passwd"); // e.g. ../../../etc/passwd
+    await expect(freshFetchDoc({ id: "esc", path: escape })).rejects.toThrow();
+  });
+
+  it("refuses an in-repo symlink that resolves outside the project root", async () => {
+    fs.symlinkSync("/etc/passwd", path.join(tmpDir, "link.md"));
+    await expect(freshFetchDoc({ id: "lnk", path: "link.md" })).rejects.toThrow();
+  });
+
+  it("still reads a legitimate in-repo doc", async () => {
+    fs.writeFileSync(path.join(tmpDir, "ok.md"), "# fine\n");
+    const res = await freshFetchDoc({ id: "ok", path: "ok.md" });
+    expect(res.content).toContain("fine");
+  });
+
   it("returns stale cache when network fetch fails", async () => {
     fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), `
 docs:

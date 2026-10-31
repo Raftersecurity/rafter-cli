@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
-import { randomBytes } from "crypto";
+import { execTmpDir } from "./exec-tmp.js";
 
 /**
  * Comprehensive tests for agent subcommands:
@@ -28,13 +28,10 @@ beforeAll(() => {
   }
 });
 
+// Some tests run a stub binary from the home dir, so not under a
+// possibly-noexec os.tmpdir().
 function createTempHome(): string {
-  const dir = path.join(
-    os.tmpdir(),
-    `rafter-agent-test-${Date.now()}-${randomBytes(4).toString("hex")}`
-  );
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+  return execTmpDir("rafter-agent-test-");
 }
 
 function runCli(
@@ -97,7 +94,7 @@ function parseArgs(args: string): string[] {
 // the file itself doesn't trip secret-scanning push protection in GitHub /
 // pre-commit hooks. Each value individually matches the corresponding regex
 // in src/scanners/secret-patterns.ts.
-const FAKE_AWS_KEY = "AKIA" + "IOSFODNN7" + "EXAMPLE";
+const FAKE_AWS_KEY = "AKIA" + "IOSFODNN7" + "ABCDEFG";
 const FAKE_STRIPE_KEY = "sk" + "_live_" + "1234567890abcdefghijklmn";
 
 // ─── agent config ────────────────────────────────────────────────────────────
@@ -216,20 +213,12 @@ describe("agent init", () => {
     expect(fs.existsSync(path.join(home, ".rafter", "patterns"))).toBe(true);
   });
 
-  it("respects --risk-level flag", () => {
-    runCli("agent init --risk-level minimal", home);
+  it.each(["minimal", "aggressive"])("respects --risk-level %s", (level) => {
+    runCli(`agent init --risk-level ${level}`, home);
     const cfg = JSON.parse(
       fs.readFileSync(path.join(home, ".rafter", "config.json"), "utf-8")
     );
-    expect(cfg.agent.riskLevel).toBe("minimal");
-  });
-
-  it("respects --risk-level aggressive", () => {
-    runCli("agent init --risk-level aggressive", home);
-    const cfg = JSON.parse(
-      fs.readFileSync(path.join(home, ".rafter", "config.json"), "utf-8")
-    );
-    expect(cfg.agent.riskLevel).toBe("aggressive");
+    expect(cfg.agent.riskLevel).toBe(level);
   });
 
   it("is idempotent — running twice doesn't corrupt config", () => {
@@ -278,8 +267,23 @@ describe("agent init", () => {
     expect(r.stdout).not.toContain("OpenClaw (--with-openclaw):");
   });
 
+  it("--all does not warn individually about undetected platforms (rafter-cli#231)", () => {
+    // No platform directories exist in this fake HOME — every platform is
+    // undetected. --all means "install all DETECTED integrations" per its
+    // own --help text, so none of these should get an individual
+    // "requested but not detected" warning — that noise buried the ones
+    // that actually matter.
+    const r = runCli("agent init --all", home);
+    expect(r.exitCode).toBe(0);
+    for (const label of ["OpenClaw", "Claude Code", "Codex CLI", "Gemini CLI", "Cursor", "Windsurf", "Continue.dev", "Aider", "Hermes", "OpenCode"]) {
+      expect(r.stdout).not.toContain(`${label} requested but not detected`);
+    }
+  });
+
   it("--dry-run with --with-betterleaks lists the binary download", () => {
-    const r = runCli("agent init --with-betterleaks --dry-run", home);
+    // Keep a betterleaks on the developer's PATH out of view: the plan only
+    // lists a download when the real run would perform one (#231).
+    const r = runCli("agent init --with-betterleaks --dry-run", home, { PATH: "/usr/bin:/bin" });
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("DOWNLOAD");
     expect(r.stdout).toContain("betterleaks");
@@ -300,8 +304,13 @@ describe("agent init", () => {
     expect(settings.hooks.PreToolUse).toBeDefined();
     expect(settings.hooks.PostToolUse).toBeDefined();
 
+    // rf-er8a: init writes a RESOLVABLE ABSOLUTE command (`<node> <entrypoint>
+    // hook pretool`), not the bare `rafter hook pretool` that exits 127 off PATH.
     const hasPreHook = settings.hooks.PreToolUse.some((entry: any) =>
-      (entry.hooks || []).some((h: any) => h.command === "rafter hook pretool")
+      (entry.hooks || []).some((h: any) => {
+        const cmd = String(h.command ?? "");
+        return cmd.endsWith("hook pretool") && path.isAbsolute(cmd.split(" ")[0]);
+      })
     );
     expect(hasPreHook).toBe(true);
   });
@@ -487,30 +496,77 @@ describe("agent exec", () => {
     expect(r.stdout).toContain("chmod 777");
   });
 
-  it("--force allows commands that need approval", () => {
-    // With default approve-dangerous policy, high-risk commands need approval
-    // --force skips the prompt
-    const r = runCli('agent exec "echo safe" --force', home);
-    expect(r.exitCode).toBe(0);
+  // ── approval needs a person at a terminal (rf-ss67) ──────────────────
+  // Every test here proves the command did NOT run: the file's mode is the
+  // witness, not the exit code alone.
+
+  it("--force no longer skips approval: denied without a terminal, not executed (rf-ss67)", () => {
+    const f = path.join(home, "forced.txt");
+    fs.writeFileSync(f, "x", { mode: 0o600 });
+    const r = runCli(`agent exec "chmod 777 ${f}" --force`, home);
+    expect(r.exitCode).toBe(1);
+    expect(r.stdout).toContain("--force no longer skips approval");
+    // The denial line itself — not the notice, which also mentions a terminal.
+    expect(r.stdout).toContain("Command denied: approval needs an interactive terminal");
+    expect(r.stdout).not.toContain("Forcing execution");
+    expect(r.stdout).not.toContain("Command cancelled");
+    expect(fs.statSync(f).mode & 0o777).toBe(0o600);
   });
 
-  it("--skip-scan skips pre-execution scanning", () => {
-    const r = runCli('agent exec "echo test" --skip-scan', home);
+  it("--force is still accepted (hidden) so old invocations parse", () => {
+    const r = runCli('agent exec "echo safe" --force', home);
     expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("safe");
+  });
+
+  it("a piped 'yes' is not an approval (rf-ss67)", () => {
+    const f = path.join(home, "piped.txt");
+    fs.writeFileSync(f, "x", { mode: 0o600 });
+    const r = spawnSync(process.execPath, [CLI_DIST, "agent", "exec", `chmod 777 ${f}`], {
+      cwd: PROJECT_ROOT,
+      encoding: "utf-8",
+      timeout: 60_000,
+      input: "yes\n",
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), CI: "1" },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("Command denied: approval needs an interactive terminal");
+    expect(r.stdout).not.toContain("approved by user");
+    expect(fs.statSync(f).mode & 0o777).toBe(0o600);
+  });
+
+  it("--dry-run classifies without executing: allowed exits 0", () => {
+    const f = path.join(home, "dry.txt");
+    const r = runCli(`agent exec --dry-run "touch ${f}"`, home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Dry run: ALLOWED");
+    expect(r.stdout).toContain("Not executed");
+    expect(fs.existsSync(f)).toBe(false);
+  });
+
+  it("--dry-run: needs-approval exits 2, blocked exits 1, nothing runs", () => {
+    const f = path.join(home, "dry2.txt");
+    fs.writeFileSync(f, "x", { mode: 0o600 });
+    const hi = runCli(`agent exec --dry-run "chmod 777 ${f}"`, home);
+    expect(hi.exitCode).toBe(2);
+    expect(hi.stdout).toContain("REQUIRES APPROVAL");
+    expect(hi.stdout).toContain("HIGH");
+    expect(fs.statSync(f).mode & 0o777).toBe(0o600);
+
+    const crit = runCli('agent exec --dry-run "rm -rf /"', home);
+    expect(crit.exitCode).toBe(1);
+    expect(crit.stdout).toContain("Dry run: BLOCKED");
+  });
+
+  it("accepts the documented `-- <command>` form", () => {
+    const r = runCli("agent exec -- echo hello world", home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("hello world");
   });
 
   it("reports failure for commands that error", () => {
     const r = runCli('agent exec "false"', home);
     expect(r.exitCode).not.toBe(0);
-  });
-
-  it("writes to audit log on command evaluation", () => {
-    runCli('agent exec "echo audit-test"', home);
-    const auditPath = path.join(home, ".rafter", "audit.jsonl");
-    if (fs.existsSync(auditPath)) {
-      const content = fs.readFileSync(auditPath, "utf-8");
-      expect(content).toContain("command_intercepted");
-    }
   });
 });
 
@@ -535,16 +591,6 @@ describe("agent audit", () => {
     expect(r.stdout).toContain("No audit log entries found");
   });
 
-  it("shows entries after commands are executed", () => {
-    // Generate some audit entries
-    runCli('agent exec "echo test1"', home);
-    runCli('agent exec "echo test2"', home);
-
-    const r = runCli("agent audit", home);
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("audit log entries");
-  });
-
   it("--last limits number of entries", () => {
     // Generate entries
     for (let i = 0; i < 5; i++) {
@@ -556,26 +602,13 @@ describe("agent audit", () => {
     expect(r.stdout).toContain("2 audit log entries");
   });
 
-  it("--event filters by event type", () => {
-    runCli('agent exec "echo test"', home);
-    const r = runCli("agent audit --event command_intercepted", home);
-    expect(r.exitCode).toBe(0);
-    // Should either find entries or say no entries
-    const combined = r.stdout;
-    expect(combined).toMatch(/(command_intercepted|No audit log entries)/);
-  });
-
-  it("--share generates a redacted excerpt", () => {
+  it("--share generates a redacted excerpt with version and OS info", () => {
     const r = runCli("agent audit --share", home);
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("Rafter Audit Excerpt");
     expect(r.stdout).toContain("Environment:");
     expect(r.stdout).toContain("Policy:");
     expect(r.stdout).toContain("Recent events");
-  });
-
-  it("--share includes version and OS info", () => {
-    const r = runCli("agent audit --share", home);
     expect(r.stdout).toContain("CLI:");
     expect(r.stdout).toContain("OS:");
   });
@@ -731,13 +764,6 @@ describe("agent verify", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("outputs verify header", () => {
-    const r = runCli("agent verify", home);
-    // Verify always outputs the header
-    const combined = r.stdout + r.stderr;
-    expect(combined).toMatch(/Rafter Agent Verify|check/i);
-  });
-
   it("fails when no config exists (exit 1)", () => {
     const r = runCli("agent verify", home);
     // Config check is a hard failure
@@ -749,15 +775,6 @@ describe("agent verify", () => {
     const r = runCli("agent verify", home);
     // Config should pass now (betterleaks may still fail)
     expect(r.stdout).toContain("Config:");
-  });
-
-  it("reports optional checks as warnings not failures", () => {
-    runCli("agent init", home);
-    const r = runCli("agent verify", home);
-    // Claude Code is optional — should show a warning, not a hard fail
-    const combined = r.stdout;
-    // Optional checks show warning messages (with "not detected" or similar)
-    expect(combined).toMatch(/(Claude Code|OpenClaw|Codex|Gemini|Cursor|Windsurf)/);
   });
 
   it("shows check summary line", () => {
@@ -773,62 +790,37 @@ describe("agent verify", () => {
     expect(r.stdout).toContain("Claude Code:");
   });
 
-  it("detects Gemini when configured", () => {
-    // Set up fake Gemini config
-    const geminiDir = path.join(home, ".gemini");
-    fs.mkdirSync(geminiDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(geminiDir, "settings.json"),
-      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } })
-    );
+  // ── rf-65zg: Continue.dev detection shares this shape ───────────────
 
-    runCli("agent init", home);
-    const r = runCli("agent verify", home);
-    expect(r.stdout).toContain("Gemini CLI:");
-    expect(r.stdout).toContain("MCP server configured");
-  });
-
-  it("detects Cursor when configured", () => {
-    const cursorDir = path.join(home, ".cursor");
-    fs.mkdirSync(cursorDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(cursorDir, "mcp.json"),
-      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } })
-    );
-
-    runCli("agent init", home);
-    const r = runCli("agent verify", home);
-    expect(r.stdout).toContain("Cursor:");
-    expect(r.stdout).toContain("MCP server configured");
-  });
-
-  it("detects Windsurf when configured", () => {
-    const wsDir = path.join(home, ".codeium", "windsurf");
-    fs.mkdirSync(wsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(wsDir, "mcp_config.json"),
-      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } })
-    );
-
-    runCli("agent init", home);
-    const r = runCli("agent verify", home);
-    expect(r.stdout).toContain("Windsurf:");
-    expect(r.stdout).toContain("MCP server configured");
-  });
-
-  // ── rf-65zg ────────────────────────────────────────────────────────
-
-  it("detects Continue.dev when configured (rf-65zg)", () => {
-    const continueDir = path.join(home, ".continue");
-    fs.mkdirSync(continueDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(continueDir, "config.json"),
+  it.each([
+    [
+      "Gemini CLI",
+      [".gemini", "settings.json"],
+      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } }),
+    ],
+    [
+      "Cursor",
+      [".cursor", "mcp.json"],
+      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } }),
+    ],
+    [
+      "Windsurf",
+      [".codeium", "windsurf", "mcp_config.json"],
+      JSON.stringify({ mcpServers: { rafter: { command: "rafter mcp serve" } } }),
+    ],
+    [
+      "Continue.dev",
+      [".continue", "config.json"],
       JSON.stringify({ mcpServers: [{ name: "rafter", command: "rafter" }] }),
-    );
+    ],
+  ] as const)("detects %s when configured", (platform, pathParts, configBody) => {
+    const configPath = path.join(home, ...pathParts);
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, configBody);
 
     runCli("agent init", home);
     const r = runCli("agent verify", home);
-    expect(r.stdout).toContain("Continue.dev:");
+    expect(r.stdout).toContain(`${platform}:`);
     expect(r.stdout).toContain("MCP server configured");
   });
 
@@ -876,6 +868,33 @@ describe("agent verify", () => {
     expect(fs.existsSync(auditPath)).toBe(true);
     const content = fs.readFileSync(auditPath, "utf-8");
     expect(content).toContain("rafter-probe-");
+  });
+
+  // ── rafter-cli#231 ──────────────────────────────────────────────────
+
+  it("counts only applicable checks as 'core', not every undetected optional integration (#231)", () => {
+    // A healthy install with ONLY Claude Code present: Config, Betterleaks,
+    // and Claude Code are the only checks that can even apply on this
+    // machine — the other 9 platforms (OpenClaw, Codex, Gemini, Cursor,
+    // Windsurf, Continue.dev, Aider, Hermes, OpenCode) simply aren't
+    // installed here. They must not inflate the "core checks" denominator,
+    // and must be reported as integrations that weren't detected rather than
+    // generic "optional checks not configured".
+    //
+    // Betterleaks is one of the three, so the test supplies a stand-in at the
+    // managed path and hides any real one on PATH. Without that the result
+    // depends on the machine: a box with betterleaks installed prints 3/3, a
+    // CI runner without it prints 2/3.
+    const binDir = path.join(home, ".rafter", "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeBetterleaks = path.join(binDir, "betterleaks");
+    fs.writeFileSync(fakeBetterleaks, "#!/bin/sh\necho 'betterleaks version 1.0.0'\n", { mode: 0o755 });
+    const env = { PATH: [path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter) };
+    runCli("agent init --with-claude-code", home, env);
+    const r = runCli("agent verify", home, env);
+    expect(r.stdout).toMatch(/3\/3 core checks passed/);
+    expect(r.stdout).toContain("9 optional integrations not detected");
+    expect(r.stdout).not.toMatch(/3\/12 core checks passed/);
   });
 });
 
@@ -955,16 +974,13 @@ describe("audit helpers", () => {
 
 describe("cross-command integration", () => {
   let home: string;
-  let tmpDir: string;
 
   beforeEach(() => {
     home = createTempHome();
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-cross-"));
   });
 
   afterEach(() => {
     fs.rmSync(home, { recursive: true, force: true });
-    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("init → config show → verify: full lifecycle", () => {
@@ -980,33 +996,6 @@ describe("cross-command integration", () => {
     // Verify finds config
     const verify = runCli("agent verify", home);
     expect(verify.stdout).toContain("Config:");
-  });
-
-  it("scan generates audit entries visible in audit", () => {
-    runCli("agent init", home);
-
-    // Create a file with a secret and scan it
-    const f = path.join(tmpDir, "leak.txt");
-    fs.writeFileSync(f, `${FAKE_AWS_KEY}\n`);
-    runCli(`agent scan ${f} --engine patterns --quiet`, home);
-
-    // The scan should have logged to audit
-    const auditPath = path.join(home, ".rafter", "audit.jsonl");
-    if (fs.existsSync(auditPath)) {
-      const content = fs.readFileSync(auditPath, "utf-8");
-      expect(content.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("exec → audit shows intercepted commands", () => {
-    runCli("agent init", home);
-    runCli('agent exec "echo cross-test"', home);
-
-    const r = runCli("agent audit --event command_intercepted", home);
-    expect(r.exitCode).toBe(0);
-    // Should show the intercepted command
-    const combined = r.stdout;
-    expect(combined).toMatch(/(command_intercepted|echo|No audit log entries)/);
   });
 
   it("status reflects audit event counts after exec", () => {

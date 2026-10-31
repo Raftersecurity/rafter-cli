@@ -25,6 +25,9 @@ class PatternMatch:
     # scan runs more than one engine (``auto`` mode → ``both``). Single-engine
     # scans leave it None — the engine is already implied by ``--engine``.
     engines: list[str] | None = None
+    # Every engine's rule name for a finding the union merged. ``pattern.name``
+    # shows only the betterleaks one, so suppression checks all of these.
+    rule_names: list[str] | None = None
 
 
 _GENERIC_PATTERN_NAMES = frozenset({"Generic API Key", "Generic Secret"})
@@ -37,7 +40,13 @@ _QUOTED_VALUE_RE = re.compile(r"""['\"]([^'\"]+)['\"]""")
 # followed immediately by ``=`` and a run of non-whitespace (the value). Used
 # to find ``NAME=VALUE`` tokens like ``RAFTER_API_KEY=<secret> rafter ...`` so
 # their value can be redacted before the command is written to the audit log.
-_ENV_ASSIGN_RE = re.compile(r"(^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\S+)")
+#
+# The prefix also accepts a leading quote (sable-fqrr): ``agent exec``
+# shell-quotes a token containing special characters, so a logged command can
+# read ``env 'SECRET_TOKEN=<secret>' ...`` — a quote, not whitespace, sits
+# before NAME=. Without this the value escaped redaction and reached the audit
+# log in the clear.
+_ENV_ASSIGN_RE = re.compile(r"""(^|[\s'"])([A-Za-z_][A-Za-z0-9_]*)=(\S+)""")
 
 # A ``NAME`` in a ``NAME=VALUE`` assignment is treated as secret-bearing when
 # it ends in a credential-suggesting word (RAFTER_API_KEY, GITHUB_TOKEN,
@@ -54,14 +63,15 @@ _SECRET_ENV_NAME_RE = re.compile(
 class PatternEngine:
     def __init__(self, patterns: Sequence[Pattern]):
         self._patterns = list(patterns)
+        # Compile once: compiling per line dominated scan time on large repos.
+        self._compiled = [
+            (p, c) for p in self._patterns if (c := self._compile(p.regex)) is not None
+        ]
 
     def scan(self, text: str) -> list[PatternMatch]:
         """Scan text for pattern matches (no line info)."""
         matches: list[PatternMatch] = []
-        for pattern in self._patterns:
-            compiled = self._compile(pattern.regex)
-            if compiled is None:
-                continue
+        for pattern, compiled in self._compiled:
             for m in compiled.finditer(text):
                 if self._is_false_positive(pattern, m.group(0)):
                     continue
@@ -76,10 +86,7 @@ class PatternEngine:
         """Scan text with line/column information."""
         matches: list[PatternMatch] = []
         for line_num, line in enumerate(text.split("\n"), start=1):
-            for pattern in self._patterns:
-                compiled = self._compile(pattern.regex)
-                if compiled is None:
-                    continue
+            for pattern, compiled in self._compiled:
                 for m in compiled.finditer(line):
                     if self._is_false_positive(pattern, m.group(0)):
                         continue
@@ -105,10 +112,7 @@ class PatternEngine:
              pattern are masked wherever they appear.
         """
         result = self._redact_env_assignments(text)
-        for pattern in self._patterns:
-            compiled = self._compile(pattern.regex)
-            if compiled is None:
-                continue
+        for pattern, compiled in self._compiled:
             result = compiled.sub(
                 lambda m, p=pattern: m.group(0) if self._is_false_positive(p, m.group(0)) else self._redact(m.group(0)),
                 result,
@@ -164,4 +168,5 @@ class PatternEngine:
         if len(match) <= 8:
             return "*" * len(match)
         visible = 4
-        return match[:visible] + "*" * (len(match) - visible * 2) + match[-visible:]
+        # Cap the mask so a long token (a JWT) does not print a line of asterisks.
+        return match[:visible] + "*" * min(len(match) - visible * 2, 16) + match[-visible:]

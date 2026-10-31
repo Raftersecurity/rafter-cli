@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
+import { execTmpDir } from "./exec-tmp.js";
 
 // ── helpers ──────────────────────────────────────────────────────────
 
@@ -105,54 +106,85 @@ describe("applyBaseline", () => {
   });
 });
 
-// ── pre-push hook template ────────────────────────────────────────────
+// ── baseline create unions both engines in auto mode (sable-qb9g) ─────
 
-describe("pre-push hook template", () => {
-  it("exists at resources/pre-push-hook.sh", () => {
-    const templatePath = path.resolve("resources", "pre-push-hook.sh");
-    expect(fs.existsSync(templatePath)).toBe(true);
+// A fake managed betterleaks that reports the pinned version (so it is
+// selected, not treated as stale) and detects ONLY AKIA tokens. A normal
+// directory scan in `auto` mode runs both engines and unions, so a secret
+// betterleaks misses but the patterns engine catches must still be recorded.
+// `baseline create` must capture the same union a scan would.
+const FAKE_BL = `#!/bin/sh
+if [ "$1" = "version" ]; then echo "1.1.2"; exit 0; fi
+report=""
+while [ $# -gt 0 ]; do
+  case "$1" in -r|--report-path) report="$2"; shift 2;; --) shift; break;; *) shift;; esac
+done
+out=""; sep=""
+for f in $(find "$@" -type f 2>/dev/null); do
+  if grep -q AKIA "$f" 2>/dev/null; then
+    out="$out$sep{\\"File\\":\\"$f\\",\\"RuleID\\":\\"aws-access-token\\",\\"Description\\":\\"AWS\\",\\"Secret\\":\\"AKIAXXXXXXXXXXXXXXXX\\",\\"Match\\":\\"AKIAXXXXXXXXXXXXXXXX\\",\\"StartLine\\":1,\\"EndLine\\":1,\\"StartColumn\\":1,\\"EndColumn\\":1,\\"Tags\\":[]}"
+    sep=","
+  fi
+done
+echo "[$out]" > "$report"
+[ -n "$sep" ] && exit 1
+exit 0
+`;
+
+describe("baseline create — auto unions both engines (sable-qb9g)", () => {
+  const CLI = path.resolve(__dirname, "../dist/index.js");
+  // GitHub PAT (ghp_ + 36 alnum): caught by the patterns engine, missed by the
+  // AKIA-only fake betterleaks. Assembled so the file holds no token literal.
+  const GITHUB_TOKEN = "ghp_" + "A".repeat(36);
+  let home: string;
+  let fixture: string;
+
+  beforeEach(() => {
+    // HOME holds the fake managed binary, so it must be on an executable FS.
+    home = execTmpDir("rafter-baseline-home-");
+    fs.mkdirSync(path.join(home, ".rafter", "bin"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".rafter", "bin", "betterleaks"), FAKE_BL, { mode: 0o755 });
+    // The fixture must be OUTSIDE any git repo, or both engines would skip the
+    // leak file as gitignored and the test would pass vacuously.
+    fixture = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-baseline-fix-"));
+    fs.writeFileSync(path.join(fixture, "leak.js"), `const token = "${GITHUB_TOKEN}";\n`);
   });
 
-  it("contains Rafter marker", () => {
-    const templatePath = path.resolve("resources", "pre-push-hook.sh");
-    const content = fs.readFileSync(templatePath, "utf-8");
-    expect(content).toContain("Rafter Security Pre-Push Hook");
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(fixture, { recursive: true, force: true });
   });
 
-  it("calls rafter secrets", () => {
-    const templatePath = path.resolve("resources", "pre-push-hook.sh");
-    const content = fs.readFileSync(templatePath, "utf-8");
-    expect(content).toContain("rafter secrets");
-  });
+  function run(args: string[]): { stdout: string; status: number } {
+    const r = spawnSync("node", [CLI, ...args], {
+      encoding: "utf-8",
+      timeout: 30_000,
+      env: { ...process.env, HOME: home },
+    });
+    return { stdout: r.stdout || "", status: r.status ?? 1 };
+  }
 
-  it("mentions --no-verify bypass", () => {
-    const templatePath = path.resolve("resources", "pre-push-hook.sh");
-    const content = fs.readFileSync(templatePath, "utf-8");
-    expect(content).toContain("--no-verify");
-  });
-
-  it("reads from stdin (git pre-push protocol)", () => {
-    const templatePath = path.resolve("resources", "pre-push-hook.sh");
-    const content = fs.readFileSync(templatePath, "utf-8");
-    expect(content).toContain("while read");
-    expect(content).toContain("local_sha");
-    expect(content).toContain("remote_sha");
+  it("records a patterns-only secret when betterleaks is available", () => {
+    run(["agent", "baseline", "create", fixture]);
+    const shown = run(["agent", "baseline", "show", "--json"]);
+    const baseline = JSON.parse(shown.stdout);
+    const patterns = baseline.entries.map((e: { pattern: string }) => e.pattern);
+    expect(patterns).toContain("GitHub Personal Access Token");
   });
 });
 
-// ── baseline JSON format ──────────────────────────────────────────────
+// ── pre-push hook template ────────────────────────────────────────────
 
-describe("baseline JSON format", () => {
-  it("has correct structure", () => {
-    const baseline = makeBaseline([
-      { file: "/repo/config.ts", line: 10, pattern: "AWS Access Key", addedAt: "2026-01-01T00:00:00Z" },
-    ]);
-    expect(baseline.version).toBe(1);
-    expect(baseline.entries).toHaveLength(1);
-    expect(baseline.entries[0]).toMatchObject({
-      file: expect.any(String),
-      line: expect.any(Number),
-      pattern: expect.any(String),
-    });
+describe("pre-push hook template", () => {
+  it("exists at resources/pre-push-hook.sh and has the expected shape", () => {
+    const templatePath = path.resolve("resources", "pre-push-hook.sh");
+    expect(fs.existsSync(templatePath)).toBe(true);
+    const content = fs.readFileSync(templatePath, "utf-8");
+    expect(content).toContain("Rafter Security Pre-Push Hook");
+    expect(content).toContain("rafter secrets");
+    expect(content).toContain("--no-verify");
+    expect(content).toContain("while read");
+    expect(content).toContain("local_sha");
+    expect(content).toContain("remote_sha");
   });
 });

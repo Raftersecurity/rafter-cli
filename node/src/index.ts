@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import * as dotenv from "dotenv";
+import { guardSecurityEnvFromDotenv } from "./utils/env-guard.js";
 import { createRunCommand } from "./commands/backend/run.js";
 import { createGetCommand } from "./commands/backend/get.js";
 import { createUsageCommand } from "./commands/backend/usage.js";
@@ -23,7 +24,15 @@ import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 import { createRequire } from "module";
 
-dotenv.config();
+// Commands call process.exit() right after writing results. When stdout is a
+// pipe, Node writes asynchronously and exit drops whatever is still queued, so
+// `rafter secrets --json . | jq` got only the first 64 KiB. Write synchronously.
+// Only stdout: a blocking stderr stalls the process (including `mcp serve`)
+// when a parent pipes stderr and never reads it.
+(process.stdout as any)._handle?.setBlocking?.(true);
+
+// A repo `.env` must not be able to set any RAFTER_* variable (key, token, disables).
+guardSecurityEnvFromDotenv(() => dotenv.config());
 
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require("../package.json");
