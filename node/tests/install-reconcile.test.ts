@@ -142,7 +142,9 @@ describe("hook auto-update over the 0.11.2 fixture", () => {
     expect(fs.existsSync(path.join(home, ".claude", "skills", "rafter-code-review"))).toBe(false);
   });
 
-  it("does not write through a symlink at a file or its .rafter-new", () => {
+  it("leaves a symlink at a file or its .rafter-new alone", () => {
+    // Both links dangle: a link at an existing file is refused by the
+    // .rafter-new merge guard anyway, so it would not show the skip working.
     copyFixture();
     const outside = path.join(home, "outside");
     fs.mkdirSync(outside);
@@ -150,11 +152,12 @@ describe("hook auto-update over the 0.11.2 fixture", () => {
     fs.symlinkSync(path.join(outside, "dangling"), skill());
     const rule = path.join(home, ".cursor", "rules", "rafter.mdc");
     fs.appendFileSync(rule, "\nmine\n");
-    fs.writeFileSync(path.join(outside, "victim"), "keep me");
     fs.symlinkSync(path.join(outside, "victim"), rule + ".rafter-new");
     maybeAutoUpdate({ home, version: "99.0.0" });
-    expect(fs.existsSync(path.join(outside, "dangling"))).toBe(false);
-    expect(fs.readFileSync(path.join(outside, "victim"), "utf-8")).toBe("keep me");
+    expect(fs.readdirSync(outside)).toEqual([]);
+    expect(fs.readlinkSync(skill())).toBe(path.join(outside, "dangling"));
+    expect(fs.readlinkSync(rule + ".rafter-new")).toBe(path.join(outside, "victim"));
+    expect(fs.existsSync(skill() + ".rafter-new")).toBe(false);
   });
 
   it("does nothing when the install is current, when nothing is installed, or when disabled", () => {

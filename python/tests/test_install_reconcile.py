@@ -148,7 +148,9 @@ class TestHookAutoUpdate:
         maybe_auto_update(home, None, "99.0.0")
         assert not (home / ".claude" / "skills" / "rafter-code-review").exists()
 
-    def test_does_not_write_through_a_symlink(self, home):
+    def test_leaves_a_symlink_at_a_file_or_its_rafter_new_alone(self, home):
+        # Both links dangle: a link at an existing file is refused by the
+        # .rafter-new merge guard anyway, so it would not show the skip working.
         copy_fixture(home)
         outside = home / "outside"
         outside.mkdir()
@@ -157,11 +159,13 @@ class TestHookAutoUpdate:
         skill.symlink_to(outside / "dangling")
         rule = home / ".cursor" / "rules" / "rafter.mdc"
         rule.write_bytes(rule.read_bytes() + b"\nmine\n")
-        (outside / "victim").write_text("keep me")
-        Path(f"{rule}.rafter-new").symlink_to(outside / "victim")
+        pending = Path(f"{rule}.rafter-new")
+        pending.symlink_to(outside / "victim")
         maybe_auto_update(home, None, "99.0.0")
-        assert not (outside / "dangling").exists()
-        assert (outside / "victim").read_text() == "keep me"
+        assert list(outside.iterdir()) == []
+        assert skill.readlink() == outside / "dangling"
+        assert pending.readlink() == outside / "victim"
+        assert not Path(f"{skill}.rafter-new").exists()
 
     def test_nothing_when_current_empty_or_disabled(self, home, monkeypatch):
         assert maybe_auto_update(home, None, "99.0.0") is None  # empty home

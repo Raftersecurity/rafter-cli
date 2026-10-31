@@ -25,6 +25,7 @@ import {
   cleanupLegacyOpenClaw,
   cleanupRetiredRules,
   cliVersion,
+  isSymlink,
   manifestPath,
   platformArtifacts,
 } from "./install-files.js";
@@ -96,14 +97,6 @@ function unitOf(a: FileArtifact): string {
   if (!m) return a.dest;
   const rel = a.resourceKey.slice("skills/".length + m[1].length + 1);
   return a.dest.slice(0, a.dest.length - rel.length - 1);
-}
-
-function isSymlink(p: string): boolean {
-  try {
-    return fs.lstatSync(p).isSymbolicLink();
-  } catch {
-    return false;
-  }
 }
 
 /**
