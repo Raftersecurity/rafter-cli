@@ -38,7 +38,14 @@ HIGH_PATTERNS: list[str] = [
     # `expect`, `unbuffer`, `socat` and Python's pty module manufacture one and
     # can type "yes". Wrapping rafter in any of them is itself the signal.
     r"\b(?:script|expect|unbuffer|socat)\b.*\brafter(?:-cli)?\s+agent\s+exec\b",
-    r"\bpty\.(?:spawn|fork|openpty)\b.*\brafter\b",
+    # Scoped to `agent exec` exactly as the sibling above is. Without the
+    # subcommand this matched ANY rafter invocation wrapped in Python's pty
+    # module -- `rafter --version`, `rafter audit`, `rafter secrets scan` all
+    # went low -> high. That contradicts this patch's own principle that only
+    # `agent exec` carries a command, and in headless CI a HIGH with stdin not
+    # a TTY is DENIED outright (exit 1), turning a previously-succeeding call
+    # into a hard failure.
+    r"\bpty\.(?:spawn|fork|openpty)\b.*\brafter(?:-cli)?['\",\s]+agent['\",\s]+exec\b",
     r"rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*",   # rm -rf, -fr, -r -f, -f -r
     r"rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*",   # reversed order
     r"sudo\s+rm",
