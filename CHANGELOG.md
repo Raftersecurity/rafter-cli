@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-10-30
+
 ### Security
 
-- **The PreToolUse hook now sees through rafter's own `agent exec`** (sable-lbyp, the classifier half of rf-ss67). `rafter agent exec --force "rm -rf /tmp/x"` classified `low`: rafter was an unrecognised evaluator to the sanitizer, so its quoted operand was prose. The operand of `rafter agent exec` is now a command string — resolved by basename (`/usr/local/bin/rafter`), through package runners (`npx @rafter-security/cli`, `pnpm dlx rafter-cli`) and wrappers (`sudo -E`, `env`, `unbuffer`) — and is classified on its own merits; `--dry-run` is exempt because it runs nothing and is the documented way to check a command first. A pseudo-terminal wrapper around `rafter agent exec` (`script -c`, `expect`, `unbuffer`, `socat`, Python's `pty.spawn`) is HIGH on its own, since the approval prompt only trusts a person at a TTY and those manufacture one. 17 rows added to the shared classifier battery; both runtimes.
+- **The PreToolUse hook now sees through rafter's own `agent exec`** (sable-lbyp, the classifier half of rf-ss67). `rafter agent exec --force "rm -rf /tmp/x"` classified `low`: rafter was an unrecognised evaluator to the sanitizer, so its quoted operand was prose. The operand of `rafter agent exec` is now a command string — resolved by basename (`/usr/local/bin/rafter`), through package runners (`npx @rafter-security/cli`, `pnpm dlx rafter-cli`) and wrappers (`sudo -E`, `env`, `unbuffer`) — and is classified on its own merits; `--dry-run` is exempt because it runs nothing and is the documented way to check a command first; only a `--dry-run` before `--` counts, since exec takes everything after `--` as the command. A pseudo-terminal wrapper around `rafter agent exec` (`script -c`, `expect`, `unbuffer`, `socat`, Python's `pty.spawn`) is HIGH on its own, since the approval prompt only trusts a person at a TTY and those manufacture one. 17 rows added to the shared classifier battery; both runtimes.
 
 ### Changed
 
