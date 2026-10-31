@@ -21,6 +21,8 @@ import { createIssuesCommand } from "./commands/issues/index.js";
 import { createReportCommand } from "./commands/report.js";
 import { createGatesCommand } from "./commands/gates.js";
 import { createSitesCommand } from "./commands/sites/index.js";
+import { createTelemetryCommand } from "./commands/telemetry.js";
+import { installUsageCounters } from "./core/usage-counters.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 import { createRequire } from "module";
@@ -104,6 +106,9 @@ program.addCommand(createGatesCommand());
 // Shell completions
 program.addCommand(createCompletionCommand());
 
+// Local usage counters (nothing leaves the machine)
+program.addCommand(createTelemetryCommand());
+
 // Version subcommand (also available as --version)
 program.addCommand(
   new Command("version")
@@ -117,5 +122,7 @@ program.addCommand(
 checkForUpdate(VERSION).then((notice) => {
   if (notice) process.stderr.write(notice);
 });
+
+installUsageCounters(program);
 
 program.parse();

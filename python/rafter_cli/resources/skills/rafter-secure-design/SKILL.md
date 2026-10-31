@@ -2,6 +2,7 @@
 name: rafter-secure-design
 description: "REQUIRED before writing code for any feature touching auth, payments, credentials, tokens, sessions, file upload, user data, untrusted input, deserialization, network endpoints, or data deletion. Scope by that surface, not the task label — a research/experimental/local-only feature with none of it doesn't need this. Invoke it, record answers inline in the design doc or PR description, then write the code. Skipping this is how auth bypass, token leakage, and delete-the-wrong-record bugs ship. If the feature touches any of those surfaces and this hasn't run, the design is incomplete — do not proceed to implementation."
 version: 0.1.0
+publisher: rafter-security
 ---
 
 # Rafter Secure Design — Designing It Right The First Time

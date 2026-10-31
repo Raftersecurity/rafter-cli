@@ -2,6 +2,7 @@
 name: rafter-code-review
 description: "Security review of code: auditing a codebase, finding vulnerabilities in a module, or reviewing a diff before calling work on auth, input, SQL, shell or crypto done. Walks a security-gate checklist (allowlists, auth checks, token and crypto validity, path containment, escaping, limits) and OWASP/CWE questions, with file:line evidence. NOT for secret scanning alone (rafter secrets)."
 version: 0.8.2
+publisher: rafter-security
 ---
 
 # Rafter Code Review — Structured Security Walkthroughs
