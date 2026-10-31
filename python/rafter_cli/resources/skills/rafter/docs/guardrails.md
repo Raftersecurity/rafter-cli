@@ -97,7 +97,7 @@ If the block is a false positive **for this specific context**, the right path i
 Every hook decision (approve / ask / block) is appended to the JSONL audit log:
 
 - Location: `rafter agent status` prints the path.
-- Read: `rafter agent audit --log` (or MCP `read_audit_log`).
+- Read: `rafter agent audit` (or MCP `read_audit_log`).
 - Use it for postmortems: *why did this command run?*, *what did the agent try before the block?*
 
 ## Platform Notes
