@@ -135,6 +135,25 @@ describe("hook auto-update over the 0.11.2 fixture", () => {
     expect(nextDay?.needsReconcile).toEqual([edited()]);
   });
 
+  it("waits for another hook's live update lock, and takes over a stale one", () => {
+    // Fails if the hook updates without the lock (two hooks would rewrite the
+    // same files and manifest at once), never reclaims a dead hook's lock, or
+    // does not release its own.
+    copyFixture();
+    const lock = path.join(home, ".rafter", ".update-lock");
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+    fs.writeFileSync(lock, "");
+    const before = fs.readFileSync(skill());
+    const now = fs.statSync(lock).mtimeMs;
+    expect(maybeAutoUpdate({ home, now: now + 1000, version: "99.0.0" })).toBeNull();
+    expect(fs.readFileSync(skill()).equals(before)).toBe(true);
+    expect(fs.existsSync(autoUpdateStampPath(home))).toBe(false);
+
+    expect(maybeAutoUpdate({ home, now: now + 61_000, version: "99.0.0" })?.updated).toBeGreaterThan(0);
+    expect(fs.readFileSync(skill()).equals(before)).toBe(false);
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
   it("does not bring back a skill the user removed", () => {
     copyFixture();
     fs.rmSync(path.join(home, ".claude", "skills", "rafter-code-review"), { recursive: true });

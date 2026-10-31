@@ -142,6 +142,26 @@ class TestHookAutoUpdate:
         assert next_day is not None and next_day.updated == 0
         assert next_day.needs_reconcile == [edited]
 
+    def test_waits_for_a_live_lock_and_takes_over_a_stale_one(self, home):
+        """Fails if the hook updates without the lock (two hooks would rewrite
+        the same files and manifest at once), never reclaims a dead hook's
+        lock, or does not release its own."""
+        copy_fixture(home)
+        lock = home / ".rafter" / ".update-lock"
+        lock.parent.mkdir(exist_ok=True)
+        lock.write_text("")
+        skill = home / ".claude" / "skills" / "rafter" / "SKILL.md"
+        before = skill.read_bytes()
+        now = int(lock.stat().st_mtime * 1000)
+        assert maybe_auto_update(home, now + 1000, "99.0.0") is None
+        assert skill.read_bytes() == before
+        assert not auto_update_stamp_path(home).exists()
+
+        r = maybe_auto_update(home, now + 61_000, "99.0.0")
+        assert r is not None and r.updated > 0
+        assert skill.read_bytes() != before
+        assert not lock.exists()
+
     def test_does_not_bring_back_a_removed_skill(self, home):
         copy_fixture(home)
         shutil.rmtree(home / ".claude" / "skills" / "rafter-code-review")
