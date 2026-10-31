@@ -69,7 +69,12 @@ def handle_403(resp: "requests.Response") -> int:
     if isinstance(body, dict) and "scan_mode" in body:
         mode = body["scan_mode"]
         limit = body.get("limit", "?")
-        used = body.get("used", limit)
+        # The API sends ``remaining``, not ``used``; ``used`` is kept for older servers.
+        used = body.get("used")
+        if used is None:
+            remaining = body.get("remaining")
+            numeric = all(isinstance(v, int) and not isinstance(v, bool) for v in (limit, remaining))
+            used = limit - remaining if numeric else limit
         print(
             f"Error: {mode.capitalize()} scan limit reached ({used}/{limit} used this billing period).\n"
             f"Upgrade your plan or wait for your quota to reset.",

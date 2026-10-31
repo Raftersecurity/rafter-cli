@@ -38,6 +38,7 @@ DEFAULT_EXCLUDE = [
     # Vendored / virtual-env / generated dirs that cause false positives
     "vendor", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache",
     ".pytest_cache", ".ruff_cache", "results", ".terraform", "bower_components",
+    ".trigger",  # Trigger.dev build output (bundled JS + source maps)
 ]
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -16,74 +17,118 @@ from ..utils.binary_manager import BinaryManager
 # Per-invocation timeout for the betterleaks subprocess.
 SCAN_TIMEOUT_S = 60
 
-# Budget for the path arguments of one `betterleaks dir` call. Windows caps a
-# whole command line at 32,767 characters; elsewhere the limit is far larger.
-ARG_CHARS_PER_CALL = 24_000 if sys.platform == "win32" else 500_000
-
-# Maximum number of file paths handed to one `betterleaks dir` invocation.
-#
-# sable-jiqb — betterleaks' run time scales with the length of the explicit file
-# list it is given (measured ~0.2s/file: 50 files ~10s, 300 files ~60s), not with
-# the size of the files. A whole git-tracked list on a few-hundred-file repo
-# therefore exceeds SCAN_TIMEOUT_S in a single call and the engine falls back to
-# patterns. Capping each call at this many files keeps every invocation well under
-# the timeout (~0.2s * 64 ~= 13s, roughly a fifth of the 60s floor, with headroom
-# on a loaded box); the full tree is covered across sequential calls, unioned by
-# file. Mirrors MAX_FILES_PER_CALL in node/src/scanners/betterleaks.ts.
-MAX_FILES_PER_CALL = 64
-
-# Config env vars betterleaks consults before the target's own .toml.
-CONFIG_ENV_VARS = (
-    "BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG", "BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML",
-)
+# Config env vars betterleaks consults before the target's own .toml, in its order.
+CONFIG_PATH_ENV_VARS = ("BETTERLEAKS_CONFIG", "GITLEAKS_CONFIG")
+CONFIG_TOML_ENV_VARS = ("BETTERLEAKS_CONFIG_TOML", "GITLEAKS_CONFIG_TOML")
 
 
-def git_visible_files(dir_path: str) -> list[str] | None:
-    """Files under ``dir_path`` that git does not ignore (tracked, plus
-    untracked and not ignored), as absolute paths. Returns None when
+def git_skipped_paths(dir_path: str) -> list[str] | None:
+    """Paths under ``dir_path`` that a git-aware scan must skip, relative to
+    it: what git ignores (a wholly ignored directory as one ``dir/`` entry),
+    submodules (a gitlink, mode 160000, in the index) and untracked nested
+    repositories (which ``ls-files --others`` lists as one ``dir/`` entry). Git
+    lists no files inside either kind, so the file-list scan this replaced
+    never scanned them. A tracked path that is now a directory on disk is NOT
+    skipped: its files are untracked and get scanned. Returns None when
     ``dir_path`` is not inside a git work tree or git is unavailable, so the
-    caller scans the directory whole. Mirrors ``gitVisibleFiles`` in
+    caller scans the directory whole. Mirrors ``gitSkippedPaths`` in
     node/src/scanners/betterleaks.ts.
     """
+    def ls(*args: str) -> list[str] | None:
+        try:
+            r = subprocess.run(
+                ["git", "-C", dir_path, "ls-files", "-z", *args, "--", "."],
+                capture_output=True, timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if r.returncode != 0:
+            return None
+        return [p for p in r.stdout.decode("utf-8", "surrogateescape").split("\0") if p]
+
+    ignored = ls("--others", "--ignored", "--exclude-standard", "--directory")
+    staged = ls("--cached", "--stage")
+    untracked = ls("--others", "--exclude-standard")
+    if ignored is None or staged is None or untracked is None:
+        return None
+    # ``--stage`` lines read "<mode> <object> <stage>\t<path>".
+    submodules = [line.split("\t", 1)[1] for line in staged if line.startswith("160000 ")]
+    nested_repos = [rel for rel in untracked if rel.endswith("/")]
+    return ignored + submodules + nested_repos
+
+
+def _toml_string(s: str) -> str:
+    """Write ``s`` as a TOML basic string. JSON escapes every control character
+    TOML forbids raw except DEL (U+007F), which would make the whole config
+    unreadable and drop the scan to the patterns engine."""
+    return json.dumps(s, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
+def _is_utf8(s: str) -> bool:
     try:
-        r = subprocess.run(
-            ["git", "-C", dir_path, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."],
-            capture_output=True, timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if r.returncode != 0:
-        return None
-    files: dict[str, None] = {}
-    for rel in r.stdout.decode("utf-8", "surrogateescape").split("\0"):
-        if not rel:
-            continue
-        abs_path = os.path.join(dir_path, rel)
-        # Skip deleted-but-tracked paths, submodule dirs and symlinks
-        # (betterleaks does not follow symlinks by default either).
-        if os.path.isfile(abs_path) and not os.path.islink(abs_path):
-            files[abs_path] = None
-    return list(files)
+        s.encode("utf-8")
+        return True
+    except UnicodeEncodeError:  # surrogateescape-decoded raw bytes
+        return False
 
 
-def _chunk_files(paths: list[str], budget: int, max_count: int) -> list[list[str]]:
-    """Split ``paths`` into groups within both bounds: at most ``max_count``
-    paths per group (sable-jiqb — betterleaks' cost scales with the file count,
-    so this is what keeps each invocation under the timeout) and a joined length
-    under ``budget`` chars (the OS command-line cap, the original #262 constraint).
+def _path_prefix_pattern(p: str) -> str:
+    """A regex (RE2, JS and Python read it alike) matching ``p`` and everything
+    below it. Only on Windows is ``\\`` a separator; on POSIX it is an ordinary
+    filename character and stays literal, or an ignored ``a\\b`` would also
+    skip ``a/b``."""
+    slashed = (p.replace("\\", "/") if sys.platform == "win32" else p).rstrip("/")
+    return "^" + re.sub(r"[\\.+*?()|\[\]{}^$]", r"\\\g<0>", slashed) + "(?:/.*)?$"
+
+
+def _read_text(path: str) -> str:
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+_LEGACY_ALLOWLIST = re.compile(r"^[ \t]*\[[ \t]*allowlist[ \t]*\][ \t]*(#.*)?$", re.MULTILINE)
+
+
+def scan_config_toml(dir_path: str, skipped: list[str], base_toml: str | None) -> str:
+    """The betterleaks config for one git-aware directory scan: the config the
+    scan would otherwise use (``base_toml``, its text; betterleaks' default
+    rules when None) plus a global path allowlist for ``skipped``, so one
+    ``betterleaks dir <root>`` walk passes over those paths without reading them.
+
+    The base config is copied in, not extended: betterleaks 1.1.x stops
+    following ``[extend]`` two levels down, so wrapping a repo config that
+    itself extends a shared config (which extends the defaults) silently
+    dropped the default rules. A relative ``extend.path`` in the copy still
+    resolves as it did, against the working directory. The deprecated
+    ``[allowlist]`` table is renamed to ``[[allowlists]]``, its equivalent,
+    since betterleaks rejects a config that has both.
+
+    #262 — rafter used to hand betterleaks the git-visible files as path
+    arguments, 64 per call. betterleaks 1.1.x rebuilds its config and detector
+    for every path argument (~0.2s each with the default rules), and its
+    ``extend`` depth counter is a process global it never resets, so with a
+    config that extends another (``[extend] useDefault = true``) only the first
+    two path arguments of a call got the extended rules: every later file was
+    scanned with the repo's own rules alone. A single walk builds one detector
+    and applies the full rule set to every file. Mirrors ``scanConfigToml`` in
+    node/src/scanners/betterleaks.ts.
     """
-    chunks: list[list[str]] = []
-    cur: list[str] = []
-    length = 0
-    for p in paths:
-        if cur and (len(cur) >= max_count or length + len(p) + 1 > budget):
-            chunks.append(cur)
-            cur, length = [], 0
-        cur.append(p)
-        length += len(p) + 1
-    if cur:
-        chunks.append(cur)
-    return chunks
+    # A path git reports in bytes that are not UTF-8 cannot be written into a
+    # TOML file, so it is left out: that file is scanned rather than skipped.
+    joined = (os.path.join(dir_path, rel) for rel in skipped)
+    patterns = [r"(?:^|/)\.git(?:/.*)?$"] + [_path_prefix_pattern(p) for p in joined if _is_utf8(p)]
+    lines = [
+        "# Generated by rafter for one scan (scan_config_toml, rafter's betterleaks scanner).",
+        *(["[extend]", "useDefault = true"] if base_toml is None else [_LEGACY_ALLOWLIST.sub("[[allowlists]]", base_toml)]),
+        "",
+        "[[allowlists]]",
+        'description = "rafter: paths git ignores"',
+        "paths = [",
+        *(f"  {_toml_string(p)}," for p in patterns),
+        "]",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 @dataclass
@@ -197,26 +242,36 @@ class BetterleaksScanner:
         walks node_modules, build output and local secret stores (.env) alike:
         slow enough to hit the timeout on an ordinary checkout, and noisy
         (#262). With respect_gitignore (the default, matching the patterns
-        engine) and a target inside a git work tree, it is handed git's own
-        list of non-ignored files instead.
+        engine) and a target inside a git work tree, it walks the tree once
+        under a generated config that skips what git ignores (see
+        scan_config_toml).
         """
-        files = None if use_git or not respect_gitignore else git_visible_files(dir_path)
-        if files is None:
+        skipped = None if use_git or not respect_gitignore else git_skipped_paths(dir_path)
+        if skipped is None:
             results = self._run_scan(dir_path, use_git=use_git)
         else:
-            # Given file paths instead of a directory, betterleaks no longer
-            # finds the target's own .betterleaks.toml / .gitleaks.toml, so pass
-            # it explicitly unless an env var already chooses the config.
-            config_args: list[str] = []
-            if not any(os.environ.get(v) for v in CONFIG_ENV_VARS):
-                for name in (".betterleaks.toml", ".gitleaks.toml"):
-                    cfg = os.path.join(dir_path, name)
-                    if os.path.exists(cfg):
-                        config_args = ["-c", cfg]
-                        break
-            results = []
-            for chunk in _chunk_files(files, ARG_CHARS_PER_CALL, MAX_FILES_PER_CALL):
-                results.extend(self._run_scan(chunk, extra_args=config_args))
+            with tempfile.TemporaryDirectory(prefix="betterleaks-cfg-") as cfg_dir:
+                # The generated config is passed as -c, which outranks every
+                # other source, so it carries whichever config betterleaks
+                # would have chosen, in betterleaks' own order: env path, env
+                # content, the target's file.
+                env_path = next((os.environ[v] for v in CONFIG_PATH_ENV_VARS if os.environ.get(v)), None)
+                env_toml = next((os.environ[v] for v in CONFIG_TOML_ENV_VARS if os.environ.get(v)), None)
+                repo_path = next(
+                    (p for p in (os.path.join(dir_path, n) for n in (".betterleaks.toml", ".gitleaks.toml"))
+                     if os.path.exists(p)),
+                    None,
+                )
+                if env_path:
+                    base_toml = _read_text(env_path)
+                elif env_toml:
+                    base_toml = env_toml
+                else:
+                    base_toml = _read_text(repo_path) if repo_path else None
+                cfg = os.path.join(cfg_dir, "scan.toml")
+                with open(cfg, "w", encoding="utf-8") as fh:
+                    fh.write(scan_config_toml(dir_path, skipped, base_toml))
+                results = self._run_scan(dir_path, extra_args=["-c", cfg])
         grouped: dict[str, list[PatternMatch]] = {}
         for r in results:
             f = r.get("File", "unknown")

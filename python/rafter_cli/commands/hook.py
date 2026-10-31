@@ -455,8 +455,9 @@ def _writes_rafter_security_config(file_path: str) -> bool:
 def _evaluate_write(tool_input: dict) -> dict:
     # rf-vnxs: checked FIRST, and before the no-content early return, because a
     # truncating write with empty content disables the hook just as well as one
-    # carrying JSON.
-    if _writes_rafter_security_config(tool_input.get("file_path", "")):
+    # carrying JSON. apply_patch names its targets only in the patch headers.
+    targets = [tool_input.get("file_path", ""), *tool_input.get("patch_paths", [])]
+    if any(_writes_rafter_security_config(t) for t in targets):
         return {
             "decision": "deny",
             "reason": (
@@ -548,13 +549,64 @@ def _evaluate_tool_call(payload: dict, fmt: str) -> dict:
     if not control.hook_enabled:
         return {"decision": "allow"}
 
-    if tool_name == "Bash":
+    if tool_name in _SHELL_TOOLS:
         return _evaluate_bash(tool_input.get("command", ""), control)
-    if tool_name in ("Write", "Edit"):
+    if tool_name in _WRITE_TOOLS:
         if not control.secret_scan_enabled:
             return {"decision": "allow"}
-        return _evaluate_write(tool_input)
+        return _evaluate_write(_normalize_write_input(tool_name, tool_input))
     return {"decision": "allow"}
+
+
+# Shell and file-write tools under each platform's own name, so the same
+# policy applies whatever the tool is called.
+#   Shell: Bash (Claude Code, Codex, Continue), Shell (Cursor preToolUse),
+#          run_shell_command (Gemini CLI).
+#   Write: Write/Edit (Claude Code, Continue, Cursor), MultiEdit (Claude Code,
+#          Continue), write_file/replace (Gemini CLI), apply_patch (Codex).
+_SHELL_TOOLS = frozenset({"Bash", "Shell", "run_shell_command"})
+_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "write_file", "replace", "apply_patch"})
+
+
+def _normalize_write_input(tool_name: str, tool_input: dict) -> dict:
+    """Map each write tool's input onto the {file_path, content} shape _evaluate_write reads.
+
+    Continue's Write names its path ``filepath``; MultiEdit and Windsurf's
+    pre_write_code carry ``edits[].new_string``; Codex's apply_patch carries
+    the whole patch in ``command``, with its target paths in the patch
+    headers (``patch_paths``).
+    """
+    out = dict(tool_input)
+    if "file_path" not in out and isinstance(tool_input.get("filepath"), str):
+        out["file_path"] = tool_input["filepath"]
+    if not out.get("content") and not out.get("new_string"):
+        edits = tool_input.get("edits")
+        if isinstance(edits, list):
+            out["content"] = "\n".join(
+                e["new_string"] for e in edits if isinstance(e, dict) and isinstance(e.get("new_string"), str)
+            )
+        elif tool_name == "apply_patch" and isinstance(tool_input.get("command"), str):
+            out["content"] = tool_input["command"]
+    if tool_name == "apply_patch" and isinstance(tool_input.get("command"), str):
+        out["patch_paths"] = _apply_patch_paths(tool_input["command"])
+    return out
+
+
+# The apply_patch format carries its targets only in hunk headers, which Codex
+# matches on the trimmed line (codex-rs/apply-patch, apply_patch.lark).
+_APPLY_PATCH_HEADERS = ("*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: ")
+
+
+def _apply_patch_paths(patch: str) -> list[str]:
+    """Every path an apply_patch names."""
+    paths = []
+    for raw in patch.split("\n"):
+        line = raw.strip()
+        for header in _APPLY_PATCH_HEADERS:
+            if line.startswith(header):
+                paths.append(line[len(header):].strip())
+                break
+    return paths
 
 
 def _deny_on_error(exc: Exception) -> dict:
@@ -608,6 +660,13 @@ def posttool(
             redacted["content"] = scanner.redact(content_text)
             modified = True
 
+        # Scan and redact the error field (sable-t578). A tool that fails and
+        # echoes a credential in its error text surfaces it like output.
+        error_text = tool_response.get("error", "")
+        if error_text and isinstance(error_text, str) and scanner.has_secrets(error_text):
+            redacted["error"] = scanner.redact(error_text)
+            modified = True
+
         if modified:
             audit = AuditLogger()
             match_count = 0
@@ -615,6 +674,8 @@ def posttool(
                 match_count += len(scanner.scan_text(output_text))
             if content_text and isinstance(content_text, str):
                 match_count += len(scanner.scan_text(content_text))
+            if error_text and isinstance(error_text, str):
+                match_count += len(scanner.scan_text(error_text))
             audit.log_content_sanitized(f"{tool_name} tool response", match_count)
             _write_posttool_output({"action": "modify", "tool_response": redacted}, format)
             return

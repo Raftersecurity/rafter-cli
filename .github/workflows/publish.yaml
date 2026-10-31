@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - prod
+  # Rehearse the release gate without publishing. Every job that touches a
+  # registry runs only on the prod push (see `if:` below), so a dispatch runs
+  # test-node, test-python and test-package and stops there. A trigger added
+  # later inherits "does not publish" by default.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -159,6 +164,8 @@ jobs:
     # leaves the two runtimes at different versions on the two indexes —
     # the divergence is the failure mode, whichever half breaks. (sable-cazq)
     needs: [test-node, test-python, test-package]
+    # Only the prod push publishes; a workflow_dispatch stops here.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # Trusted Publishing requires id-token: write in scope for THIS job (the
     # top-level grant covers it, but documented here for the job-local audit
@@ -229,6 +236,8 @@ jobs:
     # tests run on the release path at all. #221 alone only stops a red NODE
     # suite shipping Python; it does not make Python tests run.
     needs: [test-node, test-python, test-package]
+    # Only the prod push publishes; a workflow_dispatch stops here.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     defaults:
       run:

@@ -44,7 +44,8 @@ export const DEFAULT_EXCLUDE: readonly string[] = [
   ".ruff_cache",
   "results",
   ".terraform",
-  "bower_components"
+  "bower_components",
+  ".trigger", // Trigger.dev build output (bundled JS + source maps)
 ];
 
 export class RegexScanner {

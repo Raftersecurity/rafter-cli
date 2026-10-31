@@ -24,7 +24,7 @@ describe("Policy export — Claude format", () => {
             hooks: [{ type: "command", command: "rafter hook pretool" }],
           },
           {
-            matcher: "Write|Edit",
+            matcher: "Write|Edit|MultiEdit",
             hooks: [{ type: "command", command: "rafter hook pretool" }],
           },
         ],
@@ -36,7 +36,7 @@ describe("Policy export — Claude format", () => {
     expect(config.hooks.PreToolUse).toHaveLength(2);
     const matchers = config.hooks.PreToolUse.map((e) => e.matcher);
     expect(matchers).toContain("Bash");
-    expect(matchers).toContain("Write|Edit");
+    expect(matchers).toContain("Write|Edit|MultiEdit");
 
     // Verify hook entries
     for (const entry of config.hooks.PreToolUse) {
@@ -57,7 +57,7 @@ describe("Policy export — Claude format", () => {
               hooks: [{ type: "command", command: "rafter hook pretool" }],
             },
             {
-              matcher: "Write|Edit",
+              matcher: "Write|Edit|MultiEdit",
               hooks: [{ type: "command", command: "rafter hook pretool" }],
             },
           ],
