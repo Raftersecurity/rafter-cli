@@ -22,6 +22,7 @@ import {
   cursorAgentArtifacts,
   openclawSkillArtifacts,
   openclawSkillPath,
+  FORCE_HINT,
   reportKeptSummary,
   reportUnchangedSummary,
   unchangedLine,
@@ -178,6 +179,7 @@ function printDryRunPlan(plan: {
       if (outcome === "unchanged") continue; // summed into one line below
       else if (outcome === "kept") W(`${a.dest}.rafter-new`, `${a.dest} kept: modified`);
       else if (outcome === "replaced") W(a.dest, `replaced; backup at ${a.dest}.bak`);
+      else if (outcome === "reconciled") S(a.dest, "modified, reconciled with this version; recorded");
       else W(a.dest, outcome);
     }
   };
@@ -1648,7 +1650,7 @@ export async function runAgentInit(opts: AgentInitOptions): Promise<void> {
 
   session.save();
   reportUnchangedSummary(session);
-  reportKeptSummary(session);
+  reportKeptSummary(session, FORCE_HINT, opts.local ? "rafter agent update --local" : "rafter agent update");
 
   out.info();
   // rf-er8a: do not report a clean success if the hook we just wrote cannot

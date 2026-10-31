@@ -331,6 +331,11 @@ Each run reports one line per file with its outcome, except that unchanged files
 | `updated` | The file held content rafter wrote (per the install manifest) or shipped in a published release; replaced |
 | `kept` | The file was modified locally or is not rafter's; left as is, new version written to `<file>.rafter-new` (stderr under `--quiet`) |
 | `replaced` | As `kept`, but `--force` was given; old file saved as `<file>.bak` (stderr under `--quiet`) |
+| `reconciled` | A kept file whose `<file>.rafter-new` the user removed (keeping their version) or moved over it after merging; recorded, and reported once |
+
+When any file is kept, the run ends with one line naming how many and how to reconcile them: merge the local changes into `<file>.rafter-new`, move it over `<file>`, then run `rafter agent update` (`--local` for a project install), or delete `<file>.rafter-new` to keep the local version as is.
+After that, the file is `unchanged` until a release ships a different version of it, when it is `kept` again.
+An existing `<file>.rafter-new` that rafter did not write (a merge in progress) is never overwritten; one left behind after the file was brought to the current version is removed.
 
 No write follows a symlink.
 A file that is a symlink is never written through: it is `unchanged` when its target already holds the current content, and otherwise `kept` (or `replaced` with `--force`, which moves the link itself to `<file>.bak`).
@@ -348,6 +353,9 @@ Rafter records what it wrote in an install manifest, `<root>/.rafter/installed.j
   }
 }
 ```
+
+For a kept file the entry also carries `pendingSha`, the sha256 of the version waiting in `<file>.rafter-new`; once the user reconciles, `reconciledWith` holds the sha256 of the version they reconciled against.
+The top-level `cliVersion` is the CLI that last installed or updated the whole integration; it is `null` when only the pretool hook's auto-update has written the manifest (see `rafter hook pretool`).
 
 Keys are paths relative to the root, with forward slashes; Node and Python read and write the same file.
 A missing or unreadable manifest is treated as empty (with one warning), so ownership falls back to `resources/shipped-hashes.json`, the sha256 of every bundled resource in every published release.
@@ -1067,11 +1075,13 @@ With `--probe`, an additional `Claude Code (probe)` check appears as the last en
     "probe": false
   },
   "stale": false,
-  "installed_version": "0.11.2"
+  "installed_version": "0.11.2",
+  "needs_reconcile": []
 }
 ```
 
 `stale` and `installed_version` report whether installed integrations are older than this CLI (see `rafter agent update`); staleness alone never changes the exit code. Without `--json`, a stale install adds one line naming `rafter agent update` after the summary.
+`needs_reconcile` lists the absolute paths of installed files the user modified that have a newer version waiting in `<file>.rafter-new`; without `--json`, each is listed with the reconcile instruction. It never changes the exit code.
 
 `status` is one of `pass | warn | fail`. `warn` is reserved for optional integrations that aren't installed; `fail` is reserved for hard failures (Config, Betterleaks, or any failing `--probe` check).
 
@@ -1089,6 +1099,7 @@ Show agent security status dashboard. Displays config summary, installed integra
   "version": "0.8.3",
   "stale": false,
   "installed_version": "0.8.3",
+  "needs_reconcile": [],
   "agents_detected": ["claude-code", "cursor"],
   "hooks_installed": ["pre-commit"],
   "betterleaks_available": true,
@@ -1104,6 +1115,7 @@ Show agent security status dashboard. Displays config summary, installed integra
 ```
 
 `stale` is true when installed integrations are older than this CLI ships (see `rafter agent update`); `installed_version` is the CLI version in the install manifest, or `null` for an install made before rafter kept one. Without `--json`, a stale install adds one line near the top naming `rafter agent update`.
+`needs_reconcile` is as in `rafter agent verify`.
 
 `hook_control` reports the runtime hook off-switch (see the *hook off-switch* note
 under `rafter hook pretool`). Each `source` is `default`, `global-config`, or `env`.
@@ -1119,7 +1131,7 @@ Installed platforms are read from the install manifest (`<root>/.rafter/installe
 - `--force` — replace modified skill, rule and sub-agent files, saving the old file as `<file>.bak` (as `agent init --force`)
 - `--quiet` — as `agent init --quiet`
 
-**Output:** the `agent init` report, headed `Rafter Agent Update`: one line per added, updated, kept or replaced file, one `N files unchanged` line, and the kept-file hint (see *Installed files and local edits* under `rafter agent init`). With nothing installed it prints `No rafter integrations found under <root>; nothing to update.` and how to install, and writes nothing.
+**Output:** the `agent init` report, headed `Rafter Agent Update`: one line per added, updated, kept, replaced or reconciled file, one `N files unchanged` line, and the kept-file hint (see *Installed files and local edits* under `rafter agent init`). With nothing installed it prints `No rafter integrations found under <root>; nothing to update.` and how to install, and writes nothing.
 
 **Exit codes:** `0` on success, including when files were kept or nothing was installed; non-zero only when setup itself fails (as `agent init`).
 
@@ -1215,6 +1227,8 @@ On a `git commit` / `git push` (and on `Write`/`Edit`), the hook scans for secre
 **Errors fail closed.** Input that is not a JSON object gets the no-decision answer (there is nothing to evaluate). Any unexpected exception while evaluating a call, for any tool, returns `deny` with the reason `rafter hook error: <type>: <message>; denying to be safe`, also printed to stderr. Conditions the loaders handle (a malformed `.rafter.yml` warns and falls back to defaults) are not errors. A failed audit-log write never changes a decision.
 
 **Hook off-switch.** The hook can be disabled at runtime from **trusted sources only** — the `RAFTER_DISABLE_HOOKS` / `RAFTER_DISABLE_SECRET_SCAN` / `RAFTER_DISABLE_COMMAND_POLICY` env vars (`1`/`true`/`yes`/`on` = off; `0`/`false` = force-on) and the global `~/.rafter/config.json` `agent.hooks.{enabled,secretScan,commandPolicy}` keys. Env overrides global; default is enabled; a corrupt config or unrecognized value fails safe to enabled. By design this is **never** read from project-local `.rafter.yml`, so a hostile repo cannot ship a config that silently disables a victim's hook. `rafter agent status` reports the effective state and its source. See `shared-docs/CONFIG.md` for the full configuration reference.
+
+**Auto-update after an upgrade.** After writing its decision, `hook pretool` checks at most once a day per CLI version (stamp file `~/.rafter/.update-check`) whether the user-scope install is older than this CLI: the manifest's `cliVersion` is older, or rafter's files are present with no manifest version. If so, it applies this CLI's skill, rule and sub-agent files under the install policy (see *Installed files and local edits* under `rafter agent init`): only files whose hash proves they hold rafter's content are replaced, a modified file is kept with `<file>.rafter-new` beside it, a skill or rule the user removed is not brought back, a file or `<file>.rafter-new` that is a symlink is skipped (`agent update` still writes through it), and retired rule files go only when their hash is rafter's. Hooks, MCP entries and instruction blocks are not touched, and the manifest keeps its old `cliVersion`, so `rafter agent status` still names `rafter agent update`. It writes nothing to stdout and never changes the decision or exit code; when it changed or kept anything it prints one line to stderr, for example `rafter: updated 12 skill/rule files to 0.12.0; 1 file you modified needs reconciling with <path>.rafter-new (run 'rafter agent status')`. `RAFTER_DISABLE_AUTO_UPDATE=1` turns it off. Project (`--local`) installs are not auto-updated.
 
 **Bounded stdin read.** Both `hook pretool` and `hook posttool` bound their stdin read so a host that opens the hook's stdin but never writes/closes it (no EOF) cannot wedge the hook: after the bound elapses the hook reads whatever arrived (typically nothing), fails open (no decision / no-op redaction), and the process **exits** — it does not merely emit a decision and keep running. The bound is **5000 ms** by default and is overridable via `RAFTER_HOOK_STDIN_TIMEOUT_MS` (positive integer milliseconds; non-positive or unparseable values fall back to the default). Both implementations honor the same env var identically.
 

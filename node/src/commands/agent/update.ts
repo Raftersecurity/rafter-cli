@@ -4,14 +4,15 @@ import os from "os";
 import path from "path";
 import { fmt } from "../../utils/formatter.js";
 import { RAFTER_MARKER_START } from "./instruction-block.js";
-import { runAgentInit } from "./init.js";
 import {
   InstallSession,
   RULE_SKILLS,
   WHOLE_FILE_PLATFORMS,
   cliVersion,
   manifestPath,
+  NEW_VERSION_SUFFIX,
   platformArtifacts,
+  reconcileInstruction,
 } from "./install-files.js";
 import { KNOWN_SKILL_NAMES } from "../skill/registry.js";
 
@@ -116,10 +117,12 @@ export interface InstallStaleness {
   cliVersion: string;
   /** Installed rafter files whose content is older than what this CLI ships. */
   outdatedFiles: number;
+  /** Installed files the user modified that have a newer version waiting in <file>.rafter-new. */
+  needsReconcile: string[];
   platforms: UpdatePlatform[];
 }
 
-function versionOlder(a: string, b: string): boolean {
+export function versionOlder(a: string, b: string): boolean {
   const parse = (v: string) => v.match(/^(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
   const x = parse(a);
   const y = parse(b);
@@ -145,9 +148,11 @@ export function installStaleness(root: string, scope: "user" | "project"): Insta
   let hasRecord = false;
   try {
     const doc = JSON.parse(fs.readFileSync(manifestPath(root), "utf-8"));
-    if (doc && typeof doc.files === "object") {
+    // A manifest with no cliVersion was written only by the hook's
+    // auto-update: the files are recorded, the install as a whole is not.
+    if (doc && typeof doc.files === "object" && typeof doc.cliVersion === "string") {
       hasRecord = true;
-      installedVersion = typeof doc.cliVersion === "string" ? doc.cliVersion : null;
+      installedVersion = doc.cliVersion;
     }
   } catch {
     /* no usable record */
@@ -165,7 +170,7 @@ export function installStaleness(root: string, scope: "user" | "project"): Insta
     outdatedFiles > 0 ||
     (installedVersion !== null && versionOlder(installedVersion, version)) ||
     (!hasRecord && presentFiles > 0);
-  return { stale, installedVersion, cliVersion: version, outdatedFiles, platforms };
+  return { stale, installedVersion, cliVersion: version, outdatedFiles, needsReconcile: session.keptFiles(), platforms };
 }
 
 /** The one line verify / status print when the install is stale. */
@@ -173,6 +178,17 @@ export function stalenessLine(s: InstallStaleness): string {
   const from = s.installedVersion ? `installed by rafter ${s.installedVersion}` : "installed before rafter kept an install record";
   const files = s.outdatedFiles > 0 ? `, ${s.outdatedFiles} file${s.outdatedFiles === 1 ? "" : "s"} older than this CLI ships` : "";
   return `Rafter integrations are out of date (${from}; this CLI is ${s.cliVersion}${files}). Run: rafter agent update`;
+}
+
+/** The lines verify / status print for modified files waiting on the user: each file, then how to reconcile. */
+export function reconcileLines(s: InstallStaleness, updateCommand: string = "rafter agent update"): string[] {
+  if (s.needsReconcile.length === 0) return [];
+  const n = s.needsReconcile.length;
+  return [
+    `${n} rafter file${n === 1 ? "" : "s"} you modified ${n === 1 ? "has" : "have"} a newer version waiting:`,
+    ...s.needsReconcile.map((f) => `  ${f}  (new: ${f}${NEW_VERSION_SUFFIX})`),
+    reconcileInstruction(updateCommand),
+  ];
 }
 
 export function createUpdateCommand(): Command {
@@ -198,6 +214,9 @@ export function createUpdateCommand(): Command {
         return;
       }
       const flags = Object.fromEntries(platforms.map((p) => [INIT_FLAG[p], true]));
+      // Loaded here, not at the top: the pretool hook imports this module for
+      // detectInstalledPlatforms and must not pay for init's dependencies.
+      const { runAgentInit } = await import("./init.js");
       await runAgentInit({
         ...flags,
         local: opts.local,

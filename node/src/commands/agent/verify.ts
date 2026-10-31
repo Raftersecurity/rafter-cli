@@ -9,7 +9,7 @@ import path from "path";
 import os from "os";
 import yaml from "js-yaml";
 import { fmt } from "../../utils/formatter.js";
-import { installStaleness, stalenessLine } from "./update.js";
+import { installStaleness, reconcileLines, stalenessLine } from "./update.js";
 
 /**
  * Run a configured PreToolUse hook command EXACTLY as Claude Code would — through
@@ -636,6 +636,7 @@ export function createVerifyCommand(): Command {
           },
           stale: staleness.stale,
           installed_version: staleness.installedVersion,
+          needs_reconcile: staleness.needsReconcile,
         };
         process.stdout.write(JSON.stringify(payload) + "\n");
       } else {
@@ -674,6 +675,8 @@ export function createVerifyCommand(): Command {
           console.log(fmt.error(`${passed.length}/${coreResults.length} checks passed — ${hardFailed.length} failed`));
         }
         if (staleness.stale) console.log(fmt.warning(stalenessLine(staleness)));
+        const reconcile = reconcileLines(staleness);
+        if (reconcile.length > 0) console.log(fmt.warning(reconcile.join("\n")));
         console.log();
       }
 

@@ -21,8 +21,10 @@ from .install_files import (
     WHOLE_FILE_PLATFORMS,
     InstallSession,
     cli_version,
+    NEW_VERSION_SUFFIX,
     manifest_path,
     platform_artifacts,
+    reconcile_instruction,
 )
 from .skill import KNOWN_SKILL_NAMES
 
@@ -105,9 +107,11 @@ class InstallStaleness:
     cli_version: str
     outdated_files: int  # installed rafter files older than what this CLI ships
     platforms: list[str] = field(default_factory=list)
+    # Installed files the user modified that have a newer version waiting in <file>.rafter-new.
+    needs_reconcile: list[Path] = field(default_factory=list)
 
 
-def _version_older(a: str, b: str) -> bool:
+def version_older(a: str, b: str) -> bool:
     def parse(v: str):
         m = re.match(r"^(\d+)\.(\d+)\.(\d+)", v)
         return tuple(int(x) for x in m.groups()) if m else None
@@ -140,10 +144,11 @@ def install_staleness(root: Path, scope: str) -> InstallStaleness:
     has_record = False
     try:
         doc = json.loads(manifest_path(root).read_text(encoding="utf-8"))
-        if isinstance(doc, dict) and isinstance(doc.get("files"), dict):
+        # A manifest with no cliVersion was written only by the hook's
+        # auto-update: the files are recorded, the install as a whole is not.
+        if isinstance(doc, dict) and isinstance(doc.get("files"), dict) and isinstance(doc.get("cliVersion"), str):
             has_record = True
-            v = doc.get("cliVersion")
-            installed_version = v if isinstance(v, str) else None
+            installed_version = doc["cliVersion"]
     except Exception:
         pass
     outdated = present = 0
@@ -157,10 +162,10 @@ def install_staleness(root: Path, scope: str) -> InstallStaleness:
                 outdated += 1
     stale = (
         outdated > 0
-        or (installed_version is not None and _version_older(installed_version, version))
+        or (installed_version is not None and version_older(installed_version, version))
         or (not has_record and present > 0)
     )
-    return InstallStaleness(stale, installed_version, version, outdated, platforms)
+    return InstallStaleness(stale, installed_version, version, outdated, platforms, session.kept_files())
 
 
 def staleness_line(s: InstallStaleness) -> str:
@@ -171,3 +176,15 @@ def staleness_line(s: InstallStaleness) -> str:
         if s.outdated_files else ""
     )
     return f"Rafter integrations are out of date ({origin}; this CLI is {s.cli_version}{files}). Run: rafter agent update"
+
+
+def reconcile_lines(s: InstallStaleness, update_command: str = "rafter agent update") -> list[str]:
+    """The lines verify / status print for modified files waiting on the user: each file, then how to reconcile."""
+    n = len(s.needs_reconcile)
+    if n == 0:
+        return []
+    return [
+        f"{n} rafter file{'' if n == 1 else 's'} you modified {'has' if n == 1 else 'have'} a newer version waiting:",
+        *(f"  {f}  (new: {f}{NEW_VERSION_SUFFIX})" for f in s.needs_reconcile),
+        reconcile_instruction(update_command),
+    ]
