@@ -12,6 +12,13 @@ import { describeSitesError } from "./errors.js";
 /** Default `--timeout` for `sites create --wait` / `sites scan --wait`, in seconds. */
 export const DEFAULT_WAIT_TIMEOUT_SECONDS = 900;
 
+/**
+ * Exit code when the user interrupts `--wait` with Ctrl-C: 128 + SIGINT, the
+ * shell convention, so scripts can tell "stopped waiting" from a failed run.
+ * The scan itself keeps running on the server.
+ */
+export const EXIT_WAIT_INTERRUPTED = 130;
+
 /** How often to poll the status route while waiting, in ms. */
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 
@@ -29,6 +36,13 @@ export interface SitesWaitDeps {
   pollIntervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** Subscribe to Ctrl-C; returns an unsubscribe. Defaults to process SIGINT. */
+  onInterrupt?: (cb: () => void) => () => void;
+}
+
+function onSigint(cb: () => void): () => void {
+  process.once("SIGINT", cb);
+  return () => { process.off("SIGINT", cb); };
 }
 
 export interface SitesWaitOpts {
@@ -62,7 +76,20 @@ export async function waitForSiteRun(
   const key = resolveKey(opts.apiKey);
   const deadline = now() + opts.timeoutSeconds * 1000;
 
+  let interrupted = false;
+  let wake: () => void = () => {};
+  const unsubscribe = (deps.onInterrupt ?? onSigint)(() => { interrupted = true; wake(); });
+  const stopped = (): number => {
+    console.error(
+      `Stopped waiting for run ${startedRunId}; the scan keeps running. ` +
+      `Check it with 'rafter sites get ${siteId}'.`
+    );
+    return EXIT_WAIT_INTERRUPTED;
+  };
+
+  try {
   for (;;) {
+    if (interrupted) return stopped();
     let data: any;
     try {
       ({ data } = await apiClient.get(
@@ -99,7 +126,14 @@ export async function waitForSiteRun(
       return EXIT_GENERAL_ERROR;
     }
 
-    await sleep(pollIntervalMs);
+    // Arm the wake-up before sleeping, so a Ctrl-C at any point is seen.
+    const woken = new Promise<void>((resolve) => { wake = resolve; });
+    if (interrupted) return stopped();
+    await Promise.race([sleep(pollIntervalMs), woken]);
+    if (interrupted) return stopped();
+  }
+  } finally {
+    unsubscribe();
   }
 }
 

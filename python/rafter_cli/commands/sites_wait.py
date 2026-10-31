@@ -20,6 +20,12 @@ from .sites import describe_sites_error, sites_api_url
 # Default `--timeout` for `sites create --wait` / `sites scan --wait`, in seconds.
 DEFAULT_WAIT_TIMEOUT_SECONDS = 900
 
+# Exit code when the user interrupts --wait with Ctrl-C: 128 + SIGINT, the
+# shell convention, so scripts can tell "stopped waiting" from a failed run.
+# The scan itself keeps running on the server. Mirrors EXIT_WAIT_INTERRUPTED
+# in node/src/commands/sites/wait.ts.
+EXIT_WAIT_INTERRUPTED = 130
+
 # How often to poll the status route while waiting, in seconds.
 DEFAULT_POLL_INTERVAL_SECONDS = 10
 
@@ -65,7 +71,20 @@ def wait_for_site_run(
     """
     key = resolve_key(api_key)
     deadline = now() + timeout_seconds
+    try:
+        return _poll(site_id, started_run_id, key, fmt, quiet, timeout_seconds, deadline,
+                     poll_interval_seconds, sleep, now)
+    except KeyboardInterrupt:
+        print(
+            f"Stopped waiting for run {started_run_id}; the scan keeps running. "
+            f"Check it with 'rafter sites get {site_id}'.",
+            file=sys.stderr,
+        )
+        return EXIT_WAIT_INTERRUPTED
 
+
+def _poll(site_id, started_run_id, key, fmt, quiet, timeout_seconds, deadline,
+          poll_interval_seconds, sleep, now) -> int:
     while True:
         resp = api_get(
             sites_api_url(f"/{site_id}"),

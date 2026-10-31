@@ -12,7 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from rafter_cli.commands.sites import sites_app, strip_control_chars_for_display
-from rafter_cli.commands.sites_wait import parse_wait_timeout, wait_for_site_run
+from rafter_cli.commands.sites_wait import EXIT_WAIT_INTERRUPTED, parse_wait_timeout, wait_for_site_run
 from rafter_cli.commands.mcp_server import (
     handle_sites_create,
     handle_sites_get,
@@ -335,6 +335,20 @@ class TestWaitForSiteRun:
         assert code == EXIT_GENERAL_ERROR
         err = capsys.readouterr().err
         assert "r1" in err and "p1" in err and "timed out" in err
+
+    def test_ctrl_c_stops_waiting_with_exit_130(self, capsys):
+        # Fails if Ctrl-C escapes as a traceback or a generic exit code.
+        def interrupted_sleep(_s):
+            raise KeyboardInterrupt
+        with patch("rafter_cli.commands.sites_wait.api_get") as mock_get:
+            mock_get.side_effect = [_mock_response(200, {"latest_run": {"id": "r1", "status": "running"}})]
+            code = wait_for_site_run(
+                "p1", "r1", "test-key", "json", True,
+                timeout_seconds=900, poll_interval_seconds=0,
+                sleep=interrupted_sleep, now=_fake_clock([0, 0]),
+            )
+        assert code == EXIT_WAIT_INTERRUPTED == 130
+        assert "rafter sites get p1" in capsys.readouterr().err
 
     def test_parse_wait_timeout_rejects_non_positive_values(self):
         seconds, error = parse_wait_timeout("0")

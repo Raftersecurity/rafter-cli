@@ -45,6 +45,7 @@ The CLI follows UNIX principles:
 | 2 | Not found (HTTP 404) — site not found, or not owned by this account (deliberately not distinguished) |
 | 3 | Quota / rate limited (HTTP 429) |
 | 4 | Insufficient scope / forbidden (HTTP 403) — the Sites API returns 403 for both wrong API-key scope and plan/site limits; the only signal is the free-text `error` message |
+| 130 | `create --wait`/`scan --wait` interrupted with Ctrl-C (128 + SIGINT). The CLI stops waiting and names the site to check with `rafter sites get`; the scan keeps running on the server. |
 
 ### Docs (`rafter docs list`, `rafter docs show`)
 
@@ -215,8 +216,9 @@ Response (200): `{"run": {...}}`.
 - **Failed:** prints the payload, exits `1`.
 - **A different run starts on the site before ours finishes** (its `latest_run.id` no longer matches the run id we started): stops immediately, prints an error naming both run ids, exits `1`. It never reports that other run's status as if it were the one requested.
 - **Timeout:** prints an error naming the run id and site id (so the result can be checked later with `rafter sites get <id>`), exits `1`.
+- **Ctrl-C:** stops waiting at once (not at the next poll), prints which site to check with `rafter sites get <id>`, exits `130`. The scan keeps running on the server.
 - **`create --wait` when no run was started** (`run` is `null` — the site already existed, or the first scan failed to kick off): prints a message that there is nothing to wait for and exits with the normal (non-`--wait`) create result; no polling happens.
-- `scan --wait` needs the site's id to poll; when the scan response doesn't name one and the command's argument was a URL rather than a project id, it exits `1` with an error rather than guessing.
+- `scan --wait` needs the site's id to poll (`run.project_id` in the scan response); when the response doesn't name one and the command's argument was a URL rather than a project id, it exits `1` with an error rather than guessing.
 
 ### rafter sites list [OPTIONS]
 

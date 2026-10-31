@@ -40,7 +40,7 @@ import axios from "axios";
 import { runSitesCreate } from "../src/commands/sites/create.js";
 import { runSitesScan } from "../src/commands/sites/scan.js";
 import { EXIT_SUCCESS, EXIT_GENERAL_ERROR, apiUrl } from "../src/utils/api.js";
-import type { SitesWaitDeps } from "../src/commands/sites/wait.js";
+import { EXIT_WAIT_INTERRUPTED, type SitesWaitDeps } from "../src/commands/sites/wait.js";
 
 const mockedAxios = vi.mocked((axios as any).create(), true);
 const opts = { apiKey: "test-key", format: "json", quiet: true };
@@ -135,6 +135,30 @@ describe("sites create --wait", () => {
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("r1"));
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("p1"));
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("timed out"));
+  });
+
+  it("Ctrl-C mid-sleep stops waiting with exit 130 and removes its handler", async () => {
+    // Fails if Ctrl-C is ignored until the next poll, kills the process with
+    // a generic code, or leaves a SIGINT listener behind.
+    mockedAxios.post.mockResolvedValueOnce({
+      data: { site: { id: "p1" }, run: { id: "r1" }, created: true },
+    });
+    mockedAxios.get.mockResolvedValueOnce({ data: { latest_run: { id: "r1", status: "running" } } });
+    let fire: () => void = () => {};
+    let unsubscribed = false;
+    const deps: SitesWaitDeps = {
+      pollIntervalMs: 0,
+      sleep: () => { fire(); return new Promise(() => {}); }, // a sleep that never ends on its own
+      now: fakeClock([0, 0]),
+      onInterrupt: (cb) => { fire = cb; return () => { unsubscribed = true; }; },
+    };
+
+    const code = await runSitesCreate("https://example.com", { ...opts, wait: true }, deps);
+
+    expect(code).toBe(EXIT_WAIT_INTERRUPTED);
+    expect(code).toBe(130);
+    expect(unsubscribed).toBe(true);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("rafter sites get p1"));
   });
 
   it("rejects a non-positive --timeout before making any request", async () => {
