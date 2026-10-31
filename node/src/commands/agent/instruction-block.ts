@@ -46,7 +46,7 @@ ${RAFTER_MARKER_END}`;
 /**
  * Aider has no skill-loading mechanism — `rafter-secure-design`,
  * `rafter-code-review`, and `rafter-skill-review` above are names, not files
- * it can load, unlike Claude Code / Codex / OpenClaw where each one is a real
+ * it can load, unlike Claude Code / Codex / Gemini where each one is a real
  * skill directory. This note tells an Aider session what's actually runnable
  * instead of leaving those names as dead pointers.
  */

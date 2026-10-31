@@ -72,7 +72,7 @@ a dependency still gets the full gate.
 
 # Aider has no skill-loading mechanism — `rafter-secure-design`,
 # `rafter-code-review`, and `rafter-skill-review` above are names, not files
-# it can load, unlike Claude Code / Codex / OpenClaw where each one is a real
+# it can load, unlike Claude Code / Codex / Gemini where each one is a real
 # skill directory. This note tells an Aider session what's actually runnable
 # instead of leaving those names as dead pointers.
 AIDER_NOTE_MARKER_START = "<!-- rafter:aider-note:start -->"
@@ -123,16 +123,20 @@ def _has_marker_block(file_path: Path) -> bool:
     return RAFTER_MARKER_START in content and RAFTER_MARKER_END in content
 
 
-def _strip_marker_block(file_path: Path) -> bool:
+def _strip_marker_block(
+    file_path: Path,
+    start_marker: str = RAFTER_MARKER_START,
+    end_marker: str = RAFTER_MARKER_END,
+) -> bool:
     if not file_path.exists():
         return False
     content = file_path.read_text(encoding="utf-8")
-    start = content.find(RAFTER_MARKER_START)
-    end = content.find(RAFTER_MARKER_END)
+    start = content.find(start_marker)
+    end = content.find(end_marker)
     if start == -1 or end == -1:
         return False
     before = content[:start].rstrip()
-    after = content[end + len(RAFTER_MARKER_END):].lstrip("\n")
+    after = content[end + len(end_marker):].lstrip("\n")
     next_content = (before + "\n" if before else "") + after
     file_path.write_text(next_content, encoding="utf-8")
     return True
@@ -1056,6 +1060,7 @@ def _aider_read() -> ComponentSpec:
 
     def install() -> None:
         _inject_instruction_file(rafter_md_path)
+        _inject_aider_note(rafter_md_path)
         raw = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
         # Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
         raw = _AIDER_LEGACY_MCP_BLOCK_RE.sub("\n", raw)
@@ -1090,7 +1095,13 @@ def _aider_read() -> ComponentSpec:
         # Excise only the managed block; any user content in RAFTER.md survives.
         # If the file was ours alone (nothing but the block), remove it.
         # A RAFTER.md with no markers is user-authored — leave it untouched.
-        if rafter_md_path.exists() and _strip_marker_block(rafter_md_path):
+        # Both managed blocks go: the main one and the Aider note that refers
+        # to "the skill names above" — left alone it would be an orphan.
+        stripped_main = _strip_marker_block(rafter_md_path)
+        stripped_note = _strip_marker_block(
+            rafter_md_path, AIDER_NOTE_MARKER_START, AIDER_NOTE_MARKER_END
+        )
+        if rafter_md_path.exists() and (stripped_main or stripped_note):
             try:
                 if not rafter_md_path.read_text(encoding="utf-8").strip():
                     rafter_md_path.unlink()

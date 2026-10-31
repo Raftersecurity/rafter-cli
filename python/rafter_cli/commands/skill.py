@@ -157,7 +157,13 @@ def remove_retired_skills(
             continue
         if not _is_rafter_authored_skill_dir(skill_dir):
             continue
-        shutil.rmtree(skill_dir, ignore_errors=True)
+        # A symlinked skill dir: drop the link, never follow it into its
+        # target. Errors propagate (as Node's rmSync does) rather than
+        # reporting a removal that did not happen.
+        if skill_dir.is_symlink():
+            skill_dir.unlink()
+        else:
+            shutil.rmtree(skill_dir)
         removed.append(name)
     return removed
 

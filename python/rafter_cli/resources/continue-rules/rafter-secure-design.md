@@ -6,7 +6,7 @@ alwaysApply: false
 
 # rafter-secure-design — shift-left design review
 
-Pointer rule for the `rafter-secure-design` skill. Use it BEFORE writing code for any feature on the surface listed above. (The full skill — with a sub-doc per category — installs under `.claude/skills/rafter-secure-design/` only for Claude Code, Codex, and OpenClaw; this rule is the condensed equivalent here.)
+Pointer rule for the `rafter-secure-design` skill. Use it BEFORE writing code for any feature on the surface listed above. (The full skill — with a sub-doc per category — installs as its own skill directory only for Claude Code (`.claude/skills/rafter-secure-design/`) and for Codex and Gemini (`.agents/skills/rafter-secure-design/`); this rule is the condensed equivalent here.)
 
 - Reason through the matching category by hand: auth, data storage, API design, ingestion, deployment, dependencies. Each is a set of questions a security engineer would ask at kickoff — answer them inline in the design or PR description.
 - Pair with `rafter-code-review` (mid-lifecycle) and `rafter run` (detection) once code exists.

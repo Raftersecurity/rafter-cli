@@ -5,7 +5,10 @@ import yaml from "js-yaml";
 import {
   RAFTER_MARKER_START,
   RAFTER_MARKER_END,
+  AIDER_NOTE_MARKER_START,
+  AIDER_NOTE_MARKER_END,
   injectInstructionFile,
+  injectAiderNote,
 } from "./instruction-block.js";
 import { ConfigManager } from "../../core/config-manager.js";
 import { KNOWN_SKILL_NAMES, removeRetiredSkills } from "../skill/registry.js";
@@ -98,14 +101,18 @@ function hookEntryMatchesRafter(entry: any, prefix: string): boolean {
 }
 
 /** Strip the rafter marker block from a text file, writing only if the file actually changed. */
-function stripMarkerBlock(filePath: string): boolean {
+function stripMarkerBlock(
+  filePath: string,
+  startMarker: string = RAFTER_MARKER_START,
+  endMarker: string = RAFTER_MARKER_END,
+): boolean {
   if (!fs.existsSync(filePath)) return false;
   const content = fs.readFileSync(filePath, "utf-8");
-  const startIdx = content.indexOf(RAFTER_MARKER_START);
-  const endIdx = content.indexOf(RAFTER_MARKER_END);
+  const startIdx = content.indexOf(startMarker);
+  const endIdx = content.indexOf(endMarker);
   if (startIdx === -1 || endIdx === -1) return false;
   const before = content.slice(0, startIdx).trimEnd();
-  const after = content.slice(endIdx + RAFTER_MARKER_END.length);
+  const after = content.slice(endIdx + endMarker.length);
   const trailing = after.replace(/^\s*\n+/, "");
   const next = (before ? before + "\n" : "") + trailing;
   fs.writeFileSync(filePath, next, "utf-8");
@@ -1027,6 +1034,7 @@ function aiderRead(): ComponentSpec {
     },
     install: () => {
       injectInstructionFile(rafterMdPath);
+      injectAiderNote(rafterMdPath);
       let raw = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : "";
       // Strip legacy mcp-server-command silent-no-op (rf-du2o migration).
       raw = raw.replace(
@@ -1062,7 +1070,11 @@ function aiderRead(): ComponentSpec {
       // Excise only the managed block; any user content in RAFTER.md survives.
       // If the file was ours alone (nothing but the block), remove it.
       // A RAFTER.md with no markers is user-authored — leave it untouched.
-      if (fs.existsSync(rafterMdPath) && stripMarkerBlock(rafterMdPath)) {
+      // Both managed blocks go: the main one and the Aider note that refers
+      // to "the skill names above" — left alone it would be an orphan.
+      const strippedMain = stripMarkerBlock(rafterMdPath);
+      const strippedNote = stripMarkerBlock(rafterMdPath, AIDER_NOTE_MARKER_START, AIDER_NOTE_MARKER_END);
+      if (fs.existsSync(rafterMdPath) && (strippedMain || strippedNote)) {
         try {
           if (fs.readFileSync(rafterMdPath, "utf-8").trim() === "") {
             fs.rmSync(rafterMdPath, { force: true });

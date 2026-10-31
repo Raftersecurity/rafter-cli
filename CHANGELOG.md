@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agent-facing docs and rules no longer point at commands and skills that do not exist.** `rafter brief commands` printed headings left over from old skill layouts; it now prints the skill's Fast Path and the Quick Decision Table from the CLI reference. The Cursor, Windsurf and Continue rules for `rafter-secure-design`, `rafter-code-review` and `rafter-skill-review` were rewritten to name real `rafter` commands, and they say the full skill directory installs only for Claude Code (`.claude/skills/`) and for Codex and Gemini (`.agents/skills/`). Aider has no skill loader, so `RAFTER.md` now carries a short note naming the terminal commands to run instead; `agent init --with-aider` and `agent enable aider.read` both write it, and `agent disable aider.read` removes it with the main block, deleting `RAFTER.md` when nothing else is left and keeping any user text. Installing skills now also removes a rafter-published skill directory left behind by a rename (identified by `publisher: rafter-security` in its `SKILL.md`; a user's skill with the same name is left alone, and a symlinked one is unlinked, never followed). Both Node and Python.
+
 ## [0.11.5] - 2026-10-30
 
 ### Security

@@ -6,6 +6,19 @@ import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { randomBytes } from "crypto";
 import { removeRetiredSkills, isRafterAuthoredSkillDir } from "../src/commands/skill/registry.js";
+import { resolveComponent, resetComponentRegistryCache } from "../src/commands/agent/components.js";
+
+// RETIRED_SKILL_NAMES is empty today, so a call site that relies on the
+// default list is given one injected retired name here. Calls that pass an
+// explicit list (the unit tests below) are unaffected.
+vi.mock("../src/commands/skill/registry.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/commands/skill/registry.js")>();
+  return {
+    ...actual,
+    removeRetiredSkills: (dir: string, names?: readonly string[]) =>
+      actual.removeRetiredSkills(dir, names ?? ["rafter-old-name"]),
+  };
+});
 
 /**
  * Tests for `rafter skill list / install / uninstall`. Each test uses a fake
@@ -282,5 +295,36 @@ describe("removeRetiredSkills — generic stale-skill cleanup", () => {
     const userDir = writeSkill("rafter-y", undefined);
     expect(isRafterAuthoredSkillDir(rafterDir)).toBe(true);
     expect(isRafterAuthoredSkillDir(userDir)).toBe(false);
+  });
+});
+
+describe("retired-skill cleanup through the real install path", () => {
+  let home: string;
+  const realHome = process.env.HOME;
+  beforeEach(() => {
+    home = makeHome();
+    process.env.HOME = home;
+    resetComponentRegistryCache();
+  });
+  afterEach(() => {
+    process.env.HOME = realHome;
+    resetComponentRegistryCache();
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("enabling claude-code.skills removes a retired rafter skill dir", () => {
+    // Fails if the skills component install stops calling removeRetiredSkills.
+    const skillsDir = path.join(home, ".claude", "skills");
+    const retired = path.join(skillsDir, "rafter-old-name");
+    fs.mkdirSync(retired, { recursive: true });
+    fs.writeFileSync(
+      path.join(retired, "SKILL.md"),
+      "---\nname: rafter-old-name\npublisher: rafter-security\n---\n",
+    );
+
+    resolveComponent("claude-code.skills")!.install();
+
+    expect(fs.existsSync(path.join(skillsDir, "rafter", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(retired)).toBe(false);
   });
 });

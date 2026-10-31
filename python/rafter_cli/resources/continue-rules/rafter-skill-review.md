@@ -6,7 +6,7 @@ alwaysApply: false
 
 # rafter-skill-review — vet before you install
 
-Pointer rule for the `rafter-skill-review` skill. Use it BEFORE installing or forwarding any third-party agent asset. (The full skill — with sub-docs on provenance, malware, prompt injection, data practices, and telemetry — installs under `.claude/skills/rafter-skill-review/` only for Claude Code, Codex, and OpenClaw; this rule is the condensed equivalent here.)
+Pointer rule for the `rafter-skill-review` skill. Use it BEFORE installing or forwarding any third-party agent asset. (The full skill — with sub-docs on provenance, malware, prompt injection, data practices, and telemetry — installs as its own skill directory only for Claude Code (`.claude/skills/rafter-skill-review/`) and for Codex and Gemini (`.agents/skills/rafter-skill-review/`); this rule is the condensed equivalent here.)
 
 - Run `rafter skill review <path-or-url>` against the SKILL.md / MCP manifest / Cursor rule / agent config — its report already covers most of the deeper checks (provenance, obfuscation, secrets, prompt-injection patterns).
 - Weigh telemetry, allowed-tools scope, and network egress by hand on top of that report.
