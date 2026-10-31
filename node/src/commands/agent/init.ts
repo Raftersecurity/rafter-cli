@@ -1153,551 +1153,572 @@ export function createInitCommand(): Command {
       false,
     )
     .option("--quiet", "Suppress informational and success output (warnings and errors still go to stderr)", false)
-    .action(async (opts) => {
-      const out = createInitOutput(opts.quiet === true);
-      out.info(fmt.header("Rafter Agent Security Setup"));
-      out.info(fmt.divider());
-      out.info();
+    .action(async (opts) => runAgentInit(opts));
+}
 
-      const manager = new ConfigManager();
-      const root = opts.local ? process.cwd() : os.homedir();
-      const scope: "project" | "user" = opts.local ? "project" : "user";
-      // Every skill / rule / sub-agent file goes through this session's write
-      // policy and is recorded in <root>/.rafter/installed.json.
-      const session = new InstallSession({ root, out, force: opts.force === true, dryRun: opts.dryRun === true });
-      if (opts.local) {
-        out.info(fmt.info(`Project-local install — writing configs under ${root}`));
-      }
+/**
+ * Options `runAgentInit` reads: init's own flags, plus two that only
+ * `rafter agent update` sets. `mode: "update"` changes the header, and an
+ * undefined `riskLevel` leaves the configured risk level alone.
+ */
+export interface AgentInitOptions {
+  [flag: string]: any;
+  riskLevel?: string;
+  mode?: "init" | "update";
+}
 
-      // Platforms supported in --local scope: Claude Code, Codex, Gemini, Cursor.
-      // Windsurf, Continue.dev, Aider are skipped in --local because their
-      // project-local config story is not established in their CLIs today.
+/**
+ * The body of `rafter agent init`. `rafter agent update` calls it with the
+ * --with-<platform> flags of the platforms already installed, so both
+ * commands refresh skills, rules, marker blocks, hooks and MCP entries
+ * through one code path.
+ */
+export async function runAgentInit(opts: AgentInitOptions): Promise<void> {
+  const out = createInitOutput(opts.quiet === true);
+  out.info(fmt.header(opts.mode === "update" ? "Rafter Agent Update" : "Rafter Agent Security Setup"));
+  out.info(fmt.divider());
+  out.info();
 
-      // Detect environments. In local scope, don't probe user-global paths —
-      // the user must opt in explicitly via --with-<platform>.
-      const hasOpenClaw = scope === "user" && fs.existsSync(path.join(os.homedir(), ".openclaw"));
-      const hasClaudeCode = scope === "user" && fs.existsSync(path.join(os.homedir(), ".claude"));
-      const hasCodex = scope === "user" && fs.existsSync(path.join(os.homedir(), ".codex"));
-      const hasGemini = scope === "user" && fs.existsSync(path.join(os.homedir(), ".gemini"));
-      const hasCursor = scope === "user" && fs.existsSync(path.join(os.homedir(), ".cursor"));
-      const hasWindsurf = scope === "user" && fs.existsSync(path.join(os.homedir(), ".codeium", "windsurf"));
-      const hasContinueDev = scope === "user" && fs.existsSync(path.join(os.homedir(), ".continue"));
-      const hasAider = scope === "user" && fs.existsSync(path.join(os.homedir(), ".aider.conf.yml"));
-      const hasHermes = scope === "user" && fs.existsSync(path.join(os.homedir(), ".hermes"));
-      const hasOpenCode = scope === "user" && fs.existsSync(path.join(os.homedir(), ".config", "opencode"));
+  const manager = new ConfigManager();
+  const root = opts.local ? process.cwd() : os.homedir();
+  const scope: "project" | "user" = opts.local ? "project" : "user";
+  // Every skill / rule / sub-agent file goes through this session's write
+  // policy and is recorded in <root>/.rafter/installed.json.
+  const session = new InstallSession({ root, out, force: opts.force === true, dryRun: opts.dryRun === true });
+  if (opts.local) {
+    out.info(fmt.info(`Project-local install — writing configs under ${root}`));
+  }
 
-      // Resolve opt-in flags (--all enables all detected, --interactive prompts).
-      // In --local scope, --all is restricted to platforms that have a project-local
-      // config story (claudeCode, codex, gemini, cursor). The rest require user scope.
-      // OpenClaw returns to --all in rf-zgwj — the integration was rebuilt
-      // to ship a ClawHub-shaped skill at the canonical workspace path
-      // (~/.openclaw/workspace/skills/rafter-security/SKILL.md), so OpenClaw
-      // actually auto-discovers it now. (User-scope only; --local doesn't
-      // apply since the platform is user-config-driven.)
-      let wantOpenClaw = opts.withOpenclaw || (opts.all && !opts.local);
-      let wantClaudeCode = opts.withClaudeCode || opts.all;
-      let wantCodex = opts.withCodex || opts.all;
-      let wantGemini = opts.withGemini || opts.all;
-      let wantCursor = opts.withCursor || opts.all;
-      // Windsurf can install at --local scope (project rules + AGENTS.md)
-      // since rf-0vr3. User scope still also installs the MCP entry.
-      let wantWindsurf = opts.withWindsurf || opts.all;
-      // Continue.dev can install at --local scope (project rules) since rf-acz0.
-      // User scope additionally registers the MCP entry.
-      let wantContinue = opts.withContinue || opts.all;
-      // Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
-      // in cwd) since rf-du2o.
-      let wantAider = opts.withAider || opts.all;
-      // Hermes: MCP-only v0 (no hooks confirmed yet). User scope only — Hermes
-      // reads ~/.hermes/config.yaml; the project-local install story isn't
-      // established. Excluded from --all in --local for the same reason.
-      let wantHermes = opts.withHermes || (opts.all && !opts.local);
-      // OpenCode: MCP-based, user scope only. OpenCode reads a global config at
-      // ~/.config/opencode/opencode.json; a project-local install story via
-      // --local isn't wired here, so (like Hermes) it's excluded from --all in
-      // --local scope. It supports MCP local/stdio servers and AGENTS.md
-      // natively (https://opencode.ai/docs/mcp-servers/, sable-l8e5).
-      let wantOpenCode = opts.withOpencode || (opts.all && !opts.local);
-      let wantBetterleaks = opts.withBetterleaks || (opts.all && !opts.local);
-      // skill-scanner is heavy and opt-in only — deliberately NOT folded into --all.
-      const wantSkillScanner = !!opts.withSkillScanner;
+  // Platforms supported in --local scope: Claude Code, Codex, Gemini, Cursor.
+  // Windsurf, Continue.dev, Aider are skipped in --local because their
+  // project-local config story is not established in their CLIs today.
 
-      // Interactive mode: prompt for each detected integration
-      if (opts.interactive && !opts.all) {
-        out.info();
-        out.info(fmt.info("Select integrations to install:"));
-        out.info();
-        if (hasClaudeCode && !wantClaudeCode) wantClaudeCode = await askYesNo("Install Claude Code hooks + skills?");
-        if (hasCodex && !wantCodex) wantCodex = await askYesNo("Install Codex CLI skills + hooks?");
-        if (hasOpenClaw && !wantOpenClaw) wantOpenClaw = await askYesNo("Install OpenClaw skill?");
-        if (hasGemini && !wantGemini) wantGemini = await askYesNo("Install Gemini CLI MCP + hooks?");
-        if (hasCursor && !wantCursor) wantCursor = await askYesNo("Install Cursor MCP + hooks?");
-        if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP + hooks?");
-        if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP server?");
-        if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
-        if (hasHermes && !wantHermes) wantHermes = await askYesNo("Install Hermes MCP server?");
-        if (hasOpenCode && !wantOpenCode) wantOpenCode = await askYesNo("Install OpenCode MCP server?");
-        if (!wantBetterleaks) wantBetterleaks = await askYesNo("Download Betterleaks binary (enhanced scanning)?");
-        out.info();
-      }
+  // Detect environments. In local scope, don't probe user-global paths —
+  // the user must opt in explicitly via --with-<platform>.
+  const hasOpenClaw = scope === "user" && fs.existsSync(path.join(os.homedir(), ".openclaw"));
+  const hasClaudeCode = scope === "user" && fs.existsSync(path.join(os.homedir(), ".claude"));
+  const hasCodex = scope === "user" && fs.existsSync(path.join(os.homedir(), ".codex"));
+  const hasGemini = scope === "user" && fs.existsSync(path.join(os.homedir(), ".gemini"));
+  const hasCursor = scope === "user" && fs.existsSync(path.join(os.homedir(), ".cursor"));
+  const hasWindsurf = scope === "user" && fs.existsSync(path.join(os.homedir(), ".codeium", "windsurf"));
+  const hasContinueDev = scope === "user" && fs.existsSync(path.join(os.homedir(), ".continue"));
+  const hasAider = scope === "user" && fs.existsSync(path.join(os.homedir(), ".aider.conf.yml"));
+  const hasHermes = scope === "user" && fs.existsSync(path.join(os.homedir(), ".hermes"));
+  const hasOpenCode = scope === "user" && fs.existsSync(path.join(os.homedir(), ".config", "opencode"));
 
-      // Show detected environments with opt-in hints
-      const detected: string[] = [];
-      if (hasOpenClaw) detected.push("OpenClaw");
-      if (hasClaudeCode) detected.push("Claude Code");
-      if (hasCodex) detected.push("Codex CLI");
-      if (hasGemini) detected.push("Gemini CLI");
-      if (hasCursor) detected.push("Cursor");
-      if (hasWindsurf) detected.push("Windsurf");
-      if (hasContinueDev) detected.push("Continue.dev");
-      if (hasAider) detected.push("Aider");
-      if (hasHermes) detected.push("Hermes");
-      if (hasOpenCode) detected.push("OpenCode");
+  // Resolve opt-in flags (--all enables all detected, --interactive prompts).
+  // In --local scope, --all is restricted to platforms that have a project-local
+  // config story (claudeCode, codex, gemini, cursor). The rest require user scope.
+  // OpenClaw returns to --all in rf-zgwj — the integration was rebuilt
+  // to ship a ClawHub-shaped skill at the canonical workspace path
+  // (~/.openclaw/workspace/skills/rafter-security/SKILL.md), so OpenClaw
+  // actually auto-discovers it now. (User-scope only; --local doesn't
+  // apply since the platform is user-config-driven.)
+  let wantOpenClaw = opts.withOpenclaw || (opts.all && !opts.local);
+  let wantClaudeCode = opts.withClaudeCode || opts.all;
+  let wantCodex = opts.withCodex || opts.all;
+  let wantGemini = opts.withGemini || opts.all;
+  let wantCursor = opts.withCursor || opts.all;
+  // Windsurf can install at --local scope (project rules + AGENTS.md)
+  // since rf-0vr3. User scope still also installs the MCP entry.
+  let wantWindsurf = opts.withWindsurf || opts.all;
+  // Continue.dev can install at --local scope (project rules) since rf-acz0.
+  // User scope additionally registers the MCP entry.
+  let wantContinue = opts.withContinue || opts.all;
+  // Aider can install at --local scope (writes RAFTER.md + .aider.conf.yml
+  // in cwd) since rf-du2o.
+  let wantAider = opts.withAider || opts.all;
+  // Hermes: MCP-only v0 (no hooks confirmed yet). User scope only — Hermes
+  // reads ~/.hermes/config.yaml; the project-local install story isn't
+  // established. Excluded from --all in --local for the same reason.
+  let wantHermes = opts.withHermes || (opts.all && !opts.local);
+  // OpenCode: MCP-based, user scope only. OpenCode reads a global config at
+  // ~/.config/opencode/opencode.json; a project-local install story via
+  // --local isn't wired here, so (like Hermes) it's excluded from --all in
+  // --local scope. It supports MCP local/stdio servers and AGENTS.md
+  // natively (https://opencode.ai/docs/mcp-servers/, sable-l8e5).
+  let wantOpenCode = opts.withOpencode || (opts.all && !opts.local);
+  let wantBetterleaks = opts.withBetterleaks || (opts.all && !opts.local);
+  // skill-scanner is heavy and opt-in only — deliberately NOT folded into --all.
+  const wantSkillScanner = !!opts.withSkillScanner;
 
-      if (detected.length > 0) {
-        out.info(fmt.info(`Detected environments: ${detected.join(", ")}`));
-      } else {
-        out.info(fmt.info("No agent environments detected"));
-      }
+  // Interactive mode: prompt for each detected integration
+  if (opts.interactive && !opts.all) {
+    out.info();
+    out.info(fmt.info("Select integrations to install:"));
+    out.info();
+    if (hasClaudeCode && !wantClaudeCode) wantClaudeCode = await askYesNo("Install Claude Code hooks + skills?");
+    if (hasCodex && !wantCodex) wantCodex = await askYesNo("Install Codex CLI skills + hooks?");
+    if (hasOpenClaw && !wantOpenClaw) wantOpenClaw = await askYesNo("Install OpenClaw skill?");
+    if (hasGemini && !wantGemini) wantGemini = await askYesNo("Install Gemini CLI MCP + hooks?");
+    if (hasCursor && !wantCursor) wantCursor = await askYesNo("Install Cursor MCP + hooks?");
+    if (hasWindsurf && !wantWindsurf) wantWindsurf = await askYesNo("Install Windsurf MCP + hooks?");
+    if (hasContinueDev && !wantContinue) wantContinue = await askYesNo("Install Continue.dev MCP server?");
+    if (hasAider && !wantAider) wantAider = await askYesNo("Install Aider MCP server?");
+    if (hasHermes && !wantHermes) wantHermes = await askYesNo("Install Hermes MCP server?");
+    if (hasOpenCode && !wantOpenCode) wantOpenCode = await askYesNo("Install OpenCode MCP server?");
+    if (!wantBetterleaks) wantBetterleaks = await askYesNo("Download Betterleaks binary (enhanced scanning)?");
+    out.info();
+  }
 
-      // Warn about requested but undetected environments (user scope only —
-      // in --local scope we create the directories in CWD as needed).
-      // Gated on the EXPLICIT --with-<platform> flag, not the resolved
-      // want* (which --all also sets): --all means "install all DETECTED
-      // integrations" per its own --help text, so an undetected platform
-      // under --all is normal and shouldn't warn individually — 9 such
-      // warnings buried the ones that actually matter (rafter-cli#231).
-      if (scope === "user") {
-        if (opts.withOpenclaw && !hasOpenClaw) out.warn(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"));
-        if (opts.withClaudeCode && !hasClaudeCode) out.warn(fmt.warning("Claude Code requested but not detected (~/.claude not found)"));
-        if (opts.withCodex && !hasCodex) out.warn(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"));
-        if (opts.withGemini && !hasGemini) out.warn(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"));
-        if (opts.withCursor && !hasCursor) out.warn(fmt.warning("Cursor requested but not detected (~/.cursor not found)"));
-        if (opts.withWindsurf && !hasWindsurf) out.warn(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
-        if (opts.withContinue && !hasContinueDev) out.warn(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
-        if (opts.withAider && !hasAider) out.warn(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
-        if (opts.withHermes && !hasHermes) out.warn(fmt.warning("Hermes requested but not detected (~/.hermes not found)"));
-        if (opts.withOpencode && !hasOpenCode) out.warn(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"));
-      }
+  // Show detected environments with opt-in hints
+  const detected: string[] = [];
+  if (hasOpenClaw) detected.push("OpenClaw");
+  if (hasClaudeCode) detected.push("Claude Code");
+  if (hasCodex) detected.push("Codex CLI");
+  if (hasGemini) detected.push("Gemini CLI");
+  if (hasCursor) detected.push("Cursor");
+  if (hasWindsurf) detected.push("Windsurf");
+  if (hasContinueDev) detected.push("Continue.dev");
+  if (hasAider) detected.push("Aider");
+  if (hasHermes) detected.push("Hermes");
+  if (hasOpenCode) detected.push("OpenCode");
 
-      // --dry-run: print every file path the command would touch, then
-      // exit before any filesystem write happens (rf-hrtd). The plan is
-      // built from the SAME resolved want* / has* booleans the install
-      // path uses, so the listing mirrors what would actually run.
-      if (opts.dryRun) {
-        const bm = new BinaryManager();
-        const betterleaksExisting = !wantBetterleaks || opts.update
-          ? null
-          : bm.isBetterleaksInstalled()
-            ? bm.getBetterleaksPath()
-            : bm.findBetterleaksOnPath();
-        const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
-        printDryRunPlan({
-          root,
-          scope,
-          wantOpenClaw: wantOpenClaw && (hasOpenClaw),
-          wantClaudeCode: wantClaudeCode && (hasClaudeCode || opts.withClaudeCode || opts.local),
-          wantCodex: wantCodex && (hasCodex || opts.local),
-          wantGemini: wantGemini && (hasGemini || opts.local),
-          wantCursor: wantCursor && (hasCursor || opts.local),
-          wantWindsurf: wantWindsurf && (hasWindsurf || opts.local),
-          wantContinue: wantContinue && (hasContinueDev || opts.local),
-          wantAider: wantAider && (hasAider || opts.local),
-          wantHermes: wantHermes && hasHermes,
-          wantOpenCode: wantOpenCode && hasOpenCode,
-          wantBetterleaks,
-          betterleaksExisting,
-          betterleaksSupported: bm.getPlatformInfo().supported,
-          wantSkillScanner,
-          claudeCodeMcpDisabled: components["claude-code.mcp"]?.enabled === false,
-          riskLevel: opts.riskLevel,
-          session,
-        });
-        return;
-      }
+  if (detected.length > 0) {
+    out.info(fmt.info(`Detected environments: ${detected.join(", ")}`));
+  } else {
+    out.info(fmt.info("No agent environments detected"));
+  }
 
-      // Initialize directory structure
-      try {
-        await manager.initialize();
-        out.info(fmt.success("Created config at ~/.rafter/config.json"));
-      } catch (e) {
-        console.error(fmt.error(`Failed to initialize: ${e}`));
-        process.exit(1);
-      }
+  // Warn about requested but undetected environments (user scope only —
+  // in --local scope we create the directories in CWD as needed).
+  // Gated on the EXPLICIT --with-<platform> flag, not the resolved
+  // want* (which --all also sets): --all means "install all DETECTED
+  // integrations" per its own --help text, so an undetected platform
+  // under --all is normal and shouldn't warn individually — 9 such
+  // warnings buried the ones that actually matter (rafter-cli#231).
+  if (scope === "user") {
+    if (opts.withOpenclaw && !hasOpenClaw) out.warn(fmt.warning("OpenClaw requested but not detected (~/.openclaw not found)"));
+    if (opts.withClaudeCode && !hasClaudeCode) out.warn(fmt.warning("Claude Code requested but not detected (~/.claude not found)"));
+    if (opts.withCodex && !hasCodex) out.warn(fmt.warning("Codex CLI requested but not detected (~/.codex not found)"));
+    if (opts.withGemini && !hasGemini) out.warn(fmt.warning("Gemini CLI requested but not detected (~/.gemini not found)"));
+    if (opts.withCursor && !hasCursor) out.warn(fmt.warning("Cursor requested but not detected (~/.cursor not found)"));
+    if (opts.withWindsurf && !hasWindsurf) out.warn(fmt.warning("Windsurf requested but not detected (~/.codeium/windsurf not found)"));
+    if (opts.withContinue && !hasContinueDev) out.warn(fmt.warning("Continue.dev requested but not detected (~/.continue not found)"));
+    if (opts.withAider && !hasAider) out.warn(fmt.warning("Aider requested but not detected (~/.aider.conf.yml not found)"));
+    if (opts.withHermes && !hasHermes) out.warn(fmt.warning("Hermes requested but not detected (~/.hermes not found)"));
+    if (opts.withOpencode && !hasOpenCode) out.warn(fmt.warning("OpenCode requested but not detected (~/.config/opencode not found)"));
+  }
 
-      // Set risk level
-      const validRiskLevels = ["minimal", "moderate", "aggressive"];
-      if (!validRiskLevels.includes(opts.riskLevel)) {
-        console.error(fmt.error(`Invalid risk level: ${opts.riskLevel}`));
-        console.error(`Valid options: ${validRiskLevels.join(", ")}`);
-        process.exit(1);
-      }
-
-      manager.set("agent.riskLevel", opts.riskLevel);
-      out.info(fmt.success(`Set risk level: ${opts.riskLevel}`));
-
-      // Check / download Betterleaks binary (opt-in via --with-betterleaks or --all)
-      if (wantBetterleaks) {
-        const binaryManager = new BinaryManager();
-        const platformInfo = binaryManager.getPlatformInfo();
-
-        // Helper: show diagnostics for a failing binary (mirrors Python's agent init)
-        const showDiagnostics = async (binaryPath: string, verResult: { ok: boolean; stdout: string; stderr: string }) => {
-          if (verResult.stderr) {
-            out.warn(fmt.info(`  stderr: ${verResult.stderr}`));
-          }
-          const diag = await binaryManager.collectBinaryDiagnostics(binaryPath);
-          if (diag) {
-            out.warn(fmt.info("Diagnostics:"));
-            out.warn(diag);
-          }
-          out.warn(fmt.info("To fix: install betterleaks (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
-          out.info();
-        };
-
-        if (!opts.update && binaryManager.isBetterleaksInstalled()) {
-          // Local binary exists — verify it actually works
-          const verResult = await binaryManager.verifyBetterleaksVerbose();
-          if (verResult.ok) {
-            out.info(fmt.success(`Betterleaks already installed (${verResult.stdout})`));
-          } else {
-            out.warn(fmt.warning("Betterleaks binary found locally but failed to execute."));
-            out.warn(fmt.info(`  Binary: ${binaryManager.getBetterleaksPath()}`));
-            await showDiagnostics(binaryManager.getBetterleaksPath(), verResult);
-          }
-        } else {
-          // Not installed locally (or --update forcing re-download) — check PATH first
-          // unless --update was passed (in that case force a fresh managed install)
-          const pathBinary = opts.update ? null : binaryManager.findBetterleaksOnPath();
-          if (pathBinary) {
-            const verResult = await binaryManager.verifyBetterleaksVerbose(pathBinary);
-            if (verResult.ok) {
-              out.info(fmt.success(`Betterleaks available on PATH (${verResult.stdout})`));
-            } else {
-              out.warn(fmt.warning("Betterleaks found on PATH but failed to execute."));
-              out.warn(fmt.info(`  Binary: ${pathBinary}`));
-              await showDiagnostics(pathBinary, verResult);
-            }
-          } else if (!platformInfo.supported) {
-            out.info(fmt.info(`Betterleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
-            out.info(fmt.success("Using pattern-based scanning (21 patterns)"));
-          } else {
-            // Not on PATH, not installed locally — download
-            out.info();
-            out.info(fmt.info("Downloading Betterleaks (enhanced secret detection)..."));
-            try {
-              await binaryManager.downloadBetterleaks((msg) => {
-                out.info(`   ${msg}`);
-              });
-              out.info();
-            } catch (e) {
-              out.info();
-              out.warn(fmt.error(`Betterleaks setup failed — pattern-based scanning will be used instead.`));
-              out.warn(fmt.warning(String(e)));
-              out.info();
-              out.warn(fmt.info("To fix: install betterleaks manually (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
-              out.info();
-            }
-          }
-        }
-      }
-
-      // Install the optional skill-scanner deep engine (opt-in via
-      // --with-skill-scanner only — never via --all, as it's heavy).
-      if (wantSkillScanner) {
-        const onPath = opts.update ? null : (() => {
-          try {
-            const cmd = process.platform === "win32" ? "where skill-scanner" : "which skill-scanner";
-            return execSync(cmd, { timeout: 5000, encoding: "utf-8" }).trim().split("\n")[0].trim() || null;
-          } catch {
-            return null;
-          }
-        })();
-        if (onPath) {
-          out.info(fmt.success(`skill-scanner available on PATH (${onPath})`));
-        } else {
-          out.info();
-          out.info(fmt.info(
-            "Installing optional skill-scanner deep engine (heavy third-party package; isolated install)...",
-          ));
-          const result = await new SkillScannerInstaller().install(
-            SKILL_SCANNER_VERSION,
-            (msg) => out.info(`   ${msg}`),
-          );
-          if (result.ok) {
-            out.info(fmt.success(`skill-scanner installed (via ${result.via}): ${result.message}`));
-          } else {
-            out.warn(fmt.warning(`skill-scanner install failed: ${result.message}`));
-            out.warn(fmt.info(
-              "To fix: run 'rafter agent update-skill-scanner' or install manually with 'uv tool install cisco-ai-skill-scanner'.",
-            ));
-          }
-        }
-      }
-
-      // Install OpenClaw skill if opted in
-      let openclawOk = false;
-      if (hasOpenClaw && wantOpenClaw) {
-        const skillManager = new SkillManager({ log: (message) => out.info(message) });
-        const result = await skillManager.installRafterSkillVerbose();
-        openclawOk = result.ok;
-        if (result.ok) {
-          out.info(fmt.success(`Installed Rafter Security skill to ${result.destPath}`));
-          manager.set("agent.environments.openclaw.enabled", true);
-        } else {
-          out.warn(fmt.error("Failed to install Rafter Security skill"));
-          out.warn(fmt.warning(`  Source: ${result.sourcePath}`));
-          out.warn(fmt.warning(`  Destination: ${result.destPath}`));
-          if (result.error) {
-            out.warn(fmt.warning(`  Error: ${result.error}`));
-          }
-        }
-      }
-
-      // Helper: warn that a platform is not supported in --local mode.
-      const localUnsupported = (label: string): void => {
-        out.warn(fmt.warning(
-          `${label} is not supported in --local mode yet. Skipping. ` +
-          `Re-run without --local to install for this platform user-globally.`,
-        ));
-      };
-
-      // Install Claude Code skills + hooks if opted in
-      // When --with-claude-code is explicitly passed (or --local), install even if <root>/.claude doesn't exist yet
-      let claudeCodeOk = false;
-      if ((hasClaudeCode || opts.withClaudeCode || (opts.local && wantClaudeCode)) && wantClaudeCode) {
-        try {
-          await installClaudeCodeSkills(session, root, out);
-          installClaudeCodeSubAgents(session, root, out);
-          installClaudeCodeHooks(root, out);
-          if (scope === "project") {
-            const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
-            if (components["claude-code.mcp"]?.enabled === false) {
-              out.info(fmt.info("Skipped .mcp.json (claude-code.mcp disabled; re-enable with `rafter agent enable claude-code.mcp`)"));
-            } else {
-              installClaudeCodeMcp(root, out);
-              components["claude-code.mcp"] = { enabled: true, updatedAt: new Date().toISOString() };
-              manager.set("agent.components", components);
-            }
-          }
-          if (scope === "user") manager.set("agent.environments.claudeCode.enabled", true);
-          claudeCodeOk = true;
-        } catch (e) {
-          console.error(fmt.error(`Failed to install Claude Code integration: ${e}`));
-        }
-      }
-
-      // Install Codex CLI skills + hooks if opted in
-      let codexOk = false;
-      if ((hasCodex || (opts.local && wantCodex)) && wantCodex) {
-        try {
-          installCodexSkills(session, root, out);
-          installCodexHooks(root, out);
-          if (scope === "user") manager.set("agent.environments.codex.enabled", true);
-          codexOk = true;
-        } catch (e) {
-          console.error(fmt.error(`Failed to install Codex CLI integration: ${e}`));
-        }
-      }
-
-      // Install Gemini CLI MCP + skills + hooks if opted in
-      let geminiOk = false;
-      if ((hasGemini || (opts.local && wantGemini)) && wantGemini) {
-        try {
-          geminiOk = installGeminiMcp(root, out);
-          installGeminiSkills(session, root, out);
-          registerGeminiSkills(path.join(root, ".agents", "skills"), out);
-          installGeminiHooks(root, out);
-          if (geminiOk && scope === "user") manager.set("agent.environments.gemini.enabled", true);
-        } catch (e) {
-          console.error(fmt.error(`Failed to install Gemini CLI integration: ${e}`));
-        }
-      }
-
-      // Install Cursor MCP + hooks + per-skill rules + sub-agent if opted in
-      let cursorOk = false;
-      if ((hasCursor || (opts.local && wantCursor)) && wantCursor) {
-        try {
-          cursorOk = installCursorMcp(root, out);
-          installCursorHooks(root, out);
-          installCursorRules(session, root, out);
-          installCursorSubAgents(session, root, out);
-          if (cursorOk && scope === "user") manager.set("agent.environments.cursor.enabled", true);
-        } catch (e) {
-          console.error(fmt.error(`Failed to install Cursor integration: ${e}`));
-        }
-      }
-
-      // Install Windsurf integration if opted in.
-      // - User scope: MCP entry under ~/.codeium/windsurf/ + per-skill rules
-      //   at .windsurf/rules/ (workspace) + AGENTS.md (workspace, written by
-      //   installGlobalInstructions below).
-      // - Project scope (--local): per-skill rules + AGENTS.md only (no
-      //   user-scope MCP entry written from a project init).
-      // The previous ~/.windsurf/hooks.json install was pruned: Windsurf has
-      // no documented hook surface (rf-0vr3).
-      let windsurfOk = false;
-      if (wantWindsurf && (hasWindsurf || opts.local)) {
-        try {
-          if (hasWindsurf) {
-            windsurfOk = installWindsurfMcp(root, out);
-            if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
-          }
-          installWindsurfRules(session, root, out);
-          // AGENTS.md is written below in installGlobalInstructions when
-          // platforms.windsurf is true.
-          if (!hasWindsurf) windsurfOk = true; // local-scope success: rules + AGENTS.md
-        } catch (e) {
-          console.error(fmt.error(`Failed to install Windsurf integration: ${e}`));
-        }
-      }
-
-      // Install Continue.dev integration if opted in (rf-acz0).
-      // - User scope: per-skill rules (.continue/rules/) + MCP entry under
-      //   ~/.continue/config.json.
-      // - Project scope (--local): rules only.
-      // Continue.dev has no hook surface — the prior hooks install was pruned
-      // in rf-cia phase b.
-      let continueOk = false;
-      if (wantContinue && (hasContinueDev || opts.local)) {
-        try {
-          if (hasContinueDev) {
-            continueOk = installContinueDevMcp(root, out);
-            if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
-          }
-          installContinueDevRules(session, root, out);
-          if (!hasContinueDev) continueOk = true; // local-scope success: rules only
-        } catch (e) {
-          console.error(fmt.error(`Failed to install Continue.dev integration: ${e}`));
-        }
-      }
-
-      // Install Aider integration if opted in (rf-du2o).
-      // Aider has no MCP and no hook surface — its only intercept is the
-      // `read:` flag in .aider.conf.yml. We write RAFTER.md and ensure
-      // `read:` includes it. The legacy mcp-server-command YAML line (a
-      // silent no-op) is stripped on reinstall.
-      let aiderOk = false;
-      if (wantAider && (hasAider || opts.local)) {
-        try {
-          aiderOk = installAiderRead(root, out);
-          if (aiderOk && hasAider) manager.set("agent.environments.aider.enabled", true);
-        } catch (e) {
-          console.error(fmt.error(`Failed to install Aider integration: ${e}`));
-        }
-      }
-
-      // Install Hermes integration if opted in (sable-gyw).
-      // User scope only — Hermes reads ~/.hermes/config.yaml. MCP-only v0;
-      // hooks deferred pending confirmation Hermes exposes a hook surface.
-      let hermesOk = false;
-      if (wantHermes && hasHermes) {
-        try {
-          hermesOk = installHermesMcp(root, out);
-          if (hermesOk) manager.set("agent.environments.hermes.enabled", true);
-        } catch (e) {
-          console.error(fmt.error(`Failed to install Hermes integration: ${e}`));
-        }
-      }
-
-      // Install OpenCode integration if opted in (sable-l8e5).
-      // User scope only — OpenCode reads a global config at
-      // ~/.config/opencode/opencode.json. MCP-based: we register the local
-      // stdio server `rafter mcp serve` under the `mcp` block.
-      let openCodeOk = false;
-      if (wantOpenCode && hasOpenCode) {
-        try {
-          openCodeOk = installOpenCodeMcp(root, out);
-          if (openCodeOk) manager.set("agent.environments.opencode.enabled", true);
-        } catch (e) {
-          console.error(fmt.error(`Failed to install OpenCode integration: ${e}`));
-        }
-      }
-
-      // Install global instruction files for platforms that support them.
-      // Cursor is intentionally absent — Cursor uses per-skill rules + the
-      // rafter sub-agent installed in the Cursor branch above (rf-svn3).
-      installGlobalInstructions({
-        claudeCode: claudeCodeOk,
-        codex: codexOk,
-        gemini: geminiOk,
-        windsurf: windsurfOk,
-      }, root, scope, out);
-
-      session.save();
-      reportUnchangedSummary(session);
-      reportKeptSummary(session);
-
-      out.info();
-      // rf-er8a: do not report a clean success if the hook we just wrote cannot
-      // execute and enforce. A silent 127 (or an npx-cache entrypoint) means the
-      // gate is inert even though settings.json looks configured.
-      const hookWarnings = claudeCodeOk ? installedHookWarnings() : [];
-      if (hookWarnings.length > 0) {
-        for (const w of hookWarnings) out.warn(fmt.warning(w));
-        out.warn(fmt.warning("Agent security initialized WITH WARNINGS — the command gate may NOT be active (see above). Run 'rafter agent verify' to confirm."));
-      } else {
-        out.info(fmt.success("Agent security initialized!"));
-      }
-      out.info();
-
-      const anyIntegration = openclawOk || claudeCodeOk || codexOk || geminiOk || cursorOk || windsurfOk || continueOk || aiderOk || hermesOk || openCodeOk;
-
-      if (anyIntegration) {
-        out.info("Next steps:");
-        if (openclawOk) out.info("  - Restart OpenClaw to load skill");
-        if (claudeCodeOk) out.info("  - Restart Claude Code to load skills");
-        if (codexOk) out.info("  - Restart Codex CLI to load skills");
-        if (geminiOk) out.info("  - Restart Gemini CLI to load MCP server");
-        if (cursorOk) out.info("  - Restart Cursor to load MCP server");
-        if (windsurfOk) out.info("  - Restart Windsurf to load MCP server");
-        if (continueOk) out.info("  - Restart Continue.dev to load MCP server");
-        if (aiderOk) out.info("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:");
-        if (hermesOk) out.info("  - Restart Hermes to load MCP server");
-        if (openCodeOk) out.info("  - Restart OpenCode to load MCP server");
-      } else if (scope === "project") {
-        out.info("No integrations were installed. In --local mode, pass one or more opt-in flags:");
-        out.info("  rafter agent init --local --with-claude-code");
-        out.info("  rafter agent init --local --with-codex");
-        out.info("  rafter agent init --local --with-gemini");
-        out.info("  rafter agent init --local --with-cursor");
-      } else if (detected.length > 0) {
-        out.info("No integrations were installed. To install, re-run with opt-in flags:");
-        out.info("  rafter agent init --all                  # Install all detected");
-        if (hasClaudeCode) out.info("  rafter agent init --with-claude-code     # Claude Code only");
-        if (hasOpenClaw) out.info("  rafter agent init --with-openclaw        # OpenClaw only");
-        if (hasCodex) out.info("  rafter agent init --with-codex           # Codex CLI only");
-        if (hasGemini) out.info("  rafter agent init --with-gemini          # Gemini CLI only");
-        if (hasCursor) out.info("  rafter agent init --with-cursor          # Cursor only");
-        if (hasWindsurf) out.info("  rafter agent init --with-windsurf        # Windsurf only");
-        if (hasContinueDev) out.info("  rafter agent init --with-continue        # Continue.dev only");
-        if (hasAider) out.info("  rafter agent init --with-aider           # Aider only");
-        if (hasHermes) out.info("  rafter agent init --with-hermes          # Hermes only");
-        if (hasOpenCode) out.info("  rafter agent init --with-opencode        # OpenCode only");
-      } else {
-        out.info("No agent environments detected. Install an agent tool and re-run with --with-<tool>.");
-      }
-      out.info();
-      out.info("  - Run: rafter secrets . (test secret scanning)");
-      out.info("  - Configure: rafter agent config show");
-      out.info();
-
-      // Warn if a different rafter version shadows this one on PATH
-      try {
-        const _require = createRequire(import.meta.url);
-        const { version: thisVersion } = _require("../../../package.json");
-        const pathVersion = execSync("rafter --version", {
-          encoding: "utf-8",
-          timeout: 5000,
-          stdio: ["pipe", "pipe", "ignore"],
-        }).trim();
-        if (pathVersion && pathVersion !== thisVersion && !pathVersion.includes(thisVersion)) {
-          out.warn(fmt.warning(`PATH version mismatch: 'rafter --version' reports ${pathVersion}, but this install is ${thisVersion}.`));
-          out.warn(fmt.info("Another rafter binary may be shadowing this one. Check: which rafter"));
-          out.info();
-        }
-      } catch {
-        // Ignore — rafter may not be on PATH yet
-      }
+  // --dry-run: print every file path the command would touch, then
+  // exit before any filesystem write happens (rf-hrtd). The plan is
+  // built from the SAME resolved want* / has* booleans the install
+  // path uses, so the listing mirrors what would actually run.
+  if (opts.dryRun) {
+    const bm = new BinaryManager();
+    const betterleaksExisting = !wantBetterleaks || opts.update
+      ? null
+      : bm.isBetterleaksInstalled()
+        ? bm.getBetterleaksPath()
+        : bm.findBetterleaksOnPath();
+    const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
+    printDryRunPlan({
+      root,
+      scope,
+      wantOpenClaw: wantOpenClaw && (hasOpenClaw),
+      wantClaudeCode: wantClaudeCode && (hasClaudeCode || opts.withClaudeCode || opts.local),
+      wantCodex: wantCodex && (hasCodex || opts.local),
+      wantGemini: wantGemini && (hasGemini || opts.local),
+      wantCursor: wantCursor && (hasCursor || opts.local),
+      wantWindsurf: wantWindsurf && (hasWindsurf || opts.local),
+      wantContinue: wantContinue && (hasContinueDev || opts.local),
+      wantAider: wantAider && (hasAider || opts.local),
+      wantHermes: wantHermes && hasHermes,
+      wantOpenCode: wantOpenCode && hasOpenCode,
+      wantBetterleaks,
+      betterleaksExisting,
+      betterleaksSupported: bm.getPlatformInfo().supported,
+      wantSkillScanner,
+      claudeCodeMcpDisabled: components["claude-code.mcp"]?.enabled === false,
+      riskLevel: opts.riskLevel ?? "unchanged",
+      session,
     });
+    return;
+  }
+
+  // Initialize directory structure
+  try {
+    await manager.initialize();
+    out.info(fmt.success("Created config at ~/.rafter/config.json"));
+  } catch (e) {
+    console.error(fmt.error(`Failed to initialize: ${e}`));
+    process.exit(1);
+  }
+
+  // Set risk level (update leaves it as configured)
+  if (opts.riskLevel !== undefined) {
+    const validRiskLevels = ["minimal", "moderate", "aggressive"];
+    if (!validRiskLevels.includes(opts.riskLevel)) {
+      console.error(fmt.error(`Invalid risk level: ${opts.riskLevel}`));
+      console.error(`Valid options: ${validRiskLevels.join(", ")}`);
+      process.exit(1);
+    }
+
+    manager.set("agent.riskLevel", opts.riskLevel);
+    out.info(fmt.success(`Set risk level: ${opts.riskLevel}`));
+  }
+
+  // Check / download Betterleaks binary (opt-in via --with-betterleaks or --all)
+  if (wantBetterleaks) {
+    const binaryManager = new BinaryManager();
+    const platformInfo = binaryManager.getPlatformInfo();
+
+    // Helper: show diagnostics for a failing binary (mirrors Python's agent init)
+    const showDiagnostics = async (binaryPath: string, verResult: { ok: boolean; stdout: string; stderr: string }) => {
+      if (verResult.stderr) {
+        out.warn(fmt.info(`  stderr: ${verResult.stderr}`));
+      }
+      const diag = await binaryManager.collectBinaryDiagnostics(binaryPath);
+      if (diag) {
+        out.warn(fmt.info("Diagnostics:"));
+        out.warn(diag);
+      }
+      out.warn(fmt.info("To fix: install betterleaks (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
+      out.info();
+    };
+
+    if (!opts.update && binaryManager.isBetterleaksInstalled()) {
+      // Local binary exists — verify it actually works
+      const verResult = await binaryManager.verifyBetterleaksVerbose();
+      if (verResult.ok) {
+        out.info(fmt.success(`Betterleaks already installed (${verResult.stdout})`));
+      } else {
+        out.warn(fmt.warning("Betterleaks binary found locally but failed to execute."));
+        out.warn(fmt.info(`  Binary: ${binaryManager.getBetterleaksPath()}`));
+        await showDiagnostics(binaryManager.getBetterleaksPath(), verResult);
+      }
+    } else {
+      // Not installed locally (or --update forcing re-download) — check PATH first
+      // unless --update was passed (in that case force a fresh managed install)
+      const pathBinary = opts.update ? null : binaryManager.findBetterleaksOnPath();
+      if (pathBinary) {
+        const verResult = await binaryManager.verifyBetterleaksVerbose(pathBinary);
+        if (verResult.ok) {
+          out.info(fmt.success(`Betterleaks available on PATH (${verResult.stdout})`));
+        } else {
+          out.warn(fmt.warning("Betterleaks found on PATH but failed to execute."));
+          out.warn(fmt.info(`  Binary: ${pathBinary}`));
+          await showDiagnostics(pathBinary, verResult);
+        }
+      } else if (!platformInfo.supported) {
+        out.info(fmt.info(`Betterleaks not available for ${platformInfo.platform}/${platformInfo.arch}`));
+        out.info(fmt.success("Using pattern-based scanning (21 patterns)"));
+      } else {
+        // Not on PATH, not installed locally — download
+        out.info();
+        out.info(fmt.info("Downloading Betterleaks (enhanced secret detection)..."));
+        try {
+          await binaryManager.downloadBetterleaks((msg) => {
+            out.info(`   ${msg}`);
+          });
+          out.info();
+        } catch (e) {
+          out.info();
+          out.warn(fmt.error(`Betterleaks setup failed — pattern-based scanning will be used instead.`));
+          out.warn(fmt.warning(String(e)));
+          out.info();
+          out.warn(fmt.info("To fix: install betterleaks manually (https://github.com/betterleaks/betterleaks/releases) and ensure it is on PATH, then re-run 'rafter agent init'."));
+          out.info();
+        }
+      }
+    }
+  }
+
+  // Install the optional skill-scanner deep engine (opt-in via
+  // --with-skill-scanner only — never via --all, as it's heavy).
+  if (wantSkillScanner) {
+    const onPath = opts.update ? null : (() => {
+      try {
+        const cmd = process.platform === "win32" ? "where skill-scanner" : "which skill-scanner";
+        return execSync(cmd, { timeout: 5000, encoding: "utf-8" }).trim().split("\n")[0].trim() || null;
+      } catch {
+        return null;
+      }
+    })();
+    if (onPath) {
+      out.info(fmt.success(`skill-scanner available on PATH (${onPath})`));
+    } else {
+      out.info();
+      out.info(fmt.info(
+        "Installing optional skill-scanner deep engine (heavy third-party package; isolated install)...",
+      ));
+      const result = await new SkillScannerInstaller().install(
+        SKILL_SCANNER_VERSION,
+        (msg) => out.info(`   ${msg}`),
+      );
+      if (result.ok) {
+        out.info(fmt.success(`skill-scanner installed (via ${result.via}): ${result.message}`));
+      } else {
+        out.warn(fmt.warning(`skill-scanner install failed: ${result.message}`));
+        out.warn(fmt.info(
+          "To fix: run 'rafter agent update-skill-scanner' or install manually with 'uv tool install cisco-ai-skill-scanner'.",
+        ));
+      }
+    }
+  }
+
+  // Install OpenClaw skill if opted in
+  let openclawOk = false;
+  if (hasOpenClaw && wantOpenClaw) {
+    const skillManager = new SkillManager({ log: (message) => out.info(message) });
+    const result = await skillManager.installRafterSkillVerbose();
+    openclawOk = result.ok;
+    if (result.ok) {
+      out.info(fmt.success(`Installed Rafter Security skill to ${result.destPath}`));
+      manager.set("agent.environments.openclaw.enabled", true);
+    } else {
+      out.warn(fmt.error("Failed to install Rafter Security skill"));
+      out.warn(fmt.warning(`  Source: ${result.sourcePath}`));
+      out.warn(fmt.warning(`  Destination: ${result.destPath}`));
+      if (result.error) {
+        out.warn(fmt.warning(`  Error: ${result.error}`));
+      }
+    }
+  }
+
+  // Helper: warn that a platform is not supported in --local mode.
+  const localUnsupported = (label: string): void => {
+    out.warn(fmt.warning(
+      `${label} is not supported in --local mode yet. Skipping. ` +
+      `Re-run without --local to install for this platform user-globally.`,
+    ));
+  };
+
+  // Install Claude Code skills + hooks if opted in
+  // When --with-claude-code is explicitly passed (or --local), install even if <root>/.claude doesn't exist yet
+  let claudeCodeOk = false;
+  if ((hasClaudeCode || opts.withClaudeCode || (opts.local && wantClaudeCode)) && wantClaudeCode) {
+    try {
+      await installClaudeCodeSkills(session, root, out);
+      installClaudeCodeSubAgents(session, root, out);
+      installClaudeCodeHooks(root, out);
+      if (scope === "project") {
+        const components = (manager.get("agent.components") ?? {}) as Record<string, any>;
+        if (components["claude-code.mcp"]?.enabled === false) {
+          out.info(fmt.info("Skipped .mcp.json (claude-code.mcp disabled; re-enable with `rafter agent enable claude-code.mcp`)"));
+        } else {
+          installClaudeCodeMcp(root, out);
+          components["claude-code.mcp"] = { enabled: true, updatedAt: new Date().toISOString() };
+          manager.set("agent.components", components);
+        }
+      }
+      if (scope === "user") manager.set("agent.environments.claudeCode.enabled", true);
+      claudeCodeOk = true;
+    } catch (e) {
+      console.error(fmt.error(`Failed to install Claude Code integration: ${e}`));
+    }
+  }
+
+  // Install Codex CLI skills + hooks if opted in
+  let codexOk = false;
+  if ((hasCodex || (opts.local && wantCodex)) && wantCodex) {
+    try {
+      installCodexSkills(session, root, out);
+      installCodexHooks(root, out);
+      if (scope === "user") manager.set("agent.environments.codex.enabled", true);
+      codexOk = true;
+    } catch (e) {
+      console.error(fmt.error(`Failed to install Codex CLI integration: ${e}`));
+    }
+  }
+
+  // Install Gemini CLI MCP + skills + hooks if opted in
+  let geminiOk = false;
+  if ((hasGemini || (opts.local && wantGemini)) && wantGemini) {
+    try {
+      geminiOk = installGeminiMcp(root, out);
+      installGeminiSkills(session, root, out);
+      registerGeminiSkills(path.join(root, ".agents", "skills"), out);
+      installGeminiHooks(root, out);
+      if (geminiOk && scope === "user") manager.set("agent.environments.gemini.enabled", true);
+    } catch (e) {
+      console.error(fmt.error(`Failed to install Gemini CLI integration: ${e}`));
+    }
+  }
+
+  // Install Cursor MCP + hooks + per-skill rules + sub-agent if opted in
+  let cursorOk = false;
+  if ((hasCursor || (opts.local && wantCursor)) && wantCursor) {
+    try {
+      cursorOk = installCursorMcp(root, out);
+      installCursorHooks(root, out);
+      installCursorRules(session, root, out);
+      installCursorSubAgents(session, root, out);
+      if (cursorOk && scope === "user") manager.set("agent.environments.cursor.enabled", true);
+    } catch (e) {
+      console.error(fmt.error(`Failed to install Cursor integration: ${e}`));
+    }
+  }
+
+  // Install Windsurf integration if opted in.
+  // - User scope: MCP entry under ~/.codeium/windsurf/ + per-skill rules
+  //   at .windsurf/rules/ (workspace) + AGENTS.md (workspace, written by
+  //   installGlobalInstructions below).
+  // - Project scope (--local): per-skill rules + AGENTS.md only (no
+  //   user-scope MCP entry written from a project init).
+  // The previous ~/.windsurf/hooks.json install was pruned: Windsurf has
+  // no documented hook surface (rf-0vr3).
+  let windsurfOk = false;
+  if (wantWindsurf && (hasWindsurf || opts.local)) {
+    try {
+      if (hasWindsurf) {
+        windsurfOk = installWindsurfMcp(root, out);
+        if (windsurfOk) manager.set("agent.environments.windsurf.enabled", true);
+      }
+      installWindsurfRules(session, root, out);
+      // AGENTS.md is written below in installGlobalInstructions when
+      // platforms.windsurf is true.
+      if (!hasWindsurf) windsurfOk = true; // local-scope success: rules + AGENTS.md
+    } catch (e) {
+      console.error(fmt.error(`Failed to install Windsurf integration: ${e}`));
+    }
+  }
+
+  // Install Continue.dev integration if opted in (rf-acz0).
+  // - User scope: per-skill rules (.continue/rules/) + MCP entry under
+  //   ~/.continue/config.json.
+  // - Project scope (--local): rules only.
+  // Continue.dev has no hook surface — the prior hooks install was pruned
+  // in rf-cia phase b.
+  let continueOk = false;
+  if (wantContinue && (hasContinueDev || opts.local)) {
+    try {
+      if (hasContinueDev) {
+        continueOk = installContinueDevMcp(root, out);
+        if (continueOk) manager.set("agent.environments.continueDev.enabled", true);
+      }
+      installContinueDevRules(session, root, out);
+      if (!hasContinueDev) continueOk = true; // local-scope success: rules only
+    } catch (e) {
+      console.error(fmt.error(`Failed to install Continue.dev integration: ${e}`));
+    }
+  }
+
+  // Install Aider integration if opted in (rf-du2o).
+  // Aider has no MCP and no hook surface — its only intercept is the
+  // `read:` flag in .aider.conf.yml. We write RAFTER.md and ensure
+  // `read:` includes it. The legacy mcp-server-command YAML line (a
+  // silent no-op) is stripped on reinstall.
+  let aiderOk = false;
+  if (wantAider && (hasAider || opts.local)) {
+    try {
+      aiderOk = installAiderRead(root, out);
+      if (aiderOk && hasAider) manager.set("agent.environments.aider.enabled", true);
+    } catch (e) {
+      console.error(fmt.error(`Failed to install Aider integration: ${e}`));
+    }
+  }
+
+  // Install Hermes integration if opted in (sable-gyw).
+  // User scope only — Hermes reads ~/.hermes/config.yaml. MCP-only v0;
+  // hooks deferred pending confirmation Hermes exposes a hook surface.
+  let hermesOk = false;
+  if (wantHermes && hasHermes) {
+    try {
+      hermesOk = installHermesMcp(root, out);
+      if (hermesOk) manager.set("agent.environments.hermes.enabled", true);
+    } catch (e) {
+      console.error(fmt.error(`Failed to install Hermes integration: ${e}`));
+    }
+  }
+
+  // Install OpenCode integration if opted in (sable-l8e5).
+  // User scope only — OpenCode reads a global config at
+  // ~/.config/opencode/opencode.json. MCP-based: we register the local
+  // stdio server `rafter mcp serve` under the `mcp` block.
+  let openCodeOk = false;
+  if (wantOpenCode && hasOpenCode) {
+    try {
+      openCodeOk = installOpenCodeMcp(root, out);
+      if (openCodeOk) manager.set("agent.environments.opencode.enabled", true);
+    } catch (e) {
+      console.error(fmt.error(`Failed to install OpenCode integration: ${e}`));
+    }
+  }
+
+  // Install global instruction files for platforms that support them.
+  // Cursor is intentionally absent — Cursor uses per-skill rules + the
+  // rafter sub-agent installed in the Cursor branch above (rf-svn3).
+  installGlobalInstructions({
+    claudeCode: claudeCodeOk,
+    codex: codexOk,
+    gemini: geminiOk,
+    windsurf: windsurfOk,
+  }, root, scope, out);
+
+  session.save();
+  reportUnchangedSummary(session);
+  reportKeptSummary(session);
+
+  out.info();
+  // rf-er8a: do not report a clean success if the hook we just wrote cannot
+  // execute and enforce. A silent 127 (or an npx-cache entrypoint) means the
+  // gate is inert even though settings.json looks configured.
+  const hookWarnings = claudeCodeOk ? installedHookWarnings() : [];
+  if (hookWarnings.length > 0) {
+    for (const w of hookWarnings) out.warn(fmt.warning(w));
+    out.warn(fmt.warning("Agent security initialized WITH WARNINGS — the command gate may NOT be active (see above). Run 'rafter agent verify' to confirm."));
+  } else {
+    out.info(fmt.success("Agent security initialized!"));
+  }
+  out.info();
+
+  const anyIntegration = openclawOk || claudeCodeOk || codexOk || geminiOk || cursorOk || windsurfOk || continueOk || aiderOk || hermesOk || openCodeOk;
+
+  if (anyIntegration) {
+    out.info("Next steps:");
+    if (openclawOk) out.info("  - Restart OpenClaw to load skill");
+    if (claudeCodeOk) out.info("  - Restart Claude Code to load skills");
+    if (codexOk) out.info("  - Restart Codex CLI to load skills");
+    if (geminiOk) out.info("  - Restart Gemini CLI to load MCP server");
+    if (cursorOk) out.info("  - Restart Cursor to load MCP server");
+    if (windsurfOk) out.info("  - Restart Windsurf to load MCP server");
+    if (continueOk) out.info("  - Restart Continue.dev to load MCP server");
+    if (aiderOk) out.info("  - Restart Aider to load RAFTER.md from .aider.conf.yml read:");
+    if (hermesOk) out.info("  - Restart Hermes to load MCP server");
+    if (openCodeOk) out.info("  - Restart OpenCode to load MCP server");
+  } else if (scope === "project") {
+    out.info("No integrations were installed. In --local mode, pass one or more opt-in flags:");
+    out.info("  rafter agent init --local --with-claude-code");
+    out.info("  rafter agent init --local --with-codex");
+    out.info("  rafter agent init --local --with-gemini");
+    out.info("  rafter agent init --local --with-cursor");
+  } else if (detected.length > 0) {
+    out.info("No integrations were installed. To install, re-run with opt-in flags:");
+    out.info("  rafter agent init --all                  # Install all detected");
+    if (hasClaudeCode) out.info("  rafter agent init --with-claude-code     # Claude Code only");
+    if (hasOpenClaw) out.info("  rafter agent init --with-openclaw        # OpenClaw only");
+    if (hasCodex) out.info("  rafter agent init --with-codex           # Codex CLI only");
+    if (hasGemini) out.info("  rafter agent init --with-gemini          # Gemini CLI only");
+    if (hasCursor) out.info("  rafter agent init --with-cursor          # Cursor only");
+    if (hasWindsurf) out.info("  rafter agent init --with-windsurf        # Windsurf only");
+    if (hasContinueDev) out.info("  rafter agent init --with-continue        # Continue.dev only");
+    if (hasAider) out.info("  rafter agent init --with-aider           # Aider only");
+    if (hasHermes) out.info("  rafter agent init --with-hermes          # Hermes only");
+    if (hasOpenCode) out.info("  rafter agent init --with-opencode        # OpenCode only");
+  } else {
+    out.info("No agent environments detected. Install an agent tool and re-run with --with-<tool>.");
+  }
+  out.info();
+  out.info("  - Run: rafter secrets . (test secret scanning)");
+  out.info("  - Configure: rafter agent config show");
+  out.info();
+
+  // Warn if a different rafter version shadows this one on PATH
+  try {
+    const _require = createRequire(import.meta.url);
+    const { version: thisVersion } = _require("../../../package.json");
+    const pathVersion = execSync("rafter --version", {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+    if (pathVersion && pathVersion !== thisVersion && !pathVersion.includes(thisVersion)) {
+      out.warn(fmt.warning(`PATH version mismatch: 'rafter --version' reports ${pathVersion}, but this install is ${thisVersion}.`));
+      out.warn(fmt.info("Another rafter binary may be shadowing this one. Check: which rafter"));
+      out.info();
+    }
+  } catch {
+    // Ignore — rafter may not be on PATH yet
+  }
 }

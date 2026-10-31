@@ -113,6 +113,10 @@ pip install rafter-cli
 
 Requires Python 3.11+. Full feature parity with Node.js including local security toolkit and MCP server.
 
+### Upgrading
+
+After upgrading the CLI, run `rafter agent update` to refresh the skills, rules, instructions, hooks and MCP entries of every integration you installed. It keeps files you edited (the new version is written beside them as `.rafter-new`) and never adds a platform you did not install. `rafter agent status` tells you when an update is due.
+
 ---
 
 ## Remote Code Analysis
@@ -192,7 +196,7 @@ This command:
 - With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
 - With `--with-betterleaks` or `--all`: downloads [Betterleaks](https://github.com/betterleaks/betterleaks) (the gitleaks successor maintained by the original gitleaks authors) for enhanced secret scanning. Falls back to built-in 21-pattern regex scanner.
 
-Use `rafter agent list/enable/disable` for granular per-component control after the initial install — toggle any platform on or off without re-running `init`.
+Use `rafter agent list/enable/disable` for granular per-component control after the initial install — toggle any platform on or off without re-running `init`. After upgrading the CLI, `rafter agent update` refreshes everything you installed.
 
 ### Secret Scanning
 

@@ -16,6 +16,7 @@ import { createBaselineCommand } from "./baseline.js";
 import { createListCommand } from "./list.js";
 import { createEnableCommand } from "./enable.js";
 import { createDisableCommand } from "./disable.js";
+import { createUpdateCommand } from "./update.js";
 
 export function createAgentCommand(): Command {
   const agent = new Command("agent")
@@ -39,6 +40,7 @@ export function createAgentCommand(): Command {
   agent.addCommand(createListCommand());
   agent.addCommand(createEnableCommand());
   agent.addCommand(createDisableCommand());
+  agent.addCommand(createUpdateCommand());
 
   return agent;
 }
