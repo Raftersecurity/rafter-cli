@@ -809,5 +809,75 @@
     "want": [
       "low"
     ]
+  },
+  {
+    "label": "sable-e7ju: rm flags after the operand (GNU permutes) on / are critical",
+    "cmd": "rm / -rf",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: rm flags after a critical dir are critical",
+    "cmd": "rm /etc -rf",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: abbreviated long rm flags around / are critical",
+    "cmd": "rm --recur / --forc",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: abbreviated long rm flags after / are critical",
+    "cmd": "rm / --recur --forc",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: a redirect between rm's operand and flags does not hide them",
+    "cmd": "rm 2>/dev/null / -rf",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: find ~ -delete rates like rm -rf ~",
+    "cmd": "find ~ -delete",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "sable-e7ju: find $HOME -delete rates like rm -rf $HOME",
+    "cmd": "find $HOME -delete",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "sable-e7ju: after --, -rf is a file name and stays low",
+    "cmd": "rm -- -rf",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "sable-e7ju: rm ./build -f rates like rm -f ./build",
+    "cmd": "rm ./build -f",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "sable-e7ju: an echoed rm with trailing flags stays low",
+    "cmd": "echo rm / -rf",
+    "want": [
+      "low"
+    ]
   }
 ]

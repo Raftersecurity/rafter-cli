@@ -1413,11 +1413,13 @@ _ANSI_C_SIMPLE = {
 }
 _BRACE_LIST = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
 _BRACE_CMD = re.compile(r"^\{[^{}]*,[^{}]*\}")
-_RM_CANON = re.compile(
-    r"(^|[\s;&|()<>])((?:[\w./-]*/)?rm)((?:[ \t]+--?[A-Za-z][\w-]*(?:=[^\s;&|()<>]*)?)*)"
-    r"((?:[ \t]+--(?=[\s;&|()<>]|$))?)",
-    re.IGNORECASE,
-)
+# The rm command word, at the start of the string or after a separator.
+_RM_WORD = re.compile(r"(^|[\s;&|()<>])((?:[\w./-]*/)?rm)(?=[ \t])", re.IGNORECASE)
+# A word rm's getopt reads as an option: `-rf`, `--recur`, `--interactive=never`.
+_RM_FLAG_WORD = re.compile(r"--?[A-Za-z][\w-]*(?:=.*)?")
+_RM_WORD_BREAK = re.compile(r"[\s;&|()<>]")
+# A file redirect inside an argv (`2>/dev/null`, `>> log`, `<in`): not an argument.
+_RM_REDIRECT = re.compile(r"\d*(?:>>|>&|<&|>\||<>|>|<)(?![(<])")
 
 
 def _decode_ansi_c_string_at(s: str, i: int) -> tuple[str, int]:
@@ -1537,39 +1539,125 @@ def _resolve_rm_long_option(name: str) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
+def _read_rm_word(s: str, j: int) -> tuple[str, int] | None:
+    """One shell word of ``s`` starting at ``j`` as (value, end), or None at a
+    separator, comment or end."""
+    n = len(s)
+    if j >= n or s[j] in ";&|()<>\n\r#":
+        return None
+    val: list[str] = []
+    while j < n and not _RM_WORD_BREAK.match(s[j]):
+        c = s[j]
+        if c == "\\":
+            if j + 1 < n:
+                val.append(s[j + 1])
+            j += 2
+            continue
+        if c in "'\"":
+            k = j + 1
+            while k < n and s[k] != c:
+                if c == '"' and s[k] == "\\" and k + 1 < n:
+                    k += 1
+                val.append(s[k])
+                k += 1
+            j = k + 1
+            continue
+        val.append(c)
+        j += 1
+    return "".join(val), min(j, n)
+
+
+def _rm_arg_words(s: str, start_at: int) -> tuple[list[tuple[str, str, bool]], int]:
+    """The words of one rm argv, read from ``s`` at ``start_at`` up to the first
+    unquoted separator (``;``, ``&``, ``|``, ``(``, ``)``, a heredoc or process
+    substitution, a newline) or comment, and the index where it ends. Each word
+    is (source text, value with quotes and escapes removed, is_redirect). A file
+    redirect and its target are one word marked as a redirect, since the shell
+    strips them from the argv rm permutes: ``rm 2>/dev/null / -rf`` is still
+    ``rm -rf /``."""
+    n = len(s)
+
+    def skip_blanks(k: int) -> int:
+        while k < n and s[k] in " \t":
+            k += 1
+        return k
+
+    words: list[tuple[str, str, bool]] = []
+    i = start_at
+    while True:
+        j = skip_blanks(i)
+        redir = _RM_REDIRECT.match(s, j)
+        if redir:
+            t = _read_rm_word(s, skip_blanks(redir.end()))
+            if t is None:
+                return words, i
+            words.append((s[j:t[1]], "", True))
+            i = t[1]
+            continue
+        w = _read_rm_word(s, j)
+        if w is None:
+            return words, i
+        words.append((s[j:w[1]], w[0], False))
+        i = w[1]
+
+
 def _canonicalize_rm_flags(s: str) -> str:
-    """Reduce an ``rm``'s leading flags -- in any long, abbreviated-long, short or
-    ``--no-preserve-root`` spelling, adjacent or not, with or without a closing
-    ``--`` -- to the short form the patterns read: ``-rf``, ``-r`` or ``-f``. So a
-    long spelling gets exactly the tier of its short twin. Scoped to ``rm``; it
-    only rewrites flags rm would honor, so it cannot turn a benign command
-    destructive."""
+    """Reduce an ``rm``'s flags -- in any long, abbreviated-long, short or
+    ``--no-preserve-root`` spelling, adjacent or not, before or AFTER its
+    operands -- to the short form the patterns read, ``-rf``, ``-r`` or ``-f``,
+    placed before the operands, with any redirect moved after them. GNU rm
+    permutes its argv, so ``rm / -rf`` is
+    ``rm -rf /``, and a long or trailing spelling gets exactly the tier of its
+    short twin. Option parsing stops at the first ``--``: after it ``-rf`` is a
+    file name, so it stays an operand, written ``./-rf`` so no pattern reads it
+    as a flag. Scoped to ``rm``; it only rewrites flags rm would honor, so it
+    cannot turn a benign command destructive. (sable-e7ju)"""
     if not re.search(r"\brm\b", s, re.IGNORECASE):
         return s
-
-    def repl(m: "re.Match[str]") -> str:
-        pre, cmd, flags = m.group(1), m.group(2), m.group(3)
-        if not flags.strip():
-            return m.group(0)
-        recursive = force = False
-        for tok in flags.split():
-            low = tok.lower()
-            if low.startswith("--"):
-                opt = _resolve_rm_long_option(low[2:].split("=")[0])
-                if opt == "recursive":
-                    recursive = True
-                elif opt in ("force", "no-preserve-root"):
-                    force = True
-            else:
-                if "r" in low:
-                    recursive = True
-                if "f" in low:
-                    force = True
+    out: list[str] = []
+    last = 0
+    pos = 0
+    while True:
+        m = _RM_WORD.search(s, pos)
+        if not m:
+            break
+        cmd_end = m.end()
+        words, end = _rm_arg_words(s, cmd_end)
+        recursive = force = opts_done = False
+        operands: list[str] = []
+        redirects: list[str] = []
+        for src, val, is_redirect in words:
+            if is_redirect:
+                redirects.append(src)
+                continue
+            if not opts_done and val == "--":
+                opts_done = True
+                continue
+            if not opts_done and _RM_FLAG_WORD.fullmatch(val):
+                low = val.lower()
+                if low.startswith("--"):
+                    opt = _resolve_rm_long_option(low[2:].split("=")[0])
+                    if opt == "recursive":
+                        recursive = True
+                    elif opt in ("force", "no-preserve-root"):
+                        force = True
+                else:
+                    if "r" in low:
+                        recursive = True
+                    if "f" in low:
+                        force = True
+                continue
+            operands.append(f"./{src}" if opts_done and val.startswith("-") else src)
+        # Resume after this argv either way: an `rm` inside it is an operand,
+        # and rescanning from the command word would make the walk quadratic.
+        pos = max(end, cmd_end)
         if not (recursive or force):
-            return m.group(0)
-        return f"{pre}{cmd} -{'r' if recursive else ''}{'f' if force else ''}"
-
-    return _RM_CANON.sub(repl, s)
+            continue
+        flags = f"-{'r' if recursive else ''}{'f' if force else ''}"
+        out.append(s[last:cmd_end] + " " + " ".join([flags, *operands, *redirects]))
+        last = end
+    out.append(s[last:])
+    return "".join(out)
 
 
 # Find actions that delete what the walk visits.
@@ -1578,17 +1666,21 @@ _FIND_LEADING_OPT = re.compile(r"^-([HLP]|D|O\d*)$", re.IGNORECASE)
 _FIND_EXPR_START = re.compile(r"^[-(!),]")
 # A find start path that IS a critical root: `/`, `/*`, `/etc`, `/home/`, `/usr/*`.
 _FIND_CRITICAL_ROOT = re.compile(rf"^/+(?:(?:{_CRITICAL_DIRS})/*)?\*?$", re.IGNORECASE)
+# A find start path that IS the home directory: `~`, `~/`, `$HOME`, `${HOME}/`.
+_FIND_HOME_ROOT = re.compile(r"(?:~|\$home|\$\{home\})/*\*?", re.IGNORECASE)
 
 
 def _find_deletion_as_rm(view: str) -> str:
     """The ``rm -rf <start path>`` equivalent of every ``find`` that deletes what
     it walks (``-delete``, or ``-exec``/``-execdir``/``-ok``/``-okdir rm``) from a
-    critical root, or "" if none. Matched against the CRITICAL patterns only:
-    ``find / -delete`` is as catastrophic as ``rm -rf /``, while
-    ``find . -name '*.pyc' -delete`` must keep its own tier rather than inherit
-    ``rm -rf .``'s approval gate. Only a start path that is itself a critical root
-    counts, not one below it: ``find /home/me/proj -name '*.pyc' -delete`` is
-    routine cleanup, and a find filters what it deletes. (sable-e7ju)"""
+    critical root or the home directory, or "" if none. Matched against the
+    CRITICAL and HIGH patterns, never MEDIUM: ``find / -delete`` is as
+    catastrophic as ``rm -rf /``, and ``find ~ -delete`` needs approval like
+    ``rm -rf ~``, while ``find . -name '*.pyc' -delete`` must keep its own tier
+    rather than inherit ``rm -rf .``'s approval gate. Only a start path that is
+    itself such a root counts, not one below it:
+    ``find /home/me/proj -name '*.pyc' -delete`` is routine cleanup, and a find
+    filters what it deletes. (sable-e7ju)"""
     if not re.search(r"\bfind\b", view, re.IGNORECASE):
         return ""
     pieces, unterminated = _tokenize(view)
@@ -1611,6 +1703,8 @@ def _find_deletion_as_rm(view: str) -> str:
             while i < len(seg) and seg[i].op is None and not _FIND_EXPR_START.match(seg[i].text):
                 if _FIND_CRITICAL_ROOT.match(seg[i].text):
                     paths.append("/" + seg[i].text.lstrip("/"))
+                elif _FIND_HOME_ROOT.fullmatch(seg[i].text):
+                    paths.append("~")
                 i += 1
             deletes = False
             for j in range(i, len(seg)):
@@ -1749,11 +1843,18 @@ def _match_variants(command: str) -> list[str]:
     ).strip()
     if norm_san and norm_san != raw:
         variants.append(norm_san)
+    # The normalized view is truncated past _MAX_NORMALIZE_INPUT, which would
+    # drop a flag padded out past the bound (`rm / <20k chars> -rf`);
+    # canonicalize the whole raw view too (sable-e7ju).
+    if len(command) > _MAX_NORMALIZE_INPUT:
+        raw_canon = _canonicalize_rm_flags(raw)
+        if raw_canon != raw and raw_canon not in variants:
+            variants.append(raw_canon)
     return variants
 
 
 def _critical_variants(variants: list[str]) -> list[str]:
-    """The views matched against the CRITICAL patterns: _match_variants plus find-as-rm."""
+    """The views matched against the CRITICAL and HIGH patterns: _match_variants plus find-as-rm."""
     found = [f for f in map(_find_deletion_as_rm, variants) if f]
     return variants + found if found else variants
 
@@ -1780,8 +1881,10 @@ def assess_command_risk(command: str) -> str:
     # softened to approval.
     if shell_program_from_stream(command) or evasion_construct_risk(command):
         return "high"
+    # The find-as-rm views count here too, so `find ~ -delete` rates like
+    # `rm -rf ~` (sable-e7ju); they hold only critical and home roots.
     for p in HIGH_PATTERNS:
-        if any(re.search(p, v, re.IGNORECASE) for v in variants):
+        if any(re.search(p, v, re.IGNORECASE) for v in critical):
             return "high"
     for p in MEDIUM_PATTERNS:
         if any(re.search(p, v, re.IGNORECASE) for v in variants):
