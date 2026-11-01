@@ -2510,7 +2510,7 @@ def scan(
     gitignore: bool = typer.Option(True, "--gitignore/--no-gitignore", help="Respect .gitignore when walking the scan target (default: on)"),
     auto_update: bool = typer.Option(True, "--auto-update/--no-auto-update", help="Auto-update a stale managed betterleaks binary; --no-auto-update falls back to the patterns engine instead (default: on)"),
 ):
-    """Scan files or directories for secrets. [deprecated: use 'rafter secrets' instead]"""
+    """Scan files or directories for secrets. \\[deprecated: use 'rafter secrets' instead]"""
     print(
         "Warning: rafter agent scan is deprecated and will be removed in a future major version. "
         "Use rafter secrets instead.",
@@ -3783,7 +3783,7 @@ def audit_skill(
         help="Deep engine selector. 'skill-scanner' is equivalent to --deep.",
     ),
 ) -> None:
-    """[deprecated] Security audit of a Claude Code skill file — use `rafter skill review` instead."""
+    """\\[deprecated] Security audit of a Claude Code skill file — use `rafter skill review` instead."""
     if not json_output:
         print(
             "[deprecated] `rafter agent audit-skill` is deprecated; use `rafter skill review <path-or-url>` instead.",
