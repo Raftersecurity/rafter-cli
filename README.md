@@ -339,15 +339,15 @@ Point the log at a repo-local path by setting `agent.audit.logPath` in `.rafter.
 
 rafter keeps a few local counts so a bug report can say what happened: unknown commands and flags, exit codes per command, hook decisions per risk tier, scan engine fall-backs and durations, and crash error classes.
 They live in `~/.rafter/usage/` for seven days.
-They hold no paths, repo names, command lines, secrets or error messages, and rafter has no code that uploads them: nothing leaves this machine.
+Local-only: they hold no paths, repo names, command lines, secrets or error messages, and rafter has no code that uploads them. Nothing is sent anywhere.
 
 ```sh
-rafter telemetry show          # counts for the last 7 days, plus skill staleness
-rafter telemetry show --json   # paste into an issue
-rafter telemetry clear         # delete ~/.rafter/usage
+rafter counters show          # counts for the last 7 days, plus skill staleness
+rafter counters show --json   # paste into an issue
+rafter counters clear         # delete ~/.rafter/usage
 ```
 
-Turn counting off with `rafter agent config set agent.usage.enabled false`, `RAFTER_TELEMETRY=0`, or `DO_NOT_TRACK=1`. A project `.rafter.yml` cannot change this setting.
+Turn counting off with `rafter agent config set agent.usage.enabled false`, `RAFTER_USAGE_COUNTERS=0`, or `DO_NOT_TRACK=1`. A project `.rafter.yml` cannot change this setting.
 
 ### Configuration
 
@@ -556,7 +556,7 @@ Exit codes are part of Rafter's output contract — CI pipelines and orchestrato
 ├── audit.jsonl        # Security event log (JSON lines)
 ├── bin/betterleaks    # Betterleaks binary
 ├── patterns/          # Custom patterns (reserved)
-├── usage/             # Local usage counters, 7 days (rafter telemetry show)
+├── usage/             # Local usage counters, 7 days (rafter counters show)
 └── git-hooks/         # Global pre-commit hook (if --global)
 ```
 

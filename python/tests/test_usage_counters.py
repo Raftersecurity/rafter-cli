@@ -40,6 +40,7 @@ def _usage_files(home: Path) -> list[Path]:
 def _rafter(home: Path, *args: str, stdin: str = "", cwd: Path | None = None, env: dict | None = None):
     e = {**os.environ, "HOME": str(home), "CI": "1"}
     e.pop("DO_NOT_TRACK", None)
+    e.pop("RAFTER_USAGE_COUNTERS", None)
     e.pop("RAFTER_TELEMETRY", None)
     e.update(env or {})
     return subprocess.run(
@@ -113,7 +114,7 @@ def test_counts_a_real_cli_session(tmp_path):
     _rafter(tmp_path, "secrets", "--jsn", str(proj))
     assert _rafter(tmp_path, "hook", "pretool", stdin=BASH_LS).returncode == 0
     _rafter(tmp_path, "secrets", "--json", "--engine", "patterns", str(proj))
-    out = _rafter(tmp_path, "telemetry", "show", "--json")
+    out = _rafter(tmp_path, "counters", "show", "--json")
     assert out.returncode == 0, out.stderr
     report = json.loads(out.stdout)
     assert report["store"] == "~/.rafter/usage"
@@ -131,7 +132,7 @@ def test_counts_a_real_cli_session(tmp_path):
 def test_writes_nothing_when_disabled_whatever_rafter_yml_says(tmp_path):
     """Fails if a kill switch or the global setting stops working, or a project .rafter.yml can turn counting on."""
     _rafter(tmp_path, "hook", "pretool", stdin=BASH_LS, env={"DO_NOT_TRACK": "1"})
-    _rafter(tmp_path, "hook", "pretool", stdin=BASH_LS, env={"RAFTER_TELEMETRY": "off"})
+    _rafter(tmp_path, "hook", "pretool", stdin=BASH_LS, env={"RAFTER_USAGE_COUNTERS": "off"})
     assert _usage_files(tmp_path) == []
 
     (tmp_path / ".rafter").mkdir(exist_ok=True)
@@ -146,3 +147,20 @@ def test_writes_nothing_when_disabled_whatever_rafter_yml_says(tmp_path):
     (tmp_path / ".rafter" / "config.json").write_text("{}")
     _rafter(tmp_path, "hook", "pretool", stdin=BASH_LS, cwd=proj)
     assert len(_usage_files(tmp_path)) == 1
+
+
+def test_renamed_env_var_is_the_kill_switch_the_retired_name_is_not(tmp_path):
+    """sable-ce13: RAFTER_TELEMETRY -> RAFTER_USAGE_COUNTERS. Fails if the new
+    name isn't wired in as the kill switch, or the retired name still works as one."""
+    _rafter(tmp_path, "hook", "pretool", stdin=BASH_LS, env={"RAFTER_USAGE_COUNTERS": "0"})
+    assert _usage_files(tmp_path) == []
+
+    _rafter(tmp_path, "hook", "pretool", stdin=BASH_LS, env={"RAFTER_TELEMETRY": "0"})
+    assert len(_usage_files(tmp_path)) == 1
+
+
+def test_telemetry_is_no_longer_a_command(tmp_path):
+    """Fails if `telemetry` still resolves as a command instead of the renamed `counters`."""
+    result = _rafter(tmp_path, "telemetry", "show")
+    assert result.returncode != 0
+    assert "No such command" in result.stderr
