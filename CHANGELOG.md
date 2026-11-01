@@ -36,7 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`rafter agent enable openclaw.skills` installs the skill where OpenClaw reads it**, `~/.openclaw/workspace/skills/rafter-security/SKILL.md`, instead of the legacy `~/.openclaw/skills/rafter-security.md`. Both Node and Python.
 - **Installing Cursor support no longer deletes text you wrote in the legacy `.cursor/rules/rafter-security.mdc`.** `agent init --with-cursor` and `agent enable cursor.instructions` deleted the whole file; they now remove only rafter's marked block and delete the file only when nothing else is left. In Python, `cursor.instructions` now manages the per-skill rules and sub-agent that `agent init` writes, as in Node, instead of the retired consolidated file. Both Node and Python.
 - **The Cursor sub-agent written by the Python CLI no longer has a stray blank line in its frontmatter**, so it now matches the file the Node CLI writes. Python only.
+
+## [0.11.7] - 2026-11-02
+
+### Security
+
 - **The command gate no longer allows `rm -rf /` spelled with abbreviated flags, an escaped command name, or `find`.** GNU rm accepts any unambiguous prefix of a long option, so `rm --recur --forc /` deleted with no prompt: it rated low, and `rafter agent exec` ran it. A long rm flag, abbreviated or not, now rates the same as its short form (`--recursive` as `-r`, `--force` as `-f`), so `rm --recur --forc ./build` needs approval like `rm -rf ./build`, and an ambiguous prefix such as `--ver` is ignored as rm ignores it. `r\m -rf /` is read as `rm` (the shell drops the backslash). `find / -delete` and `find /etc -exec rm {} \;` are hard-blocked like `rm -rf` on that path, while `find` below a critical root (`find . -name '*.pyc' -delete`) keeps its tier. `rm -rf /*` and `rm -rf -- /` are hard-blocked like `rm -rf /` (they needed approval). GNU rm also reads flags placed after its operands, so `rm / -rf` and `rm /etc -rf` rated low; rm's flags now count wherever they appear up to a `--` (after which `-rf` is a file name, so `rm -- -rf` stays low), and `rm ./build -f` needs approval like `rm -f ./build`. `find ~ -delete` and `find $HOME -delete` need approval like `rm -rf ~` (they rated low). (sable-e7ju) Both Node and Python.
+
+### Fixed
+
 - **MCP `scan_secrets` with engine `auto` or `betterleaks` no longer crashes once betterleaks reports a finding** (sable-p8lb). `union_scan_results()` and the MCP handler's read-error filter both read `.read_error` on every engine's result, but `BetterleaksScanResult` never had that field, so either engine path raised `AttributeError: 'BetterleaksScanResult' object has no attribute 'read_error'` as soon as betterleaks found anything — the Python CLI's own scan commands were unaffected because they convert betterleaks results before union, and Node was unaffected because reading an absent property there just yields `undefined`. `BetterleaksScanResult` now carries an optional `read_error: str | None = None` field, matching Node's optional `readError?`. Python only.
 
 ## [0.11.6] - 2026-11-01
