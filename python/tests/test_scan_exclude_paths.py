@@ -144,3 +144,24 @@ class TestScanDirectoryEndToEnd:
         files = sorted(r.file for r in results)
         assert len(files) == 1, f"expected only safe/leaky.ts, got: {files}"
         assert files[0].endswith("safe/leaky.ts")
+
+
+@pytest.mark.parametrize("key", ["exclude_paths", "excludePaths"])
+def test_rafter_yml_exclude_paths_either_spelling(tmp_path, monkeypatch, capsys, key):
+    """sable-req5: `scan.excludePaths` in .rafter.yml was silently ignored."""
+    import json
+    import typer
+    from rafter_cli.commands.scan import scan_local
+
+    (tmp_path / "fixtures").mkdir()
+    (tmp_path / "fixtures" / "creds.ts").write_text(f"// {FAKE_STRIPE}\n")
+    (tmp_path / ".rafter.yml").write_text(f'scan:\n  {key}: ["fixtures/**"]\n')
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(typer.Exit) as exc:
+        scan_local(
+            paths=[str(tmp_path)], quiet=True, json_output=True, format="json", out=None,
+            staged=False, diff=None, range_=None, engine="patterns", baseline=False,
+            watch=False, history=False, gitignore=False, auto_update=False,
+        )
+    assert json.loads(capsys.readouterr().out)["results"] == []
+    assert exc.value.exit_code == 0
