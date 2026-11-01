@@ -106,6 +106,39 @@ class TestScanSecrets:
         assert creds[0]["pattern"] == "AWS Access Key ID"
         assert creds[0]["engines"] == ["patterns"]
 
+    def test_auto_and_betterleaks_engines_return_a_real_betterleaks_finding(self):
+        """sable-p8lb — BetterleaksScanner.scan_directory() returns
+        BetterleaksScanResult, not ScanResult. test_auto_runs_both_engines_and_unions
+        above fakes betterleaks output with ScanResult, which already has
+        read_error, so it never caught that `scan_secrets` crashed with
+        "'BetterleaksScanResult' object has no attribute 'read_error'" for
+        engine=auto (via union_scan_results) and engine=betterleaks (via the
+        read_error filter in `report()`) whenever betterleaks reported a
+        finding."""
+        from rafter_cli.core.pattern_engine import Pattern, PatternMatch
+        from rafter_cli.scanners.betterleaks import BetterleaksScanResult
+
+        bl_results = [BetterleaksScanResult(file="/tmp/secret.env", matches=[
+            PatternMatch(
+                pattern=Pattern(name="generic-api-key", regex="", severity="high"),
+                match="sk-1234567890abcdef", line=3, redacted="sk-1****",
+            ),
+        ])]
+
+        with patch("rafter_cli.commands.mcp_server.BetterleaksScanner") as mock_bl, \
+             patch("rafter_cli.commands.mcp_server.RegexScanner") as mock_rx:
+            mock_bl.return_value.is_available.return_value = True
+            mock_bl.return_value.scan_directory.return_value = bl_results
+            mock_rx.return_value.scan_directory.return_value = []
+
+            auto_results = handle_scan_secrets("/tmp", engine="auto")
+            bl_only_results = handle_scan_secrets("/tmp", engine="betterleaks")
+
+        for results in (auto_results, bl_only_results):
+            assert len(results) == 1
+            assert results[0]["file"] == "/tmp/secret.env"
+            assert results[0]["matches"][0]["pattern"] == "generic-api-key"
+
     # The scanner wraps a timeout or invocation failure in RuntimeError (#262);
     # auto mode must still fall back to patterns, as Node does.
     @pytest.mark.parametrize("error", [

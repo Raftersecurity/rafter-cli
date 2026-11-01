@@ -135,6 +135,12 @@ def scan_config_toml(dir_path: str, skipped: list[str], base_toml: str | None) -
 class BetterleaksScanResult:
     file: str
     matches: list[PatternMatch] = field(default_factory=list)
+    # Mirrors ScanResult.read_error and Node's optional `readError?` (sable-p8lb).
+    # betterleaks never sets this itself, but union_scan_results() and the MCP
+    # scan_secrets handler read `.read_error` on whichever engine's result they
+    # are given. In Node that access on a plain object simply yields `undefined`;
+    # in Python it raised AttributeError because the field did not exist here.
+    read_error: str | None = None
 
 
 class BetterleaksCheckResult(NamedTuple):

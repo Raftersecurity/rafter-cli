@@ -3,7 +3,7 @@
 Counts are keyed by allowlisted enums, counts and duration buckets only; the
 allowlist is shared-docs/usage-counters.json, embedded below and checked
 against that file by a test. Nothing here touches the network: the counters
-stay on this machine until a person pastes ``rafter telemetry show`` output
+stay on this machine until a person pastes ``rafter counters show`` output
 somewhere.
 
 Recorders only add to an in-memory buffer; the buffer is written once, when
@@ -14,7 +14,7 @@ file is replaced. Every entry point swallows its own errors and none writes to
 stdout.
 
 Mirrors node/src/core/usage-counters.ts. Deleting this file, its Node twin, the
-two ``telemetry`` command files and their one-line call sites removes the
+two ``counters`` command files and their one-line call sites removes the
 feature.
 """
 from __future__ import annotations
@@ -129,7 +129,7 @@ def reset_pending() -> None:
 
 
 def discard_pending() -> None:
-    """Drop everything buffered and stop counting for this process (``telemetry clear``)."""
+    """Drop everything buffered and stop counting for this process (``counters clear``)."""
     global _discarded
     _pending.clear()
     _discarded = True
@@ -308,15 +308,15 @@ def count_error(exc: BaseException) -> None:
 
 def usage_status(env: dict | None = None) -> tuple[bool, str]:
     """Whether counting is on, and why: ``default`` | ``config`` |
-    ``env:RAFTER_TELEMETRY`` | ``env:DO_NOT_TRACK``.
+    ``env:RAFTER_USAGE_COUNTERS`` | ``env:DO_NOT_TRACK``.
 
     Read only from the environment and the global ~/.rafter/config.json
     (``agent.usage.enabled``); a project .rafter.yml is never consulted.
     """
     env = os.environ if env is None else env
-    rt = (env.get("RAFTER_TELEMETRY") or "").strip().lower()
+    rt = (env.get("RAFTER_USAGE_COUNTERS") or "").strip().lower()
     if rt in ("0", "false", "off"):
-        return False, "env:RAFTER_TELEMETRY"
+        return False, "env:RAFTER_USAGE_COUNTERS"
     dnt = (env.get("DO_NOT_TRACK") or "").strip().lower()
     if dnt not in ("", "0", "false"):
         return False, "env:DO_NOT_TRACK"

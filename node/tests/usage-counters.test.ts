@@ -48,6 +48,7 @@ function usageFiles(home: string): string[] {
 function cliEnv(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, CI: "1", ...extra };
   if (!("DO_NOT_TRACK" in extra)) delete env.DO_NOT_TRACK;
+  if (!("RAFTER_USAGE_COUNTERS" in extra)) delete env.RAFTER_USAGE_COUNTERS;
   if (!("RAFTER_TELEMETRY" in extra)) delete env.RAFTER_TELEMETRY;
   return env;
 }
@@ -130,7 +131,7 @@ describe("usage counters", () => {
     rafter(home, ["secrets", "--jsn", proj]);
     expect(rafter(home, ["hook", "pretool"], { input: BASH_LS }).status).toBe(0);
     rafter(home, ["secrets", "--json", "--engine", "patterns", proj]);
-    const out = execFileSync("node", [CLI, "telemetry", "show", "--json"], { env: cliEnv(home), encoding: "utf-8" });
+    const out = execFileSync("node", [CLI, "counters", "show", "--json"], { env: cliEnv(home), encoding: "utf-8" });
     const report = JSON.parse(out);
     expect(report.store).toBe("~/.rafter/usage");
     expect(report.enabled).toBe(true);
@@ -148,7 +149,7 @@ describe("usage counters", () => {
   it("writes nothing when disabled, whatever .rafter.yml says", () => {
     const home = tmpHome();
     rafter(home, ["hook", "pretool"], { input: BASH_LS, env: { DO_NOT_TRACK: "1" } });
-    rafter(home, ["hook", "pretool"], { input: BASH_LS, env: { RAFTER_TELEMETRY: "off" } });
+    rafter(home, ["hook", "pretool"], { input: BASH_LS, env: { RAFTER_USAGE_COUNTERS: "off" } });
     expect(usageFiles(home)).toEqual([]);
 
     fs.mkdirSync(path.join(home, ".rafter"), { recursive: true });
@@ -163,5 +164,24 @@ describe("usage counters", () => {
     fs.writeFileSync(path.join(home, ".rafter", "config.json"), "{}");
     rafter(home, ["hook", "pretool"], { input: BASH_LS, cwd: proj });
     expect(usageFiles(home).length).toBe(1);
+  });
+
+  // Fails if the renamed env var doesn't take over as the kill switch, or the retired
+  // name keeps working as one (sable-ce13: RAFTER_TELEMETRY -> RAFTER_USAGE_COUNTERS).
+  it("RAFTER_USAGE_COUNTERS disables counting; the retired RAFTER_TELEMETRY no longer does", () => {
+    const home = tmpHome();
+    rafter(home, ["hook", "pretool"], { input: BASH_LS, env: { RAFTER_USAGE_COUNTERS: "0" } });
+    expect(usageFiles(home)).toEqual([]);
+
+    rafter(home, ["hook", "pretool"], { input: BASH_LS, env: { RAFTER_TELEMETRY: "0" } });
+    expect(usageFiles(home).length).toBe(1);
+  });
+
+  // Fails if `telemetry` still resolves as a command instead of the renamed `counters`.
+  it("no longer has a `telemetry` command", () => {
+    const home = tmpHome();
+    const result = rafter(home, ["telemetry", "show"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("unknown command");
   });
 });

@@ -47,6 +47,7 @@
   "npm:0.11.3",
   "npm:0.11.4",
   "npm:0.11.5",
+  "npm:0.11.6",
   "pypi:0.1.0",
   "pypi:0.4.0",
   "pypi:0.4.1",
@@ -91,7 +92,8 @@
   "pypi:0.11.2",
   "pypi:0.11.3",
   "pypi:0.11.4",
-  "pypi:0.11.5"
+  "pypi:0.11.5",
+  "pypi:0.11.6"
  ],
  "files": {
   "agents/rafter.md": [
@@ -163,6 +165,7 @@
    "886d65416bb19057bb4fbef4cad2b8fa392197e53a5fb1f3e9ce3b30c7ca2f65",
    "989713d60ab02ab04d03c80d448510b245d986a292f437fa355ab6845b75f942",
    "9b7b27ae5248e55dbfa9d6c7d5cb6a4e3dec31b16268ea89a4264e9feae7ae1b",
+   "9bfa29fe4ca55ff0775d83d567063fa1a02b934fba393f2b6fd336481e313b89",
    "9c028cd429f974c1542edb251d952aed20ccc97e5e8f6740b6e8a9e46f3a11ba",
    "a3616bb898b7fa9fdf7af71e503975ab846c11dd2ff4176824f6e4de278cbf6b",
    "a5cba1a60c237f7dbb6b4c4d1c876150c12230901d5c3eb12c1b43e6764bac94",

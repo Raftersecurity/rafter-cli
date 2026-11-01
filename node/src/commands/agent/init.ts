@@ -535,7 +535,7 @@ function installCodexHooks(root: string, out: InitOutput): void {
  *
  * Covers the full pre/post-tool lifecycle plus shell-specific gating:
  *   - preToolUse           — rafter classifies every tool call
- *   - postToolUse          — rafter post-hook (audit, telemetry)
+ *   - postToolUse          — rafter post-hook (audit, usage counters)
  *   - beforeShellExecution — narrower complement; some Cursor versions
  *                            fire this without firing preToolUse for shell.
  *
