@@ -12,11 +12,10 @@ on:
 
 permissions:
   contents: read
-  # id-token: write is required by npm Trusted Publishing (OIDC). Lets the
-  # publish-node job exchange the GitHub-issued OIDC token for a short-lived
-  # npm publish credential, replacing the long-lived NPM_TOKEN secret. Does
-  # NOT grant write access on its own; just mints the identity token.
-  id-token: write
+  # No workflow-wide id-token: write (sable-sd5u). Only publish-node needs it,
+  # for npm Trusted Publishing, and grants it in its own permissions block.
+  # A job that inherits it can mint this repo's OIDC identity, so a job
+  # running third-party code (publish-clawhub) must not have it.
 
 jobs:
   test-node:
@@ -167,9 +166,9 @@ jobs:
     # Only the prod push publishes; a workflow_dispatch stops here.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    # Trusted Publishing requires id-token: write in scope for THIS job (the
-    # top-level grant covers it, but documented here for the job-local audit
-    # trail). Self-hosted runners are NOT supported by npm Trusted Publishing
+    # Trusted Publishing requires id-token: write in scope for THIS job, and
+    # this is the only job that has it (sable-sd5u: no workflow-wide grant).
+    # Self-hosted runners are NOT supported by npm Trusted Publishing
     # — ubuntu-latest (GitHub-hosted) is required.
     permissions:
       contents: read
@@ -294,6 +293,9 @@ jobs:
     needs: [publish-node]
     runs-on: ubuntu-latest
     if: github.repository == 'Raftersecurity/rafter-cli'
+    # Runs third-party code (the clawhub CLI): read-only, no OIDC token.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -346,8 +348,8 @@ jobs:
           # publish/show command (rf-zgwj follow-up after first-publish
           # failure on prod). The persisted token lives in the runner's
           # ephemeral filesystem and is discarded when the job ends.
-          npx -y clawhub@latest login --token "$CLAWHUB_TOKEN"
-          npx -y clawhub@latest whoami
+          npx -y clawhub@0.24.1 login --token "$CLAWHUB_TOKEN"
+          npx -y clawhub@0.24.1 whoami
 
       - name: Publish to ClawHub
         if: steps.gate.outputs.skip != 'true'
@@ -356,7 +358,7 @@ jobs:
           # fingerprint matches what's already published, it no-ops.
           # If the version is unchanged but content differs, the command
           # fails (intentional — bumps must come with a version change).
-          npx -y clawhub@latest skill publish /tmp/rafter-skill/rafter-security \
+          npx -y clawhub@0.24.1 skill publish /tmp/rafter-skill/rafter-security \
             --version "${{ needs.publish-node.outputs.version }}" \
             --owner rafter
 
