@@ -114,13 +114,78 @@ export function loadPolicy(baseDir?: string): PolicyFile | null {
 
   try {
     const content = fs.readFileSync(policyPath, "utf-8");
-    const parsed = yaml.load(content) as Record<string, any>;
-    if (!parsed || typeof parsed !== "object") return null;
+    const loaded = yaml.load(content) as Record<string, any>;
+    if (!loaded || typeof loaded !== "object") return null;
+    const parsed = normalizeKeySpelling(loaded);
     return validatePolicy(mapPolicy(parsed), parsed);
   } catch (e: any) {
     console.error(`Warning: Failed to parse policy file ${policyPath}: ${e.message}`);
     return null;
   }
+}
+
+/**
+ * camelCase spelling -> snake_case key, for every multi-word key the loader
+ * reads, per nesting level (sable-req5). The hosted scanner accepts both
+ * spellings with snake_case winning on collision; so do both CLIs. Keep this
+ * table identical to _CAMEL_ALIASES in python/rafter_cli/core/policy_loader.py.
+ */
+const CAMEL_ALIASES: Record<string, Record<string, string>> = {
+  top: {
+    riskLevel: "risk_level",
+    commandPolicy: "command_policy",
+    excludePaths: "exclude_paths",
+    customPatterns: "custom_patterns",
+  },
+  command_policy: {
+    blockedPatterns: "blocked_patterns",
+    requireApproval: "require_approval",
+    allowedPatterns: "allowed_patterns",
+  },
+  scan: {
+    excludePaths: "exclude_paths",
+    customPatterns: "custom_patterns",
+    autoUpdateBetterleaks: "auto_update_betterleaks",
+    plusRequiresApproval: "plus_requires_approval",
+  },
+  audit: {
+    retentionDays: "retention_days",
+    logLevel: "log_level",
+    logPath: "log_path",
+  },
+  "docs.cache": {
+    ttlSeconds: "ttl_seconds",
+  },
+};
+
+const isPlainObject = (v: unknown): v is Record<string, any> =>
+  !!v && typeof v === "object" && !Array.isArray(v);
+
+/** Copy `d` with known camelCase keys renamed to snake_case; snake_case wins. */
+function snakeKeys(d: Record<string, any>, aliases: Record<string, string>): Record<string, any> {
+  const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+  // fromEntries defines own properties, so a "__proto__" key stays a plain key.
+  const out = Object.fromEntries(Object.entries(d).filter(([k]) => !has(aliases, k)));
+  for (const [camel, snake] of Object.entries(aliases)) {
+    if (has(d, camel) && !has(d, snake)) out[snake] = d[camel];
+  }
+  return out;
+}
+
+/** Rewrite camelCase policy keys to the snake_case `mapPolicy` reads. */
+function normalizeKeySpelling(loaded: Record<string, any>): Record<string, any> {
+  const raw = snakeKeys(loaded, CAMEL_ALIASES.top);
+  for (const section of ["command_policy", "scan", "audit"]) {
+    if (isPlainObject(raw[section])) raw[section] = snakeKeys(raw[section], CAMEL_ALIASES[section]);
+  }
+  if (Array.isArray(raw.docs)) {
+    raw.docs = raw.docs.map((e: any) =>
+      isPlainObject(e) && isPlainObject(e.cache)
+        ? { ...e, cache: snakeKeys(e.cache, CAMEL_ALIASES["docs.cache"]) }
+        : e,
+    );
+  }
+  return raw;
 }
 
 /**

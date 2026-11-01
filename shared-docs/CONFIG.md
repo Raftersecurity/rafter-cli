@@ -41,6 +41,7 @@ commandPolicy:
   mode: approve-dangerous         # allow-all | approve-dangerous | deny-list
   blockedPatterns: ["rm -rf /"]   # replaces (not appends) the defaults
   requireApproval: ["git push --force"]
+  allowedPatterns: ["git push --force-with-lease"]  # known-safe: no approval prompt
 scan:
   excludePaths: ["dist/**", "*.lock"]
   customPatterns:
@@ -48,6 +49,7 @@ scan:
       regex: "intl_[a-z0-9]{32}"
       severity: high
   autoUpdateBetterleaks: true     # false to opt out (e.g. CI provisions its own binary)
+  plusRequiresApproval: false     # true: a paid Plus scan needs --yes or a prompt
 ignore:                           # suppress findings (top-level, NOT under scan:)
   - paths: ["tests/fixtures/**"]
     rules: ["AWS Access Key ID"]  # omit to suppress all rules for those paths
@@ -62,7 +64,11 @@ docs: [ ... ]                     # repo security docs (see CLI_SPEC)
 Backend-compatibility: top-level `exclude_paths:` / `custom_patterns:` (the flat
 snake_case shape the hosted scanner also reads — it looks for `.rafter.yml` first,
 then `.rafter/config.yml`) are also accepted; nested `scan.*` wins on collision.
-Keys accept either `camelCase` or `snake_case` on every engine. The hosted scanner
+Every multi-word key may be spelled in `camelCase` (as above) or `snake_case`
+(`scan.exclude_paths`, `audit.retention_days`) on every engine, the local Node and
+Python CLIs included; if one mapping carries both spellings of a key, snake_case
+wins. CLI releases through 0.11.5 read only snake_case and silently ignored the
+camelCase keys shown above. The hosted scanner
 honours `scan.excludePaths` and `ignore:`. An ignore rule with a non-empty
 `reason:` may hide even a must-fix or secret-scanner finding; one without a reason
 still hides ordinary findings but is held at the floor for protected ones. Every
