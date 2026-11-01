@@ -88,6 +88,25 @@ def test_empty_when_neither_engine_finds_anything():
     assert union_scan_results([], []) == []
 
 
+def test_accepts_the_real_betterleaks_result_type():
+    """sable-p8lb — BetterleaksScanner.scan_directory()/scan_file() return
+    BetterleaksScanResult, not ScanResult (every other test in this file fakes
+    betterleaks output with ScanResult, which already has read_error and so
+    never caught this). union_scan_results() reads `.read_error` on whatever
+    it's given; a real BetterleaksScanResult without that attribute raised
+    AttributeError the moment betterleaks reported any finding."""
+    from rafter_cli.scanners.betterleaks import BetterleaksScanResult
+
+    bl = [BetterleaksScanResult(file="a.env", matches=[_m("private-key", "KEY", 2)])]
+
+    out = union_scan_results(bl, [])
+
+    assert len(out) == 1
+    assert out[0].file == "a.env"
+    assert out[0].matches[0].pattern.name == "private-key"
+    assert out[0].matches[0].engines == ["betterleaks"]
+
+
 def test_does_not_mutate_input_matches():
     src = _m("k", "V", 1)
     bl = [ScanResult(file="a.env", matches=[src])]
