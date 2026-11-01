@@ -168,6 +168,20 @@ describe("apply_patch to rafter's config gets the Write guard's reason", () => {
   });
 });
 
+describe("a symlink into the rafter dir does not get around the Write guard (sable-rxqr)", () => {
+  it("denies a Write through a link to ~/.rafter", () => {
+    fs.mkdirSync(path.join(home, ".rafter"), { recursive: true });
+    const link = path.join(home, "innocent");
+    fs.symlinkSync(path.join(home, ".rafter"), link);
+    try {
+      const r = runHook("claude", { tool_name: "Write", tool_input: { file_path: path.join(link, "config.json"), content: "{}" } });
+      expect(isDeny("claude", r)).toBe(true);
+    } finally {
+      fs.unlinkSync(link);
+    }
+  });
+});
+
 // The platform only calls the hook for tools its matcher names, so each
 // installer's matcher must name the write tools the hook evaluates.
 describe("installers register the hook for every evaluated write tool", () => {

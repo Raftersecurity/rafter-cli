@@ -363,12 +363,27 @@ function writesRafterSecurityConfig(filePath: string): boolean {
     const expanded = filePath.startsWith("~")
       ? path.join(os.homedir(), filePath.slice(1))
       : filePath;
-    const target = path.resolve(expanded);
-    const rafterDir = path.resolve(getRafterDir());
+    // Compare real paths, as Python's Path.resolve() does: a symlink into the
+    // rafter dir must not be a way around this check (sable-rxqr).
+    const target = realpathNearest(path.resolve(expanded));
+    const rafterDir = realpathNearest(path.resolve(getRafterDir()));
     return target === rafterDir || target.startsWith(rafterDir + path.sep);
   } catch {
     return false;
   }
+}
+
+/** Real path of `p`, resolving symlinks in its longest existing prefix. */
+function realpathNearest(p: string): string {
+  let head = p;
+  const tail: string[] = [];
+  while (!fs.existsSync(head)) {
+    const parent = path.dirname(head);
+    if (parent === head) return p;
+    tail.unshift(path.basename(head));
+    head = parent;
+  }
+  return path.join(fs.realpathSync(head), ...tail);
 }
 
 function evaluateWrite(toolInput: Record<string, any>): HookDecision {

