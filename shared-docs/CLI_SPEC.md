@@ -145,7 +145,7 @@ A report is not necessarily durable the instant a scan flips to `completed`, so 
 | HTTP 404, **after** the scan is known to exist | Transient — read-after-write lag, not a wrong id. |
 | HTTP 404 on the **first** poll | Not retried. The scan genuinely does not exist. Exit code `2`. |
 | HTTP 429 **with** a usable `Retry-After` | Transient. Retried after sleeping `min(Retry-After, 60s)` instead of the exponential schedule. |
-| HTTP 429 **without** one | Not retried — on this API a bare 429 means quota exhausted, and waiting does not earn credits. |
+| HTTP 429 **without** one | Not retried — on this API a bare 429 means quota exhausted, and waiting does not earn credits. Exit code `1`: exit `3` is reserved for a 429 on scan *submit*. |
 | Other 4xx (401/403 …) | Not retried — reported immediately. |
 
 Two budgets bound the retries. The **consecutive** counter (5) resets on any successful poll, so a long scan with occasional blips is not killed by unrelated failures minutes apart. A **total** counter (20 per command invocation) does *not* reset, so a backend alternating success and failure cannot keep the loop alive indefinitely — the CLI has no wall-clock deadline of its own.
