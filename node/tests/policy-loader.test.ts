@@ -313,3 +313,66 @@ ignore: []
     expect(true).toBe(true);
   });
 });
+
+// sable-req5 — every multi-word key the loader reads, in its camelCase spelling.
+// Each case: [YAML body, path into the loaded policy, expected value].
+const CAMEL_CASES: [string, (string | number)[], unknown][] = [
+  ["riskLevel: aggressive", ["riskLevel"], "aggressive"],
+  ["commandPolicy:\n  mode: deny-list", ["commandPolicy", "mode"], "deny-list"],
+  ["command_policy:\n  blockedPatterns: ['rm -rf /']", ["commandPolicy", "blockedPatterns"], ["rm -rf /"]],
+  ["command_policy:\n  requireApproval: ['git push']", ["commandPolicy", "requireApproval"], ["git push"]],
+  ["command_policy:\n  allowedPatterns: ['ls']", ["commandPolicy", "allowedPatterns"], ["ls"]],
+  ["excludePaths: ['top/**']", ["scan", "excludePaths"], ["top/**"]],
+  ["customPatterns: [{name: T, regex: 't_[0-9]+', severity: high}]", ["scan", "customPatterns", 0, "name"], "T"],
+  ["scan:\n  excludePaths: ['dist/**']", ["scan", "excludePaths"], ["dist/**"]],
+  ["scan:\n  customPatterns: [{name: N, regex: 'n_[0-9]+', severity: low}]", ["scan", "customPatterns", 0, "name"], "N"],
+  ["scan:\n  autoUpdateBetterleaks: false", ["scan", "autoUpdateBetterleaks"], false],
+  ["scan:\n  plusRequiresApproval: true", ["scan", "plusRequiresApproval"], true],
+  ["audit:\n  retentionDays: 7", ["audit", "retentionDays"], 7],
+  ["audit:\n  logLevel: debug", ["audit", "logLevel"], "debug"],
+  ["audit:\n  logPath: .rafter/a.jsonl", ["audit", "logPath"], ".rafter/a.jsonl"],
+  ["docs:\n  - url: https://example.com/d.md\n    cache: {ttlSeconds: 60}", ["docs", 0, "cache", "ttlSeconds"], 60],
+];
+
+describe(".rafter.yml camelCase keys (sable-req5)", () => {
+  let tmpDir: string;
+  let origCwd: string;
+
+  beforeEach(() => {
+    tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "rafter-policy-camel-")));
+    origCwd = process.cwd();
+    require("child_process").execSync("git init -q", { cwd: tmpDir, stdio: "ignore" });
+    process.chdir(tmpDir);
+  });
+
+  afterEach(() => {
+    process.chdir(origCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  async function load(body: string) {
+    fs.writeFileSync(path.join(tmpDir, ".rafter.yml"), body + "\n");
+    const mod = await import("../src/core/policy-loader.js");
+    return mod.loadPolicy();
+  }
+
+  it.each(CAMEL_CASES)("honors %j", async (body, keyPath, expected) => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let value: any = await load(body);
+    for (const step of keyPath) value = value?.[step];
+    expect(value).toEqual(expected);
+    expect(errSpy.mock.calls.flat().join("\n")).not.toContain("Unknown policy key");
+  });
+
+  it("snake_case wins when both spellings are present", async () => {
+    const policy = await load(
+      "risk_level: minimal\nriskLevel: aggressive\n" +
+      "scan:\n  exclude_paths: ['snake/**']\n  excludePaths: ['camel/**']\n" +
+      "audit:\n  logLevel: debug\n  log_level: error",
+    );
+    expect(policy?.riskLevel).toBe("minimal");
+    expect(policy?.scan?.excludePaths).toEqual(["snake/**"]);
+    expect(policy?.audit?.logLevel).toBe("error");
+  });
+});

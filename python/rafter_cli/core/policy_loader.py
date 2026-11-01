@@ -75,6 +75,7 @@ def load_policy(base_dir: str | Path | None = None) -> dict | None:
         raw = yaml.safe_load(path.read_text())
         if not raw or not isinstance(raw, dict):
             return None
+        raw = _normalize_key_spelling(raw)
         return _validate_policy(_map_policy(raw), raw)
     except OSError as e:
         print(f"Warning: Cannot read policy file {path}: {e}", file=sys.stderr)
@@ -86,6 +87,63 @@ def load_policy(base_dir: str | Path | None = None) -> dict | None:
         # Node loader.
         print(f"Warning: Failed to parse policy file {path}: {e}", file=sys.stderr)
         return None
+
+
+#: camelCase spelling -> snake_case key, for every multi-word key the loader
+#: reads, per nesting level (sable-req5). The hosted scanner accepts both
+#: spellings with snake_case winning on collision; so do both CLIs. Keep this
+#: table identical to CAMEL_ALIASES in node/src/core/policy-loader.ts.
+_CAMEL_ALIASES: dict[str, dict[str, str]] = {
+    "top": {
+        "riskLevel": "risk_level",
+        "commandPolicy": "command_policy",
+        "excludePaths": "exclude_paths",
+        "customPatterns": "custom_patterns",
+    },
+    "command_policy": {
+        "blockedPatterns": "blocked_patterns",
+        "requireApproval": "require_approval",
+        "allowedPatterns": "allowed_patterns",
+    },
+    "scan": {
+        "excludePaths": "exclude_paths",
+        "customPatterns": "custom_patterns",
+        "autoUpdateBetterleaks": "auto_update_betterleaks",
+        "plusRequiresApproval": "plus_requires_approval",
+    },
+    "audit": {
+        "retentionDays": "retention_days",
+        "logLevel": "log_level",
+        "logPath": "log_path",
+    },
+    "docs.cache": {
+        "ttlSeconds": "ttl_seconds",
+    },
+}
+
+
+def _snake_keys(d: dict, aliases: dict[str, str]) -> dict:
+    """Copy ``d`` with known camelCase keys renamed to snake_case; snake_case wins."""
+    out = {k: v for k, v in d.items() if k not in aliases}
+    for camel, snake in aliases.items():
+        if camel in d and snake not in d:
+            out[snake] = d[camel]
+    return out
+
+
+def _normalize_key_spelling(raw: dict) -> dict:
+    """Rewrite camelCase policy keys to the snake_case the mapper reads."""
+    raw = _snake_keys(raw, _CAMEL_ALIASES["top"])
+    for section in ("command_policy", "scan", "audit"):
+        if isinstance(raw.get(section), dict):
+            raw[section] = _snake_keys(raw[section], _CAMEL_ALIASES[section])
+    if isinstance(raw.get("docs"), list):
+        raw["docs"] = [
+            {**e, "cache": _snake_keys(e["cache"], _CAMEL_ALIASES["docs.cache"])}
+            if isinstance(e, dict) and isinstance(e.get("cache"), dict) else e
+            for e in raw["docs"]
+        ]
+    return raw
 
 
 def _map_policy(raw: dict) -> dict:
