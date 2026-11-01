@@ -21,7 +21,7 @@ import { createIssuesCommand } from "./commands/issues/index.js";
 import { createReportCommand } from "./commands/report.js";
 import { createGatesCommand } from "./commands/gates.js";
 import { createSitesCommand } from "./commands/sites/index.js";
-import { createTelemetryCommand } from "./commands/telemetry.js";
+import { createCountersCommand } from "./commands/counters.js";
 import { installUsageCounters } from "./core/usage-counters.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
@@ -107,7 +107,7 @@ program.addCommand(createGatesCommand());
 program.addCommand(createCompletionCommand());
 
 // Local usage counters (nothing leaves the machine)
-program.addCommand(createTelemetryCommand());
+program.addCommand(createCountersCommand());
 
 // Version subcommand (also available as --version)
 program.addCommand(

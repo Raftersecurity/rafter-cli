@@ -79,7 +79,7 @@ function skillStaleness(): SkillStaleness[] {
   return rows.sort((a, b) => (a.name + "\0" + a.platform < b.name + "\0" + b.platform ? -1 : 1));
 }
 
-export function buildTelemetryReport(days: number): Record<string, unknown> {
+export function buildCountersReport(days: number): Record<string, unknown> {
   const status = usageStatus();
   const { since, counters } = readCounters(days);
   return {
@@ -132,11 +132,11 @@ function printText(r: any): void {
   process.stdout.write(out.join("\n") + "\n");
 }
 
-export function createTelemetryCommand(): Command {
-  const telemetry = new Command("telemetry")
+export function createCountersCommand(): Command {
+  const counters = new Command("counters")
     .description(`Show or clear local usage counters. ${USAGE_NOTICE}`);
 
-  telemetry
+  counters
     .command("show")
     .description(`Print the local usage counters for the last N days. ${USAGE_NOTICE}`)
     .option("--json", "Output machine-readable JSON")
@@ -147,12 +147,12 @@ export function createTelemetryCommand(): Command {
         console.error(`Error: --days must be an integer from 1 to ${USAGE_ALLOWLIST.retention_days}`);
         process.exit(2);
       }
-      const report = buildTelemetryReport(days);
+      const report = buildCountersReport(days);
       if (opts.json) process.stdout.write(JSON.stringify(report, null, 2) + "\n");
       else printText(report);
     });
 
-  telemetry
+  counters
     .command("clear")
     .description(`Delete the local usage counters (${USAGE_STORE_DISPLAY})`)
     .action(() => {
@@ -165,5 +165,5 @@ export function createTelemetryCommand(): Command {
       );
     });
 
-  return telemetry;
+  return counters;
 }

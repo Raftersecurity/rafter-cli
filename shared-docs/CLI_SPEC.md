@@ -1503,7 +1503,7 @@ Generate shell completion scripts.
 
 - `<shell>` — shell type: `bash`, `zsh`, or `fish`
 
-### rafter telemetry show [OPTIONS]
+### rafter counters show [OPTIONS]
 
 Print the local usage counters. Nothing leaves this machine: rafter has no code that uploads them.
 
@@ -1543,14 +1543,14 @@ JSON shape (key order is stable; `runtime` is `node` or `python`, `runtime_major
 }
 ```
 
-- `enabled_source`: `default`, `config` (`agent.usage.enabled` in `~/.rafter/config.json`), `env:RAFTER_TELEMETRY` or `env:DO_NOT_TRACK`.
+- `enabled_source`: `default`, `config` (`agent.usage.enabled` in `~/.rafter/config.json`), `env:RAFTER_USAGE_COUNTERS` or `env:DO_NOT_TRACK`.
 - `counters` always has all eight families; each maps full counter keys to counts summed over the window, sorted by key.
 - `skills` lists each installed rafter skill (bundled skill × platform), plus `rafter-security` on `openclaw` when `agent.skills.installedVersion` is set. `stale` is true when the installed `version` differs from the version this CLI ships, or the skill's `rafter_cli_version` frontmatter differs from the running CLI. Paths are not reported.
 - The store is always shown as the literal `~/.rafter/usage`, never an expanded home path.
 
 Text output (without `--json`) prints the same fields, then each non-empty family under a heading, then the skills.
 
-### rafter telemetry clear
+### rafter counters clear
 
 Delete `~/.rafter/usage`. Prints one line to stdout; exit code `0`. The `clear` invocation itself is not counted.
 
@@ -1586,7 +1586,7 @@ Never recorded: working directory, file paths, repo names or roots, branch names
 
 **Setting.** `agent.usage.enabled` in `~/.rafter/config.json`; default `true`. Only the global config is read; a project `.rafter.yml` cannot set it. `rafter agent config set agent.usage.enabled false` turns it off.
 
-**Kill switches** (override the config): `RAFTER_TELEMETRY` set to `0`, `false` or `off`; `DO_NOT_TRACK` set to any non-empty value other than `0` or `false`. `RAFTER_TELEMETRY=1` does not override a config `false`. When counting is off, nothing is written; `rafter telemetry show` still reads existing files.
+**Kill switches** (override the config): `RAFTER_USAGE_COUNTERS` set to `0`, `false` or `off`; `DO_NOT_TRACK` set to any non-empty value other than `0` or `false`. `RAFTER_USAGE_COUNTERS=1` does not override a config `false`. When counting is off, nothing is written; `rafter counters show` still reads existing files.
 
 ### Pre-Commit Framework (`.pre-commit-hooks.yaml`)
 

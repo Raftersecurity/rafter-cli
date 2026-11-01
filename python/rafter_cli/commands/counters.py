@@ -1,4 +1,4 @@
-"""``rafter telemetry show|clear`` — the local usage counters. Mirrors node/src/commands/telemetry.ts."""
+"""``rafter counters show|clear`` — the local usage counters. Mirrors node/src/commands/counters.ts."""
 from __future__ import annotations
 
 import json
@@ -21,8 +21,8 @@ from ..core.usage_counters import (
     usage_status,
 )
 
-telemetry_app = typer.Typer(
-    name="telemetry",
+counters_app = typer.Typer(
+    name="counters",
     help=f"Show or clear local usage counters. {USAGE_NOTICE}",
     no_args_is_help=True,
 )
@@ -88,7 +88,7 @@ def _skill_staleness() -> list[dict]:
     return sorted(rows, key=lambda r: (r["name"], r["platform"]))
 
 
-def build_telemetry_report(days: int) -> dict:
+def build_counters_report(days: int) -> dict:
     enabled, source = usage_status()
     since, counters = read_counters(days)
     return {
@@ -141,7 +141,7 @@ def _print_text(r: dict) -> None:
     sys.stdout.write("\n".join(out) + "\n")
 
 
-@telemetry_app.command("show", help=f"Print the local usage counters for the last N days. {USAGE_NOTICE}")
+@counters_app.command("show", help=f"Print the local usage counters for the last N days. {USAGE_NOTICE}")
 def show(
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON"),
     days: str = typer.Option("7", "--days", help="Days to include, 1 to 7"),
@@ -150,14 +150,14 @@ def show(
     if not re.fullmatch(r"\d+", days, re.ASCII) or not 1 <= int(days) <= limit:
         print(f"Error: --days must be an integer from 1 to {limit}", file=sys.stderr)
         raise typer.Exit(code=2)
-    report = build_telemetry_report(int(days))
+    report = build_counters_report(int(days))
     if json_output:
         sys.stdout.write(json.dumps(report, indent=2) + "\n")
     else:
         _print_text(report)
 
 
-@telemetry_app.command("clear", help=f"Delete the local usage counters ({USAGE_STORE_DISPLAY})")
+@counters_app.command("clear", help=f"Delete the local usage counters ({USAGE_STORE_DISPLAY})")
 def clear():
     discard_pending()
     existed = clear_store()

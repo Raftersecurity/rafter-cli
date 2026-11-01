@@ -22,7 +22,7 @@ from .commands.report import report_main
 from .commands.scan import scan_app, secrets_app
 from .commands.sites import sites_app
 from .commands.skill import skill_app
-from .commands.telemetry import telemetry_app
+from .commands.counters import counters_app
 from .core import usage_counters
 from .utils.formatter import set_agent_mode
 
@@ -123,7 +123,7 @@ app.add_typer(notify_app)
 app.add_typer(policy_app)
 app.add_typer(sites_app)
 app.add_typer(skill_app)
-app.add_typer(telemetry_app)
+app.add_typer(counters_app)
 app.command("report")(report_main)
 app.command("gates")(gates_main)
 

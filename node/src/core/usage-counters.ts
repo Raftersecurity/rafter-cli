@@ -4,7 +4,7 @@
  * Counts are keyed by allowlisted enums, counts and duration buckets only; the
  * allowlist is shared-docs/usage-counters.json, embedded below and checked
  * against that file by a test. Nothing here touches the network: the counters
- * stay on this machine until a person pastes `rafter telemetry show` output
+ * stay on this machine until a person pastes `rafter counters show` output
  * somewhere.
  *
  * Recorders only add to an in-memory buffer; the buffer is written once, when
@@ -15,7 +15,7 @@
  * none writes to stdout.
  *
  * Mirrors python/rafter_cli/core/usage_counters.py. Deleting this file, its
- * Python twin, the two `telemetry` command files and their one-line call sites
+ * Python twin, the two `counters` command files and their one-line call sites
  * removes the feature.
  */
 import fs from "fs";
@@ -119,7 +119,7 @@ export function resetPending(): void {
   discarded = false;
 }
 
-/** Drop everything buffered and stop counting for this process (`telemetry clear`). */
+/** Drop everything buffered and stop counting for this process (`counters clear`). */
 export function discardPending(): void {
   pending.clear();
   discarded = true;
@@ -276,7 +276,7 @@ export function countError(err: unknown): void {
 
 export interface UsageStatus {
   enabled: boolean;
-  /** "default" | "config" | "env:RAFTER_TELEMETRY" | "env:DO_NOT_TRACK" */
+  /** "default" | "config" | "env:RAFTER_USAGE_COUNTERS" | "env:DO_NOT_TRACK" */
   source: string;
 }
 
@@ -286,8 +286,8 @@ export interface UsageStatus {
  * is never consulted.
  */
 export function usageStatus(env: NodeJS.ProcessEnv = process.env): UsageStatus {
-  const rt = (env.RAFTER_TELEMETRY ?? "").trim().toLowerCase();
-  if (rt === "0" || rt === "false" || rt === "off") return { enabled: false, source: "env:RAFTER_TELEMETRY" };
+  const rt = (env.RAFTER_USAGE_COUNTERS ?? "").trim().toLowerCase();
+  if (rt === "0" || rt === "false" || rt === "off") return { enabled: false, source: "env:RAFTER_USAGE_COUNTERS" };
   const dnt = (env.DO_NOT_TRACK ?? "").trim().toLowerCase();
   if (dnt !== "" && dnt !== "0" && dnt !== "false") return { enabled: false, source: "env:DO_NOT_TRACK" };
   try {
