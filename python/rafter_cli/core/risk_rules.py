@@ -70,9 +70,10 @@ _REVERSE_SHELL_PATTERNS: list[str] = [
 # Catastrophic, irreversible commands. Hard-blocked unconditionally — no policy,
 # mode, or deny-list can opt out of them.
 CRITICAL_PATTERNS: list[str] = [
-    # rm -rf / (root only, any flag order: -rf, -fr, -r -f, -f -r)
-    r"rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*\s+/(\s|$)",
-    r"rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*\s+/(\s|$)",
+    # rm -rf / (root only, any flag order: -rf, -fr, -r -f, -f -r). `/*` is the
+    # root's every entry, so it is the same catastrophe as `/` (sable-e7ju).
+    r"rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*\s+/\*?(\s|$)",
+    r"rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*\s+/\*?(\s|$)",
     # rm -rf on critical top-level directories
     rf"rm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*f[a-z]*\s+/({_CRITICAL_DIRS})(/|\s|$)",
     rf"rm\s+(-[a-z]*f[a-z]*\s+)*-[a-z]*r[a-z]*\s+/({_CRITICAL_DIRS})(/|\s|$)",
@@ -246,7 +247,7 @@ _CHAIN_SPLIT = re.compile(r"\|\||&&|[;|&]")
 class _Piece:
     """A word or an operator, with its span in the source string."""
 
-    __slots__ = ("start", "end", "op", "text", "quoted", "substs")
+    __slots__ = ("start", "end", "op", "text", "quoted", "substs", "escaped")
 
     def __init__(
         self,
@@ -256,6 +257,7 @@ class _Piece:
         text: str,
         quoted: bool,
         substs: list[str],
+        escaped: bool = False,
     ) -> None:
         self.start = start
         self.end = end
@@ -263,6 +265,10 @@ class _Piece:
         self.text = text
         self.quoted = quoted
         self.substs = substs
+        # Whether an unquoted backslash escaped a character in the word. The
+        # shell removes it -- `r\m` and `\rm` run `rm` (sable-e7ju) -- so
+        # `text` is what runs while the source span still holds the backslash.
+        self.escaped = escaped
 
 
 def _is_op_char(c: str) -> bool:
@@ -364,6 +370,7 @@ def _tokenize(s: str) -> tuple[list[_Piece], bool]:
         start = i
         text: list[str] = []
         quoted = False
+        escaped = False
         substs: list[str] = []
 
         while i < n:
@@ -385,6 +392,7 @@ def _tokenize(s: str) -> tuple[list[_Piece], bool]:
                         i += 1
                     continue
                 i += 1
+                escaped = True
                 if i < n:
                     text.append(s[i])
                     i += 1
@@ -457,7 +465,7 @@ def _tokenize(s: str) -> tuple[list[_Piece], bool]:
             text.append(ch)
             i += 1
 
-        pieces.append(_Piece(start, i, None, "".join(text), quoted, substs))
+        pieces.append(_Piece(start, i, None, "".join(text), quoted, substs, escaped))
 
     return pieces, unterminated
 
@@ -646,7 +654,9 @@ def _process_segment(
             # Unquote a quoted executable so quoting the *command name* cannot
             # break the pattern anchors (`"rm" -rf /`, `r"m" -rf /`,
             # `watch "rm -rf /"`). Unquoting only exposes more to the patterns.
-            if p.quoted:
+            # An escaped one is the same: the shell drops the backslash, so
+            # `r\m` runs `rm` and the patterns must see `rm` (sable-e7ju).
+            if p.quoted or p.escaped:
                 out.append((p.start, p.end, p.text))
             prev_text_flag = False
             continue
@@ -1404,7 +1414,8 @@ _ANSI_C_SIMPLE = {
 _BRACE_LIST = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
 _BRACE_CMD = re.compile(r"^\{[^{}]*,[^{}]*\}")
 _RM_CANON = re.compile(
-    r"(^|[\s;&|()<>])((?:[\w./-]*/)?rm)((?:[ \t]+--?[A-Za-z][\w-]*)*)",
+    r"(^|[\s;&|()<>])((?:[\w./-]*/)?rm)((?:[ \t]+--?[A-Za-z][\w-]*(?:=[^\s;&|()<>]*)?)*)"
+    r"((?:[ \t]+--(?=[\s;&|()<>]|$))?)",
     re.IGNORECASE,
 )
 
@@ -1504,10 +1515,35 @@ def _expand_brace_lists(s: str) -> str:
     return s
 
 
+# GNU rm's long options, against which an abbreviation is resolved.
+_RM_LONG_OPTIONS = (
+    "dir", "force", "help", "interactive", "no-preserve-root", "one-file-system",
+    "preserve-root", "recursive", "verbose", "version",
+)
+
+
+def _resolve_rm_long_option(name: str) -> str | None:
+    """The rm long option ``name`` (without ``--`` or ``=value``) stands for, or None.
+
+    GNU getopt_long accepts an exact name or any UNIQUE prefix of one: ``--recur``
+    and ``--r`` are ``--recursive``, ``--forc`` is ``--force``, while ``--ver``
+    (verbose or version) is ambiguous and rejected, so rm runs nothing. (sable-e7ju)
+    """
+    if not name:
+        return None
+    if name in _RM_LONG_OPTIONS:
+        return name
+    hits = [o for o in _RM_LONG_OPTIONS if o.startswith(name)]
+    return hits[0] if len(hits) == 1 else None
+
+
 def _canonicalize_rm_flags(s: str) -> str:
-    """Reduce an ``rm`` carrying BOTH recursive and force intent -- in any long,
-    short or ``--no-preserve-root`` spelling, adjacent or not -- to the ``rm -rf``
-    form the patterns catch. Scoped to ``rm`` and only ever adds ``-rf``."""
+    """Reduce an ``rm``'s leading flags -- in any long, abbreviated-long, short or
+    ``--no-preserve-root`` spelling, adjacent or not, with or without a closing
+    ``--`` -- to the short form the patterns read: ``-rf``, ``-r`` or ``-f``. So a
+    long spelling gets exactly the tier of its short twin. Scoped to ``rm``; it
+    only rewrites flags rm would honor, so it cannot turn a benign command
+    destructive."""
     if not re.search(r"\brm\b", s, re.IGNORECASE):
         return s
 
@@ -1519,18 +1555,85 @@ def _canonicalize_rm_flags(s: str) -> str:
         for tok in flags.split():
             low = tok.lower()
             if low.startswith("--"):
-                if low == "--recursive":
+                opt = _resolve_rm_long_option(low[2:].split("=")[0])
+                if opt == "recursive":
                     recursive = True
-                elif low in ("--force", "--no-preserve-root"):
+                elif opt in ("force", "no-preserve-root"):
                     force = True
             else:
                 if "r" in low:
                     recursive = True
                 if "f" in low:
                     force = True
-        return f"{pre}{cmd} -rf" if (recursive and force) else m.group(0)
+        if not (recursive or force):
+            return m.group(0)
+        return f"{pre}{cmd} -{'r' if recursive else ''}{'f' if force else ''}"
 
     return _RM_CANON.sub(repl, s)
+
+
+# Find actions that delete what the walk visits.
+_FIND_DELETE_EXECS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_FIND_LEADING_OPT = re.compile(r"^-([HLP]|D|O\d*)$", re.IGNORECASE)
+_FIND_EXPR_START = re.compile(r"^[-(!),]")
+# A find start path that IS a critical root: `/`, `/*`, `/etc`, `/home/`, `/usr/*`.
+_FIND_CRITICAL_ROOT = re.compile(rf"^/+(?:(?:{_CRITICAL_DIRS})/*)?\*?$", re.IGNORECASE)
+
+
+def _find_deletion_as_rm(view: str) -> str:
+    """The ``rm -rf <start path>`` equivalent of every ``find`` that deletes what
+    it walks (``-delete``, or ``-exec``/``-execdir``/``-ok``/``-okdir rm``) from a
+    critical root, or "" if none. Matched against the CRITICAL patterns only:
+    ``find / -delete`` is as catastrophic as ``rm -rf /``, while
+    ``find . -name '*.pyc' -delete`` must keep its own tier rather than inherit
+    ``rm -rf .``'s approval gate. Only a start path that is itself a critical root
+    counts, not one below it: ``find /home/me/proj -name '*.pyc' -delete`` is
+    routine cleanup, and a find filters what it deletes. (sable-e7ju)"""
+    if not re.search(r"\bfind\b", view, re.IGNORECASE):
+        return ""
+    pieces, unterminated = _tokenize(view)
+    if unterminated:
+        return ""
+    out: list[str] = []
+    seg: list[_Piece] = []
+
+    def flush() -> None:
+        at = next(
+            (k for k, p in enumerate(seg) if p.op is None and _exec_name(p.text) == "find"),
+            -1,
+        )
+        if at != -1:
+            i = at + 1
+            # Leading options: -H -L -P, -D <debugopts>, -O<level>.
+            while i < len(seg) and _FIND_LEADING_OPT.match(seg[i].text):
+                i += 2 if seg[i].text.lower() == "-d" else 1
+            paths: list[str] = []
+            while i < len(seg) and seg[i].op is None and not _FIND_EXPR_START.match(seg[i].text):
+                if _FIND_CRITICAL_ROOT.match(seg[i].text):
+                    paths.append("/" + seg[i].text.lstrip("/"))
+                i += 1
+            deletes = False
+            for j in range(i, len(seg)):
+                t = seg[j].text.lower()
+                if t == "-delete":
+                    deletes = True
+                elif (
+                    t in _FIND_DELETE_EXECS
+                    and j + 1 < len(seg)
+                    and _exec_name(seg[j + 1].text) == "rm"
+                ):
+                    deletes = True
+            if deletes and paths:
+                out.append("rm -rf " + " ".join(paths))
+        seg.clear()
+
+    for p in pieces:
+        if p.op is not None and p.op in _CHAIN_OPS:
+            flush()
+            continue
+        seg.append(p)
+    flush()
+    return " ; ".join(out)
 
 
 def normalize_for_matching(command: str) -> str:
@@ -1638,11 +1741,21 @@ def _match_variants(command: str) -> list[str]:
     raw = sanitize_command_for_matching(command).strip()
     variants = [raw] if raw else []
     normalized = normalize_for_matching(command)
-    if normalized != command:
-        norm_san = sanitize_command_for_matching(normalized).strip()
-        if norm_san and norm_san != raw:
-            variants.append(norm_san)
+    # rm's flags are canonicalized again AFTER sanitizing, because only the
+    # sanitizer resolves an escaped command word: `r\m --recur --forc /` reads
+    # `rm ...` only once the backslash is gone (sable-e7ju).
+    norm_san = _canonicalize_rm_flags(
+        sanitize_command_for_matching(normalized) if normalized != command else raw
+    ).strip()
+    if norm_san and norm_san != raw:
+        variants.append(norm_san)
     return variants
+
+
+def _critical_variants(variants: list[str]) -> list[str]:
+    """The views matched against the CRITICAL patterns: _match_variants plus find-as-rm."""
+    found = [f for f in map(_find_deletion_as_rm, variants) if f]
+    return variants + found if found else variants
 
 
 def assess_command_risk(command: str) -> str:
@@ -1656,8 +1769,9 @@ def assess_command_risk(command: str) -> str:
     variants = _match_variants(command)
     if not variants:
         return "low"
+    critical = _critical_variants(variants)
     for p in CRITICAL_PATTERNS:
-        if any(re.search(p, v, re.IGNORECASE) for v in variants):
+        if any(re.search(p, v, re.IGNORECASE) for v in critical):
             return "critical"
     # rf-zvll B2 + sable-jtxp: a shell fed its program from a channel we cannot
     # read, or an obfuscation construct whose payload we cannot read, requires
@@ -1682,7 +1796,7 @@ def match_critical_pattern(command: str) -> str | None:
     called only once a command is already classified "critical", to surface
     *which* built-in rule matched.
     """
-    variants = _match_variants(command)
+    variants = _critical_variants(_match_variants(command))
     for p in CRITICAL_PATTERNS:
         if any(re.search(p, v, re.IGNORECASE) for v in variants):
             return p
