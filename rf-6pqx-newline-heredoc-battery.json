@@ -697,5 +697,187 @@
     "want": [
       "low"
     ]
+  },
+  {
+    "label": "sable-e7ju: abbreviated long rm flags on / are critical",
+    "cmd": "rm --recur --forc /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: abbreviated --rec with short -f on / is critical",
+    "cmd": "rm --rec -f /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: abbreviated long rm flags on a critical dir are critical",
+    "cmd": "rm --forc --r /etc",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: escaped command word r\\m runs rm",
+    "cmd": "r\\m -rf /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: escaped command word with abbreviated flags",
+    "cmd": "r\\m --recur --forc /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: find / -delete is rm -rf /",
+    "cmd": "find / -delete",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: find on a critical dir with -delete",
+    "cmd": "find /etc -delete",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: find / -exec rm is rm -rf /",
+    "cmd": "find / -exec rm {} \\;",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: rm -rf /* is rm -rf /",
+    "cmd": "rm -rf /*",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: rm -rf -- / is rm -rf /",
+    "cmd": "rm -rf -- /",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: abbreviated flags on a project dir match rm -rf ./build",
+    "cmd": "rm --recur --forc ./build",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "sable-e7ju: find . -name '*.pyc' -delete stays low",
+    "cmd": "find . -name '*.pyc' -delete",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "sable-e7ju: find below a critical root with a filter stays low",
+    "cmd": "find /home/me/proj -name '*.pyc' -delete",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "sable-e7ju: an echoed abbreviated rm stays low",
+    "cmd": "echo \"rm --recur --forc /\"",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "sable-e7ju: grep for the literal --recursive stays low",
+    "cmd": "grep -- --recursive file",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "sable-e7ju: ambiguous rm prefix --ver is rejected by rm and stays low",
+    "cmd": "rm --ver /",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "sable-e7ju: rm flags after the operand (GNU permutes) on / are critical",
+    "cmd": "rm / -rf",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: rm flags after a critical dir are critical",
+    "cmd": "rm /etc -rf",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: abbreviated long rm flags around / are critical",
+    "cmd": "rm --recur / --forc",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: abbreviated long rm flags after / are critical",
+    "cmd": "rm / --recur --forc",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: a redirect between rm's operand and flags does not hide them",
+    "cmd": "rm 2>/dev/null / -rf",
+    "want": [
+      "critical"
+    ]
+  },
+  {
+    "label": "sable-e7ju: find ~ -delete rates like rm -rf ~",
+    "cmd": "find ~ -delete",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "sable-e7ju: find $HOME -delete rates like rm -rf $HOME",
+    "cmd": "find $HOME -delete",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "sable-e7ju: after --, -rf is a file name and stays low",
+    "cmd": "rm -- -rf",
+    "want": [
+      "low"
+    ]
+  },
+  {
+    "label": "sable-e7ju: rm ./build -f rates like rm -f ./build",
+    "cmd": "rm ./build -f",
+    "want": [
+      "high"
+    ]
+  },
+  {
+    "label": "sable-e7ju: an echoed rm with trailing flags stays low",
+    "cmd": "echo rm / -rf",
+    "want": [
+      "low"
+    ]
   }
 ]
