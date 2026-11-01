@@ -1375,8 +1375,8 @@ def review_cmd(
         None,
         help=(
             "Local path (file or directory) OR git URL (https/ssh/.git) OR "
-            "shorthand (github:owner/repo[/subpath], gitlab:owner/repo[/subpath], "
-            "npm:pkg[@version]). Omit when using --installed."
+            "shorthand (github:owner/repo\\[/subpath], gitlab:owner/repo\\[/subpath], "
+            "npm:pkg\\[@version]). Omit when using --installed."
         ),
     ),
     json_output: bool = typer.Option(
