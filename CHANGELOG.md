@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.6] - 2026-11-01
+
+### Fixed
+
+- **`rafter skill review --help` crashed with `rich.errors.MarkupError` instead of printing usage** (sable-it5s). Its argument help text named the `github:owner/repo[/subpath]` and `npm:pkg[@version]` shorthand forms with literal square brackets, which Rich's console markup reads as style tags; the unmatched `[/subpath]` raised rather than rendered. Brackets are now escaped so the literal text shows, and the same bug is fixed where it silently swallowed text instead of crashing: `rafter agent scan --help` and `rafter agent audit-skill --help` now show their `[deprecated...]` notices instead of dropping them. A new smoke test runs `--help` through every command and subcommand in the CLI tree. Python only.
+- **`.rafter.yml` keys spelled in camelCase now take effect in the CLI.** The configuration reference shows camelCase keys such as `scan.excludePaths`, and the hosted scanner reads them, but both CLIs read only snake_case and silently ignored the rest, so a path excluded with `scan.excludePaths` was still scanned. Every multi-word key (`riskLevel`; `commandPolicy` and its `blockedPatterns`, `requireApproval` and `allowedPatterns`; `excludePaths` and `customPatterns` at the top level and under `scan`; `scan.autoUpdateBetterleaks`; `scan.plusRequiresApproval`; `audit.retentionDays`, `audit.logLevel` and `audit.logPath`; `cache.ttlSeconds` on a `docs` entry) now accepts either spelling. When a mapping carries both, snake_case wins, as on the hosted scanner. Both Node and Python.
+- **CLI_SPEC states the exit code of a bare 429 while polling: `1`** (sable-1jx5). The polling table called a bare 429 "quota exhausted" but gave no exit code, so it read as exit `3`, which `rafter run`/`rafter get` return only for a 429 on scan submit. Both runtimes already exit `1`; this is a docs fix.
+
 ## [0.11.5] - 2026-10-30
 
 ### Security

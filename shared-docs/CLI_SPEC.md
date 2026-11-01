@@ -145,7 +145,7 @@ A report is not necessarily durable the instant a scan flips to `completed`, so 
 | HTTP 404, **after** the scan is known to exist | Transient — read-after-write lag, not a wrong id. |
 | HTTP 404 on the **first** poll | Not retried. The scan genuinely does not exist. Exit code `2`. |
 | HTTP 429 **with** a usable `Retry-After` | Transient. Retried after sleeping `min(Retry-After, 60s)` instead of the exponential schedule. |
-| HTTP 429 **without** one | Not retried — on this API a bare 429 means quota exhausted, and waiting does not earn credits. |
+| HTTP 429 **without** one | Not retried — on this API a bare 429 means quota exhausted, and waiting does not earn credits. Exit code `1`: exit `3` is reserved for a 429 on scan *submit*. |
 | Other 4xx (401/403 …) | Not retried — reported immediately. |
 
 Two budgets bound the retries. The **consecutive** counter (5) resets on any successful poll, so a long scan with occasional blips is not killed by unrelated failures minutes apart. A **total** counter (20 per command invocation) does *not* reset, so a backend alternating success and failure cannot keep the loop alive indefinitely — the CLI has no wall-clock deadline of its own.
@@ -1438,7 +1438,11 @@ These rules are honored identically by the **local** CLI engines (Node and Pytho
 - A relative glob (no leading `/`, not starting with `**`) is auto-anchored to match **anywhere** along the absolute scan path, so `tests/fixtures/**` matches `/abs/project/tests/fixtures/foo`.
 - Path matching is case-sensitive.
 
-*Rule selectors (`rules:`)* — each entry matches a finding when it equals (case-insensitively) **either** the finding's rule **name/title** (e.g. `AWS Access Key`) **or** its **rule id** (e.g. `R-6D5E2` / `rules.autogrep.json.vuln-…`). Use the name for local pattern findings and the id for remote SAST/SCA findings. Non-existent selectors are harmless (they just never match).
+*Rule selectors (`rules:`)* — each entry matches a finding when it equals (case-insensitively) **either** the finding's rule **name/title** (e.g. `AWS Access Key`) **or** its **rule id** — the hashed `R-XXXXX` id the hosted report and PR comment show (e.g. `R-6D5E2`) or the scanner-native id (`rules.autogrep.json.vuln-…`); the hosted scanner accepts all three. Use the name for local pattern findings and either id for remote SAST/SCA findings. Non-existent selectors are harmless (they just never match); on a remote scan they are listed in `suppressed.json` under `unmatched`.
+
+*Key spelling* — every engine accepts the camelCase keys shown here and the hosted scanner's snake_case (`exclude_paths`) alike; if a mapping carries both spellings of a key, snake_case wins on every engine.
+
+*`reason:` is required to hide a protected finding* — on the hosted scanner an `ignore:` rule may hide a **must-fix**, **secret-scanner**, or unclassified **critical/high** finding on any scan (default branch or PR head alike) **only if it carries a non-empty `reason`**; the reason is the price. A rule without one (a blank reason counts as none) is not an error: it still suppresses ordinary findings, and for a protected finding it matches it is held at the floor — the finding stays in the report and `suppressed.json` lists it under `blocked` with `blocked_by` and a hint to add a reason. Every protected suppression that does go through is written to `suppressed.json` twice — in `_suppressed` with `protected` set to `must-fix`, `secret-scanner` or `unclassified-high`, and in the top-level `protected_suppressions` list with a count — so it cannot go unnoticed. The accepted trade (decision sb-d5ld, 2026-09-08): a committer can hide a planted secret in the same PR that suppresses it; it is visible in the diff and in the audit trail. `scan.excludePaths` cannot hide a protected finding at all, because it carries no reason slot: such matches are listed under `blocked` with a hint to use an ignore rule. Suppression is the project's decision on both sides; it is a separate surface from `commandPolicy`, which the global config may bound.
 
 ---
 

@@ -96,6 +96,15 @@ describe("rafter secrets — scan.exclude_paths (sable-yz0)", () => {
     expect(files.some((f: string) => f.includes("resend_setup.sql"))).toBe(false);
   });
 
+  it("camelCase `scan.excludePaths` is honored like `exclude_paths` (sable-req5)", () => {
+    const yml = fs.readFileSync(path.join(repo, ".rafter.yml"), "utf-8");
+    fs.writeFileSync(path.join(repo, ".rafter.yml"), yml.replace("exclude_paths", "excludePaths"));
+    const r = runCli(["secrets", ".", "--engine", "patterns", "--format", "json"], repo, home);
+    const files = (JSON.parse(r.stdout).results || []).map((x: any) => x.file);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/safe\/leaky\.ts$/);
+  });
+
   it("auto engine matches patterns-engine output (regardless of which engine wins)", () => {
     const r = runCli(["secrets", ".", "--format", "json"], repo, home);
     expect(r.exitCode).toBe(1);
