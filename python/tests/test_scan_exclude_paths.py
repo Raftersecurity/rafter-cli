@@ -159,7 +159,7 @@ def test_rafter_yml_exclude_paths_either_spelling(tmp_path, monkeypatch, capsys,
     monkeypatch.chdir(tmp_path)
     with pytest.raises(typer.Exit) as exc:
         scan_local(
-            paths=[str(tmp_path)], quiet=True, json_output=True, format="json", out=None,
+            path=str(tmp_path), quiet=True, json_output=True, format="json",
             staged=False, diff=None, range_=None, engine="patterns", baseline=False,
             watch=False, history=False, gitignore=False, auto_update=False,
         )
