@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from rafter_cli.commands.policy import _generate_claude_config
 from rafter_cli.core.policy_loader import _validate_policy, _map_policy, find_policy_file, load_policy
 
@@ -299,3 +301,54 @@ class TestIgnoreRules:
         err = capsys.readouterr().err
         assert "ignore" in err
         assert "ignore" not in result
+
+
+# sable-req5 — every multi-word key the loader reads, in its camelCase spelling.
+# Each case: (YAML body, path into the loaded policy, expected value).
+_CAMEL_CASES = [
+    ("riskLevel: aggressive", ["risk_level"], "aggressive"),
+    ("commandPolicy:\n  mode: deny-list", ["command_policy", "mode"], "deny-list"),
+    ("command_policy:\n  blockedPatterns: ['rm -rf /']", ["command_policy", "blocked_patterns"], ["rm -rf /"]),
+    ("command_policy:\n  requireApproval: ['git push']", ["command_policy", "require_approval"], ["git push"]),
+    ("command_policy:\n  allowedPatterns: ['ls']", ["command_policy", "allowed_patterns"], ["ls"]),
+    ("excludePaths: ['top/**']", ["scan", "exclude_paths"], ["top/**"]),
+    ("customPatterns: [{name: T, regex: 't_[0-9]+', severity: high}]", ["scan", "custom_patterns", 0, "name"], "T"),
+    ("scan:\n  excludePaths: ['dist/**']", ["scan", "exclude_paths"], ["dist/**"]),
+    ("scan:\n  customPatterns: [{name: N, regex: 'n_[0-9]+', severity: low}]", ["scan", "custom_patterns", 0, "name"], "N"),
+    ("scan:\n  autoUpdateBetterleaks: false", ["scan", "auto_update_betterleaks"], False),
+    ("scan:\n  plusRequiresApproval: true", ["scan", "plus_requires_approval"], True),
+    ("audit:\n  retentionDays: 7", ["audit", "retention_days"], 7),
+    ("audit:\n  logLevel: debug", ["audit", "log_level"], "debug"),
+    ("audit:\n  logPath: .rafter/a.jsonl", ["audit", "log_path"], ".rafter/a.jsonl"),
+    ("docs:\n  - url: https://example.com/d.md\n    cache: {ttlSeconds: 60}", ["docs", 0, "cache", "ttl_seconds"], 60),
+]
+
+
+class TestCamelCaseKeys:
+    """.rafter.yml keys accept camelCase as well as snake_case; snake_case wins."""
+
+    @staticmethod
+    def _load(tmp_path, body: str):
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        (tmp_path / ".rafter.yml").write_text(body + "\n")
+        return load_policy(tmp_path)
+
+    @pytest.mark.parametrize("body,path,expected", _CAMEL_CASES, ids=[c[0].split(":")[0] + "." + str(c[1][-1]) for c in _CAMEL_CASES])
+    def test_camel_case_key_honored(self, tmp_path, capsys, body, path, expected):
+        value = self._load(tmp_path, body)
+        for step in path:
+            value = value[step]
+        assert value == expected
+        assert "Unknown policy key" not in capsys.readouterr().err
+
+    def test_snake_case_wins_on_collision(self, tmp_path):
+        policy = self._load(
+            tmp_path,
+            "risk_level: minimal\nriskLevel: aggressive\n"
+            "scan:\n  exclude_paths: ['snake/**']\n  excludePaths: ['camel/**']\n"
+            "audit:\n  logLevel: debug\n  log_level: error",
+        )
+        assert policy["risk_level"] == "minimal"
+        assert policy["scan"]["exclude_paths"] == ["snake/**"]
+        assert policy["audit"]["log_level"] == "error"
