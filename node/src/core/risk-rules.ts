@@ -92,9 +92,10 @@ const REVERSE_SHELL_PATTERN_SOURCES: string[] = [
 ];
 
 const CRITICAL_PATTERN_SOURCES: string[] = [
-  // rm -rf / (root only, any flag order)
-  `rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+/(\\s|$)`,
-  `rm\\s+(-[a-z]*f[a-z]*\\s+)*-[a-z]*r[a-z]*\\s+/(\\s|$)`,
+  // rm -rf / (root only, any flag order). `/*` is the root's every entry, so it
+  // is the same catastrophe as `/` (sable-e7ju).
+  `rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+/\\*?(\\s|$)`,
+  `rm\\s+(-[a-z]*f[a-z]*\\s+)*-[a-z]*r[a-z]*\\s+/\\*?(\\s|$)`,
   // rm -rf on critical top-level directories
   `rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+/(${CRITICAL_DIRS})(/|\\s|$)`,
   `rm\\s+(-[a-z]*f[a-z]*\\s+)*-[a-z]*r[a-z]*\\s+/(${CRITICAL_DIRS})(/|\\s|$)`,
@@ -261,6 +262,12 @@ interface Piece {
   text: string;
   /** Whether any part of the word was quoted. */
   quoted: boolean;
+  /**
+   * Whether an unquoted backslash escaped a character in the word. The shell
+   * removes it — `r\m` and `\rm` run `rm` (sable-e7ju) — so `text` is what
+   * runs while the source span still holds the backslash.
+   */
+  escaped?: boolean;
   /** Contents of any command substitutions that the shell would execute. */
   substs: string[];
 }
@@ -361,6 +368,7 @@ function tokenize(s: string): { pieces: Piece[]; unterminated: boolean } {
     const start = i;
     let text = "";
     let quoted = false;
+    let escaped = false;
     const substs: string[] = [];
 
     while (i < s.length) {
@@ -375,6 +383,7 @@ function tokenize(s: string): { pieces: Piece[]; unterminated: boolean } {
         if (nxt === "\n") { i += 2; continue; }
         if (nxt === "\r") { i += 2; if (s[i] === "\n") i++; continue; }
         i++;
+        escaped = true;
         if (i < s.length) { text += s[i]; i++; }
         continue;
       }
@@ -431,7 +440,7 @@ function tokenize(s: string): { pieces: Piece[]; unterminated: boolean } {
       i++;
     }
 
-    pieces.push({ start, end: i, op: null, text, quoted, substs });
+    pieces.push({ start, end: i, op: null, text, quoted, escaped, substs });
   }
 
   return { pieces, unterminated };
@@ -611,7 +620,9 @@ function processSegment(
       // Unquote a quoted executable so quoting the *command name* cannot break
       // the pattern anchors (`"rm" -rf /`, `r"m" -rf /`, `watch "rm -rf /"`).
       // Unquoting only ever exposes more to the patterns — the safe direction.
-      if (p.quoted) out.push({ start: p.start, end: p.end, with: p.text });
+      // An escaped one is the same: the shell drops the backslash, so `r\m`
+      // runs `rm` and the patterns must see `rm` (sable-e7ju).
+      if (p.quoted || p.escaped) out.push({ start: p.start, end: p.end, with: p.text });
       prevTextFlag = false;
       continue;
     }
@@ -1433,31 +1444,201 @@ function expandBraceLists(s: string): string {
   return s;
 }
 
+/** GNU rm's long options, against which an abbreviation is resolved. */
+const RM_LONG_OPTIONS = [
+  "dir", "force", "help", "interactive", "no-preserve-root", "one-file-system",
+  "preserve-root", "recursive", "verbose", "version",
+];
+
 /**
- * Reduce an `rm` whose flags carry BOTH recursive and force intent — in any
- * long, short or `--no-preserve-root` spelling, adjacent or not — to the
- * `rm -rf` form the existing patterns catch. Scoped to `rm`, and the collapse
- * only ever adds `-rf`, so it cannot turn a benign command destructive.
+ * The rm long option `name` (without `--` or `=value`) stands for, or null.
+ * GNU getopt_long accepts an exact name or any UNIQUE prefix of one: `--recur`
+ * and `--r` are `--recursive`, `--forc` is `--force`, while `--ver` (verbose or
+ * version) is ambiguous and rejected, so rm runs nothing. (sable-e7ju)
+ */
+function resolveRmLongOption(name: string): string | null {
+  if (!name) return null;
+  if (RM_LONG_OPTIONS.includes(name)) return name;
+  const hits = RM_LONG_OPTIONS.filter((o) => o.startsWith(name));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/** The rm command word, at the start of the string or after a separator. */
+const RM_WORD = /(^|[\s;&|()<>])((?:[\w./-]*\/)?rm)(?=[ \t])/gi;
+/** A word rm's getopt reads as an option: `-rf`, `--recur`, `--interactive=never`. */
+const RM_FLAG_WORD = /^--?[A-Za-z][\w-]*(?:=.*)?$/;
+
+/** A file redirect inside an argv (`2>/dev/null`, `>> log`, `<in`): not an argument. */
+const RM_REDIRECT = /\d*(?:>>|>&|<&|>\||<>|>|<)(?![(<])/y;
+
+interface RmWord { src: string; val: string; redirect?: boolean; }
+
+/**
+ * The words of one rm argv, read from `s` at `from` up to the first unquoted
+ * separator (`;`, `&`, `|`, `(`, `)`, a heredoc or process substitution, a
+ * newline) or comment. Each word keeps its source text and its value with
+ * quotes and escapes removed. A file redirect and its target are one word
+ * marked `redirect`, since the shell strips them from the argv rm permutes:
+ * `rm 2>/dev/null / -rf` is still `rm -rf /`.
+ */
+function rmArgWords(s: string, from: number): { words: RmWord[]; end: number } {
+  const skipBlanks = (k: number) => {
+    while (k < s.length && (s[k] === " " || s[k] === "\t")) k++;
+    return k;
+  };
+  const words: RmWord[] = [];
+  let i = from;
+  for (;;) {
+    const j = skipBlanks(i);
+    RM_REDIRECT.lastIndex = j;
+    const redir = RM_REDIRECT.exec(s);
+    if (redir) {
+      const t = readRmWord(s, skipBlanks(j + redir[0].length));
+      if (!t) return { words, end: i };
+      words.push({ src: s.slice(j, t.end), val: "", redirect: true });
+      i = t.end;
+      continue;
+    }
+    const w = readRmWord(s, j);
+    if (!w) return { words, end: i };
+    words.push({ src: s.slice(j, w.end), val: w.val });
+    i = w.end;
+  }
+}
+
+/** One shell word of `s` starting at `j`, or null at a separator, comment or end. */
+function readRmWord(s: string, j: number): { val: string; end: number } | null {
+  if (j >= s.length || /[;&|()<>\n\r#]/.test(s[j])) return null;
+  let val = "";
+  while (j < s.length && !/[\s;&|()<>]/.test(s[j])) {
+    const c = s[j];
+    if (c === "\\") {
+      if (j + 1 < s.length) val += s[j + 1];
+      j += 2;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      let k = j + 1;
+      while (k < s.length && s[k] !== c) {
+        if (c === '"' && s[k] === "\\" && k + 1 < s.length) k++;
+        val += s[k];
+        k++;
+      }
+      j = k + 1;
+      continue;
+    }
+    val += c;
+    j++;
+  }
+  return { val, end: Math.min(j, s.length) };
+}
+
+/**
+ * Reduce an `rm`'s flags — in any long, abbreviated-long, short or
+ * `--no-preserve-root` spelling, adjacent or not, before or AFTER its operands
+ * — to the short form the patterns read, `-rf`, `-r` or `-f`, placed before
+ * the operands, with any redirect moved after them. GNU rm permutes its argv, so `rm / -rf` is `rm -rf /`, and a
+ * long or trailing spelling gets exactly the tier of its short twin. Option
+ * parsing stops at the first `--`: after it `-rf` is a file name, so it stays
+ * an operand, written `./-rf` so no pattern reads it as a flag. Scoped to
+ * `rm`; it only rewrites flags rm would honor, so it cannot turn a benign
+ * command destructive. (sable-e7ju)
  */
 function canonicalizeRmFlags(s: string): string {
   if (!/\brm\b/i.test(s)) return s;
-  const re = /(^|[\s;&|()<>])((?:[\w./-]*\/)?rm)((?:[ \t]+--?[A-Za-z][\w-]*)*)/gi;
-  return s.replace(re, (whole, pre: string, cmd: string, flags: string) => {
-    if (!flags.trim()) return whole;
+  let out = "";
+  let last = 0;
+  RM_WORD.lastIndex = 0;
+  for (let m = RM_WORD.exec(s); m; m = RM_WORD.exec(s)) {
+    const cmdEnd = m.index + m[0].length;
+    const { words, end } = rmArgWords(s, cmdEnd);
     let recursive = false;
     let force = false;
-    for (const tok of flags.trim().split(/\s+/)) {
-      const low = tok.toLowerCase();
-      if (low.startsWith("--")) {
-        if (low === "--recursive") recursive = true;
-        else if (low === "--force" || low === "--no-preserve-root") force = true;
-      } else {
-        if (low.includes("r")) recursive = true;
-        if (low.includes("f")) force = true;
+    let optsDone = false;
+    const operands: string[] = [];
+    const redirects: string[] = [];
+    for (const w of words) {
+      if (w.redirect) { redirects.push(w.src); continue; }
+      if (!optsDone && w.val === "--") { optsDone = true; continue; }
+      if (!optsDone && RM_FLAG_WORD.test(w.val)) {
+        const low = w.val.toLowerCase();
+        if (low.startsWith("--")) {
+          const opt = resolveRmLongOption(low.slice(2).split("=")[0]);
+          if (opt === "recursive") recursive = true;
+          else if (opt === "force" || opt === "no-preserve-root") force = true;
+        } else {
+          if (low.includes("r")) recursive = true;
+          if (low.includes("f")) force = true;
+        }
+        continue;
       }
+      operands.push(optsDone && w.val.startsWith("-") ? `./${w.src}` : w.src);
     }
-    return recursive && force ? `${pre}${cmd} -rf` : whole;
-  });
+    // Resume after this argv either way: an `rm` inside it is an operand, and
+    // rescanning from the command word would make the walk quadratic.
+    RM_WORD.lastIndex = Math.max(end, cmdEnd);
+    if (!recursive && !force) continue;
+    const flags = `-${recursive ? "r" : ""}${force ? "f" : ""}`;
+    out += `${s.slice(last, cmdEnd)} ${[flags, ...operands, ...redirects].join(" ")}`;
+    last = end;
+  }
+  return out + s.slice(last);
+}
+
+/** Find actions that delete what the walk visits. */
+const FIND_DELETE_EXECS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
+/** A find start path that IS a critical root: `/`, `/*`, `/etc`, `/home/`, `/usr/*`. */
+const FIND_CRITICAL_ROOT = new RegExp(`^/+(?:(?:${CRITICAL_DIRS})/*)?\\*?$`, "i");
+/** A find start path that IS the home directory: `~`, `~/`, `$HOME`, `${HOME}/`. */
+const FIND_HOME_ROOT = /^(?:~|\$home|\$\{home\})\/*\*?$/i;
+
+/**
+ * The `rm -rf <start path>` equivalent of every `find` that deletes what it
+ * walks (`-delete`, or `-exec`/`-execdir`/`-ok`/`-okdir rm`) from a critical
+ * root or the home directory, or "" if none. Matched against the CRITICAL and
+ * HIGH patterns, never MEDIUM: `find / -delete` is as catastrophic as
+ * `rm -rf /`, and `find ~ -delete` needs approval like `rm -rf ~`, while
+ * `find . -name '*.pyc' -delete` must keep its own tier rather than inherit
+ * `rm -rf .`'s approval gate. Only a start path that is itself such a root
+ * counts, not one below it: `find /home/me/proj -name '*.pyc' -delete` is
+ * routine cleanup, and a find filters what it deletes. (sable-e7ju)
+ */
+function findDeletionAsRm(view: string): string {
+  if (!/\bfind\b/i.test(view)) return "";
+  const { pieces, unterminated } = tokenize(view);
+  if (unterminated) return "";
+  const out: string[] = [];
+  let seg: Piece[] = [];
+  const flush = () => {
+    const at = seg.findIndex((p) => p.op === null && execName(p.text) === "find");
+    if (at !== -1) {
+      let i = at + 1;
+      // Leading options: -H -L -P, -D <debugopts>, -O<level>.
+      while (i < seg.length && /^-([HLP]|D|O\d*)$/i.test(seg[i].text)) {
+        i += seg[i].text.toLowerCase() === "-d" ? 2 : 1;
+      }
+      const paths: string[] = [];
+      while (i < seg.length && seg[i].op === null && !/^[-(!),]/.test(seg[i].text)) {
+        if (FIND_CRITICAL_ROOT.test(seg[i].text)) paths.push(seg[i].text.replace(/^\/+/, "/"));
+        else if (FIND_HOME_ROOT.test(seg[i].text)) paths.push("~");
+        i++;
+      }
+      let deletes = false;
+      for (let j = i; j < seg.length; j++) {
+        const t = seg[j].text.toLowerCase();
+        if (t === "-delete") deletes = true;
+        else if (FIND_DELETE_EXECS.has(t) && seg[j + 1] && execName(seg[j + 1].text) === "rm") deletes = true;
+      }
+      if (deletes && paths.length > 0) out.push(`rm -rf ${paths.join(" ")}`);
+    }
+    seg = [];
+  };
+  for (const p of pieces) {
+    if (p.op !== null && CHAIN_OPS.has(p.op)) { flush(); continue; }
+    seg.push(p);
+  }
+  flush();
+  return out.join(" ; ");
 }
 
 /**
@@ -1558,11 +1739,27 @@ function matchVariants(command: string): string[] {
   const variants: string[] = [];
   if (raw) variants.push(raw);
   const normalized = normalizeForMatching(command);
-  if (normalized !== command) {
-    const normSan = sanitizeCommandForMatching(normalized).toLowerCase().trim();
-    if (normSan && normSan !== raw) variants.push(normSan);
+  // rm's flags are canonicalized again AFTER sanitizing, because only the
+  // sanitizer resolves an escaped command word: `r\m --recur --forc /` reads
+  // `rm …` only once the backslash is gone (sable-e7ju).
+  const normSan = canonicalizeRmFlags(
+    normalized !== command ? sanitizeCommandForMatching(normalized) : raw
+  ).toLowerCase().trim();
+  if (normSan && normSan !== raw) variants.push(normSan);
+  // The normalized view is truncated past MAX_NORMALIZE_INPUT, which would drop
+  // a flag padded out past the bound (`rm / <20k chars> -rf`); canonicalize the
+  // whole raw view too (sable-e7ju).
+  if (command.length > MAX_NORMALIZE_INPUT) {
+    const rawCanon = canonicalizeRmFlags(raw);
+    if (rawCanon !== raw && !variants.includes(rawCanon)) variants.push(rawCanon);
   }
   return variants;
+}
+
+/** The views matched against the CRITICAL and HIGH patterns: matchVariants plus find-as-rm. */
+function criticalVariants(variants: string[]): string[] {
+  const found = variants.map(findDeletionAsRm).filter(Boolean);
+  return found.length ? [...variants, ...found] : variants;
 }
 
 export function assessCommandRisk(command: string): CommandRiskLevel {
@@ -1576,8 +1773,9 @@ export function assessCommandRisk(command: string): CommandRiskLevel {
   const variants = matchVariants(command);
   if (variants.length === 0) return "low";
 
+  const critical = criticalVariants(variants);
   for (const pattern of CRITICAL_PATTERNS) {
-    if (variants.some((v) => pattern.test(v))) return "critical";
+    if (critical.some((v) => pattern.test(v))) return "critical";
   }
   // rf-zvll B2 + sable-jtxp: a shell fed its program from a channel we cannot
   // read, or an obfuscation construct whose payload we cannot read, requires
@@ -1585,8 +1783,10 @@ export function assessCommandRisk(command: string): CommandRiskLevel {
   // payload IS readable and matches — keeps its hard block rather than being
   // softened to approval.
   if (shellProgramFromStream(command) || evasionConstructRisk(command)) return "high";
+  // The find-as-rm views count here too, so `find ~ -delete` rates like
+  // `rm -rf ~` (sable-e7ju); they hold only critical and home roots.
   for (const pattern of HIGH_PATTERNS) {
-    if (variants.some((v) => pattern.test(v))) return "high";
+    if (critical.some((v) => pattern.test(v))) return "high";
   }
   for (const pattern of MEDIUM_PATTERNS) {
     if (variants.some((v) => pattern.test(v))) return "medium";
@@ -1605,7 +1805,7 @@ export function matchedCriticalPattern(command: string): string | null {
     return "rafter security configuration is protected (rf-vnxs)";
   }
   // Mirror assessCommandRisk: a critical match may live in the normalized view.
-  const variants = matchVariants(command);
+  const variants = criticalVariants(matchVariants(command));
   for (const pattern of CRITICAL_PATTERNS) {
     if (variants.some((v) => pattern.test(v))) return pattern.source;
   }
