@@ -33,8 +33,9 @@ jobs:
             const title = context.payload.pull_request.title;
             const m = title.match(TITLE_RE);
             if (!m) return;
-            const label = map[m[1].toLowerCase()];
-            if (!label) return;
+            const key = m[1].toLowerCase();
+            if (!Object.hasOwn(map, key)) return;
+            const label = map[key];
             await github.rest.issues.addLabels({
               ...context.repo,
               issue_number: context.issue.number,
