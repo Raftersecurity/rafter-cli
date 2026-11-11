@@ -4,6 +4,10 @@
 
 Rafter is the security toolkit for developers. Stable output contracts mean any developer can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
 
+For local JSON fields, examples, and runtime differences, see the
+[JSON Output Reference](JSON_SCHEMAS.md). Backend-dependent sections are
+marked as pending there.
+
 **Free forever for individuals and open source.** No account required. No telemetry. All local security features (secret scanning, policy enforcement, pre-commit hooks, audit logging, MCP server) work without an API key, without network access, and without usage limits.
 
 The CLI follows UNIX principles:
