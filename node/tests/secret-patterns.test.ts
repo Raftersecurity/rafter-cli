@@ -374,6 +374,31 @@ describe("Secret patterns — coverage matrix", () => {
     });
   });
 
+  describe("Datadog API Key", () => {
+    it("detects DD_API_KEY with a 32-char hex key", () => {
+      const token = fakeSecret("DD_API_KEY=", "a".repeat(32));
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(true);
+    });
+
+    it("detects DD_APP_KEY with a 40-char hex key", () => {
+      const token = fakeSecret("DD_APP_KEY=", "b".repeat(40));
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(true);
+    });
+
+    it("does not match a bare 32-char hex string without Datadog context", () => {
+      const notAKey = "a".repeat(32);
+      const r = scanString(notAKey + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(false);
+    });
+
+    it("does not match DD_API_KEY with a short or non-hex value", () => {
+      const r = scanString("DD_API_KEY=not-a-real-key\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(false);
+    });
+  });
+
   // ── Helper function coverage ──────────────────────────────────────
 
   describe("getPatternsBySeverity", () => {
