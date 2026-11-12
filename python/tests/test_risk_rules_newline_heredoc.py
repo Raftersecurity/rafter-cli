@@ -18,7 +18,7 @@ from pathlib import Path
 
 from rafter_cli.core.risk_rules import assess_command_risk
 
-_BATTERY_PATH = Path(__file__).resolve().parents[2] / "rf-6pqx-newline-heredoc-battery.json"
+_BATTERY_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "battery" / "rf-6pqx-newline-heredoc-battery.json"
 _BATTERY = json.loads(_BATTERY_PATH.read_text())
 
 

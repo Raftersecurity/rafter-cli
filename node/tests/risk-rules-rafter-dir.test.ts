@@ -14,7 +14,7 @@ import { assessCommandRisk, modifiesRafterSecurityConfig } from "../src/core/ris
  * (python/tests/test_risk_rules_rafter_dir.py).
  */
 const here = path.dirname(fileURLToPath(import.meta.url));
-const batteryPath = path.resolve(here, "../../sable-36oe-rafter-dir-battery.json");
+const batteryPath = path.resolve(here, "../../fixtures/battery/sable-36oe-rafter-dir-battery.json");
 const battery: Array<{ label: string; cmd: string; protected: boolean }> = JSON.parse(
   readFileSync(batteryPath, "utf8"),
 );
