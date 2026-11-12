@@ -221,6 +221,15 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
     regex: "SG\\.[a-zA-Z0-9_-]{22}\\.[a-zA-Z0-9_-]{43}",
     severity: "critical",
     description: "SendGrid API Key detected"
+  },
+  // Datadog (#23). API keys are 32 hex chars and app keys 40 hex chars, normally set as DD_API_KEY /
+  // DD_APP_KEY. A bare 32-char hex string is usually an MD5 hash, so the match is anchored on the
+  // Datadog context instead of matching any 32-char hex string.
+  {
+    name: "Datadog API Key",
+    regex: "(?i)(?:datadog|dd_api_key|dd_app_key)[^a-zA-Z0-9]{0,20}['\"]?[a-f0-9]{32}(?:[a-f0-9]{8})?\\b",
+    severity: "critical",
+    description: "Datadog API key detected"
   }
 ];
 
