@@ -81,6 +81,28 @@ def test_scan_text_ignores_short_sendgrid_like_string(scanner):
     matches = scanner.scan_text(token)
     assert not any(m.pattern.name == "SendGrid API Key" for m in matches)
 
+def test_scan_text_detects_datadog_api_key(scanner):
+    token = "DD_API_KEY=" + "a" * 32
+    matches = scanner.scan_text(token)
+    assert any(m.pattern.name == "Datadog API Key" for m in matches)
+
+
+def test_scan_text_detects_datadog_app_key(scanner):
+    token = "DD_APP_KEY=" + "b" * 40
+    matches = scanner.scan_text(token)
+    assert any(m.pattern.name == "Datadog API Key" for m in matches)
+
+
+def test_scan_text_ignores_bare_hex_without_datadog_context(scanner):
+    token = "a" * 32
+    matches = scanner.scan_text(token)
+    assert not any(m.pattern.name == "Datadog API Key" for m in matches)
+
+
+def test_scan_text_ignores_short_datadog_like_value(scanner):
+    matches = scanner.scan_text("DD_API_KEY=not-a-real-key")
+    assert not any(m.pattern.name == "Datadog API Key" for m in matches)
+
 def test_has_secrets(scanner):
     assert scanner.has_secrets("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij")
     assert not scanner.has_secrets("just a normal string")
