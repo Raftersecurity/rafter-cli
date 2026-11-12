@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-12
+
 ### Added
 
 - **`rafter gates [path]` maps a codebase's security gates for an audit.** It lists the functions whose names say they decide whether something is allowed (authorize, authenticate, `can*`, `is*Allowed`, `check*`, `verify*`, middleware and similar), ranked by name and path, and groups gates that implement the same contract (sync and async variants, two backends, v1 and v2), flagging a group when one member lacks a guard call (escaping, path normalization or containment, constant-time compare, expiry, limits) that another makes. Go, Python, JavaScript, TypeScript, Java and Ruby; test, vendored and generated code is skipped and `.gitignore` is honored. Static and offline, with text output sized for an agent and `--json`. The `rafter-code-review` skill's audit path now starts with it. Both Node and Python, with identical output, including for Unicode text (a BOM, non-breaking spaces, emoji). A hostile tree cannot stall it: very long lines, unclosed quotes and files of thousands of unclosed definitions map in seconds. It warns on stderr when no file was scanned.
@@ -26,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A clean text result from `rafter secrets` says it covers secrets only**, not a code security review. JSON output is unchanged. Both Node and Python.
 - **Node: `--staged`, `--diff` and `--range` outside a git repo** print `Error: Not in a git repository`, as Python does, instead of git's raw error.
 - **`rafter agent init` reports what it did to each installed file.** Every skill file (including `docs/`), per-skill rule file and sub-agent file gets one line: `added`, `updated`, `kept` or `replaced`; files already up to date are summed into one `N files unchanged` line. `--dry-run` shows the same predicted outcome per file. Lines that need attention (`kept`, `replaced`) still print, to stderr, under `--quiet`. Both Node and Python.
+- **Repository layout.** The shared test battery and corpus files moved from the repo root to `fixtures/battery/`, `demo.gif` and `demo.tape` moved into `demo/`, and internal drafts and a bead-store export were removed from the tree. No change to the published packages.
 
 ### Fixed
 
