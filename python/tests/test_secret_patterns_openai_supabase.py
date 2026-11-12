@@ -25,7 +25,7 @@ import pytest
 from rafter_cli.scanners.regex_scanner import RegexScanner
 
 FIXTURES = json.loads(
-    (Path(__file__).resolve().parents[2] / "rf-f5is-key-fixtures.json").read_text()
+    (Path(__file__).resolve().parents[2] / "fixtures" / "battery" / "rf-f5is-key-fixtures.json").read_text()
 )
 
 

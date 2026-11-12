@@ -36,7 +36,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BATTERY = os.path.join(HERE, "..", "..", "rf-6pqx-newline-heredoc-battery.json")
+BATTERY = os.path.join(HERE, "..", "..", "fixtures", "battery", "rf-6pqx-newline-heredoc-battery.json")
 
 
 def main() -> int:

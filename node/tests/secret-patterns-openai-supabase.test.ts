@@ -25,7 +25,7 @@ import { RegexScanner } from "../src/scanners/regex-scanner.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtures: Array<{
   label: string; prefix: string; fill: string; len: number; suffix: string; expect: string | null;
-}> = JSON.parse(fs.readFileSync(path.resolve(here, "../../rf-f5is-key-fixtures.json"), "utf8"));
+}> = JSON.parse(fs.readFileSync(path.resolve(here, "../../fixtures/battery/rf-f5is-key-fixtures.json"), "utf8"));
 
 const build = (r: (typeof fixtures)[number]) => r.prefix + r.fill.repeat(r.len) + r.suffix;
 const names = (ms: any[]) => new Set((ms ?? []).map((m) => m.pattern?.name ?? m.name ?? "?"));
