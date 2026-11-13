@@ -93,14 +93,39 @@ def test_scan_text_detects_datadog_app_key(scanner):
     assert any(m.pattern.name == "Datadog API Key" for m in matches)
 
 
+def test_scan_text_detects_datadog_api_key_full_name(scanner):
+    token = "DATADOG_API_KEY=" + "c" * 32
+    matches = scanner.scan_text(token)
+    assert any(m.pattern.name == "Datadog API Key" for m in matches)
+
+
+def test_scan_text_detects_datadog_api_key_lowercase(scanner):
+    token = "datadog_api_key=" + "d" * 32
+    matches = scanner.scan_text(token)
+    assert any(m.pattern.name == "Datadog API Key" for m in matches)
+
+
+def test_scan_text_detects_dd_api_key_header(scanner):
+    token = "DD-API-KEY: " + "e" * 32
+    matches = scanner.scan_text(token)
+    assert any(m.pattern.name == "Datadog API Key" for m in matches)
+
+
 def test_scan_text_ignores_bare_hex_without_datadog_context(scanner):
     token = "a" * 32
     matches = scanner.scan_text(token)
     assert not any(m.pattern.name == "Datadog API Key" for m in matches)
 
 
-def test_scan_text_ignores_short_datadog_like_value(scanner):
-    matches = scanner.scan_text("DD_API_KEY=not-a-real-key")
+def test_scan_text_ignores_datadog_key_with_36_hex_value(scanner):
+    token = "DD_API_KEY=" + "a" * 36
+    matches = scanner.scan_text(token)
+    assert not any(m.pattern.name == "Datadog API Key" for m in matches)
+
+
+def test_scan_text_ignores_datadog_followed_by_bare_md5(scanner):
+        token = "datadog " + "a" * 32
+    matches = scanner.scan_text(token)
     assert not any(m.pattern.name == "Datadog API Key" for m in matches)
 
 def test_has_secrets(scanner):
