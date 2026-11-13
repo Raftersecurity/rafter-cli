@@ -2434,12 +2434,12 @@ assessment. Read status, partial, summary and vulnerabilities. The captured
 partial value is false; no partial, failed or empty completed report was forced
 to obtain additional examples.
 
-The wire field was `severity`, matching the endpoint-specific definition and
-the current issue builder. Older CLI_SPEC/generic examples use `level`; no
-captured finding had that property. Do not rename the observed field to match
-an older example. Legacy compatibility and future field guarantees still need
-maintainer guidance. `scanned_commit` was observed but is absent from the
-published result-field table, so its presence is not asserted as guaranteed.
+The wire field was `severity`, matching CLI_SPEC.md, the endpoint-specific
+definition and the current issue builder. Earlier generic examples used `level`;
+no captured finding had that property. Legacy compatibility and future field
+guarantees still need maintainer guidance. `scanned_commit` was observed but is
+absent from the published result-field table, so its presence is not asserted
+as guaranteed.
 
 ### Account quota
 
