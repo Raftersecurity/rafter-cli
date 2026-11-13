@@ -4,6 +4,10 @@
 
 Rafter is the security toolkit for developers. Stable output contracts mean any developer can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
 
+For local JSON fields, examples, and runtime differences, see the
+[JSON Output Reference](JSON_SCHEMAS.md). Backend-dependent sections are
+marked as pending there.
+
 **Free forever for individuals and open source.** No account required. No telemetry. All local security features (secret scanning, policy enforcement, pre-commit hooks, audit logging, MCP server) work without an API key, without network access, and without usage limits.
 
 The CLI follows UNIX principles:
@@ -124,7 +128,7 @@ Retrieve results from a scan.
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
 
-**Vulnerability levels (JSON output):** The `level` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
+**Vulnerability severity (JSON output):** The `severity` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
 
 #### Failed scans
 
@@ -552,6 +556,10 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
 ```
 
 **Top-level field reference:**
+
+`engine_requested`, `engine_used` and `degraded` are always present in the
+JSON result of a one-shot local scan. The current watch-mode writers omit
+these three fields; see [watch output framing](JSON_SCHEMAS.md#watch-output-framing).
 
 | Field | Type | Description |
 |-------|------|-------------|
