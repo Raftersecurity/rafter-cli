@@ -128,7 +128,7 @@ Retrieve results from a scan.
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
 
-**Vulnerability levels (JSON output):** The `level` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
+**Vulnerability severity (JSON output):** The `severity` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
 
 #### Failed scans
 
@@ -556,6 +556,10 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
 ```
 
 **Top-level field reference:**
+
+`engine_requested`, `engine_used` and `degraded` are always present in the
+JSON result of a one-shot local scan. The current watch-mode writers omit
+these three fields; see [watch output framing](JSON_SCHEMAS.md#watch-output-framing).
 
 | Field | Type | Description |
 |-------|------|-------------|

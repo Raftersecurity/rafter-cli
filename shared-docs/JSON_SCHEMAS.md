@@ -1,5 +1,8 @@
 # JSON Output Reference
 
+[CLI_SPEC.md](CLI_SPEC.md) is the canonical behavior reference. This document
+records observed outputs and does not introduce compatibility guarantees.
+
 The examples below were captured from Rafter CLI **0.11.7**, revision
 `1ebad941815d91d45d7befe3295d15f23a8b05ad`, in both Node and Python.
 The local scan, audit, configuration, and policy cases were replayed
@@ -7,13 +10,6 @@ against this source using fresh fixtures and isolated profiles. Additional
 local command, hook and MCP captures use the same revision. A November 10
 backend capture adds submission, queued/processing, completed-result and quota
 examples from one authorized Fast scan, with the same result read by both CLIs.
-[CLI_SPEC.md](CLI_SPEC.md) remains the canonical behavior reference.
-
-**Work in progress:** the local scan, audit JSONL, configuration, and Claude
-policy export sections below have actual output examples. The additional local CLI, hook and MCP families are documented below.
-The observed Fast run/get/usage responses are documented below. Sites responses
-and unobserved backend outcomes remain pending; this is not yet a complete
-reference for every JSON-capable command.
 
 This initial contribution documents the captured outputs listed below. Sites CLI
 and Sites MCP response shapes, and unobserved backend variants, are explicitly
@@ -71,9 +67,9 @@ The existing [exit-code contract](CLI_SPEC.md#exit-codes) remains explicit and
 stable. Preserve any other guarantee where the spec states it; do not infer
 stability merely because the same field appears in Node and Python.
 
-The original 48 local examples came from real Node 24.16.0 and Python 3.13.2 executions on Windows,
-with isolated profiles and built-in pattern scanning. They are not mocked
-backend responses. Additional Python MCP examples use Python 3.12.3 in
+The local examples came from real Node 24.16.0 and Python 3.13.2 executions
+on Windows, with isolated profiles and built-in pattern scanning. They are not
+mocked backend responses. Additional Python MCP examples use Python 3.12.3 in
 Ubuntu WSL; their runtime and SDK differences are identified below. Paths
 alone were sanitized in those local examples: `<fixture>` replaces the fixture
 root, `<home>` replaces the scratch profile, and path separators become `/`.
@@ -110,7 +106,6 @@ an exit-1 JSON body as though it were a process crash.
 
 Clean fixture, exit 0; both runtimes agreed:
 
-<!-- capture: scan-clean -->
 ```json
 {
   "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
@@ -125,7 +120,6 @@ Clean fixture, exit 0; both runtimes agreed:
 
 Fake-key fixture, exit 1; both runtimes agreed:
 
-<!-- capture: scan-finding -->
 ```json
 {
   "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
@@ -170,16 +164,16 @@ Fake-key fixture, exit 1; both runtimes agreed:
 | `results[].matches[].column` | number or null | Each match | One-based source column, or null if unavailable | U; paired scan writers |
 | `results[].matches[].redacted` | string | Each match | Redacted representation; the raw matched secret is not a scan-output field | U; paired scan writers |
 | `results[].matches[].engines` | array of strings | Conditional, auto-mode union findings | Engine provenance, such as `patterns` / `betterleaks`; source-traced, not captured with both engines here | U; union/writer paths |
-| `engine_requested` | string | When an engine report is supplied | Requested `patterns`, `betterleaks`, or `auto` | U; engine-report writers |
-| `engine_used` | string | With that report | Resolved `patterns`, `betterleaks`, or `both` | U; engine-report writers |
-| `degraded` | boolean | With that report | Requested Betterleaks contribution was unavailable or failed | U; engine-report writers |
+| `engine_requested` | string | Always in one-shot scan JSON; omitted in watch objects | Requested `patterns`, `betterleaks`, or `auto` | U; engine-report writers |
+| `engine_used` | string | Always in one-shot scan JSON; omitted in watch objects | Resolved `patterns`, `betterleaks`, or `both` | U; engine-report writers |
+| `degraded` | boolean | Always in one-shot scan JSON; omitted in watch objects | Requested Betterleaks contribution was unavailable or failed | U; engine-report writers |
 | `degraded_reason` | string | Degraded report with a nonempty reason | Explanation of fallback, not a stable error-code enum | U; engine-report writers |
 | `_suppressed` | array of objects | Only when findings were hidden | Suppressed finding metadata, described below | U; suppression writers |
 | `unreadable` | array of objects | Only when file reads failed | Incomplete scan metadata, described below | U; paired scan writers |
 
-The engine metadata appeared in every captured scan above. The output helpers
-accept an optional engine report, so the reference does not promote those
-conditional fields into universally required fields.
+`engine_requested`, `engine_used` and `degraded` are always present in the
+JSON result of a one-shot local scan. The current watch-mode writers omit
+these three fields; see [watch output framing](#watch-output-framing).
 
 ### Suppression metadata
 
@@ -194,7 +188,6 @@ ignore:
 
 The real scan returned exit 0 in both runtimes, with the retained results empty:
 
-<!-- capture: scan-suppressed -->
 ```json
 {
   "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
@@ -221,7 +214,6 @@ The real scan returned exit 0 in both runtimes, with the retained results empty:
 A legacy `.rafterignore` containing `finding.txt` instead yielded `source`
 `".rafterignore"` and `reason: null`, also with exit 0:
 
-<!-- capture: scan-legacy-suppressed -->
 ```json
 {
   "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
@@ -264,7 +256,6 @@ fields and are not established by these local examples.
 For an existing fixture held open with an exclusive Windows file handle, Node
 returned exit 2 with the following real read error:
 
-<!-- capture: scan-unreadable-node -->
 ```json
 {
   "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
@@ -285,7 +276,6 @@ returned exit 2 with the following real read error:
 
 Python returned exit 2 for the same fixture with its own error wording:
 
-<!-- capture: scan-unreadable-python -->
 ```json
 {
   "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
@@ -316,7 +306,6 @@ do not assume every scan failure provides this wrapper or a JSON error object.
 Requesting an unavailable Betterleaks engine with auto-update disabled produced
 real fallback output without installing an engine:
 
-<!-- capture: scan-fallback -->
 ```json
 {
   "_note": "Local-only scan: pattern-based detection without agentic-intelligence triage. Findings have not been evaluated for context (public exposure, key validity, deployment environment). Investigate each before acting; do not dismiss. Run 'rafter run' for backend agentic analysis.",
@@ -364,14 +353,12 @@ returned Node exit 1 and Python exit 2. Do not use it to generate an example.
 These first-record examples were written by actual clean scans into fresh
 scratch profiles. Node omitted an unresolved `gitRepo`:
 
-<!-- capture: audit-scan-node -->
 ```jsonl
 {"eventType":"scan_executed","securityCheck":{"passed":true,"reason":"Secret scan completed with no findings","details":{"filesWithFindings":0,"totalMatches":0,"patterns":[]}},"resolution":{"actionTaken":"allowed"},"cwd":"<fixture>/project","prevHash":null,"timestamp":"2026-11-04T03:20:44.609Z","sessionId":"1793762444581-40a18ca95104e758"}
 ```
 
 Python serialized that absence as null:
 
-<!-- capture: audit-scan-python -->
 ```jsonl
 {"timestamp":"2026-11-04T03:21:29.551461+00:00","sessionId":"1793762489550-761f05c4","cwd":"<fixture>/project","gitRepo":null,"prevHash":null,"eventType":"scan_executed","securityCheck":{"passed":true,"reason":"Secret scan completed with no findings","details":{"filesWithFindings":0,"totalMatches":0,"patterns":[]}},"resolution":{"actionTaken":"allowed"}}
 ```
@@ -422,7 +409,6 @@ with controlled input `echo documentation`, `passed=true`, action `allowed`,
 and no reason/agent, wrote these first records. The command string was logged,
 not executed. Node omitted the absent optional reason/agent:
 
-<!-- capture: audit-command-node -->
 ```json
 {
   "eventType": "command_intercepted",
@@ -445,7 +431,6 @@ not executed. Node omitted the absent optional reason/agent:
 
 Python emitted null values for them:
 
-<!-- capture: audit-command-python -->
 ```json
 {
   "timestamp": "2026-11-04T03:22:46.352528+00:00",
@@ -517,7 +502,6 @@ integration state**. No backend request was made.
 
 Node:
 
-<!-- capture: config-node -->
 ```json
 {
   "version": "1.0.0",
@@ -607,7 +591,6 @@ Node:
 
 Python:
 
-<!-- capture: config-python -->
 ```json
 {
   "version": "1.0.0",
@@ -797,7 +780,6 @@ default generators. A configured path does not prove a platform was installed.
 
 `agent config get agent.audit` returned this Node JSON:
 
-<!-- capture: config-get-node -->
 ```json
 {
   "logAllActions": true,
@@ -808,7 +790,6 @@ default generators. A configured path does not prove a platform was installed.
 
 The same command returned this Python JSON:
 
-<!-- capture: config-get-python -->
 ```json
 {
   "log_all_actions": true,
@@ -862,7 +843,6 @@ rafter policy export --format claude
 
 Both runtimes printed the same JSON object to stdout and returned exit 0:
 
-<!-- capture: policy-claude -->
 ```json
 {
   "hooks": {
@@ -925,7 +905,6 @@ valid input and reports `installed: false`; `installed` checks the config file,
 not whether every hook or agent integration works. Both runtimes returned this
 fresh-profile shape:
 
-<!-- capture6: status -->
 ```json
 {
   "installed": false,
@@ -950,8 +929,6 @@ fresh-profile shape:
   }
 }
 ```
-
-<!-- fields6: status -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -980,7 +957,6 @@ warnings and version staleness are informational. In the captured fresh profile,
 the config and Betterleaks checks failed and the optional agent checks warned.
 The expected exit 1 is a verification result, not an unreadable JSON stream.
 
-<!-- capture6: verify -->
 ```json
 {
   "checks": [
@@ -1058,8 +1034,6 @@ The expected exit 1 is a verification result, not an unreadable JSON stream.
 }
 ```
 
-<!-- fields6: verify -->
-
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
 | `checks` | array of objects | Always | Individual checks in execution order. | U |
@@ -1091,7 +1065,6 @@ Source: Node [status](../node/src/commands/agent/status.ts) and
 `{"components": []}`, not a missing response. This is one actual member of
 `components`, selected from the full captured report:
 
-<!-- capture6: component -->
 ```json
 {
   "id": "claude-code.hooks",
@@ -1105,8 +1078,6 @@ Source: Node [status](../node/src/commands/agent/status.ts) and
   "configEnabled": false
 }
 ```
-
-<!-- fields6: components -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -1127,7 +1098,6 @@ empty `entries` array. The following baseline was generated by an actual
 `rafter agent baseline create finding.txt --engine patterns` run in a disposable
 profile; the creation command itself prints text, not this JSON response.
 
-<!-- capture6: baseline -->
 ```json
 {
   "version": 1,
@@ -1143,8 +1113,6 @@ profile; the creation command itself prints text, not this JSON response.
   ]
 }
 ```
-
-<!-- fields6: baseline -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -1171,7 +1139,6 @@ The first installation below came from an inert, locally authored frontmatter
 fixture inside the scratch profile. Its intentionally old version exercises
 metadata detection; no executable integration or third-party skill was installed.
 
-<!-- capture6: skill-installation -->
 ```json
 {
   "name": "rafter",
@@ -1182,8 +1149,6 @@ metadata detection; no executable integration or third-party skill was installed
   "version": "0.0.0"
 }
 ```
-
-<!-- fields6: skill-list -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -1209,7 +1174,6 @@ requested. The captured finding report below includes actual frontmatter,
 redaction, command-pattern, Unicode-obfuscation, and binary-inventory results.
 URLs and command strings were scanned as data and were not fetched or executed.
 
-<!-- capture6: review -->
 ```json
 {
   "target": {
@@ -1279,8 +1243,6 @@ URLs and command strings were scanned as data and were not fetched or executed.
 }
 ```
 
-<!-- fields6: review -->
-
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
 | `target` | object | Always | Resolved review target. | U |
@@ -1347,7 +1309,6 @@ sanitization. In a separate CRLF metadata fixture, Node omitted unavailable
 frontmatter values while Python emitted nulls. For example, this is the actual
 Python `frontmatter[0]` member from that separate capture:
 
-<!-- capture6: frontmatter-python -->
 ```json
 {
   "file": "SKILL.md",
@@ -1373,7 +1334,6 @@ A directory containing multiple skill subtrees emits `target.mode: multi-skill`,
 a `skills` array and an aggregate summary. Below is one actual `skills` member;
 its `report` follows the entire single-review field table.
 
-<!-- capture6: multi-member -->
 ```json
 {
   "relDir": "one",
@@ -1407,8 +1367,6 @@ its `report` follows the entire single-review field table.
 }
 ```
 
-<!-- fields6: multi -->
-
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
 | `target` | object | Always | Original resolved multi-skill scope; common input/kind/resolvedPath/source fields follow the single-review table. | U |
@@ -1434,7 +1392,6 @@ its `report` follows the entire single-review field table.
 metadata fixture; an empty profile instead returned `installations: []`, zero
 counts and `worst: clean` with exit 0.
 
-<!-- capture6: installed-review -->
 ```json
 {
   "target": {
@@ -1492,8 +1449,6 @@ counts and `worst: clean` with exit 0.
 }
 ```
 
-<!-- fields6: installed -->
-
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
 | `target` | object | Always | Installed-review selection. | U |
@@ -1530,7 +1485,6 @@ Source: Node [skill inventory](../node/src/commands/skill/list.ts),
 single-review schema. Its local quick scan exits 1 for findings and 0 otherwise.
 The actual finding response is:
 
-<!-- capture6: audit-skill -->
 ```json
 {
   "skill": "SKILL.md",
@@ -1551,8 +1505,6 @@ The actual finding response is:
   "rafterSkillInstalled": false
 }
 ```
-
-<!-- fields6: audit-skill -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -1580,7 +1532,6 @@ or prints `[]` and exits 3 when no docs are configured or a tag filter matches
 nothing. Listing a local path reports policy metadata without reading its
 content, so a listed entry can refer to a missing file.
 
-<!-- capture6: docs-list -->
 ```json
 [
   {
@@ -1608,8 +1559,6 @@ content, so a listed entry can refer to a missing file.
 ]
 ```
 
-<!-- fields6: docs-list -->
-
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
 | `[].id` | string | Each entry | Policy document identifier. | U |
@@ -1626,7 +1575,6 @@ it still prints the successful array, reports errors to stderr and exits 1.
 The next example is an actual partial-success result from a tag selecting one
 existing and one missing local file:
 
-<!-- capture6: docs-partial -->
 ```json
 [
   {
@@ -1638,8 +1586,6 @@ existing and one missing local file:
   }
 ]
 ```
-
-<!-- fields6: docs-show -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -1670,7 +1616,6 @@ This real three-file fixture produced a flagged pair: one `authenticate`
 function calls an escape helper and the other does not. Both runtimes returned
 the same map:
 
-<!-- capture6: gates -->
 ```json
 {
   "stats": {
@@ -1743,8 +1688,6 @@ the same map:
 }
 ```
 
-<!-- fields6: gates -->
-
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
 | `stats` | object | Always | Mapping totals for the supplied scope. | U |
@@ -1789,7 +1732,6 @@ child profile opted in, ran a real clean scan and pretool evaluation, and
 contained inert old-version skill metadata. A report can include counts from
 earlier `counters show` invocations, since that command is counted at its exit.
 
-<!-- capture6: counters -->
 ```json
 {
   "schema": 1,
@@ -1834,8 +1776,6 @@ earlier `counters show` invocations, since that command is counted at its exit.
   ]
 }
 ```
-
-<!-- fields6: counters -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -1898,7 +1838,6 @@ were evaluated, never executed.
 Claude/Codex/Continue use `{}` for no objection. A denial writes this envelope
 with exit 0; the host reads its decision field:
 
-<!-- capture6: pre-claude -->
 ```json
 {
   "hookSpecificOutput": {
@@ -1912,7 +1851,6 @@ with exit 0; the host reads its decision field:
 Cursor has no neutral schema: no objection is `{"permission":"allow"}`; a
 block is the following actual object, also with exit 0:
 
-<!-- capture6: pre-cursor -->
 ```json
 {
   "permission": "deny",
@@ -1923,15 +1861,12 @@ block is the following actual object, also with exit 0:
 
 Gemini uses `{}` for no objection and this denial object:
 
-<!-- capture6: pre-gemini -->
 ```json
 {
   "decision": "deny",
   "reason": "✗ Rafter blocked: rm -rf /\n  Rule: rm\\s+(-[a-z]*r[a-z]*\\s+)*-[a-z]*f[a-z]*\\s+\\/\\*?(\\s|$)\n  Risk: CRITICAL—irreversible system damage"
 }
 ```
-
-<!-- fields6: pretool -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -1958,7 +1893,6 @@ For Claude/Codex/Continue, the neutral result contains only the event envelope.
 The real redaction example below supplied a deliberately fake key in output,
 content and error fields, and all three returned redacted:
 
-<!-- capture6: post-claude -->
 ```json
 {
   "hookSpecificOutput": {
@@ -1974,21 +1908,17 @@ content and error fields, and all three returned redacted:
 
 Cursor and Gemini emit notifications on modification:
 
-<!-- capture6: post-cursor -->
 ```json
 {
   "agentMessage": "Rafter redacted secrets from tool output"
 }
 ```
 
-<!-- capture6: post-gemini -->
 ```json
 {
   "systemMessage": "Rafter redacted secrets from tool output"
 }
 ```
-
-<!-- fields6: posttool -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -2027,7 +1957,6 @@ usually omit `isError` on success; Python models include `isError: false` and
 successful tool results include `structuredContent`. For example, these are
 the actual `evaluate_command` results for the same benign string:
 
-<!-- capture6: mcp-node-envelope -->
 ```json
 {
   "content": [
@@ -2039,7 +1968,6 @@ the actual `evaluate_command` results for the same benign string:
 }
 ```
 
-<!-- capture6: mcp-python-envelope -->
 ```json
 {
   "content": [
@@ -2054,8 +1982,6 @@ the actual `evaluate_command` results for the same benign string:
   "isError": false
 }
 ```
-
-<!-- fields6: mcp-envelope -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -2082,7 +2008,6 @@ The primary block decodes to an **array of per-file results**, not the
 `{results, engine_requested, engine_used, ...}` CLI wrapper. This is an actual
 decoded finding block:
 
-<!-- capture6: mcp-scan -->
 ```json
 [
   {
@@ -2098,8 +2023,6 @@ decoded finding block:
   }
 ]
 ```
-
-<!-- fields6: mcp-scan -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -2117,7 +2040,6 @@ second block reports suppressed metadata, and a separate block can report
 unreadable paths; inspect all blocks before treating empty findings as clean.
 The following blocks were decoded from real suppressed and unreadable calls:
 
-<!-- capture6: mcp-suppressed -->
 ```json
 {
   "suppressed_count": 1,
@@ -2135,8 +2057,6 @@ The following blocks were decoded from real suppressed and unreadable calls:
 }
 ```
 
-<!-- fields6: mcp-suppressed -->
-
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
 | `suppressed_count` | number | Suppression block | Number of filtered findings. | U |
@@ -2149,7 +2069,6 @@ The following blocks were decoded from real suppressed and unreadable calls:
 | `_suppressed[].reason` | string or null | Each suppressed match | Recorded rationale, or null for legacy/no-reason rules. | U |
 | `_suppressed[].source` | string | Each suppressed match | Policy source, such as .rafter.yml or .rafterignore. | U |
 
-<!-- capture6: mcp-unreadable -->
 ```json
 {
   "unreadable_count": 1,
@@ -2161,8 +2080,6 @@ The following blocks were decoded from real suppressed and unreadable calls:
   ]
 }
 ```
-
-<!-- fields6: mcp-unreadable -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -2181,7 +2098,6 @@ success example here.
 `evaluate_command` classifies a string without executing it. This decoded
 dangerous-string result was the same in both runtimes:
 
-<!-- capture6: mcp-evaluation -->
 ```json
 {
   "allowed": false,
@@ -2190,8 +2106,6 @@ dangerous-string result was the same in both runtimes:
   "reason": "Matches built-in blocked pattern (critical destructive command)"
 }
 ```
-
-<!-- fields6: evaluation -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -2213,15 +2127,12 @@ masks credentials. For a supplied key, Node returns the selected JSON value
 directly. Python returns a `key`/`value` wrapper; this actual keyed result shows
 the missing-key null case:
 
-<!-- capture6: mcp-config-key -->
 ```json
 {
   "key": "agent.noSuchField",
   "value": null
 }
 ```
-
-<!-- fields6: config-key -->
 
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
@@ -2245,7 +2156,6 @@ and has no process exit-3 interpretation.
 success body was followed by an actual rescan that returned an empty primary
 array plus the suppressed metadata shown above:
 
-<!-- capture6: mcp-suppression-write -->
 ```json
 {
   "ok": true,
@@ -2264,8 +2174,6 @@ array plus the suppressed metadata shown above:
 }
 ```
 
-<!-- fields6: suppression -->
-
 | Field path | JSON type | Presence / condition | Meaning | Stability |
 |---|---|---|---|---|
 | `ok` | boolean | Successful suppress_finding | true after a policy write. | U |
@@ -2282,7 +2190,6 @@ useful triage call supplies a reason. Only a disposable fixture was modified.
 An unmatched document produces a tool error. Node's actual result contains
 JSON-encoded `{error: ...}`:
 
-<!-- capture6: mcp-node-error -->
 ```json
 {
   "content": [
@@ -2297,7 +2204,6 @@ JSON-encoded `{error: ...}`:
 
 Python's actual result contains plain diagnostic text instead:
 
-<!-- capture6: mcp-python-error -->
 ```json
 {
   "content": [
@@ -2325,7 +2231,6 @@ responses. Do not infer a uniform `{error}` payload for both runtimes.
 All three were read from both real servers. The next two actual docs-resource
 results show the MIME-type difference while preserving JSON text:
 
-<!-- capture6: mcp-node-resource -->
 ```json
 {
   "contents": [
@@ -2338,7 +2243,6 @@ results show the MIME-type difference while preserving JSON text:
 }
 ```
 
-<!-- capture6: mcp-python-resource -->
 ```json
 {
   "contents": [
@@ -2371,10 +2275,11 @@ two complete objects, so their termination codes are not scan-completion codes.
 
 Watch stdout is **neither one JSON document nor JSONL**. A consumer must handle
 the observed status text and repeated objects explicitly. The individual scan
-objects follow the [local scan fields](#local-secret-scans); the original
-one-shot examples do not establish whole-stream parsing for watch mode.
+objects use the [local scan fields](#local-secret-scans), except that
+`engine_requested`, `engine_used` and `degraded` are currently omitted by both
+watch-mode writers. One-shot examples do not establish whole-stream parsing
+for watch mode.
 
-<!-- backend-reference:start -->
 ## Hosted Fast scan and quota responses
 
 These six selections come from one actual November 10, 2026 Fast scan of
@@ -2386,7 +2291,7 @@ returned the same complete JSON as the original Python run.
 
 Only `scan_id` is replaced with `<scan-id>` in these examples. The completed
 example is an explicitly selected excerpt, described below; counts and other
-values remain unchanged. The original 48 local examples remain unchanged.
+values remain unchanged.
 Field stability is **unspecified** unless an existing contract says otherwise.
 
 ```sh
@@ -2408,7 +2313,6 @@ the completed report on stdout. `--skip-interactive` returns without that final
 JSON; adding `--quiet` also hides the ID. Saving the response/ID before polling
 allows later retrieval without a second submission.
 
-<!-- capture-backend: submission -->
 ```json
 {
   "success": true,
@@ -2416,7 +2320,6 @@ allows later retrieval without a second submission.
 }
 ```
 
-<!-- fields-backend: submission -->
 | Field path | JSON type | Presence / condition | Meaning | Stability / source |
 |---|---|---|---|---|
 | `success` | boolean | Observed response | Request accepted | U; submission API and capture |
@@ -2426,21 +2329,18 @@ Actual queued and processing HTTP poll bodies follow. They describe progress,
 not an empty or completed findings report. The public result endpoint also
 describes pending; that state was not observed in this capture.
 
-<!-- capture-backend: queued -->
 ```json
 {
   "status": "queued"
 }
 ```
 
-<!-- capture-backend: processing -->
 ```json
 {
   "status": "processing"
 }
 ```
 
-<!-- fields-backend: poll -->
 | Field path | JSON type | Presence / condition | Meaning | Stability / source |
 |---|---|---|---|---|
 | `status` | string | Observed queued/processing responses | Current job state | U; result API and captures |
@@ -2455,7 +2355,6 @@ line_end was null; published nullable alternatives for file_path and line_start
 were not observed. Findings are reported results, with no triage or validity
 claim implied by this schema example.
 
-<!-- capture-backend: completed-excerpt -->
 ```json
 {
   "status": "completed",
@@ -2504,7 +2403,6 @@ claim implied by this schema example.
 }
 ```
 
-<!-- fields-backend: report -->
 | Field path | JSON type | Presence / condition | Meaning | Stability / source |
 |---|---|---|---|---|
 | `status` | string | Captured completed report | Job state | U; result API and capture |
@@ -2547,7 +2445,6 @@ published result-field table, so its presence is not asserted as guaranteed.
 
 Before the submission:
 
-<!-- capture-backend: usage-before -->
 ```json
 {
   "quota": {
@@ -2568,7 +2465,6 @@ Before the submission:
 
 After the same single Fast submission:
 
-<!-- capture-backend: usage-after -->
 ```json
 {
   "quota": {
@@ -2587,7 +2483,6 @@ After the same single Fast submission:
 }
 ```
 
-<!-- fields-backend: usage -->
 | Field path | JSON type | Presence / condition | Meaning | Stability / source |
 |---|---|---|---|---|
 | `quota` | object | Both captured usage responses | Account allowance | U; usage API and capture |
@@ -2620,8 +2515,6 @@ Node [run](../node/src/commands/backend/run.ts),
 [payload writer](../node/src/utils/api.ts);
 Python [backend handlers](../python/rafter_cli/commands/backend.py) and
 [payload writer](../python/rafter_cli/utils/api.py).
-<!-- backend-reference:end -->
-
 ## Pending coverage and evidence
 
 Run/get/usage now have actual Fast-scan evidence and published field definitions,
