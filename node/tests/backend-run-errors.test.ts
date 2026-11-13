@@ -110,14 +110,14 @@ it("reports quota exhaustion with exit 3 in the spinner branch", async () => {
   expect(spinner.fail).toHaveBeenCalledWith("Request failed");
 });
 
-it("stays silent on quota exhaustion in the quiet branch, still exiting 3", async () => {
+it("prints quota exhaustion in quiet mode while preserving exit code 3", async () => {
   setAgentMode(true);
   vi.mocked(apiClient.post).mockRejectedValueOnce({ response: { status: 429, data: {} } });
 
   const { exitCode, lines } = await runScan(QUIET);
 
   expect(exitCode).toBe(EXIT_QUOTA_EXHAUSTED);
-  expect(lines).toEqual([]);
+  expect(lines).toEqual(["[ERROR] Quota exhausted"]);
 });
 
 it("formats repository detection errors without calling the API", async () => {

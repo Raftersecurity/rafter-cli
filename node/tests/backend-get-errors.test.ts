@@ -49,26 +49,15 @@ async function runGetRejecting(thrown: unknown, scanId = "scan-123") {
 it("formats backend get 404 errors in agent mode", async () => {
   setAgentMode(true);
 
-  vi.mocked(fetchScanWithRetry).mockRejectedValueOnce({
-    response: { status: 404 },
-  });
-
-  const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
-
-  vi.spyOn(process, "exit").mockImplementation((code) => {
-    throw new Error(`EXIT:${code}`);
-  });
-
-  await expect(
-    createGetCommand().parseAsync(
-      ["missing-scan", "--api-key", "test-key"],
-      { from: "user" },
-    ),
-  ).rejects.toThrow("EXIT:2");
-
-  expect(stderr).toHaveBeenCalledWith(
-    "[ERROR] Scan 'missing-scan' not found",
+  const { exitCode, lines } = await runGetRejecting(
+    { response: { status: 404 } },
+    "missing-scan",
   );
+
+  expect(exitCode).toBe(2);
+  expect(lines).toEqual([
+    "[ERROR] Scan 'missing-scan' not found",
+  ]);
 });
 
 it("formats backend get 404 errors in human mode", async () => {

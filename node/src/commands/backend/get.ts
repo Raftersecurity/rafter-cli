@@ -40,10 +40,6 @@ export function createGetCommand(): Command {
             process.exit(EXIT_SCAN_NOT_FOUND);
           } else if (e instanceof PollGaveUpError) {
             console.error(fmt.error(e.message));
-          } else if (e.response?.data) {
-            console.error(fmt.error(describeHttpError(e)));
-          } else if (e instanceof Error) {
-            console.error(fmt.error(e.message));
           } else {
             console.error(fmt.error(describeHttpError(e)));
           }
