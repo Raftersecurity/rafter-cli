@@ -224,10 +224,13 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   },
   // Datadog (#23). API keys are 32 hex chars and app keys 40 hex chars, normally set as DD_API_KEY /
   // DD_APP_KEY. A bare 32-char hex string is usually an MD5 hash, so the match is anchored on the
-  // Datadog context instead of matching any 32-char hex string.
+  // Datadog context instead of matching any 32-char hex string. The anchor allows an optional
+  // separator and an api/app/application word between the keyword and `key`, so DATADOG_API_KEY,
+  // datadog_api_key and the DD-API-KEY header also match; the trailing \b pins the length, so a
+  // 36-hex run does not match.
   {
     name: "Datadog API Key",
-    regex: "(?i)(?:datadog|dd_api_key|dd_app_key)[^a-zA-Z0-9]{0,20}['\"]?[a-f0-9]{32}(?:[a-f0-9]{8})?\\b",
+    regex: "(?i)(?<![a-z0-9])(?:dd|datadog)[_.-]?(?:api|app|application)?[_.-]?key\b[^a-zA-Z0-9]{0,20}[a-f0-9]{32}(?:[a-f0-9]{8})?\\b",
     severity: "critical",
     description: "Datadog API key detected"
   }
