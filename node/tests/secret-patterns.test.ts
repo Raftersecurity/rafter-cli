@@ -387,14 +387,38 @@ describe("Secret patterns — coverage matrix", () => {
       expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(true);
     });
 
+    it("detects DATADOG_API_KEY with a 32-char hex key", () => {
+      const token = fakeSecret("DATADOG_API_KEY=", "c".repeat(32));
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(true);
+    });
+
+    it("detects lowercase datadog_api_key", () => {
+      const token = fakeSecret("datadog_api_key=", "d".repeat(32));
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(true);
+    });
+
+    it("detects DD-API-KEY header with a 32-char hex key", () => {
+      const token = fakeSecret("DD-API-KEY: ", "e".repeat(32));
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(true);
+    });
+
     it("does not match a bare 32-char hex string without Datadog context", () => {
       const notAKey = "a".repeat(32);
       const r = scanString(notAKey + "\n");
       expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(false);
     });
 
-    it("does not match DD_API_KEY with a short or non-hex value", () => {
-      const r = scanString("DD_API_KEY=not-a-real-key\n");
+    it("does not match DD_API_KEY with a 36-char hex value", () => {
+      const token = fakeSecret("DD_API_KEY=", "a".repeat(36));
+      const r = scanString(token + "\n");
+      expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(false);
+    });
+
+    it("does not match datadog followed by a bare MD5 hash", () => {
+            const r = scanString("datadog " + "a".repeat(32) + "\n");
       expect(r.matches.some((m) => m.pattern.name.includes("Datadog"))).toBe(false);
     });
   });
