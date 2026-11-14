@@ -230,7 +230,7 @@ export const DEFAULT_SECRET_PATTERNS: Pattern[] = [
   // 36-hex run does not match.
   {
     name: "Datadog API Key",
-    regex: "(?i)(?<![a-z0-9])(?:dd|datadog)[_.-]?(?:api|app|application)?[_.-]?key\b[^a-zA-Z0-9]{0,20}[a-f0-9]{32}(?:[a-f0-9]{8})?\\b",
+    regex: "(?i)(?<![a-z0-9])(?:dd|datadog)[_.-]?(?:api|app|application)?[_.-]?key\\b[^a-zA-Z0-9]{0,20}[a-f0-9]{32}(?:[a-f0-9]{8})?\\b",
     severity: "critical",
     description: "Datadog API key detected"
   }
