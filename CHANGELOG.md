@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **JSON output reference** (#36, #357). `shared-docs/JSON_SCHEMAS.md` records the observed JSON output of the local commands, hooks and MCP tools in both runtimes, with field tables; `CLI_SPEC.md` stays the canonical contract. Thanks to @bbdevelops for the contribution.
+
+### Changed
+
+- **`rafter run`, `rafter get` and `rafter usage` print errors through the shared formatter** (#34, #341): `[ERROR] <message>` with `-a`, `✗ <message>` otherwise, and HTTP failures read `HTTP <status> — <detail>` with the detail flattened to one line and capped at 200 characters. A 429 on submit now prints `Quota exhausted` in quiet mode too, in both runtimes. Exit codes are unchanged. Both Node and Python. Thanks to @jing2003 for the contribution.
+
+### Fixed
+
+- **`CLI_SPEC.md` names the vulnerability field `severity`**, not `level`, matching the wire format (#357).
+
 ## [0.12.0] - 2026-11-12
 
 ### Added
