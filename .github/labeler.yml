@@ -1,0 +1,15 @@
+secret-pattern:
+  - changed-files:
+    - any-glob-to-any-file:
+      - node/src/scanners/secret-patterns.ts
+      - python/rafter_cli/scanners/secret_patterns.py
+
+documentation:
+  - changed-files:
+    - any-glob-to-any-file: 'recipes/**'
+
+testing:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'node/tests/**'
+      - 'python/tests/**'
