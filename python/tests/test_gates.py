@@ -1,5 +1,6 @@
 """`rafter gates` end to end. Mirrors node/tests/gates.test.ts."""
 
+import errno
 import json
 import os
 import site
@@ -141,8 +142,13 @@ def test_bad_input_exits_2(tree):
 def test_unicode_and_file_names_read_like_node(tmp_path):
     write_fixture(tmp_path, UNICODE_FIXTURE)
     # A file name that is not valid UTF-8 is skipped, not printed.
-    with open(os.path.join(os.fsencode(str(tmp_path)), b"auth\xff.py"), "w") as f:
-        f.write("def authorize_bad():\n    pass\n")
+    # macOS (APFS) refuses such names with EILSEQ, so there the case cannot arise.
+    try:
+        with open(os.path.join(os.fsencode(str(tmp_path)), b"auth\xff.py"), "w") as f:
+            f.write("def authorize_bad():\n    pass\n")
+    except OSError as e:
+        if e.errno != errno.EILSEQ:
+            raise
     out, _, code = rafter("gates", str(tmp_path), "--json", "--no-gitignore")
     assert code == 0
     data = json.loads(out)
