@@ -529,17 +529,19 @@ describe("cross-workflow consistency", () => {
     expect(nodeVersions.has("22")).toBe(true);
   });
 
-  it("all workflows checking out code use actions/checkout", () => {
+  it("no pull_request_target job checks out the PR's code", () => {
+    // pull_request_target runs with a write token and secrets; checking out
+    // the PR head there runs untrusted code with them.
+    const prHead = /pull_request\.head|head_ref|refs\/pull\//;
     for (const [file, wf] of Object.entries<any>(workflows)) {
+      if (!JSON.stringify(wf.on ?? {}).includes("pull_request_target")) continue;
       for (const [jobName, job] of Object.entries<any>(wf.jobs)) {
-        if (!job.steps || job.steps.length === 0) continue;
-        const firstStep = job.steps[0];
-        // First step should be checkout in most cases
-        if (firstStep.uses) {
+        for (const step of job.steps ?? []) {
+          if (!String(step.uses ?? "").includes("actions/checkout")) continue;
           expect(
-            firstStep.uses,
-            `${file}/${jobName} first step should be checkout`,
-          ).toContain("checkout");
+            JSON.stringify(step.with ?? {}),
+            `${file}/${jobName} checks out the PR head under pull_request_target`,
+          ).not.toMatch(prHead);
         }
       }
     }
