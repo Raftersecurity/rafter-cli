@@ -81,6 +81,13 @@ jobs:
             echo "CHANGELOG.md updated for $VERSION"
           fi
 
+      - name: Ensure the shipped-hashes table covers every published release
+        # Auto-update proves a skill file is rafter's own by hash. A release cut
+        # before the table includes the previous version treats that version's
+        # unedited files as edited; 0.12.0 and 0.12.1 both nearly shipped so.
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/gen-shipped-hashes.py --check
+
   test-build:
     runs-on: ubuntu-latest
     steps:
