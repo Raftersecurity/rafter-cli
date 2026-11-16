@@ -1,0 +1,37 @@
+{
+  "mcpServers": {
+    "rafter": {
+      "command": "rafter",
+      "args": [
+        "mcp",
+        "serve"
+      ]
+    }
+  },
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "run_shell_command|write_file|replace|edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__RAFTER_BIN__ hook pretool --format gemini",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__RAFTER_BIN__ hook posttool --format gemini",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

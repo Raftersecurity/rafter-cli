@@ -25,9 +25,9 @@ import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 GATE = REPO / "tools" / "shell-route-sweep" / "gate.py"
-CORPUS = REPO / "rf-zvll-corpus.json"
-UNDER = REPO / "rf-zvll-underblock-baseline.json"
-OVER = REPO / "rf-zvll-overblock-baseline.json"
+CORPUS = REPO / "fixtures" / "battery" / "rf-zvll-corpus.json"
+UNDER = REPO / "fixtures" / "battery" / "rf-zvll-underblock-baseline.json"
+OVER = REPO / "fixtures" / "battery" / "rf-zvll-overblock-baseline.json"
 RR = REPO / "python" / "rafter_cli" / "core" / "risk_rules.py"
 
 

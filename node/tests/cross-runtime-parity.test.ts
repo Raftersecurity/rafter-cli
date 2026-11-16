@@ -3,6 +3,7 @@ import { execSync, execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { GATES_FIXTURE, writeFixture } from "./fixtures/gates-fixture.js";
 
 /**
  * Cross-runtime parity tests — invoke both Node.js and Python CLIs
@@ -642,5 +643,31 @@ describeIfPython("parity: stdout/stderr separation", () => {
     // Stderr should NOT contain the JSON array
     expect(nodeResult.stderr).not.toContain('"matches"');
     expect(pyResult.stderr).not.toContain('"matches"');
+  });
+});
+
+// ─── Gates ──────────────────────────────────────────────────────────
+
+describeIfPython("parity: gates", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rafter-parity-gates-"));
+    writeFixture(tmpDir, GATES_FIXTURE);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("text and --json output are identical", () => {
+    const text = runBoth(["gates", tmpDir]);
+    expect(text.node.exitCode).toBe(0);
+    expect(text.python.exitCode).toBe(0);
+    expect(text.python.stdout).toBe(text.node.stdout);
+
+    const json = runBoth(["gates", tmpDir, "--json"]);
+    expect(JSON.parse(json.node.stdout).stats.flagged_groups).toBe(1);
+    expect(json.python.stdout).toBe(json.node.stdout);
   });
 });

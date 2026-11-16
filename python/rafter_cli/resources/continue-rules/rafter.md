@@ -6,11 +6,11 @@ alwaysApply: false
 
 # rafter — security toolkit router
 
-Pointer rule. Use the `rafter` skill (full guidance at `.claude/skills/rafter/SKILL.md`).
+Pointer rule for the `rafter` skill. Full guidance: run `rafter brief scanning` (or `rafter brief commands` for just the command list).
 
 - Run `rafter run` for the default tier — remote SAST + SCA + secrets. Needs `RAFTER_API_KEY`.
 - Run `rafter run --mode plus` for agentic deep-dive on suspicious patterns.
 - Run `rafter secrets <path>` for offline secrets-only (NOT a code security scan).
 - Run `rafter agent exec --dry-run -- <cmd>` to classify a shell command's risk before running it.
 
-If unsure which tier to pick, Read `.claude/skills/rafter/SKILL.md` and follow the routing table.
+If unsure which tier to pick, run `rafter brief scanning` and follow the routing table.

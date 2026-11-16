@@ -103,10 +103,18 @@ describe("brief command — topic rendering", () => {
     expect(r.stdout.length).toBeGreaterThan(100);
   });
 
-  it("renders commands topic with the command reference heading", () => {
+  it("renders commands topic with real command content, not just the heading", () => {
     const r = rafter("brief commands");
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("Rafter Command Reference");
+    // The extractor pulls these from the Fast Path + Quick Decision Table
+    // sections of the live skill docs. A heading-only regression (the
+    // extractor targeting headings that no longer exist) would leave the
+    // output at just the title line, so assert on actual command content.
+    expect(r.stdout).toContain("rafter run");
+    expect(r.stdout).toContain("rafter secrets");
+    expect(r.stdout).toContain("rafter skill review");
+    expect(r.stdout.length).toBeGreaterThan(200);
   });
 
   it("rejects 'pricing' topic — removed; pricing lives in marketing surfaces", () => {

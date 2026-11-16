@@ -97,13 +97,13 @@ If the block is a false positive **for this specific context**, the right path i
 Every hook decision (approve / ask / block) is appended to the JSONL audit log:
 
 - Location: `rafter agent status` prints the path.
-- Read: `rafter agent audit --log` (or MCP `read_audit_log`).
+- Read: `rafter agent audit` (or MCP `read_audit_log`).
 - Use it for postmortems: *why did this command run?*, *what did the agent try before the block?*
 
 ## Platform Notes
 
 - **Claude Code**: `rafter agent init --with-claude-code` wires `pretool` + `posttool` into `~/.claude/settings.json`. Hook timeout is 5s; long scans defer to the async posttool path.
-- **MCP clients (Gemini, Cursor, …)**: no native hook; use the `evaluate_command` MCP tool from your agent's system prompt ("before Bash, call rafter.evaluate_command").
+- **Agents without a native hook (Gemini, Cursor, …)**: run `rafter agent exec --dry-run -- <command>` before a risky command. If the client already has rafter's MCP server configured, the `evaluate_command` tool gives the same answer.
 - **CI**: hooks don't fire in CI. Use `rafter scan` + `rafter policy validate` in the pipeline instead.
 
 ## Common Pitfalls

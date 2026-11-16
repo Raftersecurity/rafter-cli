@@ -20,7 +20,7 @@ import { assessCommandRisk } from "../src/core/risk-rules.js";
  * achebe (#230).
  */
 const here = path.dirname(fileURLToPath(import.meta.url));
-const batteryPath = path.resolve(here, "../../rf-6pqx-newline-heredoc-battery.json");
+const batteryPath = path.resolve(here, "../../fixtures/battery/rf-6pqx-newline-heredoc-battery.json");
 const battery: Array<{ label: string; cmd: string; want: string[] }> = JSON.parse(
   readFileSync(batteryPath, "utf8"),
 );

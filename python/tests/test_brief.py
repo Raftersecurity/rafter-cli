@@ -86,6 +86,14 @@ class TestTopicRendering:
         result = runner.invoke(app, ["brief", "commands"])
         assert result.exit_code == 0
         assert "Rafter Command Reference" in result.stdout
+        # The extractor pulls these from the Fast Path + Quick Decision Table
+        # sections of the live skill docs. A heading-only regression (the
+        # extractor targeting headings that no longer exist) would leave the
+        # output at just the title line, so assert on actual command content.
+        assert "rafter run" in result.stdout
+        assert "rafter secrets" in result.stdout
+        assert "rafter skill review" in result.stdout
+        assert len(result.stdout) > 200
 
     def test_pricing_topic_removed(self):
         # 'pricing' is removed from rafter brief — pricing content lives in

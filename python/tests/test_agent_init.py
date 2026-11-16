@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
 from rafter_cli.commands.agent import (
     _install_claude_code_hooks,
@@ -803,16 +805,16 @@ class TestInstallCodexSkills:
         assert ok, f"Expected success, got error: {error}"
         assert error == ""
 
-        # Must mirror _AGENT_SKILLS in python/rafter_cli/commands/agent.py.
+        # Must mirror KNOWN_SKILL_NAMES in python/rafter_cli/commands/skill.py.
         for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
             skill_path = tmp_path / ".agents" / "skills" / name / "SKILL.md"
             assert skill_path.exists(), f"{name} SKILL.md should be installed"
             assert skill_path.read_text().strip(), f"{name} SKILL.md should not be empty"
 
-    def test_overwrites_existing_skills(self, tmp_path, monkeypatch):
+    def test_keeps_skill_content_rafter_did_not_write(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        # Pre-create with stale content
+        # Content no rafter release shipped: a user's edit, not a stale copy.
         backend_dir = tmp_path / ".agents" / "skills" / "rafter"
         backend_dir.mkdir(parents=True)
         (backend_dir / "SKILL.md").write_text("old content")
@@ -820,8 +822,8 @@ class TestInstallCodexSkills:
         ok, error = _install_codex_skills(tmp_path)
         assert ok
 
-        content = (backend_dir / "SKILL.md").read_text()
-        assert content != "old content", "Skill should be updated on reinstall"
+        assert (backend_dir / "SKILL.md").read_text() == "old content"
+        assert "name: rafter" in (backend_dir / "SKILL.md.rafter-new").read_text()
 
 
 # ── Gemini skill installation tests ──────────────────────────────────
@@ -836,7 +838,7 @@ class TestInstallGeminiSkills:
         assert ok, f"Expected success, got error: {error}"
         assert error == ""
 
-        # Mirrors _AGENT_SKILLS — same list as codex.
+        # Mirrors KNOWN_SKILL_NAMES — same list as codex.
         for name in ("rafter", "rafter-secure-design", "rafter-code-review"):
             skill_path = tmp_path / ".agents" / "skills" / name / "SKILL.md"
             assert skill_path.exists(), f"{name} SKILL.md should be installed"
@@ -905,12 +907,13 @@ class TestRegisterGeminiSkills:
 
 # ── OpenClaw skill installation tests ────────────────────────────────
 
-from rafter_cli.commands.agent import _install_openclaw_skill
-
 
 class TestInstallOpenClawSkill:
     """rf-zgwj — OpenClaw integration writes a ClawHub-shaped skill at the
-    canonical workspace path, not the legacy single-file path."""
+    canonical workspace path, not the legacy single-file path, under the same
+    keep-edited-files policy as every other platform."""
+
+    REPO = Path(__file__).resolve().parents[2]
 
     def _canonical_path(self, root: Path) -> Path:
         return root / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md"
@@ -918,64 +921,55 @@ class TestInstallOpenClawSkill:
     def _legacy_path(self, root: Path) -> Path:
         return root / ".openclaw" / "skills" / "rafter-security.md"
 
+    def _init(self, tmp_path, monkeypatch) -> str:
+        from rafter_cli.__main__ import app
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.chdir(tmp_path)
+        result = CliRunner().invoke(app, ["agent", "init", "--with-openclaw"])
+        assert result.exit_code == 0, result.output
+        return result.output
+
     def test_installs_skill_at_clawhub_workspace_path(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
         (tmp_path / ".openclaw").mkdir()
-
-        ok, source, dest, error = _install_openclaw_skill()
-        assert ok, f"Expected success, got error: {error}"
-        assert error == ""
-
+        output = self._init(tmp_path, monkeypatch)
         dest_path = self._canonical_path(tmp_path)
-        assert dest_path.exists(), "SKILL.md should be installed at canonical path"
-        assert dest_path.read_text().strip(), "SKILL.md should not be empty"
-        assert str(dest_path) == dest
+        assert dest_path.read_text().startswith("---\nname: rafter-security\n")
+        assert re.search(r"added +\S+\.openclaw/workspace/skills/rafter-security/SKILL\.md", output)
 
-    def test_fails_when_openclaw_dir_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    def test_does_not_install_when_openclaw_dir_missing(self, tmp_path, monkeypatch):
+        output = self._init(tmp_path, monkeypatch)
+        assert "OpenClaw requested but not detected" in output
+        assert not self._canonical_path(tmp_path).exists()
 
-        ok, source, dest, error = _install_openclaw_skill()
-        assert not ok, "Should fail when .openclaw is missing"
-        assert "not found" in error.lower()
-
-    def test_overwrites_existing_clawhub_skill(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".openclaw").mkdir()
-        skill_dir = self._canonical_path(tmp_path).parent
-        skill_dir.mkdir(parents=True)
-        (skill_dir / "SKILL.md").write_text("old content")
-
-        ok, source, dest, error = _install_openclaw_skill()
-        assert ok
-
-        content = self._canonical_path(tmp_path).read_text()
-        assert content != "old content", "SKILL.md should be updated on reinstall"
-
-    def test_creates_workspace_skills_directory_tree(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".openclaw").mkdir()
-
-        ok, source, dest, error = _install_openclaw_skill()
-        assert ok
-
-        assert self._canonical_path(tmp_path).parent.is_dir(), (
-            "Should create workspace/skills/rafter-security/"
-        )
-
-    def test_strips_legacy_skill_on_reinstall(self, tmp_path, monkeypatch):
-        """rf-zgwj migration: the rafter ≤ 0.7.7 install left a file at
-        ~/.openclaw/skills/rafter-security.md. OpenClaw never read it.
-        Reinstall removes it and writes the canonical ClawHub-shaped skill."""
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    def test_keeps_edited_skill_and_edited_legacy_file(self, tmp_path, monkeypatch):
         legacy = self._legacy_path(tmp_path)
         legacy.parent.mkdir(parents=True)
-        legacy.write_text("---\nname: rafter-security\nversion: 0.6.0\n---\n# old\n")
+        legacy.write_text("---\nname: rafter-security\nversion: 0.6.0\n---\n# my notes\n")
+        self._init(tmp_path, monkeypatch)
+        skill = self._canonical_path(tmp_path)
+        skill.write_text(skill.read_text() + "\nmine\n")
+        edited = skill.read_text()
 
-        ok, _src, _dest, _err = _install_openclaw_skill()
-        assert ok
+        output = self._init(tmp_path, monkeypatch)
+        assert skill.read_text() == edited
+        assert Path(f"{skill}.rafter-new").exists()
+        assert legacy.exists()
+        assert re.search(r"kept +\S+rafter-security/SKILL\.md", output)
+        assert "Kept legacy" in output
 
+    def test_strips_legacy_skill_that_is_rafters_content(self, tmp_path, monkeypatch):
+        """rf-zgwj migration: the rafter ≤ 0.7.7 install left a file at
+        ~/.openclaw/skills/rafter-security.md. OpenClaw never read it.
+        Reinstall removes it when its bytes are ones a release shipped."""
+        legacy = self._legacy_path(tmp_path)
+        legacy.parent.mkdir(parents=True)
+        shutil.copyfile(self.REPO / "fixtures" / "install-0.11.2" / "home" / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md", legacy)
+
+        output = self._init(tmp_path, monkeypatch)
         assert self._canonical_path(tmp_path).exists()
         assert not legacy.exists(), "Legacy file should be stripped on reinstall"
+        assert f"Removed legacy {legacy}" in output
 
 
 # ── Codex AGENTS.md / Gemini GEMINI.md instruction file tests ───────
@@ -1134,8 +1128,8 @@ class TestGeminiWithSkillsEndToEnd:
 
         # One probe + one link per skill (3 skills)
         link_only = [c for c in link_calls if c[1:3] == ["skills", "link"]]
-        from rafter_cli.commands.agent import _AGENT_SKILLS
-        assert len(link_only) == len(_AGENT_SKILLS)
+        from rafter_cli.commands.skill import KNOWN_SKILL_NAMES
+        assert len(link_only) == len(KNOWN_SKILL_NAMES)
 
 
 class TestInstallClaudeCodeMcp:
@@ -1439,16 +1433,15 @@ class TestInstallClaudeCodeSubAgents:
 
         assert first == second
 
-    def test_overwrites_stale_subagent_content(self, tmp_path):
+    def test_keeps_subagent_content_rafter_did_not_write(self, tmp_path):
         agents_dir = tmp_path / ".claude" / "agents"
         agents_dir.mkdir(parents=True)
         (agents_dir / "rafter.md").write_text("stale content from previous version")
 
         _install_claude_code_subagents(tmp_path)
 
-        content = (agents_dir / "rafter.md").read_text()
-        assert content != "stale content from previous version"
-        assert "name: rafter" in content
+        assert (agents_dir / "rafter.md").read_text() == "stale content from previous version"
+        assert "name: rafter" in (agents_dir / "rafter.md.rafter-new").read_text()
 
 
 # ── Help text points at the current skill-review command ─────────────────

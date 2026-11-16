@@ -18,10 +18,11 @@ SECRET = "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7ABCDEFG\n"
 def _run_scan(target: str, capsys) -> tuple[dict, int]:
     with pytest.raises(typer.Exit) as exc:
         scan_local(
-            path=target,
+            paths=[target],
             quiet=True,
             json_output=True,
             format="json",
+            out=None,
             staged=False,
             diff=None,
             range_=None,

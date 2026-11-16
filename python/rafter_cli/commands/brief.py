@@ -405,15 +405,15 @@ def _render_topic(topic: str) -> str | None:
         return _load_skill("rafter")
     if topic == "commands":
         rafter = _load_skill("rafter")
-        cmds = _extract_sections(rafter, [
-            "Core Commands", "Commands", "Trigger", "Get Scan", "Check API",
-            "/rafter-scan", "/rafter-bash",
-            "/rafter-audit-skill", "/rafter-audit",
-        ])
+        fast_path = _extract_sections(rafter, ["Fast Path"])
+        cli_reference = _load_skill_doc("rafter", "cli-reference")
+        decision_table = _extract_sections(cli_reference, ["Quick Decision Table"])
         return "\n".join([
             "# Rafter Command Reference",
             "",
-            cmds,
+            fast_path,
+            "",
+            decision_table,
         ])
     if topic == "setup":
         return _render_setup_guide()

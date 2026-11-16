@@ -104,6 +104,10 @@ export interface RafterConfig {
       redactSecrets: boolean;
       blockPatterns: boolean;
     };
+    /** Local usage counters (core/usage-counters.ts). Read only from this global config, never from .rafter.yml. Default on. */
+    usage?: {
+      enabled?: boolean;
+    };
     audit: {
       logAllActions: boolean;
       retentionDays: number;

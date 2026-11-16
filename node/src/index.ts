@@ -19,7 +19,10 @@ import { createNotifyCommand } from "./commands/notify.js";
 import { createCompletionCommand } from "./commands/completion.js";
 import { createIssuesCommand } from "./commands/issues/index.js";
 import { createReportCommand } from "./commands/report.js";
+import { createGatesCommand } from "./commands/gates.js";
 import { createSitesCommand } from "./commands/sites/index.js";
+import { createCountersCommand } from "./commands/counters.js";
+import { installUsageCounters } from "./core/usage-counters.js";
 import { checkForUpdate } from "./utils/update-checker.js";
 import { setAgentMode } from "./utils/formatter.js";
 import { createRequire } from "module";
@@ -97,8 +100,14 @@ program.addCommand(createNotifyCommand());
 // HTML security report
 program.addCommand(createReportCommand());
 
+// Gates — static map of security gates for an audit
+program.addCommand(createGatesCommand());
+
 // Shell completions
 program.addCommand(createCompletionCommand());
+
+// Local usage counters (nothing leaves the machine)
+program.addCommand(createCountersCommand());
 
 // Version subcommand (also available as --version)
 program.addCommand(
@@ -109,9 +118,42 @@ program.addCommand(
     })
 );
 
+/**
+ * `-a`/`--agent` is declared only on the root `program`, so Commander rejects
+ * it as an unknown option once it appears after a subcommand name
+ * (`rafter secrets . -a`, `rafter scan local . -a`). The actual mode switch
+ * already happens above via the `process.argv` scan, which is
+ * position-independent — this just teaches every command in the tree to
+ * accept the flag syntactically instead of erroring on it.
+ *
+ * Skipped on a command that declares its own `--agent <value>` option
+ * (`agent audit`, `skill review` filter by agent type) and on every parent
+ * of one: Commander lets a parent consume its options anywhere in argv, so a
+ * boolean `--agent` on `skill` would swallow `skill review --agent codex` and
+ * leave `codex` as a stray positional. `rafter -a agent audit ...` (the flag
+ * before the subcommand) still works for those two.
+ */
+function declaresAgentOption(cmd: Command): boolean {
+  return (
+    cmd.options.some((o) => o.long === "--agent") ||
+    cmd.commands.some(declaresAgentOption)
+  );
+}
+function allowAgentFlagAtAnyDepth(cmd: Command): void {
+  if (!declaresAgentOption(cmd)) {
+    cmd.option("-a, --agent", "Plain output for AI agents (no colors/emoji)");
+  }
+  for (const sub of cmd.commands) {
+    allowAgentFlagAtAnyDepth(sub);
+  }
+}
+allowAgentFlagAtAnyDepth(program);
+
 // Non-blocking update check — runs after command, prints to stderr
 checkForUpdate(VERSION).then((notice) => {
   if (notice) process.stderr.write(notice);
 });
+
+installUsageCounters(program);
 
 program.parse();

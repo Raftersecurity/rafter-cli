@@ -10,12 +10,14 @@ import { applySuppressions, Suppression } from "../../core/custom-patterns.js";
 import { resolveHookControl, HookControl } from "../../core/hook-control.js";
 import { collectSuppressions, applyExcludePaths } from "../agent/scan.js";
 import { shellQuote } from "../agent/exec.js";
+import { runHookAutoUpdate } from "../agent/auto-update.js";
 import { scanAddedDiffLines } from "../../scanners/git-diff-scan.js";
 import { parseUnifiedDiffAddedLines, gitDiffMaxBuffer } from "../../utils/git-diff.js";
 import type { ScanIgnoreRule } from "../../core/config-schema.js";
 import { execSync, ExecSyncOptionsWithStringEncoding } from "child_process";
 import fs from "fs";
 import path from "path";
+import { countHook } from "../../core/usage-counters.js";
 
 /**
  * Subset of `cfg.agent.scan` the hook consumes. The hook is patterns-only by
@@ -68,6 +70,10 @@ interface HookDecision {
   // "allow" = rafter has no objection; written as a no-decision (see writeDecision).
   decision: "allow" | "deny";
   reason?: string;
+  /** For the local usage counters only; never written to the platform. */
+  tool?: "shell" | "write" | "other";
+  risk?: string;
+  error?: boolean;
 }
 
 const RISK_LABELS: Record<string, string> = {
@@ -130,7 +136,10 @@ export function createHookPretoolCommand(): Command {
       } catch (e) {
         decision = denyOnError(e);
       }
+      countHook(decision.tool, decision.error ? "error" : decision.decision, decision.risk);
       writeDecision(decision, format);
+      // Once a day after an upgrade: bring installed skill and rule files up to this version.
+      runHookAutoUpdate();
     });
 }
 
@@ -163,7 +172,7 @@ function denyOnError(e: unknown): HookDecision {
   const msg = e instanceof Error ? e.message : String(e);
   const reason = `rafter hook error: ${type}: ${msg}; denying to be safe`;
   console.error(reason);
-  return { decision: "deny", reason };
+  return { decision: "deny", reason, error: true };
 }
 
 /**
@@ -221,19 +230,20 @@ function evaluateToolCall(payload: HookInput): HookDecision {
   // Honor the (trusted-source-only) hook off-switch before doing any work.
   // Master switch off → allow everything; otherwise the two concerns are gated
   // independently inside evaluateBash (command policy + git-commit secret scan).
+  const tool = SHELL_TOOLS.has(tool_name) ? "shell" : WRITE_TOOLS.has(tool_name) ? "write" : "other";
   const control = resolveHookControl();
-  if (!control.hookEnabled) return { decision: "allow" };
+  if (!control.hookEnabled) return { decision: "allow", tool };
 
-  if (SHELL_TOOLS.has(tool_name)) {
-    return evaluateBash(tool_input?.command || "", control);
+  if (tool === "shell") {
+    return { ...evaluateBash(tool_input?.command || "", control), tool };
   }
 
-  if (WRITE_TOOLS.has(tool_name)) {
-    if (!control.secretScanEnabled) return { decision: "allow" };
-    return evaluateWrite(normalizeWriteInput(tool_name, tool_input || {}));
+  if (tool === "write") {
+    if (!control.secretScanEnabled) return { decision: "allow", tool };
+    return { ...evaluateWrite(normalizeWriteInput(tool_name, tool_input || {})), tool };
   }
 
-  return { decision: "allow" };
+  return { decision: "allow", tool };
 }
 
 /**
@@ -290,6 +300,7 @@ function applyPatchPaths(patch: string): string[] {
 
 function evaluateBash(command: string, control: HookControl): HookDecision {
   const audit = new AuditLogger();
+  let risk = "none";
 
   // Command-risk interception — gated by commandPolicy. When disabled, skip the
   // block/approval logic but still fall through to the staged-secret scan below
@@ -297,6 +308,7 @@ function evaluateBash(command: string, control: HookControl): HookDecision {
   if (control.commandPolicyEnabled) {
     const interceptor = new CommandInterceptor();
     const evaluation = interceptor.evaluate(command);
+    risk = evaluation.riskLevel;
 
     // Blocked — hard deny
     if (!evaluation.allowed && !evaluation.requiresApproval) {
@@ -304,6 +316,7 @@ function evaluateBash(command: string, control: HookControl): HookDecision {
       return {
         decision: "deny",
         reason: formatBlockedMessage(command, evaluation),
+        risk,
       };
     }
 
@@ -313,6 +326,7 @@ function evaluateBash(command: string, control: HookControl): HookDecision {
       return {
         decision: "deny",
         reason: formatApprovalMessage(command, evaluation),
+        risk,
       };
     }
   }
@@ -328,6 +342,7 @@ function evaluateBash(command: string, control: HookControl): HookDecision {
         decision: "deny",
         reason: `Rafter: secret scan of the staged diff could not run (${scanResult.scanError}); ` +
           "commit blocked rather than allowed unscanned. Run 'rafter secrets --staged' to investigate.",
+        risk,
       };
     }
     if (scanResult.secretsFound) {
@@ -340,12 +355,13 @@ function evaluateBash(command: string, control: HookControl): HookDecision {
       return {
         decision: "deny",
         reason: formatStagedSecretReason(scanResult),
+        risk,
       };
     }
   }
 
   audit.logCommandIntercepted(command, true, "allowed");
-  return { decision: "allow" };
+  return { decision: "allow", risk };
 }
 
 /**
@@ -400,6 +416,7 @@ function evaluateWrite(toolInput: Record<string, any>): HookDecision {
         "  Risk: CRITICAL\u2014editing this file reconfigures or removes the\n" +
         "        guardrail. The gate cannot approve its own disarming. A\n" +
         "        person must make this change outside an agent session.",
+      risk: "critical",
     };
   }
 

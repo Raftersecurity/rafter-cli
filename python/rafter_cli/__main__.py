@@ -1,6 +1,9 @@
 """Rafter CLI entry point."""
 from __future__ import annotations
 
+import copy
+from typing import Any
+
 import typer
 
 from . import __version__
@@ -9,6 +12,7 @@ from .commands.backend import register_backend_commands
 from .commands.brief import brief_app
 from .commands.ci import ci_app
 from .commands.docs import docs_app
+from .commands.gates import gates_main
 from .commands.hook import hook_app
 from .commands.issues.issues_app import issues_app
 from .commands.mcp_server import mcp_app
@@ -18,6 +22,8 @@ from .commands.report import report_main
 from .commands.scan import scan_app, secrets_app
 from .commands.sites import sites_app
 from .commands.skill import skill_app
+from .commands.counters import counters_app
+from .core import usage_counters
 from .utils.formatter import set_agent_mode
 
 app = typer.Typer(
@@ -38,6 +44,7 @@ def _version_callback(value: bool):
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         False, "--version", "-V", help="Show version and exit.",
         callback=_version_callback, is_eager=True,
@@ -47,6 +54,7 @@ def main(
     ),
 ):
     """Rafter CLI — the default security agent for AI workflows."""
+    usage_counters.track_click_tree(ctx)
     if agent:
         set_agent_mode(True)
 
@@ -115,7 +123,66 @@ app.add_typer(notify_app)
 app.add_typer(policy_app)
 app.add_typer(sites_app)
 app.add_typer(skill_app)
+app.add_typer(counters_app)
 app.command("report")(report_main)
+app.command("gates")(gates_main)
+
+
+def _allow_agent_flag_at_any_depth(cmd: Any, template: Any = None) -> None:
+    """`-a`/`--agent` is declared only on the root callback above, so Click
+    rejects it as an unknown option once it appears after a subcommand name
+    (``rafter secrets . -a``). Add a self-contained flag — its own callback
+    sets agent mode — to every command/group in the tree so Click accepts it
+    at any depth. Skipped on a command that already declares its own
+    ``--agent <value>`` option (``agent audit``, ``skill review`` filter by
+    agent type) to avoid colliding with that unrelated flag; ``rafter -a
+    agent audit ...`` (the flag before the subcommand) still works for those.
+    """
+    # Typer >=0.16 builds every param as its own `typer.core.TyperOption` /
+    # `TyperArgument` on a vendored Click fork — NOT a subclass of the
+    # top-level `click.Option` — so `isinstance(p, click.Option)` is always
+    # False here and would never see the existing `--agent <type>` params on
+    # `agent audit` / `skill review`. Check the flag strings directly.
+    has_agent_option = any("--agent" in getattr(p, "opts", []) for p in cmd.params)
+    if template is None:
+        # First call is on the root, whose callback declares `-a/--agent`.
+        template = next(p for p in cmd.params if "--agent" in getattr(p, "opts", []))
+    if not has_agent_option:
+        def _enable(ctx, param, value: bool) -> None:
+            if value:
+                set_agent_mode(True)
+
+        # Copy the root's own `-a/--agent` option rather than construct one.
+        # typer >=0.16 vendors its own Click fork, so a plain `click.Option`
+        # crashes inside real Click's `handle_parse_result`, and the
+        # `typer.core.TyperOption` constructor is private API that changes
+        # between releases (0.29 added a required `type_descriptor`). The
+        # root's option was built by whatever typer is installed, so a copy
+        # with a new callback works on all of them.
+        flag = copy.copy(template)
+        flag.callback = _enable
+        flag.expose_value = False
+        flag.is_eager = True
+        cmd.params.append(flag)
+    # Same fork issue: `TyperGroup` isn't a subclass of the public
+    # `click.Group` either, so check for `.commands` (every group — Typer's
+    # or real Click's — exposes it) instead of `isinstance(cmd, click.Group)`.
+    sub_commands = getattr(cmd, "commands", None)
+    if sub_commands:
+        for sub in sub_commands.values():
+            _allow_agent_flag_at_any_depth(sub, template)
+
+
+def run() -> None:
+    """Console-script entry point (see ``pyproject.toml``): the app, wrapped by
+    the local usage counters. Builds the Click command tree once and patches it
+    with the any-depth `-a` flag first, since `app()` would rebuild an unpatched
+    tree itself.
+    """
+    command = typer.main.get_command(app)
+    _allow_agent_flag_at_any_depth(command)
+    usage_counters.run_app(command)
+
 
 if __name__ == "__main__":
-    app()
+    run()

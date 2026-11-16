@@ -53,7 +53,7 @@ scan:
 ignore:                           # suppress findings (top-level, NOT under scan:)
   - paths: ["tests/fixtures/**"]
     rules: ["AWS Access Key ID"]  # omit to suppress all rules for those paths
-    reason: "test fixtures, not real keys"
+    reason: "test fixtures, not real keys"  # needed to suppress a secret/must-fix finding remotely
 audit:
   retentionDays: 30
   logLevel: info                  # debug | info | warn | error

@@ -397,6 +397,7 @@ class ConfigManager:
             OutputFilteringConfig,
             ScanConfig,
             ScanCustomPattern,
+            UsageConfig,
         )
 
         backend = BackendConfig(**cls._pick_fields(BackendConfig, d.get("backend") or {}))
@@ -438,6 +439,7 @@ class ConfigManager:
                 ),
             ),
             components=agent_raw.get("components") or {},
+            usage=UsageConfig(**cls._pick_fields(UsageConfig, agent_raw.get("usage") or {})),
         )
 
         return RafterConfig(

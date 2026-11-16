@@ -6,57 +6,59 @@ export const RAFTER_MARKER_END = "<!-- rafter:end -->";
 
 /** Rafter security context block for agent instruction files (CLAUDE.md, AGENTS.md, etc.) */
 export const RAFTER_INSTRUCTION_BLOCK = `${RAFTER_MARKER_START}
-## Security: Rafter (surface-driven review gate)
+## Security: Rafter
 
-Rafter is this project's security review gate — driven by the change's **security
-surface**, not by the task label. When a diff touches a real surface (below), it is
-**not complete** until a rafter skill (or \`rafter run\`) has reviewed it: don't mark
-done, don't hand off, don't open a PR without that pass. When it touches **none** of
-that surface — research / experimental / local-only / throwaway code (training
-scripts, data analysis, plotting, model eval, notebooks, pure computation over
-trusted local data) — a quick surface check is enough; proceed without the full
-gate. Judge by the diff's actual surface, not the "research" label: research code
-that reads a secret, shells out, hits the network, parses untrusted input, or bumps
-a dependency still gets the full gate.
+Security-relevant code is not done until you have reviewed it yourself. Rafter
+gives you the map and the questions; the review is yours. Code is
+security-relevant when it decides who may do what, or touches untrusted input,
+queries, shell, file paths, parsing or (de)serialization, crypto or TLS,
+credentials or tokens, outbound requests, data deletion, or dependencies.
+Analysis scripts, plots and pure computation over trusted local data need only
+a quick look for those.
 
-**Stop and invoke when the change touches that surface:**
-
-- Designing auth, payments, credentials, tokens, sessions, file upload,
-  user/untrusted data, deserialization, network endpoints, or data deletion
-  → **\`rafter-secure-design\`** (before writing code).
-- Diff touches user/untrusted input, SQL/query building, shell/exec, auth,
-  credentials, file paths, (de)serialization, crypto, network endpoints/outbound
-  fetchers (SSRF), data deletion, or dependencies → **\`rafter-code-review\`** +
-  \`rafter run\` (before declaring done).
-- About to install or forward a third-party SKILL.md, MCP manifest, Cursor
-  rule, or agent config → **\`rafter-skill-review\`** (before copying anywhere).
-- Security-adjacent but the angle isn't clear → **\`rafter\`** (the router skill,
-  powerful toolkit to help you write more secure code).
-
-**CLI:**
-
-- \`rafter run\` — remote SAST + SCA + secrets (real code analysis, needs \`RAFTER_API_KEY\`)
-- \`rafter secrets .\` — local secrets only (offline; NOT a code-security scan)
-- \`rafter run --mode plus\` — everything in default (\`--mode fast\`) plus
-  powerful agentic deep-dives (needs \`RAFTER_API_KEY\`). **Plus is a PAID tier
-  and consumes the user's credits — ask the user before running it.** Enforced
-  when \`scan.plus_requires_approval\` is set (then pass \`--yes\` to confirm).
+- Designing such a feature → **\`rafter-secure-design\`**, before writing code.
+- Reviewing a diff or auditing code → **\`rafter-code-review\`**. Start with
+  \`rafter gates <path>\`: it lists the functions that make security decisions.
+- Installing a third-party skill, MCP server or agent config →
+  **\`rafter-skill-review\`**, before copying it anywhere.
+- \`rafter secrets <paths>\` finds hardcoded credentials only. A clean result is
+  not a code review.
+- \`rafter run\` adds remote SAST + SCA on the pushed commit (needs
+  \`RAFTER_API_KEY\`). \`--mode plus\` is paid: ask the user first.
 ${RAFTER_MARKER_END}`;
 
 /**
- * Write a Rafter instruction block into an instruction file.
- * Uses marker comments for idempotent updates — existing rafter blocks are replaced,
- * non-rafter content is preserved.
+ * Aider has no skill-loading mechanism — `rafter-secure-design`,
+ * `rafter-code-review`, and `rafter-skill-review` above are names, not files
+ * it can load, unlike Claude Code / Codex / Gemini where each one is a real
+ * skill directory. This note tells an Aider session what's actually runnable
+ * instead of leaving those names as dead pointers.
  */
-export function injectInstructionFile(filePath: string): boolean {
+export const AIDER_NOTE_MARKER_START = "<!-- rafter:aider-note:start -->";
+export const AIDER_NOTE_MARKER_END = "<!-- rafter:aider-note:end -->";
+
+export const AIDER_SKILL_NOTE = `${AIDER_NOTE_MARKER_START}
+**Note for Aider**: the skill names above (\`rafter\`, \`rafter-secure-design\`,
+\`rafter-code-review\`, \`rafter-skill-review\`) are not separate files here —
+Aider has no skill-loading mechanism, only this one file. For the fuller
+walkthroughs those skills provide on other platforms, run these in a terminal:
+\`rafter brief shift-left\` (design & review routing), \`rafter brief scanning\`
+(full CLI + guardrails), or \`rafter skill review <path>\` (the real pre-install
+check).
+${AIDER_NOTE_MARKER_END}`;
+
+/** Shared idempotent marker-block injector: replace the block between the given
+ * markers if present, otherwise append it. */
+function injectMarkedBlock(
+  filePath: string,
+  block: string,
+  startMarker: string,
+  endMarker: string,
+): boolean {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-
-  const block = RAFTER_INSTRUCTION_BLOCK;
-  const startMarker = RAFTER_MARKER_START;
-  const endMarker = RAFTER_MARKER_END;
 
   let content = "";
   if (fs.existsSync(filePath)) {
@@ -77,4 +79,54 @@ export function injectInstructionFile(filePath: string): boolean {
 
   fs.writeFileSync(filePath, content, "utf-8");
   return true;
+}
+
+/**
+ * Write a Rafter instruction block into an instruction file.
+ * Uses marker comments for idempotent updates — existing rafter blocks are replaced,
+ * non-rafter content is preserved.
+ */
+export function injectInstructionFile(filePath: string): boolean {
+  return injectMarkedBlock(filePath, RAFTER_INSTRUCTION_BLOCK, RAFTER_MARKER_START, RAFTER_MARKER_END);
+}
+
+/**
+ * Append (or idempotently update) the Aider-specific skill note. Separate
+ * marker pair from the main block, so this can live alongside it in the same
+ * file (RAFTER.md) without disturbing the shared instruction block.
+ */
+export function injectAiderNote(filePath: string): boolean {
+  return injectMarkedBlock(filePath, AIDER_SKILL_NOTE, AIDER_NOTE_MARKER_START, AIDER_NOTE_MARKER_END);
+}
+
+/** Strip the rafter marker block from a text file, writing only if the file actually changed. */
+export function stripMarkerBlock(
+  filePath: string,
+  startMarker: string = RAFTER_MARKER_START,
+  endMarker: string = RAFTER_MARKER_END,
+): boolean {
+  if (!fs.existsSync(filePath)) return false;
+  const content = fs.readFileSync(filePath, "utf-8");
+  const startIdx = content.indexOf(startMarker);
+  const endIdx = content.indexOf(endMarker);
+  if (startIdx === -1 || endIdx === -1) return false;
+  const before = content.slice(0, startIdx).trimEnd();
+  const after = content.slice(endIdx + endMarker.length);
+  const trailing = after.replace(/^\s*\n+/, "");
+  const next = (before ? before + "\n" : "") + trailing;
+  fs.writeFileSync(filePath, next, "utf-8");
+  return true;
+}
+
+/**
+ * Take rafter's block out of an instruction file rafter no longer writes
+ * (e.g. the consolidated .cursor/rules/rafter-security.mdc). The file is
+ * deleted only when nothing else is left in it; a file without the block is
+ * not rafter's and is left alone.
+ */
+export function retireInstructionFile(filePath: string): "removed" | "stripped" | null {
+  if (!stripMarkerBlock(filePath)) return null;
+  if (fs.readFileSync(filePath, "utf-8").trim()) return "stripped";
+  fs.unlinkSync(filePath);
+  return "removed";
 }

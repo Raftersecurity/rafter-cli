@@ -25,6 +25,7 @@ from rich import print as rprint
 from .. import __version__
 from ..core.audit_logger import AuditLogger
 from ..core.command_interceptor import CommandInterceptor
+from ..core.usage_counters import count_scan
 from ..core.config_manager import (
     ConfigManager,
     is_secret_config_key,
@@ -40,6 +41,25 @@ from ..scanners.union import union_scan_results
 from ..utils.formatter import fmt, is_agent_mode, print_stderr
 from ..utils.skill_manager import SkillManager
 from ..utils.binary_manager import BinaryManager, BETTERLEAKS_VERSION
+from .skill import KNOWN_SKILL_NAMES
+from .install_files import (
+    FileArtifact,
+    InstallOutput,
+    InstallSession,
+    claude_agent_artifacts,
+    cleanup_legacy_openclaw,
+    cleanup_retired_rules,
+    cleanup_retired_skills,
+    cursor_agent_artifacts,
+    openclaw_skill_artifacts,
+    openclaw_skill_path,
+    FORCE_HINT,
+    report_kept_summary,
+    report_unchanged_summary,
+    unchanged_line,
+    rule_artifacts,
+    skill_artifacts,
+)
 
 agent_app = typer.Typer(name="agent", help="Agent security features", no_args_is_help=True)
 
@@ -146,15 +166,11 @@ def _resolve_rafter_path() -> str:
     return "rafter"
 
 
-# Skills installed by `rafter agent init` for Claude Code / Codex.
-# Keep this list in sync with Node's AGENT_SKILLS and the SKILL.md files
-# actually shipped under rafter_cli/resources/skills/.
-_AGENT_SKILLS: list[dict[str, str]] = [
-    {"name": "rafter", "description": "Rafter Remote"},
-    {"name": "rafter-secure-design", "description": "Rafter Secure Design"},
-    {"name": "rafter-code-review", "description": "Rafter Code Review"},
-    {"name": "rafter-skill-review", "description": "Rafter Skill Review"},
-]
+def _own_session(root: Path, quiet: bool, session: InstallSession | None) -> tuple[InstallSession, bool]:
+    """The caller's session, or a fresh one the caller must save (direct calls from tests)."""
+    if session is not None:
+        return session, False
+    return InstallSession(root=root, out=InstallOutput(quiet)), True
 
 
 def _install_claude_code_hooks(root: Path, quiet: bool = False) -> None:
@@ -242,38 +258,6 @@ def _install_claude_code_hooks(root: Path, quiet: bool = False) -> None:
 # ── init ─────────────────────────────────────────────────────────────
 
 
-def _copy_skill_tree(skill_name: str, dest_dir: Path, label: str, quiet: bool = False) -> None:
-    """Copy the full skill source tree (SKILL.md + any docs/ etc.) into dest_dir.
-
-    Skills can ship a ``docs/`` subfolder of reference material referenced by
-    SKILL.md. Copying only SKILL.md would silently strip those resources.
-    """
-    res = importlib.resources.files("rafter_cli.resources").joinpath("skills", skill_name)
-    skill_md = res.joinpath("SKILL.md")
-    if not skill_md.is_file():
-        _init_alert(quiet, fmt.warning(f"{label} skill template not found in package resources"))
-        return
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    def _walk(node, target: Path) -> None:
-        for child in node.iterdir():
-            child_target = target / child.name
-            if child.is_dir():
-                # Skip Python package metadata that has no value at the install site.
-                if child.name in {"__pycache__"}:
-                    continue
-                child_target.mkdir(parents=True, exist_ok=True)
-                _walk(child, child_target)
-            elif child.is_file():
-                if child.name == "__init__.py":
-                    continue
-                child_target.write_bytes(child.read_bytes())
-
-    _walk(res, dest_dir)
-    _init_print(quiet, fmt.success(f"Installed {label} skill to {dest_dir}"))
-
-
 def _print_dry_run_plan(
     *,
     root: Path,
@@ -294,6 +278,7 @@ def _print_dry_run_plan(
     betterleaks_existing: Path | None = None,
     betterleaks_supported: bool = True,
     claude_code_mcp_disabled: bool = False,
+    session: InstallSession | None = None,
 ) -> None:
     """Print every file path the install would touch — without writing anything (rf-hrtd).
 
@@ -324,6 +309,39 @@ def _print_dry_run_plan(
     def S(p: Path, note: str) -> None:
         print(f"  SKIP      {p}   ({note})")
 
+    if session is None:
+        session = InstallSession(root=root, dry_run=True)
+
+    # Whole-file artifacts: the predicted outcome per file, from the same
+    # policy the real run applies (install_files.py).
+    def F(artifacts: list[FileArtifact]) -> None:
+        for a in artifacts:
+            outcome = session.apply(a)
+            if outcome == "unchanged":
+                continue  # summed into one line below
+            if outcome == "kept":
+                W(Path(f"{a.dest}.rafter-new"), f"{a.dest} kept: modified")
+            elif outcome == "replaced":
+                W(a.dest, f"replaced; backup at {a.dest}.bak")
+            elif outcome == "reconciled":
+                S(a.dest, "modified, reconciled with this version; recorded")
+            else:
+                W(a.dest, outcome)
+
+    def retired(r) -> None:
+        for p in r.removed:
+            R(p, "retired")
+        for p in r.kept:
+            S(p, "retired, but modified; kept")
+
+    def skills(d: Path, platform: str, component: str) -> None:
+        F(skill_artifacts(d, platform, component))
+        retired(cleanup_retired_skills(session, d))
+
+    def rules(kind: str) -> None:
+        F(rule_artifacts(kind, root))
+        retired(cleanup_retired_rules(session, kind))
+
     rprint()
     rprint(fmt.info("DRY RUN — no files will be created or modified."))
     scope_note = f" (cwd: {root})" if scope == "project" else ""
@@ -350,13 +368,23 @@ def _print_dry_run_plan(
         print("skill-scanner deep engine (--with-skill-scanner):")
         D(Path("skill-scanner"), "heavy PyPI package, isolated install via uv tool / pip --user")
 
+    # Same order as the real run, which installs OpenClaw before the others.
+    if want_openclaw:
+        print()
+        print("OpenClaw (--with-openclaw):")
+        F(openclaw_skill_artifacts(home))
+        legacy = cleanup_legacy_openclaw(session)
+        for p in legacy.removed:
+            R(p, "legacy file from rafter ≤ 0.7.7")
+        for p in legacy.kept:
+            S(p, "legacy file from rafter ≤ 0.7.7, but modified; kept")
+
     if want_claude_code:
         print()
         print("Claude Code (--with-claude-code):")
         W(root / ".claude" / "settings.json", "PreToolUse + PostToolUse hooks merged")
-        for s in _AGENT_SKILLS:
-            W(root / ".claude" / "skills" / s["name"] / "SKILL.md")
-        W(root / ".claude" / "agents" / "rafter.md", "sub-agent")
+        skills(root / ".claude" / "skills", "claude-code", "claude-code.skills")
+        F(claude_agent_artifacts(root))
         W(root / ".claude" / "CLAUDE.md", "rafter:start/end marker block")
         # .mcp.json is a project-scope file; the user-scope install never writes it.
         if scope == "project":
@@ -369,8 +397,7 @@ def _print_dry_run_plan(
         print()
         print("Codex CLI (--with-codex):")
         W(root / ".codex" / "hooks.json", "PreToolUse: Bash|apply_patch, PostToolUse: Bash|apply_patch")
-        for s in _AGENT_SKILLS:
-            W(root / ".agents" / "skills" / s["name"] / "SKILL.md")
+        skills(root / ".agents" / "skills", "codex", "codex.skills")
         agents_md = root / ".codex" / "AGENTS.md" if scope == "user" else root / "AGENTS.md"
         W(agents_md, "shared with Windsurf when --with-windsurf")
 
@@ -378,8 +405,7 @@ def _print_dry_run_plan(
         print()
         print("Gemini CLI (--with-gemini):")
         W(root / ".gemini" / "settings.json", "MCP + BeforeTool/AfterTool hooks")
-        for s in _AGENT_SKILLS:
-            W(root / ".agents" / "skills" / s["name"] / "SKILL.md", "shared with Codex")
+        skills(root / ".agents" / "skills", "gemini", "gemini.skills")
         gemini_md = root / ".gemini" / "GEMINI.md" if scope == "user" else root / "GEMINI.md"
         W(gemini_md)
         if scope == "user":
@@ -389,9 +415,8 @@ def _print_dry_run_plan(
         print()
         print("Cursor (--with-cursor):")
         W(root / ".cursor" / "hooks.json", "preToolUse + postToolUse + beforeShellExecution")
-        for s in ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"):
-            W(root / ".cursor" / "rules" / f"{s}.mdc")
-        W(root / ".cursor" / "agents" / "rafter.md", "sub-agent (Cursor reads .claude/agents/ too)")
+        rules("cursor")
+        F(cursor_agent_artifacts(root))
         W(root / ".cursor" / "mcp.json")
 
     if want_windsurf:
@@ -399,8 +424,7 @@ def _print_dry_run_plan(
         print("Windsurf (--with-windsurf):")
         if scope == "user":
             W(home / ".codeium" / "windsurf" / "mcp_config.json", "user-scope MCP only")
-        for s in ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"):
-            W(root / ".windsurf" / "rules" / f"{s}.md")
+        rules("windsurf")
         W(root / "AGENTS.md", "shared with Codex; idempotent if already written")
 
     if want_continue:
@@ -408,8 +432,7 @@ def _print_dry_run_plan(
         print("Continue.dev (--with-continue):")
         if scope == "user":
             W(home / ".continue" / "config.json", "MCP entry; preserves existing keys")
-        for s in ("rafter", "rafter-secure-design", "rafter-code-review", "rafter-skill-review"):
-            W(root / ".continue" / "rules" / f"{s}.md")
+        rules("continue")
 
     if want_aider:
         print()
@@ -427,11 +450,10 @@ def _print_dry_run_plan(
         print("OpenCode (--with-opencode):")
         W(root / ".config" / "opencode" / "opencode.json", "mcp.rafter local/stdio entry merged into existing JSON")
 
-    if want_openclaw:
+    unchanged = session.count("unchanged")
+    if unchanged:
         print()
-        print("OpenClaw (--with-openclaw):")
-        W(home / ".openclaw" / "workspace" / "skills" / "rafter-security" / "SKILL.md", "ClawHub-shape")
-        R(home / ".openclaw" / "skills" / "rafter-security.md", "legacy file from rafter ≤ 0.7.7, if present")
+        print(f"  SKIP      {unchanged_line(unchanged)}")
 
     rprint()
     rprint(fmt.divider())
@@ -440,41 +462,39 @@ def _print_dry_run_plan(
     rprint()
 
 
-def _install_skills_to(skills_dir: Path, quiet: bool = False) -> None:
-    """Install all _AGENT_SKILLS into <skills_dir>, including any docs/ trees."""
+def _install_skills_to(
+    skills_dir: Path,
+    quiet: bool = False,
+    *,
+    session: InstallSession | None = None,
+    platform: str = "claude-code",
+    component: str = "claude-code.skills",
+) -> None:
+    """Install every file of every shipped skill (SKILL.md and docs/) under the
+    write policy in install_files.py, then retire renamed skills."""
+    s, owned = _own_session(skills_dir.parent.parent, quiet, session)
     skills_dir.mkdir(parents=True, exist_ok=True)
-    for skill in _AGENT_SKILLS:
-        _copy_skill_tree(skill["name"], skills_dir / skill["name"], skill["description"], quiet=quiet)
+    s.apply_all(skill_artifacts(skills_dir, platform, component, s.out))
+    cleanup_retired_skills(s, skills_dir)
+    if owned:
+        s.save()
 
 
-def _install_claude_code_skills(root: Path, quiet: bool = False) -> None:
-    """Copy all four Rafter skills into <root>/.claude/skills/."""
-    _install_skills_to(root / ".claude" / "skills", quiet=quiet)
+def _install_claude_code_skills(root: Path, quiet: bool = False, session: InstallSession | None = None) -> None:
+    """Install all Rafter skills into <root>/.claude/skills/."""
+    _install_skills_to(root / ".claude" / "skills", quiet=quiet, session=session)
 
 
-# Sub-agents shipped by `rafter agent init --with-claude-code`. These land in
+# Sub-agents shipped by `rafter agent init --with-claude-code` land in
 # <root>/.claude/agents/<name>.md and become first-class delegation targets
-# (Agent(subagent_type='<name>')) in the calling Claude Code session — distinct
-# from skills, which only surface in the activation prompt. Source files live
-# in `rafter_cli/resources/agents/<name>.md`. Keep in sync with the Node installer.
-_CLAUDE_CODE_SUBAGENTS: list[dict[str, str]] = [
-    {"name": "rafter", "description": "Rafter Security"},
-]
-
-
-def _install_claude_code_subagents(root: Path, quiet: bool = False) -> None:
-    """Copy sub-agent definitions into <root>/.claude/agents/<name>.md."""
-    agents_dir = root / ".claude" / "agents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
-    res = importlib.resources.files("rafter_cli.resources")
-    for sub in _CLAUDE_CODE_SUBAGENTS:
-        dest_path = agents_dir / f"{sub['name']}.md"
-        try:
-            content = res.joinpath("agents", f"{sub['name']}.md").read_text(encoding="utf-8")
-            dest_path.write_text(content, encoding="utf-8")
-            _init_print(quiet, fmt.success(f"Installed {sub['description']} sub-agent to {dest_path}"))
-        except Exception:
-            _init_alert(quiet, fmt.warning(f"{sub['description']} sub-agent template not found in package resources"))
+# (Agent(subagent_type='<name>')) — distinct from skills, which only surface in
+# the activation prompt. The list lives in install_files.py.
+def _install_claude_code_subagents(root: Path, quiet: bool = False, session: InstallSession | None = None) -> None:
+    """Install sub-agent definitions into <root>/.claude/agents/<name>.md."""
+    s, owned = _own_session(root, quiet, session)
+    s.apply_all(claude_agent_artifacts(root, s.out))
+    if owned:
+        s.save()
 
 
 def _install_global_instructions(
@@ -538,77 +558,23 @@ def _install_global_instructions(
     _ = cursor  # parameter kept for call-site compatibility
 
 
-def _install_openclaw_skill(quiet: bool = False) -> tuple[bool, str, str, str]:
-    """Install Rafter Security skill to OpenClaw. Returns (ok, source, dest, error).
-
-    rf-zgwj: writes to the canonical ClawHub workspace location
-    (~/.openclaw/workspace/skills/rafter-security/SKILL.md) so OpenClaw
-    auto-discovers it at session start. Earlier versions wrote to
-    ~/.openclaw/skills/rafter-security.md — that file is removed on
-    reinstall as a migration step.
-    """
-    home = Path.home()
-    openclaw_root = home / ".openclaw"
-    skill_dir = openclaw_root / "workspace" / "skills" / "rafter-security"
-    dest_path = skill_dir / "SKILL.md"
-    legacy_path = openclaw_root / "skills" / "rafter-security.md"
-
-    try:
-        ref = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md")
-        source_path = str(ref)
-    except Exception:
-        source_path = "(bundled resource)"
-
-    if not openclaw_root.exists():
-        return False, source_path, str(dest_path), f"OpenClaw not found: {openclaw_root}"
-
-    skill_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        content = importlib.resources.files("rafter_cli.resources").joinpath("rafter-security-skill.md").read_text(encoding="utf-8")
-    except Exception as e:
-        return False, source_path, str(dest_path), f"Source skill file not found: {e}"
-
-    try:
-        dest_path.write_text(content, encoding="utf-8")
-    except Exception as e:
-        return False, source_path, str(dest_path), str(e)
-
-    # Migration: strip the rafter ≤ 0.7.7 install path (rf-zgwj). OpenClaw
-    # never read that path; remove it on reinstall.
-    if legacy_path.exists():
-        try:
-            legacy_path.unlink()
-            _init_print(quiet, fmt.success(f"Removed legacy {legacy_path} (superseded by ClawHub-shaped skill at {dest_path})"))
-            # Drop the empty parent if we just emptied it.
-            legacy_parent = legacy_path.parent
-            try:
-                if not any(legacy_parent.iterdir()):
-                    legacy_parent.rmdir()
-            except OSError:
-                pass
-        except OSError:
-            pass
-
-    return True, source_path, str(dest_path), ""
-
-
-def _install_codex_skills(root: Path, quiet: bool = False) -> tuple[bool, str]:
+def _install_codex_skills(root: Path, quiet: bool = False, session: InstallSession | None = None) -> tuple[bool, str]:
     """Install all Rafter skills to <root>/.agents/skills/ for Codex CLI."""
     try:
-        _install_skills_to(root / ".agents" / "skills", quiet=quiet)
+        _install_skills_to(root / ".agents" / "skills", quiet=quiet, session=session, platform="codex", component="codex.skills")
         return True, ""
     except Exception as e:
         return False, str(e)
 
 
-def _install_gemini_skills(root: Path, quiet: bool = False) -> tuple[bool, str]:
+def _install_gemini_skills(root: Path, quiet: bool = False, session: InstallSession | None = None) -> tuple[bool, str]:
     """Install all Rafter skills to <root>/.agents/skills/ for Gemini CLI.
 
-    Gemini shares the same skills dir as Codex — overwrite is harmless.
+    Gemini shares the same skills dir as Codex; after Codex wrote it, every
+    file reports "unchanged".
     """
     try:
-        _install_skills_to(root / ".agents" / "skills", quiet=quiet)
+        _install_skills_to(root / ".agents" / "skills", quiet=quiet, session=session, platform="gemini", component="gemini.skills")
         return True, ""
     except Exception as e:
         return False, str(e)
@@ -643,8 +609,8 @@ def _register_gemini_skills(skills_dir: Path, quiet: bool = False) -> None:
         ))
         return
 
-    for skill in _AGENT_SKILLS:
-        abs_path = (skills_dir / skill["name"]).resolve()
+    for name in KNOWN_SKILL_NAMES:
+        abs_path = (skills_dir / name).resolve()
         if not abs_path.exists():
             continue
         try:
@@ -654,7 +620,7 @@ def _register_gemini_skills(skills_dir: Path, quiet: bool = False) -> None:
                 capture_output=True,
                 timeout=10,
             )
-            _init_print(quiet, fmt.success(f"Registered {skill['name']} with Gemini CLI"))
+            _init_print(quiet, fmt.success(f"Registered {name} with Gemini CLI"))
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
             first_line = ""
             stderr = getattr(e, "stderr", None)
@@ -664,7 +630,7 @@ def _register_gemini_skills(skills_dir: Path, quiet: bool = False) -> None:
                 except Exception:
                     first_line = ""
             _init_alert(quiet, fmt.warning(
-                f"Failed to register {skill['name']} with Gemini CLI: {first_line or 'unknown error'}"
+                f"Failed to register {name} with Gemini CLI: {first_line or 'unknown error'}"
             ))
 
 
@@ -737,15 +703,6 @@ _CURSOR_HOOK_EVENTS: tuple[tuple[str, str], ...] = (
     ("postToolUse", "hook posttool --format cursor"),
     ("beforeShellExecution", "hook pretool --format cursor"),
 )
-
-# Skills shipped as both Cursor rules and Claude Code / Codex / Gemini skills.
-_CURSOR_RULE_SKILLS: tuple[str, ...] = (
-    "rafter",
-    "rafter-secure-design",
-    "rafter-code-review",
-    "rafter-skill-review",
-)
-
 
 def _install_codex_hooks(root: Path, quiet: bool = False) -> None:
     """Install Rafter PreToolUse/PostToolUse hooks into <root>/.codex/hooks.json.
@@ -861,7 +818,7 @@ def _install_cursor_hooks(root: Path, quiet: bool = False) -> None:
     _init_print(quiet, fmt.success(f"Installed hooks to {hooks_path}"))
 
 
-def _install_cursor_rules(root: Path, quiet: bool = False) -> None:
+def _install_cursor_rules(root: Path, quiet: bool = False, session: InstallSession | None = None) -> None:
     """Install per-skill Cursor rule files at <root>/.cursor/rules/<skill>.mdc.
 
     Replaces the legacy consolidated `.cursor/rules/rafter-security.mdc`.
@@ -870,62 +827,35 @@ def _install_cursor_rules(root: Path, quiet: bool = False) -> None:
     """
     rules_dir = root / ".cursor" / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
+    s, owned = _own_session(root, quiet, session)
+    s.apply_all(rule_artifacts("cursor", root, s.out))
+    cleanup_retired_rules(s, "cursor")
+    if owned:
+        s.save()
 
-    res = importlib.resources.files("rafter_cli.resources")
-    for name in _CURSOR_RULE_SKILLS:
-        try:
-            content = res.joinpath("cursor-rules", f"{name}.mdc").read_text(encoding="utf-8")
-        except Exception:
-            _init_alert(quiet, fmt.warning(f"Cursor rule template missing: {name}.mdc"))
-            continue
-        dest = rules_dir / f"{name}.mdc"
-        dest.write_text(content, encoding="utf-8")
-        _init_print(quiet, fmt.success(f"Installed Cursor rule to {dest}"))
-
-    # Migrate away from the legacy consolidated rule on reinstall.
+    # Take rafter's block out of the legacy consolidated rule, so reinstall on
+    # top of an old layout migrates cleanly. Anything else in it is the user's.
     legacy = rules_dir / "rafter-security.mdc"
-    if legacy.exists():
-        try:
-            legacy.unlink()
-            _init_print(quiet, fmt.info(f"Removed legacy {legacy} (superseded by per-skill rules)"))
-        except OSError:
-            pass
+    try:
+        done = _retire_instruction_file(legacy)
+    except OSError:
+        done = None
+    if done == "removed":
+        _init_print(quiet, fmt.info(f"Removed legacy {legacy} (superseded by per-skill rules)"))
+    elif done == "stripped":
+        _init_print(quiet, fmt.info(f"Removed rafter's block from legacy {legacy}; kept the rest"))
 
 
-def _install_cursor_subagents(root: Path, quiet: bool = False) -> None:
+def _install_cursor_subagents(root: Path, quiet: bool = False, session: InstallSession | None = None) -> None:
     """Install the Cursor sub-agent at <root>/.cursor/agents/rafter.md.
 
     Reuses the rf-q7j Claude-Code sub-agent body, with Cursor-shape
     frontmatter (no `tools:` field — tools inherit from parent agent).
     """
-    agents_dir = root / ".cursor" / "agents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
-
-    res = importlib.resources.files("rafter_cli.resources")
-    try:
-        raw = res.joinpath("agents", "rafter.md").read_text(encoding="utf-8")
-    except Exception:
-        _init_alert(quiet, fmt.warning("Rafter sub-agent template not found in resources/agents/"))
-        return
-
-    cursored = _strip_frontmatter_field(raw, "tools")
-    dest = agents_dir / "rafter.md"
-    dest.write_text(cursored, encoding="utf-8")
-    _init_print(quiet, fmt.success(f"Installed Cursor sub-agent to {dest}"))
-
-
-def _strip_frontmatter_field(content: str, field: str) -> str:
-    """Strip a single-line frontmatter field from a markdown file's frontmatter."""
-    if not content.startswith("---\n"):
-        return content
-    fm_end = content.find("\n---", 4)
-    if fm_end == -1:
-        return content
-    frontmatter = content[4:fm_end]
-    body = content[fm_end:]
-    pattern = re.compile(rf"^{re.escape(field)}:\s.*$\n?", re.MULTILINE)
-    cleaned = pattern.sub("", frontmatter)
-    return f"---\n{cleaned}{body}"
+    s, owned = _own_session(root, quiet, session)
+    s.apply_all(cursor_agent_artifacts(root, s.out))
+    if owned:
+        s.save()
 
 
 def _install_cursor_mcp(root: Path, quiet: bool = False) -> bool:
@@ -974,16 +904,7 @@ def _install_windsurf_mcp(root: Path, quiet: bool = False) -> bool:
     return True
 
 
-# Skills shipped as Windsurf rules at .windsurf/rules/<skill>.md (rf-0vr3).
-_WINDSURF_RULE_SKILLS: tuple[str, ...] = (
-    "rafter",
-    "rafter-secure-design",
-    "rafter-code-review",
-    "rafter-skill-review",
-)
-
-
-def _install_windsurf_rules(root: Path, quiet: bool = False) -> None:
+def _install_windsurf_rules(root: Path, quiet: bool = False, session: InstallSession | None = None) -> None:
     """Install per-skill Windsurf rules at <root>/.windsurf/rules/<skill>.md.
 
     Workspace-scope rules consumed by Windsurf's rules system (.windsurf/rules/*.md,
@@ -995,31 +916,14 @@ def _install_windsurf_rules(root: Path, quiet: bool = False) -> None:
     documented hook surface (rf-0vr3 prune; same pattern as Continue.dev hooks
     prune in rf-cia phase b).
     """
-    rules_dir = root / ".windsurf" / "rules"
-    rules_dir.mkdir(parents=True, exist_ok=True)
-
-    res = importlib.resources.files("rafter_cli.resources")
-    for name in _WINDSURF_RULE_SKILLS:
-        try:
-            content = res.joinpath("windsurf-rules", f"{name}.md").read_text(encoding="utf-8")
-        except Exception:
-            _init_alert(quiet, fmt.warning(f"Windsurf rule template missing: {name}.md"))
-            continue
-        dest = rules_dir / f"{name}.md"
-        dest.write_text(content, encoding="utf-8")
-        _init_print(quiet, fmt.success(f"Installed Windsurf rule to {dest}"))
+    s, owned = _own_session(root, quiet, session)
+    s.apply_all(rule_artifacts("windsurf", root, s.out))
+    cleanup_retired_rules(s, "windsurf")
+    if owned:
+        s.save()
 
 
-# Skills shipped as Continue.dev rules at .continue/rules/<skill>.md (rf-acz0).
-_CONTINUE_RULE_SKILLS: tuple[str, ...] = (
-    "rafter",
-    "rafter-secure-design",
-    "rafter-code-review",
-    "rafter-skill-review",
-)
-
-
-def _install_continue_dev_rules(root: Path, quiet: bool = False) -> None:
+def _install_continue_dev_rules(root: Path, quiet: bool = False, session: InstallSession | None = None) -> None:
     """Install per-skill Continue.dev rules at <root>/.continue/rules/<skill>.md.
 
     Continue.dev reads workspace rules from .continue/rules/*.md (per-rule
@@ -1027,19 +931,11 @@ def _install_continue_dev_rules(root: Path, quiet: bool = False) -> None:
     `alwaysApply`. Each rule body mirrors the Cursor / Windsurf pointer-rule
     pattern.
     """
-    rules_dir = root / ".continue" / "rules"
-    rules_dir.mkdir(parents=True, exist_ok=True)
-
-    res = importlib.resources.files("rafter_cli.resources")
-    for name in _CONTINUE_RULE_SKILLS:
-        try:
-            content = res.joinpath("continue-rules", f"{name}.md").read_text(encoding="utf-8")
-        except Exception:
-            _init_alert(quiet, fmt.warning(f"Continue.dev rule template missing: {name}.md"))
-            continue
-        dest = rules_dir / f"{name}.md"
-        dest.write_text(content, encoding="utf-8")
-        _init_print(quiet, fmt.success(f"Installed Continue.dev rule to {dest}"))
+    s, owned = _own_session(root, quiet, session)
+    s.apply_all(rule_artifacts("continue", root, s.out))
+    cleanup_retired_rules(s, "continue")
+    if owned:
+        s.save()
 
 
 def _install_continue_dev_mcp(root: Path, quiet: bool = False) -> bool:
@@ -1104,6 +1000,9 @@ def _install_aider_read(root: Path, quiet: bool = False) -> bool:
 
     # 1. Write RAFTER.md (idempotent — marker block replaced in place).
     _inject_instruction_file(rafter_md_path)
+    # 1a. Aider has no skill-loading mechanism — add the note explaining that
+    # the skill names in the block above aren't separate files here.
+    _inject_aider_note(rafter_md_path)
 
     # 2. Update .aider.conf.yml read: list.
     raw = config_path.read_text() if config_path.exists() else ""
@@ -1254,16 +1153,115 @@ def init(
         "--dry-run",
         help="Print every file path that would be created, modified, or downloaded — without making any changes (rf-hrtd).",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace installed skill, rule and sub-agent files even if you modified them (the old file is saved as <file>.bak)",
+    ),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress informational and success output (warnings and errors still go to stderr)"),
 ):
     """Initialize agent security system."""
-    _init_print(quiet, fmt.header("Rafter Agent Security Setup"))
+    _run_agent_init(
+        risk_level=risk_level,
+        with_betterleaks=with_betterleaks,
+        with_skill_scanner=with_skill_scanner,
+        with_openclaw=with_openclaw,
+        with_claude_code=with_claude_code,
+        with_codex=with_codex,
+        with_gemini=with_gemini,
+        with_aider=with_aider,
+        with_cursor=with_cursor,
+        with_windsurf=with_windsurf,
+        with_continue=with_continue,
+        with_hermes=with_hermes,
+        with_opencode=with_opencode,
+        all_integrations=all_integrations,
+        update=update,
+        local=local,
+        dry_run=dry_run,
+        force=force,
+        quiet=quiet,
+    )
+
+
+_UPDATE_INIT_FLAG = {
+    "claude-code": "with_claude_code",
+    "codex": "with_codex",
+    "gemini": "with_gemini",
+    "cursor": "with_cursor",
+    "windsurf": "with_windsurf",
+    "continue": "with_continue",
+    "aider": "with_aider",
+    "hermes": "with_hermes",
+    "opencode": "with_opencode",
+    "openclaw": "with_openclaw",
+}
+
+
+@agent_app.command("update")
+def update_installed(
+    local: bool = typer.Option(False, "--local", help="Update the project-local install in the current directory instead of the user-global one"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print what would change, per file, without writing anything"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace installed skill, rule and sub-agent files even if you modified them (the old file is saved as <file>.bak)",
+    ),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress informational and success output (warnings and errors still go to stderr)"),
+):
+    """Re-apply every installed rafter integration (skills, rules, instructions, hooks, MCP) with this version."""
+    from .agent_update import detect_installed_platforms
+
+    root = Path.cwd() if local else Path.home()
+    platforms = detect_installed_platforms(root, "project" if local else "user")
+    if not platforms:
+        _init_print(quiet, fmt.info(f"No rafter integrations found under {root}; nothing to update."))
+        _init_print(quiet, fmt.info(f"To install, run: rafter agent init{' --local' if local else ''} --with-<platform>"))
+        return
+    flags = {_UPDATE_INIT_FLAG[p]: True for p in platforms}
+    _run_agent_init(risk_level=None, local=local, dry_run=dry_run, force=force, quiet=quiet, mode="update", **flags)
+
+
+def _run_agent_init(
+    *,
+    risk_level: str | None = "moderate",
+    with_betterleaks: bool = False,
+    with_skill_scanner: bool = False,
+    with_openclaw: bool = False,
+    with_claude_code: bool = False,
+    with_codex: bool = False,
+    with_gemini: bool = False,
+    with_aider: bool = False,
+    with_cursor: bool = False,
+    with_windsurf: bool = False,
+    with_continue: bool = False,
+    with_hermes: bool = False,
+    with_opencode: bool = False,
+    all_integrations: bool = False,
+    update: bool = False,
+    local: bool = False,
+    dry_run: bool = False,
+    force: bool = False,
+    quiet: bool = False,
+    mode: str = "init",
+) -> None:
+    """The body of `rafter agent init`.
+
+    `rafter agent update` calls it with the with_<platform> flags of the
+    platforms already installed, so both commands refresh skills, rules,
+    marker blocks, hooks and MCP entries through one code path. `mode="update"`
+    changes the header; `risk_level=None` leaves the configured level alone.
+    """
+    _init_print(quiet, fmt.header("Rafter Agent Update" if mode == "update" else "Rafter Agent Security Setup"))
     _init_print(quiet, fmt.divider())
     _init_print(quiet)
 
     manager = ConfigManager()
     root = Path.cwd() if local else Path.home()
     scope = "project" if local else "user"
+    # Every skill / rule / sub-agent file goes through this session's write
+    # policy and is recorded in <root>/.rafter/installed.json.
+    session = InstallSession(root=root, out=InstallOutput(quiet), force=force, dry_run=dry_run)
     if local:
         _init_print(quiet, fmt.info(f"Project-local install — writing configs under {root}"))
 
@@ -1396,10 +1394,11 @@ def init(
             want_opencode=want_opencode and has_opencode,
             want_betterleaks=want_betterleaks,
             want_skill_scanner=want_skill_scanner,
-            risk_level=risk_level,
+            risk_level=risk_level if risk_level is not None else "unchanged",
             betterleaks_existing=_bl_existing,
             betterleaks_supported=BinaryManager().is_platform_supported(),
             claude_code_mcp_disabled=_components.get("claude-code.mcp", {}).get("enabled") is False,
+            session=session,
         )
         return
 
@@ -1407,15 +1406,16 @@ def init(
     manager.initialize()
     _init_print(quiet, fmt.success("Created config at ~/.rafter/config.json"))
 
-    # Validate + set risk level
-    valid = ("minimal", "moderate", "aggressive")
-    if risk_level not in valid:
-        _init_alert(quiet, fmt.error(f"Invalid risk level: {risk_level}"))
-        print(f"Valid options: {', '.join(valid)}", file=sys.stderr)
-        raise typer.Exit(code=1)
+    # Validate + set risk level (update leaves it as configured)
+    if risk_level is not None:
+        valid = ("minimal", "moderate", "aggressive")
+        if risk_level not in valid:
+            _init_alert(quiet, fmt.error(f"Invalid risk level: {risk_level}"))
+            print(f"Valid options: {', '.join(valid)}", file=sys.stderr)
+            raise typer.Exit(code=1)
 
-    manager.set("agent.risk_level", risk_level)
-    _init_print(quiet, fmt.success(f"Set risk level: {risk_level}"))
+        manager.set("agent.risk_level", risk_level)
+        _init_print(quiet, fmt.success(f"Set risk level: {risk_level}"))
 
     # Betterleaks check (opt-in via --with-betterleaks or --all)
     if want_betterleaks:
@@ -1476,20 +1476,18 @@ def init(
                     "manually with 'uv tool install cisco-ai-skill-scanner'."
                 ))
 
-    # Install OpenClaw skill if opted in
+    # Install OpenClaw skill if opted in (user scope only, so session.root is home)
     openclaw_ok = False
     if has_openclaw and want_openclaw:
-        ok, source, dest, error = _install_openclaw_skill(quiet=quiet)
-        openclaw_ok = ok
-        if ok:
-            _init_print(quiet, fmt.success(f"Installed Rafter Security skill to {dest}"))
-            manager.set("agent.environments.openclaw.enabled", True)
-        else:
-            _init_alert(quiet, fmt.error("Failed to install Rafter Security skill"))
-            _init_alert(quiet, fmt.warning(f"  Source: {source}"))
-            _init_alert(quiet, fmt.warning(f"  Destination: {dest}"))
-            if error:
-                _init_alert(quiet, fmt.warning(f"  Error: {error}"))
+        try:
+            artifacts = openclaw_skill_artifacts(root, session.out)
+            session.apply_all(artifacts)
+            cleanup_legacy_openclaw(session)
+            openclaw_ok = bool(artifacts)
+            if openclaw_ok:
+                manager.set("agent.environments.openclaw.enabled", True)
+        except OSError as e:
+            _init_alert(quiet, fmt.error(f"Failed to install Rafter Security skill to {openclaw_skill_path(root)}: {e}"))
 
     def _local_unsupported(label: str) -> None:
         _init_alert(quiet, fmt.warning(
@@ -1502,8 +1500,8 @@ def init(
     claude_code_ok = False
     if (has_claude_code or with_claude_code or (local and want_claude_code)) and want_claude_code:
         try:
-            _install_claude_code_skills(root, quiet=quiet)
-            _install_claude_code_subagents(root, quiet=quiet)
+            _install_claude_code_skills(root, quiet=quiet, session=session)
+            _install_claude_code_subagents(root, quiet=quiet, session=session)
             _install_claude_code_hooks(root, quiet=quiet)
             if scope == "project":
                 components = manager.get("agent.components") or {}
@@ -1527,7 +1525,7 @@ def init(
     codex_ok = False
     if (has_codex or (local and want_codex)) and want_codex:
         try:
-            ok, error = _install_codex_skills(root, quiet=quiet)
+            ok, error = _install_codex_skills(root, quiet=quiet, session=session)
             _install_codex_hooks(root, quiet=quiet)
             codex_ok = ok
             if ok and scope == "user":
@@ -1542,7 +1540,7 @@ def init(
     if (has_gemini or (local and want_gemini)) and want_gemini:
         try:
             gemini_ok = _install_gemini_mcp(root, quiet=quiet)
-            skills_ok, skills_error = _install_gemini_skills(root, quiet=quiet)
+            skills_ok, skills_error = _install_gemini_skills(root, quiet=quiet, session=session)
             if not skills_ok:
                 _init_alert(quiet, fmt.error(f"Failed to install Gemini CLI skills: {skills_error}"))
             else:
@@ -1559,8 +1557,8 @@ def init(
         try:
             cursor_ok = _install_cursor_mcp(root, quiet=quiet)
             _install_cursor_hooks(root, quiet=quiet)
-            _install_cursor_rules(root, quiet=quiet)
-            _install_cursor_subagents(root, quiet=quiet)
+            _install_cursor_rules(root, quiet=quiet, session=session)
+            _install_cursor_subagents(root, quiet=quiet, session=session)
             if cursor_ok and scope == "user":
                 manager.set("agent.environments.cursor.enabled", True)
         except Exception as e:
@@ -1580,7 +1578,7 @@ def init(
                 windsurf_ok = _install_windsurf_mcp(root, quiet=quiet)
                 if windsurf_ok:
                     manager.set("agent.environments.windsurf.enabled", True)
-            _install_windsurf_rules(root, quiet=quiet)
+            _install_windsurf_rules(root, quiet=quiet, session=session)
             if not has_windsurf:
                 # Project-scope success: rules + AGENTS.md (written below).
                 windsurf_ok = True
@@ -1598,7 +1596,7 @@ def init(
                 continue_ok = _install_continue_dev_mcp(root, quiet=quiet)
                 if continue_ok:
                     manager.set("agent.environments.continue_dev.enabled", True)
-            _install_continue_dev_rules(root, quiet=quiet)
+            _install_continue_dev_rules(root, quiet=quiet, session=session)
             if not has_continue_dev:
                 continue_ok = True
         except Exception as e:
@@ -1653,6 +1651,10 @@ def init(
         scope=scope,
         quiet=quiet,
     )
+
+    session.save()
+    report_unchanged_summary(session)
+    report_kept_summary(session, FORCE_HINT, "rafter agent update --local" if local else "rafter agent update")
 
     _init_print(quiet)
     _init_print(quiet, fmt.success("Agent security initialized!"))
@@ -1915,6 +1917,7 @@ def _output_empty_diff_scan(
     format: str,
     suppressions,
     report: EngineReport | None = None,
+    out: str | None = None,
 ) -> None:
     """Emit the result of a diff scan that had no files to scan.
 
@@ -1929,7 +1932,7 @@ def _output_empty_diff_scan(
         # would emit literally as "[green]...[/green]".
         rprint(fmt.success(empty_message), file=sys.stderr)
     _output_scan_results(
-        [], json_output, quiet, context_label, format=format, suppressions=suppressions, report=report
+        [], json_output, quiet, context_label, format=format, suppressions=suppressions, report=report, out=out
     )
 
 
@@ -1955,6 +1958,7 @@ def _run_git_added_line_scan(
     format: str,
     not_repo_message: str = "Error: Not in a git repository or invalid ref",
     engine_pref: str = "auto",
+    out: str | None = None,
 ) -> None:
     """Parse a unified diff for + lines and scan with the patterns engine."""
     from ..utils.git_diff import parse_unified_diff_added_lines
@@ -1976,14 +1980,14 @@ def _run_git_added_line_scan(
 
     if not patch.strip():
         _output_empty_diff_scan(
-            empty_message, json_output, quiet, context_label, format, suppressions, report
+            empty_message, json_output, quiet, context_label, format, suppressions, report, out=out
         )
         raise typer.Exit(code=0)
 
     added = parse_unified_diff_added_lines(patch)
     if not added:
         _output_empty_diff_scan(
-            empty_message, json_output, quiet, context_label, format, suppressions, report
+            empty_message, json_output, quiet, context_label, format, suppressions, report, out=out
         )
         raise typer.Exit(code=0)
 
@@ -2011,7 +2015,7 @@ def _run_git_added_line_scan(
     all_results = _apply_exclude_paths(all_results, exclude, repo_root)
     filtered = _apply_baseline(all_results, baseline_entries)
     _output_scan_results(
-        filtered, json_output, quiet, context_label, format=format, suppressions=suppressions, report=report
+        filtered, json_output, quiet, context_label, format=format, suppressions=suppressions, report=report, out=out
     )
 
 
@@ -2145,6 +2149,21 @@ def _scan_directory(
     return _apply_exclude_paths(results, exclude, dir_path)
 
 
+def _write_json_output(text: str, out_path: str | None, quiet: bool) -> bool:
+    """Write a JSON/SARIF payload to ``--out <file>`` instead of stdout, so an
+    agent in a sandbox without shell redirects can still get the result onto
+    disk. Status lines keep going to stderr regardless. Returns True when it
+    wrote the file (the caller then skips its normal stdout print).
+    """
+    if not out_path:
+        return False
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(text if text.endswith("\n") else text + "\n")
+    if not quiet:
+        print_stderr(fmt.info(f"Results written to {out_path}"))
+    return True
+
+
 def _output_scan_results(
     results: list[ScanResult],
     json_output: bool,
@@ -2154,6 +2173,7 @@ def _output_scan_results(
     exit_on_findings: bool = True,
     suppressions: list | None = None,
     report: EngineReport | None = None,
+    out: str | None = None,
 ) -> None:
     from ..core.custom_patterns import apply_suppressions
     suppressions = suppressions or []
@@ -2188,7 +2208,7 @@ def _output_scan_results(
         ))
 
     if format == "sarif":
-        _output_sarif(kept_results, scan_exit_code)
+        _output_sarif(kept_results, scan_exit_code, out=out, quiet=quiet)
         return
 
     if json_output or format == "json":
@@ -2202,7 +2222,7 @@ def _output_scan_results(
             ]}
             for r in kept_results
         ]
-        out: dict = {
+        payload: dict = {
             "_note": (
                 "Local-only scan: pattern-based detection without agentic-intelligence triage. "
                 "Findings have not been evaluated for context (public exposure, key validity, "
@@ -2216,19 +2236,21 @@ def _output_scan_results(
         # sable-jiqb — report the engine actually used and any fall-back, so a
         # json/MCP/CI consumer is never left thinking betterleaks ran when it did not.
         if report is not None:
-            out["engine_requested"] = report.requested
-            out["engine_used"] = report.used
-            out["degraded"] = report.degraded
+            payload["engine_requested"] = report.requested
+            payload["engine_used"] = report.used
+            payload["degraded"] = report.degraded
             if report.degraded and report.reason:
-                out["degraded_reason"] = report.reason
+                payload["degraded_reason"] = report.reason
         if suppressed:
             from dataclasses import asdict
-            out["_suppressed"] = [asdict(s) for s in suppressed]
+            payload["_suppressed"] = [asdict(s) for s in suppressed]
         # Files that could not be read (sable-ilbx) — a reader can tell an empty
         # `results` from an incomplete scan.
         if read_errors:
-            out["unreadable"] = read_errors
-        print(json.dumps(out, indent=2))
+            payload["unreadable"] = read_errors
+        json_text = json.dumps(payload, indent=2)
+        if not _write_json_output(json_text, out, quiet):
+            print(json_text)
         if exit_on_findings:
             raise typer.Exit(code=scan_exit_code)
         return
@@ -2246,7 +2268,8 @@ def _output_scan_results(
                 rprint()
         elif not quiet:
             msg = f"No secrets detected in {context}" if context else "No secrets detected"
-            rprint(f"\n{fmt.success(msg)}\n")
+            rprint(f"\n{fmt.success(msg)}")
+            rprint("This covers secrets only — it is not a code security review.\n")
         if exit_on_findings:
             raise typer.Exit(code=scan_exit_code)
         return
@@ -2419,7 +2442,12 @@ def _log_watch_findings(logger: AuditLogger, results: list[ScanResult]) -> None:
             )
 
 
-def _output_sarif(results: list[ScanResult], empty_exit_code: int = 0) -> None:
+def _output_sarif(
+    results: list[ScanResult],
+    empty_exit_code: int = 0,
+    out: str | None = None,
+    quiet: bool = False,
+) -> None:
     """Emit SARIF 2.1.0 JSON for GitHub/GitLab security tab integration."""
     rules: dict[str, dict] = {}
     sarif_results = []
@@ -2458,7 +2486,9 @@ def _output_sarif(results: list[ScanResult], empty_exit_code: int = 0) -> None:
             "results": sarif_results,
         }],
     }
-    print(json.dumps(sarif, indent=2))
+    sarif_text = json.dumps(sarif, indent=2)
+    if not _write_json_output(sarif_text, out, quiet):
+        print(sarif_text)
     # A read error (sable-ilbx) makes an otherwise-empty scan non-clean; the
     # caller passes that exit code in.
     raise typer.Exit(code=1 if results else empty_exit_code)
@@ -2576,6 +2606,7 @@ def scan(
         _watch_and_scan(resolved_path, engine, quiet, json_output, format, custom_patterns, scan_cfg, suppressions, auto_update_enabled)
         return
 
+    scan_start = time.monotonic()
     eng, select_reason = _select_engine(engine, quiet, auto_update_enabled)
     report = _build_engine_report(engine, eng, select_reason)
 
@@ -2588,6 +2619,7 @@ def scan(
             print(f"Scanning file: {resolved_path} ({_engine_label(eng)})", file=sys.stderr)
         results = _scan_file(resolved_path, eng, custom_patterns, report=report)
 
+    count_scan(report, time.monotonic() - scan_start)
     filtered = _apply_baseline(results, baseline_entries)
     _output_scan_results(filtered, json_output, quiet, format=format, suppressions=suppressions, report=report)
 
@@ -3502,6 +3534,10 @@ def verify(
         # hook payloads can be added in follow-ups.
         results.append(_probe_claude_code())
 
+    # Informational only: an out-of-date install never fails verify.
+    from .agent_update import install_staleness, reconcile_lines, staleness_line
+    staleness = install_staleness(Path.home(), "user")
+
     hard_failed = [r for r in results if not r.passed and not r.optional]
     warned = [r for r in results if not r.passed and r.optional]
     passed = [r for r in results if r.passed]
@@ -3523,6 +3559,9 @@ def verify(
                 "total": len(results),
                 "probe": probe,
             },
+            "stale": staleness.stale,
+            "installed_version": staleness.installed_version,
+            "needs_reconcile": [str(p) for p in staleness.needs_reconcile],
         }
         sys.stdout.write(json.dumps(payload) + "\n")
     else:
@@ -3555,6 +3594,11 @@ def verify(
             rprint(fmt.success(f"{len(passed)}/{len(core_results)} core checks passed{warn_note}"))
         else:
             rprint(fmt.error(f"{len(hard_failed)} check{'s' if len(hard_failed) != 1 else ''} failed"))
+        if staleness.stale:
+            InstallOutput().warn(fmt.warning(staleness_line(staleness)))
+        reconcile = reconcile_lines(staleness)
+        if reconcile:
+            InstallOutput().warn(fmt.warning("\n".join(reconcile)))
         rprint()
 
     if hard_failed:
@@ -4018,6 +4062,14 @@ def status(
     print("Rafter Agent Status")
     print("=" * 50)
 
+    from .agent_update import install_staleness, reconcile_lines, staleness_line
+    staleness = install_staleness(Path.home(), "user")
+    if staleness.stale:
+        print(f"\n{staleness_line(staleness)}")
+    reconcile = reconcile_lines(staleness)
+    if reconcile:
+        print("\n" + "\n".join(reconcile))
+
     # --- Config ---
     if config_path.exists():
         try:
@@ -4184,6 +4236,17 @@ def status(
     print()
 
 
+def _staleness_json() -> dict[str, Any]:
+    from .agent_update import install_staleness
+
+    st = install_staleness(Path.home(), "user")
+    return {
+        "stale": st.stale,
+        "installed_version": st.installed_version,
+        "needs_reconcile": [str(p) for p in st.needs_reconcile],
+    }
+
+
 def _agent_status_json(config_path: Path, audit_path: Path) -> dict[str, Any]:
     from ..core.hook_control import resolve_hook_control
 
@@ -4191,6 +4254,7 @@ def _agent_status_json(config_path: Path, audit_path: Path) -> dict[str, Any]:
     return {
         "installed": config_path.exists(),
         "version": __version__,
+        **_staleness_json(),
         "agents_detected": _detect_agent_platforms(),
         "hooks_installed": _detect_git_hooks(),
         "betterleaks_available": _betterleaks_available(),
@@ -4460,7 +4524,9 @@ def baseline_add(
 # ── components: list / enable / disable ──────────────────────────────
 
 from .agent_components import (  # noqa: E402
+    _inject_aider_note,
     _inject_instruction_file,
+    _retire_instruction_file,
     get_registry as _components_get_registry,
     record_component_state as _components_record_state,
     resolve_component as _components_resolve,
@@ -4522,6 +4588,8 @@ def components_enable(
 ):
     """Install a specific agent component."""
     exit_code = 0
+    # Skill / rule files keep local edits, as in `agent init`.
+    session = InstallSession(root=Path.home(), out=InstallOutput())
     seen: set[str] = set()
     for raw in components:
         if raw in seen:
@@ -4544,12 +4612,16 @@ def components_enable(
             continue
 
         try:
-            spec.install()
+            spec.install_with(session)
             _components_record_state(spec.id, True)
             rprint(fmt.success(f"Enabled {spec.id} → {spec.path}"))
         except Exception as err:
             rprint(fmt.error(f"Failed to enable {spec.id}: {err}"), file=sys.stderr)
             exit_code = 1
+
+    session.save()
+    report_unchanged_summary(session)
+    report_kept_summary(session, "remove the file and re-run 'rafter agent enable' to replace it")
 
     if exit_code:
         raise typer.Exit(code=exit_code)

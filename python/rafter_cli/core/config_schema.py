@@ -180,6 +180,14 @@ class HooksConfig:
 
 
 @dataclass
+class UsageConfig:
+    """Local usage counters (core/usage_counters.py). Honored ONLY from the
+    global ``~/.rafter/config.json``, never from a project ``.rafter.yml``.
+    ``None`` = unset (counting on)."""
+    enabled: bool | None = None
+
+
+@dataclass
 class AgentConfig:
     risk_level: RiskLevel = "moderate"
     environments: EnvironmentsConfig = field(default_factory=EnvironmentsConfig)
@@ -190,6 +198,7 @@ class AgentConfig:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
     hooks: HooksConfig = field(default_factory=HooksConfig)
+    usage: UsageConfig = field(default_factory=UsageConfig)
     # Fine-grained per-component install state (set by `rafter agent enable/disable`).
     # Keys are component IDs like "claude-code.hooks"; values are `{enabled, updatedAt}`.
     components: dict = field(default_factory=dict)

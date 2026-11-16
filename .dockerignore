@@ -2,7 +2,7 @@ node_modules
 .git
 *.md
 docs
-demo.tape
+demo
 mail
 state.json
 shared-docs

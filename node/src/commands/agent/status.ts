@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import { getRafterDir, getAuditLogPath, getBinDir } from "../../core/config-defaults.js";
 import { AuditLogger } from "../../core/audit-logger.js";
 import { ConfigManager } from "../../core/config-manager.js";
+import { installStaleness, reconcileLines, stalenessLine } from "./update.js";
 import { resolveHookControl } from "../../core/hook-control.js";
 import { BinaryManager } from "../../utils/binary-manager.js";
 import { SkillManager } from "../../utils/skill-manager.js";
@@ -14,6 +15,12 @@ import { SkillManager } from "../../utils/skill-manager.js";
 interface AgentStatusJson {
   installed: boolean;
   version: string;
+  /** True when installed rafter integrations are older than this CLI ships. */
+  stale: boolean;
+  /** CLI version recorded in the install manifest; null without one. */
+  installed_version: string | null;
+  /** Modified files with a newer version waiting in <file>.rafter-new. */
+  needs_reconcile: string[];
   agents_detected: string[];
   hooks_installed: string[];
   betterleaks_available: boolean;
@@ -45,6 +52,11 @@ export function createStatusCommand(): Command {
 
       console.log("Rafter Agent Status");
       console.log("=".repeat(50));
+
+      const staleness = installStaleness(home, "user");
+      if (staleness.stale) console.log(`\n${stalenessLine(staleness)}`);
+      const reconcile = reconcileLines(staleness);
+      if (reconcile.length > 0) console.log(`\n${reconcile.join("\n")}`);
 
       // --- Config ---
       if (fs.existsSync(configPath)) {
@@ -236,6 +248,10 @@ function buildStatusJson(home: string, configPath: string, auditPath: string): A
   return {
     installed: fs.existsSync(configPath),
     version: getPkgVersion(),
+    ...(() => {
+      const s = installStaleness(home, "user");
+      return { stale: s.stale, installed_version: s.installedVersion, needs_reconcile: s.needsReconcile };
+    })(),
     agents_detected: detectAgents(home),
     hooks_installed: detectGitHooks(home),
     betterleaks_available: isBetterleaksAvailable(),

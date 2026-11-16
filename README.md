@@ -113,6 +113,10 @@ pip install rafter-cli
 
 Requires Python 3.11+. Full feature parity with Node.js including local security toolkit and MCP server.
 
+### Upgrading
+
+After upgrading the CLI, run `rafter agent update` to refresh the skills, rules, instructions, hooks and MCP entries of every integration you installed. It keeps files you edited (the new version is written beside them as `.rafter-new`) and never adds a platform you did not install. `rafter agent status` tells you when an update is due.
+
 ---
 
 ## Remote Code Analysis
@@ -192,7 +196,7 @@ This command:
 - With `--with-*` or `--all`: installs Rafter skills/extensions to opted-in agents
 - With `--with-betterleaks` or `--all`: downloads [Betterleaks](https://github.com/betterleaks/betterleaks) (the gitleaks successor maintained by the original gitleaks authors) for enhanced secret scanning. Falls back to built-in 21-pattern regex scanner.
 
-Use `rafter agent list/enable/disable` for granular per-component control after the initial install — toggle any platform on or off without re-running `init`.
+Use `rafter agent list/enable/disable` for granular per-component control after the initial install — toggle any platform on or off without re-running `init`. After upgrading the CLI, `rafter agent update` refreshes everything you installed.
 
 ### Secret Scanning
 
@@ -330,6 +334,20 @@ rafter agent audit --verify                  # verify hash chain (exit 1 if tamp
 Event types: `command_intercepted`, `secret_detected`, `content_sanitized`, `policy_override`. `scan_executed` and `config_changed` are reserved for future use (defined in the type union but not yet emitted).
 
 Point the log at a repo-local path by setting `agent.audit.logPath` in `.rafter.yml` (e.g. `.rafter/audit.jsonl`) so every contributor can verify their own chain independently. Retention pruning rewrites the log atomically and re-seals the chain, preserving a sidecar manifest (`audit.jsonl.retention.log`) that records the hashes of pruned entries — verify still passes after legitimate cleanup, and fails on forgery.
+
+### Usage Counters
+
+rafter keeps a few local counts so a bug report can say what happened: unknown commands and flags, exit codes per command, hook decisions per risk tier, scan engine fall-backs and durations, and crash error classes.
+They live in `~/.rafter/usage/` for seven days.
+Local-only: they hold no paths, repo names, command lines, secrets or error messages, and rafter has no code that uploads them. Nothing is sent anywhere.
+
+```sh
+rafter counters show          # counts for the last 7 days, plus skill staleness
+rafter counters show --json   # paste into an issue
+rafter counters clear         # delete ~/.rafter/usage
+```
+
+Turn counting off with `rafter agent config set agent.usage.enabled false`, `RAFTER_USAGE_COUNTERS=0`, or `DO_NOT_TRACK=1`. A project `.rafter.yml` cannot change this setting.
 
 ### Configuration
 
@@ -538,6 +556,7 @@ Exit codes are part of Rafter's output contract — CI pipelines and orchestrato
 ├── audit.jsonl        # Security event log (JSON lines)
 ├── bin/betterleaks    # Betterleaks binary
 ├── patterns/          # Custom patterns (reserved)
+├── usage/             # Local usage counters, 7 days (rafter counters show)
 └── git-hooks/         # Global pre-commit hook (if --global)
 ```
 
