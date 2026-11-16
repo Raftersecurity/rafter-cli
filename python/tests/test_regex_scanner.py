@@ -124,7 +124,7 @@ def test_scan_text_ignores_datadog_key_with_36_hex_value(scanner):
 
 
 def test_scan_text_ignores_datadog_followed_by_bare_md5(scanner):
-        token = "datadog " + "a" * 32
+    token = "datadog " + "a" * 32
     matches = scanner.scan_text(token)
     assert not any(m.pattern.name == "Datadog API Key" for m in matches)
 
