@@ -1,0 +1,43 @@
+name: "Pull Request Auto Labeler"
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  label-by-files:
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+
+  label-by-title:
+    if: github.event.action != 'synchronize'
+    permissions:
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const map = {
+              feat: 'enhancement',
+              fix: 'bug',
+              test: 'testing',
+              docs: 'documentation',
+              pattern: 'secret-pattern',
+            };
+            // this regex match conventional
+            const TITLE_RE = /^(\w+)(\([^)]*\))?!?:/;
+            const title = context.payload.pull_request.title;
+            const m = title.match(TITLE_RE);
+            if (!m) return;
+            const key = m[1].toLowerCase();
+            if (!Object.hasOwn(map, key)) return;
+            const label = map[key];
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: context.issue.number,
+              labels: [label],
+            });
