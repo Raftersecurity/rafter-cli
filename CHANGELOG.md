@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.12.0] - 2026-11-12
+## [0.12.1] - 2026-11-15
+
+### Added
+
+- **Datadog API and application keys are detected** (#23, #358). The pattern is anchored on Datadog context (`DD_API_KEY`, `DD_APP_KEY`, `DATADOG_API_KEY`, the `DD-API-KEY` header and similar), so a bare 32-character hex string such as an MD5 hash does not match. Both Node and Python. Thanks to @daocuong11 for the contribution.
+
+## [0.12.0] - 2026-11-15
 
 ### Added
 
