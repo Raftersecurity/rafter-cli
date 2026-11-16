@@ -1,5 +1,7 @@
 import { Command } from "commander";
 import { API, resolveKey, EXIT_GENERAL_ERROR, apiClient, apiUrl} from "../../utils/api.js";
+import { fmt } from "../../utils/formatter.js";
+import { describeHttpError } from "./scan-status.js";
 
 export function createUsageCommand(): Command {
   return new Command("usage")
@@ -10,11 +12,7 @@ export function createUsageCommand(): Command {
         const { data } = await apiClient.get(apiUrl("static/usage"), { headers: { "x-api-key": key } });
         console.log(JSON.stringify(data, null, 2));
       } catch (e: any) {
-        if (e.response?.data) {
-          console.error(e.response.data);
-        } else {
-          console.error(e.message);
-        }
+        console.error(fmt.error(describeHttpError(e)));
         process.exit(EXIT_GENERAL_ERROR);
       }
     });

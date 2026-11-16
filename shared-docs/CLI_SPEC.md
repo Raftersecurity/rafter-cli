@@ -4,6 +4,10 @@
 
 Rafter is the security toolkit for developers. Stable output contracts mean any developer can classify outcomes (clean / findings / retryable error / fatal error) and act without reading prose.
 
+For local JSON fields, examples, and runtime differences, see the
+[JSON Output Reference](JSON_SCHEMAS.md). Backend-dependent sections are
+marked as pending there.
+
 **Free forever for individuals and open source.** No account required. No telemetry. All local security features (secret scanning, policy enforcement, pre-commit hooks, audit logging, MCP server) work without an API key, without network access, and without usage limits.
 
 The CLI follows UNIX principles:
@@ -124,7 +128,7 @@ Retrieve results from a scan.
 - `--quiet` — suppress status messages on stderr
 - `-h, --help`
 
-**Vulnerability levels (JSON output):** The `level` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
+**Vulnerability severity (JSON output):** The `severity` field on each vulnerability uses SARIF standard values: `"error"`, `"warning"`, or `"note"`.
 
 #### Failed scans
 
@@ -133,6 +137,10 @@ A scan whose status is `failed` exits `1` from `rafter run`, `rafter get` and `r
 #### Partial scans
 
 A completed scan that the API marks `partial: true` or `warning_code: "SCAN_PARTIAL"` (some scanners did not finish) still exits `0` with its payload on stdout, but stderr warns that findings may be missing, names `missing_scanners` when the API lists them, and says not to treat the result as clean. The warning prints even with `--quiet`. Both runtimes.
+
+#### Error messages
+
+Errors that `rafter run`, `rafter get` (with or without `--interactive`) and `rafter usage` report through the shared formatter go to stderr as `[ERROR] <message>` in agent mode (`-a`) and as a red `✗ <message>` otherwise; the Python runtime escapes server-supplied text so bracketed content prints literally. An HTTP failure described by the shared HTTP helper generally reads `HTTP <status> — <detail>`, where `<detail>` is the `error` field of a JSON response body when present and otherwise the body itself, flattened to one line and truncated to 200 characters. Exit codes are those listed under [Exit Codes](#exit-codes); the formatting does not change them. Not every error path uses this format: `rafter run` handles HTTP 403 errors through the shared 403 handler, which prints `Error: …` and exits with code `4`. In contrast, `rafter get` and `rafter usage` handle HTTP 403 errors through their general error paths, using the shared formatter and exiting with code `1`. A multi-line message such as the poll give-up message carries the prefix on its first line only. Both runtimes.
 
 #### Poll-loop retry contract
 
@@ -552,6 +560,10 @@ When `--json` is passed, output is a JSON object to stdout with a `results` arra
 ```
 
 **Top-level field reference:**
+
+`engine_requested`, `engine_used` and `degraded` are always present in the
+JSON result of a one-shot local scan. The current watch-mode writers omit
+these three fields; see [watch output framing](JSON_SCHEMAS.md#watch-output-framing).
 
 | Field | Type | Description |
 |-------|------|-------------|

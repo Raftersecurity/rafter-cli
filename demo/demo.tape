@@ -3,7 +3,7 @@
 # Requires: node >=18, git, vhs
 #
 # Usage:
-#   vhs demo.tape          # renders demo.gif
+#   cd demo && vhs demo.tape   # renders demo/demo.gif
 #
 # NOTE: The fake AWS key is split across two printf args so this file
 # itself passes Rafter's secret scanner. It reassembles at runtime.

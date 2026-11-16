@@ -1,4 +1,5 @@
 import ora from "ora";
+import { inspect } from "node:util";
 import {
   API,
   API_TIMEOUT_SHORT_MS,
@@ -114,14 +115,23 @@ function truncate(value: unknown): string {
   // A server is free to answer {"error": {"message": "..."}}. Coerce before
   // touching string methods — this used to throw, which turned a retryable
   // failure into an immediate crash with a nonsense message.
-  const s = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
+  let json: string | undefined;
+  if (typeof value !== "string") {
+    try {
+      json = JSON.stringify(value);
+    } catch {
+      // Circular references and BigInt values make JSON.stringify throw;
+      // inspect renders both instead of crashing the error path.
+    }
+  }
+  const s = typeof value === "string" ? value : json ?? inspect(value, { breakLength: Infinity });
   const flat = s.replace(/[\r\n]+/g, " ").trim();
   return flat.length > MAX_ERROR_DETAIL_CHARS
     ? `${flat.slice(0, MAX_ERROR_DETAIL_CHARS)}…`
     : flat;
 }
 
-function describeHttpError(e: any): string {
+export function describeHttpError(e: any): string {
   const status = e?.response?.status;
   const data = e?.response?.data;
   let detail: unknown = "";
@@ -133,9 +143,11 @@ function describeHttpError(e: any): string {
     detail = e.message;
   }
   const detailText = truncate(detail);
+  // A non-Error throw (string, plain object) carries its detail in the value
+  // itself; String() would reduce a plain object to "[object Object]".
   return status
     ? `HTTP ${status}${detailText ? ` — ${detailText}` : ""}`
-    : detailText || String(e);
+    : detailText || (e instanceof Error ? String(e) : truncate(e));
 }
 
 /**

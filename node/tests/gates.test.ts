@@ -72,7 +72,12 @@ describe("rafter gates", () => {
     try {
       writeFixture(dir, UNICODE_FIXTURE);
       // A file name that is not valid UTF-8 is skipped, not printed.
-      fs.writeFileSync(Buffer.concat([Buffer.from(dir + "/auth"), Buffer.from([0xff]), Buffer.from(".py")]), "def authorize_bad():\n    pass\n");
+      // macOS (APFS) refuses such names with EILSEQ, so there the case cannot arise.
+      try {
+        fs.writeFileSync(Buffer.concat([Buffer.from(dir + "/auth"), Buffer.from([0xff]), Buffer.from(".py")]), "def authorize_bad():\n    pass\n");
+      } catch (e: any) {
+        if (e.code !== "EILSEQ") throw e;
+      }
       const out = JSON.parse(rafter(["gates", dir, "--json", "--no-gitignore"]).stdout);
       expect(out.gates.map((g: any) => `${g.file}:${g.name}`)).toEqual([
         "\uFF5A.go:authorizeAdmin",

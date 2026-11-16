@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-12
+
 ### Added
 
 - **`rafter gates [path]` maps a codebase's security gates for an audit.** It lists the functions whose names say they decide whether something is allowed (authorize, authenticate, `can*`, `is*Allowed`, `check*`, `verify*`, middleware and similar), ranked by name and path, and groups gates that implement the same contract (sync and async variants, two backends, v1 and v2), flagging a group when one member lacks a guard call (escaping, path normalization or containment, constant-time compare, expiry, limits) that another makes. Go, Python, JavaScript, TypeScript, Java and Ruby; test, vendored and generated code is skipped and `.gitignore` is honored. Static and offline, with text output sized for an agent and `--json`. The `rafter-code-review` skill's audit path now starts with it. Both Node and Python, with identical output, including for Unicode text (a BOM, non-breaking spaces, emoji). A hostile tree cannot stall it: very long lines, unclosed quotes and files of thousands of unclosed definitions map in seconds. It warns on stderr when no file was scanned.
@@ -18,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The pretool hook brings installed skills and rules up to date after a CLI upgrade.** Once a day, if the install is older than the CLI, it replaces skill, rule and sub-agent files that still hold rafter's own content (proved by hash), keeps any you edited with the new version beside them as `<file>.rafter-new`, and prints one line to stderr. It never writes to stdout or changes a hook decision, and does not touch hooks, MCP entries or instruction blocks (run `rafter agent update` for those). `RAFTER_DISABLE_AUTO_UPDATE=1` turns it off. Both Node and Python.
 - **Edited files waiting on a new version are flagged until you reconcile them.** `agent init`, `agent update`, `agent status` and `agent verify` list each kept file with a one-line instruction: merge your changes into `<file>.rafter-new`, move it over `<file>`, then run `rafter agent update` (or delete `<file>.rafter-new` to keep yours). The next update reports the file `reconciled` once and then leaves it alone until a release changes it again. `status --json` and `verify --json` gain `needs_reconcile`. Both Node and Python.
 - **`rafter agent status` and `rafter agent verify` say when installed integrations are out of date** and name `rafter agent update`; their `--json` output gains `stale` and `installed_version`. An out-of-date install does not change `verify`'s exit code. Both Node and Python.
+- **JSON output reference** (#36, #357). `shared-docs/JSON_SCHEMAS.md` records the observed JSON output of the local commands, hooks and MCP tools in both runtimes, with field tables; `CLI_SPEC.md` stays the canonical contract. Thanks to @bbdevelops for the contribution.
 
 ### Changed
 
@@ -26,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A clean text result from `rafter secrets` says it covers secrets only**, not a code security review. JSON output is unchanged. Both Node and Python.
 - **Node: `--staged`, `--diff` and `--range` outside a git repo** print `Error: Not in a git repository`, as Python does, instead of git's raw error.
 - **`rafter agent init` reports what it did to each installed file.** Every skill file (including `docs/`), per-skill rule file and sub-agent file gets one line: `added`, `updated`, `kept` or `replaced`; files already up to date are summed into one `N files unchanged` line. `--dry-run` shows the same predicted outcome per file. Lines that need attention (`kept`, `replaced`) still print, to stderr, under `--quiet`. Both Node and Python.
+- **Repository layout.** The shared test battery and corpus files moved from the repo root to `fixtures/battery/`, `demo.gif` and `demo.tape` moved into `demo/`, and internal drafts and a bead-store export were removed from the tree. No change to the published packages.
+- **`rafter run`, `rafter get` and `rafter usage` print errors through the shared formatter** (#34, #341): `[ERROR] <message>` with `-a`, `✗ <message>` otherwise, and HTTP failures read `HTTP <status> — <detail>` with the detail flattened to one line and capped at 200 characters. A 429 on submit now prints `Quota exhausted` in quiet mode too, in both runtimes. Exit codes are unchanged. Both Node and Python. Thanks to @jing2003 for the contribution.
+- **Python: `typer` is capped below 0.30.** The CLI adjusts the Click tree typer builds (to accept `-a` after a subcommand), which relies on typer internals; 0.29 changed one and crashed every command, so the range is pinned to versions the suite has run against (#361).
 
 ### Fixed
 
@@ -36,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`rafter agent enable openclaw.skills` installs the skill where OpenClaw reads it**, `~/.openclaw/workspace/skills/rafter-security/SKILL.md`, instead of the legacy `~/.openclaw/skills/rafter-security.md`. Both Node and Python.
 - **Installing Cursor support no longer deletes text you wrote in the legacy `.cursor/rules/rafter-security.mdc`.** `agent init --with-cursor` and `agent enable cursor.instructions` deleted the whole file; they now remove only rafter's marked block and delete the file only when nothing else is left. In Python, `cursor.instructions` now manages the per-skill rules and sub-agent that `agent init` writes, as in Node, instead of the retired consolidated file. Both Node and Python.
 - **The Cursor sub-agent written by the Python CLI no longer has a stray blank line in its frontmatter**, so it now matches the file the Node CLI writes. Python only.
+- **`CLI_SPEC.md` names the vulnerability field `severity`**, not `level`, matching the wire format (#357).
 
 ## [0.11.7] - 2026-11-02
 

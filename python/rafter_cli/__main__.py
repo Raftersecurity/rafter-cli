@@ -1,10 +1,10 @@
 """Rafter CLI entry point."""
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import typer
-import typer.core
 
 from . import __version__
 from .commands.agent import agent_app
@@ -128,7 +128,7 @@ app.command("report")(report_main)
 app.command("gates")(gates_main)
 
 
-def _allow_agent_flag_at_any_depth(cmd: Any) -> None:
+def _allow_agent_flag_at_any_depth(cmd: Any, template: Any = None) -> None:
     """`-a`/`--agent` is declared only on the root callback above, so Click
     rejects it as an unknown option once it appears after a subcommand name
     (``rafter secrets . -a``). Add a self-contained flag — its own callback
@@ -144,36 +144,33 @@ def _allow_agent_flag_at_any_depth(cmd: Any) -> None:
     # False here and would never see the existing `--agent <type>` params on
     # `agent audit` / `skill review`. Check the flag strings directly.
     has_agent_option = any("--agent" in getattr(p, "opts", []) for p in cmd.params)
+    if template is None:
+        # First call is on the root, whose callback declares `-a/--agent`.
+        template = next(p for p in cmd.params if "--agent" in getattr(p, "opts", []))
     if not has_agent_option:
         def _enable(ctx, param, value: bool) -> None:
             if value:
                 set_agent_mode(True)
 
-        # typer >=0.16 vendors its own Click fork (`typer._click`/`typer.core`)
-        # with a Context class distinct from the real `click.core.Context` — a
-        # plain `click.Option` here parses fine but then crashes inside real
-        # Click's `Option.handle_parse_result` (`AttributeError:
-        # '...Context' object has no attribute '_param_default_explicit'`)
-        # because that Context never went through real Click's own __init__.
-        # `typer.core.TyperOption` is built on the same fork as every other
-        # param already on `cmd`, so it's the type that has to be used here.
-        cmd.params.append(
-            typer.core.TyperOption(
-                param_decls=["-a", "--agent"],
-                is_flag=True,
-                expose_value=False,
-                is_eager=True,
-                help="Plain output for AI agents (no colors/emoji).",
-                callback=_enable,
-            )
-        )
+        # Copy the root's own `-a/--agent` option rather than construct one.
+        # typer >=0.16 vendors its own Click fork, so a plain `click.Option`
+        # crashes inside real Click's `handle_parse_result`, and the
+        # `typer.core.TyperOption` constructor is private API that changes
+        # between releases (0.29 added a required `type_descriptor`). The
+        # root's option was built by whatever typer is installed, so a copy
+        # with a new callback works on all of them.
+        flag = copy.copy(template)
+        flag.callback = _enable
+        flag.expose_value = False
+        flag.is_eager = True
+        cmd.params.append(flag)
     # Same fork issue: `TyperGroup` isn't a subclass of the public
     # `click.Group` either, so check for `.commands` (every group — Typer's
     # or real Click's — exposes it) instead of `isinstance(cmd, click.Group)`.
     sub_commands = getattr(cmd, "commands", None)
     if sub_commands:
         for sub in sub_commands.values():
-            _allow_agent_flag_at_any_depth(sub)
+            _allow_agent_flag_at_any_depth(sub, template)
 
 
 def run() -> None:
